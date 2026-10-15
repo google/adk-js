@@ -25,11 +25,13 @@ vi.mock('../../src/runner/runner.js', async (importOriginal) => {
     await importOriginal<typeof import('../../src/runner/runner.js')>();
   return {
     ...actual,
-    Runner: vi.fn().mockImplementation((config: RunnerConfig) => ({
-      appName: config?.appName,
-      sessionService: config?.sessionService,
-      runAsync: vi.fn(),
-    })),
+    Runner: vi.fn().mockImplementation(function (config: RunnerConfig) {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: vi.fn(),
+      };
+    }),
   };
 });
 
@@ -115,13 +117,13 @@ describe('A2AAgentExecutor', () => {
       }
     }
 
-    vi.mocked(Runner).mockImplementation(((config: RunnerConfig) => {
+    vi.mocked(Runner).mockImplementation(function (config: RunnerConfig) {
       return {
         appName: config?.appName,
         sessionService: config?.sessionService,
         runAsync: mockRunAsync,
       } as unknown as Runner;
-    }) as unknown as () => Runner);
+    });
 
     let beforeExecutedCalled = false;
     let afterEventCount = 0;
@@ -236,13 +238,13 @@ describe('A2AAgentExecutor', () => {
       });
     }
 
-    vi.mocked(Runner).mockImplementation(((config: RunnerConfig) => {
+    vi.mocked(Runner).mockImplementation(function (config: RunnerConfig) {
       return {
         appName: config?.appName,
         sessionService: config?.sessionService,
         runAsync: mockRunAsync,
-      };
-    }) as unknown as () => Runner);
+      } as unknown as Runner;
+    });
 
     const executor = new A2AAgentExecutor({
       runner: {appName: 'test-app', sessionService: mockSessionService},
@@ -323,13 +325,13 @@ describe('A2AAgentExecutor', () => {
       throw new Error('LLM failed');
     }
 
-    vi.mocked(Runner).mockImplementation(((config: RunnerConfig) => {
+    vi.mocked(Runner).mockImplementation(function (config: RunnerConfig) {
       return {
         appName: config?.appName,
         sessionService: config?.sessionService,
         runAsync: mockRunAsyncWithError,
       } as unknown as Runner;
-    }) as unknown as () => Runner);
+    });
 
     const executor = new A2AAgentExecutor({
       runner: {
@@ -371,13 +373,13 @@ describe('A2AAgentExecutor', () => {
     mockSessionService.getSession.mockResolvedValue(mockSession);
 
     const mockRunAsync = vi.fn(async function* () {});
-    vi.mocked(Runner).mockImplementation(((config: RunnerConfig) => {
+    vi.mocked(Runner).mockImplementation(function (config: RunnerConfig) {
       return {
         appName: config?.appName,
         sessionService: config?.sessionService,
         runAsync: mockRunAsync,
       } as unknown as Runner;
-    }) as unknown as () => Runner);
+    });
 
     const executor = new A2AAgentExecutor({
       runner: {

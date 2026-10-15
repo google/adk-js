@@ -268,12 +268,8 @@ export abstract class BaseTestServer {
 
   constructor(host: string, port?: number) {
     this.host = host;
-    this.port = port || BaseTestServer.getRandomPort();
+    this.port = port ?? 0;
     this.url = `http://${this.host}:${this.port}`;
-  }
-
-  static getRandomPort(): number {
-    return 40000 + Math.floor(Math.random() * 10000);
   }
 
   protected async startProcess({
@@ -299,8 +295,10 @@ export abstract class BaseTestServer {
         const message = data.toString();
         stdoutChunks.push(message);
 
-        // Find URL like http://localhost:12345
-        const urlMatch = message.match(/http:\/\/localhost:([0-9]+)/i);
+        // Find URL like http://localhost:12345 or http://127.0.0.1:12345
+        const urlMatch = message.match(
+          /http:\/\/(?:localhost|127\.0\.0\.1):([0-9]+)/i,
+        );
         if (urlMatch && urlMatch[1]) {
           const parsedPort = parseInt(urlMatch[1], 10);
           if (parsedPort > 0) {

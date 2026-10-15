@@ -26,9 +26,16 @@ const IMAGE = process.env.ADK_DOCKER_IT_IMAGE || 'adk-code-executor-it:latest';
 function makeParams(
   code: string,
   language: CodeExecutionLanguage,
+  sessionId = 'integration-test-session',
 ): ExecuteCodeParams {
   return {
-    invocationContext: {} as unknown as InvocationContext,
+    invocationContext: {
+      session: {
+        appName: 'integration-test-app',
+        userId: 'integration-test-user',
+        id: sessionId,
+      },
+    } as unknown as InvocationContext,
     codeExecutionInput: {code, language, inputFiles: []},
   };
 }

@@ -44,9 +44,6 @@ describe('task utils', () => {
       } catch (_) {
         // expected
       }
-      // allow microtask queue to flush the .catch(markDone)
-      await new Promise((resolve) => process.nextTick(resolve));
-
       expect(task.done()).toBe(true);
     });
 

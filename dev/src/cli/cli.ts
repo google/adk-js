@@ -8,13 +8,26 @@
 import {
   BaseArtifactService,
   BaseSessionService,
+  EvalEntry,
+  EvalMetric,
+  EvalResult,
+  EvalStatus,
   LogLevel,
   getArtifactServiceFromUri,
+  getEvaluationCriteriaOrDefault,
+  getRootAgent,
   getSessionServiceFromUri,
+  loadDotenvForAgent,
+  logToTmpFolder,
+  parseAndGetEvalsToRun,
+  runEvals,
   setLogLevel as setAdkCoreLogLevel,
+  tryGetResetFunc,
 } from '@google/adk';
 import {Argument, Command, Option} from 'commander';
 import dotenv from 'dotenv';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import {runIntegrationTests} from '../integration/run_integration_tests.js';
 import {AdkApiServer} from '../server/adk_api_server.js';
 import {FileModuleType} from '../utils/agent_loader.js';
@@ -32,7 +45,9 @@ const LOG_LEVEL_MAP: Record<string, LogLevel> = {
   'debug': LogLevel.DEBUG,
   'info': LogLevel.INFO,
   'warn': LogLevel.WARN,
+  'warning': LogLevel.WARN,
   'error': LogLevel.ERROR,
+  'critical': LogLevel.ERROR,
 };
 
 function getLogLevelFromOptions(options: {
@@ -409,6 +424,11 @@ export function createProgram(): Command {
       '--resume <string>',
       'The json file that contains a previously saved session (by --save_session option). The previous session will be re-displayed. And user can continue to interact with the agent.',
     )
+    .option(
+      '--log_to_tmp [boolean]',
+      'Optional. Whether to log to system temp folder instead of console.',
+      false,
+    )
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION)
     .addOption(SESSION_SERVICE_URI_OPTION)
@@ -420,6 +440,10 @@ export function createProgram(): Command {
     .addOption(RELOAD_AGENTS_OPTION)
     .action(async (agentPath: string, options: Record<string, string>) => {
       setAdkCoreLogLevel(getLogLevelFromOptions(options));
+      const logToTmp = getBoolean(options['log_to_tmp']);
+      if (logToTmp) {
+        logToTmpFolder({level: getLogLevelFromOptions(options)});
+      }
 
       try {
         await runAgent({
@@ -433,12 +457,125 @@ export function createProgram(): Command {
           otelToCloud: options['otel_to_cloud'] ? true : false,
           agentFileLoadOptions: getAgentFileOptions(options),
           reloadAgents: getBoolean(options['reload_agents']),
+          ...(logToTmp ? {logToTmp: true} : {}),
         });
       } catch (error) {
         logger.error('Error running agent:', (error as Error).message);
         process.exitCode = 1;
       }
     });
+
+  program
+    .command('eval')
+    .description('Evaluates an agent given the eval sets.')
+    .argument(
+      '<agent_module_file_path>',
+      'The path to the agent directory or file that contains the rootAgent.',
+    )
+    .argument(
+      '[eval_set_file_path...]',
+      'Specify one or more eval set file paths, optionally followed by :eval_1,eval_2.',
+    )
+    .option('--config_file_path <string>', 'Optional. The path to config file.')
+    .option(
+      '--print_detailed_results [boolean]',
+      'Optional. Whether to print detailed results on console or not.',
+      false,
+    )
+    .addOption(VERBOSE_OPTION)
+    .addOption(LOG_LEVEL_OPTION)
+    .addOption(COMPILE_AGENT_FILE)
+    .addOption(BUNDLE_AGENT_FILE)
+    .addOption(AGENT_FILE_MODULE_TYPE)
+    .action(
+      async (
+        agentModuleFilePath: string,
+        evalSetFilePaths: string[],
+        options: Record<string, string>,
+      ) => {
+        setAdkCoreLogLevel(getLogLevelFromOptions(options));
+
+        try {
+          const absAgentPath = getAbsolutePath(agentModuleFilePath);
+          loadDotenvForAgent(
+            path.basename(absAgentPath),
+            path.dirname(absAgentPath),
+          );
+
+          const evaluationCriteria = getEvaluationCriteriaOrDefault(
+            options['config_file_path'],
+          );
+          const evalMetrics: EvalMetric[] = Object.entries(
+            evaluationCriteria,
+          ).map(([metric_name, threshold]) => ({
+            metric_name,
+            threshold,
+          }));
+
+          const rootAgent = await getRootAgent(absAgentPath);
+          const resetFunc = await tryGetResetFunc(absAgentPath);
+
+          const evalSetToEvals = parseAndGetEvalsToRun(evalSetFilePaths);
+          const evalCasesByEvalSetId: Record<string, EvalEntry[]> = {};
+
+          for (const [evalSetFile, evalsToRun] of Object.entries(
+            evalSetToEvals,
+          )) {
+            const evalSetContent = JSON.parse(
+              fs.readFileSync(getAbsolutePath(evalSetFile), 'utf-8'),
+            ) as EvalEntry[];
+
+            evalCasesByEvalSetId[evalSetFile] =
+              evalsToRun.length > 0
+                ? evalSetContent.filter((e) => evalsToRun.includes(e.name))
+                : evalSetContent;
+          }
+
+          const evalResults: EvalResult[] = [];
+          for await (const result of runEvals(
+            evalCasesByEvalSetId,
+            rootAgent,
+            resetFunc,
+            evalMetrics,
+            getBoolean(options['print_detailed_results']),
+          )) {
+            evalResults.push(result);
+          }
+
+          process.stdout.write(
+            '*********************************************************************\n',
+          );
+          const evalRunSummary: Record<string, [number, number]> = {};
+          for (const evalResult of evalResults) {
+            if (
+              !Object.prototype.hasOwnProperty.call(
+                evalRunSummary,
+                evalResult.eval_set_file,
+              )
+            ) {
+              evalRunSummary[evalResult.eval_set_file] = [0, 0];
+            }
+            if (evalResult.final_eval_status === EvalStatus.PASSED) {
+              evalRunSummary[evalResult.eval_set_file][0] += 1;
+            } else {
+              evalRunSummary[evalResult.eval_set_file][1] += 1;
+            }
+          }
+
+          process.stdout.write('Eval Run Summary\n');
+          for (const [evalSetFile, passFailCount] of Object.entries(
+            evalRunSummary,
+          )) {
+            process.stdout.write(
+              `${evalSetFile}:\n  Tests passed: ${passFailCount[0]}\n  Tests failed: ${passFailCount[1]}\n`,
+            );
+          }
+        } catch (error) {
+          logger.error('Error evaluating agent:', (error as Error).message);
+          process.exitCode = 1;
+        }
+      },
+    );
 
   const DEPLOY_COMMAND = program
     .command('deploy')
@@ -459,6 +596,11 @@ export function createProgram(): Command {
       'adk-default-service-name',
     )
     .option(
+      '--app_name [string]',
+      'Optional. App name of the ADK API server. Default: folder or file name of the agent source.',
+      '',
+    )
+    .option(
       '--temp_folder [string]',
       'Optional. Temp folder for the generated Cloud Run source files (default: a private directory created in the system temp directory).',
     )
@@ -469,6 +611,12 @@ export function createProgram(): Command {
     .addOption(LOG_LEVEL_OPTION)
     .addOption(SESSION_SERVICE_URI_OPTION)
     .addOption(ARTIFACT_SERVICE_URI_OPTION)
+    .addOption(OTEL_TO_CLOUD_OPTION)
+    .option(
+      '--with_cloud_trace [boolean]',
+      'Optional. Whether to enable Cloud Trace for cloud_run.',
+      false,
+    )
     .addOption(COMPILE_AGENT_FILE)
     .addOption(BUNDLE_AGENT_FILE)
     .addOption(AGENT_FILE_MODULE_TYPE)
@@ -488,12 +636,17 @@ export function createProgram(): Command {
         extraGcloudArgs.push(arg);
       }
 
+      const otelToCloud =
+        getBoolean(options['otel_to_cloud']) ||
+        getBoolean(options['with_cloud_trace']);
+
       try {
         await deployToCloudRun({
           agentPath: getAbsolutePath(agentPath),
           project: options['project'],
           region: options['region'],
           serviceName: options['service_name'],
+          ...(options['app_name'] ? {appName: options['app_name']} : {}),
           tempFolder: options['temp_folder'],
           port: parseInt(options['port'], 10),
           withUi: getBoolean(options['with_ui']),
@@ -502,6 +655,7 @@ export function createProgram(): Command {
           allowOrigins: options['allow_origins'],
           sessionServiceUri: options['session_service_uri'],
           artifactServiceUri: options['artifact_service_uri'],
+          ...(otelToCloud ? {otelToCloud: true} : {}),
           agentFileLoadOptions: getAgentFileOptions({...options, minify: true}),
           a2a: getBoolean(options['a2a']),
           a2aAuthToken: options['a2a_auth_token'],

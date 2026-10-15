@@ -30,16 +30,22 @@ type A2AStreamEventData =
   Message | Task | TaskStatusUpdateEvent | TaskArtifactUpdateEvent;
 
 vi.mock('@a2a-js/sdk/client', () => {
-  const DefaultAgentCardResolver = vi.fn().mockImplementation(() => ({
-    resolve: vi.fn(),
-  }));
-  const Client = vi.fn().mockImplementation(() => ({
-    sendMessageStream: vi.fn(),
-    sendMessage: vi.fn(),
-  }));
-  const ClientFactory = vi.fn().mockImplementation(() => ({
-    createFromAgentCard: vi.fn(),
-  }));
+  const DefaultAgentCardResolver = vi.fn().mockImplementation(function () {
+    return {
+      resolve: vi.fn(),
+    };
+  });
+  const Client = vi.fn().mockImplementation(function () {
+    return {
+      sendMessageStream: vi.fn(),
+      sendMessage: vi.fn(),
+    };
+  });
+  const ClientFactory = vi.fn().mockImplementation(function () {
+    return {
+      createFromAgentCard: vi.fn(),
+    };
+  });
   return {Client, ClientFactory, DefaultAgentCardResolver};
 });
 
@@ -65,8 +71,12 @@ describe('A2ARemoteAgent', () => {
     } as unknown as DefaultAgentCardResolver;
 
     // Reset mocks to return our instances if constructors are called
-    vi.mocked(ClientFactory).mockImplementation(() => mockClientFactory);
-    vi.mocked(DefaultAgentCardResolver).mockImplementation(() => mockResolver);
+    vi.mocked(ClientFactory).mockImplementation(function () {
+      return mockClientFactory;
+    });
+    vi.mocked(DefaultAgentCardResolver).mockImplementation(function () {
+      return mockResolver;
+    });
   });
 
   const createMockContext = (overrides = {}): InvocationContext => {

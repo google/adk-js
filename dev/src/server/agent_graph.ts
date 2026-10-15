@@ -15,6 +15,7 @@ import {
   Graph as WorkflowGraph,
   isAgentTool,
   isBaseAgent,
+  isBaseRetrievalTool,
   isBaseTool,
   isFunctionTool,
   isLlmAgent,
@@ -23,6 +24,7 @@ import {
   isSequentialAgent,
   isWorkflow,
 } from '@google/adk';
+import {spawn} from 'node:child_process';
 import {
   Digraph,
   Edge,
@@ -551,6 +553,10 @@ function getNodeCaption(toolOrAgent: BaseAgent | BaseTool): string {
     return `🤖 ${toolOrAgent.name}`;
   }
 
+  if (isBaseRetrievalTool(toolOrAgent)) {
+    return `🔎 ${toolOrAgent.name}`;
+  }
+
   if (isFunctionTool(toolOrAgent)) {
     return `🔧 ${toolOrAgent.name}`;
   }
@@ -572,6 +578,10 @@ function getNodeCaption(toolOrAgent: BaseAgent | BaseTool): string {
 function getNodeShape(toolOrAgent: BaseAgent | BaseTool): string {
   if (isBaseAgent(toolOrAgent)) {
     return 'ellipse';
+  }
+
+  if (isBaseRetrievalTool(toolOrAgent)) {
+    return 'cylinder';
   }
 
   if (isFunctionTool(toolOrAgent)) {
@@ -604,23 +614,62 @@ function shouldBuildAgentCluster(toolOrAgent: BaseAgent | BaseTool): boolean {
   return false;
 }
 
+function renderDotToPng(dotSource: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('dot', ['-Tpng']);
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdoutChunks.push(Buffer.from(chunk));
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderrChunks.push(Buffer.from(chunk));
+    });
+    child.on('error', (err: Error) => {
+      reject(err);
+    });
+    child.on('close', (code: number | null) => {
+      if (code === 0) {
+        resolve(Buffer.concat(stdoutChunks));
+      } else {
+        const stderrText = Buffer.concat(stderrChunks).toString('utf-8').trim();
+        reject(
+          new Error(
+            `Graphviz 'dot -Tpng' exited with code ${code}${stderrText ? `: ${stderrText}` : ''}`,
+          ),
+        );
+      }
+    });
+
+    child.stdin.write(dotSource);
+    child.stdin.end();
+  });
+}
+
 /**
  * Returns a graphviz graph of the agent tree.
  *
  * @param rootAgent The root agent of the agent tree.
  * @param highlightsPairs An array of pairs of agent names to highlight.
+ * @param image When `true`, renders the graph to a PNG `Buffer` via `dot -Tpng`.
  * @return A graphviz graph of the agent tree.
  */
 export async function getAgentGraph(
   rootAgent: RunnableRoot,
   highlightsPairs: Array<[string, string]>,
-): Promise<Digraph> {
+  image?: boolean,
+): Promise<Digraph | Buffer> {
   const graph = new Digraph(rootAgent.name, /* strict= */ true, {
     rankdir: 'LR',
     bgcolor: '#333537',
   });
 
   await buildGraph(graph, rootAgent, highlightsPairs);
+
+  if (image) {
+    return renderDotToPng(toDot(graph));
+  }
 
   return graph;
 }
@@ -637,6 +686,9 @@ export async function getAgentGraphAsDot(
   highlightsPairs: Array<[string, string]>,
 ): Promise<string> {
   const graph = await getAgentGraph(rootAgent, highlightsPairs);
+  if (Buffer.isBuffer(graph)) {
+    return graph.toString('utf-8');
+  }
 
   return toDot(graph);
 }

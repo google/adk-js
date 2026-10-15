@@ -108,9 +108,9 @@ describe('getGcpExporters', () => {
         const mockAuth = {
           getProjectId: vi.fn().mockResolvedValue('test-project'),
         };
-        vi.mocked(GoogleAuth).mockImplementation(
-          () => mockAuth as unknown as GoogleAuth,
-        );
+        vi.mocked(GoogleAuth).mockImplementation(function () {
+          return mockAuth as unknown as GoogleAuth;
+        });
 
         const result = await getGcpExporters(config);
 
@@ -127,9 +127,9 @@ describe('getGcpExporters', () => {
     const mockAuth = {
       getProjectId: vi.fn().mockRejectedValue(new Error('Auth error')),
     };
-    vi.mocked(GoogleAuth).mockImplementation(
-      () => mockAuth as unknown as GoogleAuth,
-    );
+    vi.mocked(GoogleAuth).mockImplementation(function () {
+      return mockAuth as unknown as GoogleAuth;
+    });
 
     const result = await getGcpExporters({enableTracing: true});
 
@@ -140,9 +140,9 @@ describe('getGcpExporters', () => {
     const mockAuth = {
       getProjectId: vi.fn().mockResolvedValue(null),
     };
-    vi.mocked(GoogleAuth).mockImplementation(
-      () => mockAuth as unknown as GoogleAuth,
-    );
+    vi.mocked(GoogleAuth).mockImplementation(function () {
+      return mockAuth as unknown as GoogleAuth;
+    });
 
     const result = await getGcpExporters({enableTracing: true});
 
