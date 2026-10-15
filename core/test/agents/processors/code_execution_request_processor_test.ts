@@ -6,14 +6,17 @@
 
 import {
   BaseAgent,
+  FileContentEncoding,
+  InMemoryArtifactService,
   InvocationContext,
   LlmAgent,
   LlmRequest,
   PluginManager,
+  ScopedArtifactService,
   createSession,
 } from '@google/adk';
 import {execFileSync} from 'node:child_process';
-import {describe, expect, it} from 'vitest';
+import {describe, expect, it, vi} from 'vitest';
 import {
   CODE_EXECUTION_REQUEST_PROCESSOR,
   CodeExecutionResponseProcessor,
@@ -22,7 +25,11 @@ import {
   BaseCodeExecutor,
   ExecuteCodeParams,
 } from '../../../src/code_executors/base_code_executor.js';
-import {CodeExecutionResult} from '../../../src/code_executors/code_execution_utils.js';
+import {
+  CodeExecutionInput,
+  CodeExecutionResult,
+} from '../../../src/code_executors/code_execution_utils.js';
+import {base64Encode} from '../../../src/utils/env_aware_utils.js';
 
 class MockBaseAgent extends BaseAgent {
   constructor(name: string) {
@@ -38,6 +45,20 @@ class TestCodeExecutor extends BaseCodeExecutor {
   }
 }
 
+class RecordingCodeExecutor extends BaseCodeExecutor {
+  readonly inputs: CodeExecutionInput[] = [];
+
+  constructor(private readonly result: CodeExecutionResult) {
+    super();
+    this.optimizeDataFile = true;
+  }
+
+  async executeCode(params: ExecuteCodeParams): Promise<CodeExecutionResult> {
+    this.inputs.push(params.codeExecutionInput);
+    return this.result;
+  }
+}
+
 function createMockInvocationContext(agent: BaseAgent): InvocationContext {
   return new InvocationContext({
     invocationId: 'test-invocation',
@@ -50,6 +71,31 @@ function createMockInvocationContext(agent: BaseAgent): InvocationContext {
     }),
     pluginManager: new PluginManager([]),
   });
+}
+
+function createContextWithArtifacts(agent: BaseAgent): {
+  ctx: InvocationContext;
+  artifactService: ScopedArtifactService;
+} {
+  const artifactService = new ScopedArtifactService(
+    new InMemoryArtifactService(),
+    'test-app',
+    'test-user',
+    'test-session',
+  );
+  const ctx = new InvocationContext({
+    invocationId: 'test-invocation',
+    agent,
+    session: createSession({
+      id: 'test-session',
+      events: [],
+      appName: 'test-app',
+      userId: 'test-user',
+    }),
+    pluginManager: new PluginManager([]),
+    artifactService,
+  });
+  return {ctx, artifactService};
 }
 
 function createLlmRequest(overrides: Partial<LlmRequest> = {}): LlmRequest {
@@ -69,66 +115,9 @@ async function collectEvents<T>(gen: AsyncGenerator<T>): Promise<T[]> {
   return results;
 }
 
+const CSV_TEXT = 'a,b\n1,2\n';
+
 describe('CodeExecutionRequestProcessor', () => {
-  it('injects a working crop helper for data-file exploration', async () => {
-    const executor = new TestCodeExecutor();
-    executor.optimizeDataFile = true;
-    const agent = new LlmAgent({
-      name: 'data-agent',
-      model: 'gemini-2.5-flash',
-      codeExecutor: executor,
-    });
-    const request = createLlmRequest({
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            {
-              inlineData: {
-                mimeType: 'text/csv',
-                data: Buffer.from('name\nAlice\n').toString('base64'),
-              },
-            },
-          ],
-        },
-      ],
-    });
-    const events = CODE_EXECUTION_REQUEST_PROCESSOR.runAsync(
-      createMockInvocationContext(agent),
-      request,
-    );
-    const {value: event} = await events.next();
-    await events.return();
-    const code = event?.content?.parts?.find((part) => part.executableCode)
-      ?.executableCode?.code;
-    expect(code).toBeDefined();
-
-    // Execute the injected function with Python's standard library so this
-    // regression does not require pandas or a remote code executor.
-    const result = execFileSync(
-      process.env.PYTHON ??
-        (process.platform === 'win32' ? 'python' : 'python3'),
-      [
-        '-c',
-        `import ast, json, sys
-source = ast.parse(sys.stdin.read())
-functions = ast.Module(body=[node for node in source.body
-    if isinstance(node, ast.FunctionDef) and node.name == 'crop'], type_ignores=[])
-namespace = {}
-exec(compile(functions, '<data-file-helper>', 'exec'), namespace)
-crop = namespace['crop']
-print(json.dumps([crop('short'), crop('a' * 65), crop('abcd', 3), crop('abcd', 2)]))`,
-      ],
-      {input: code, encoding: 'utf8'},
-    );
-    expect(JSON.parse(result)).toEqual([
-      'short',
-      'a'.repeat(61) + '...',
-      '...',
-      'ab',
-    ]);
-  });
-
   describe('early-exit paths', () => {
     it('yields no events and leaves request unchanged for a non-LlmAgent', async () => {
       const agent = new MockBaseAgent('non-llm-agent');
@@ -183,6 +172,176 @@ print(json.dumps([crop('short'), crop('a' * 65), crop('abcd', 3), crop('abcd', 2
       expect(events).toHaveLength(0);
       // Content should still be present after processing
       expect(llmRequest.contents).toHaveLength(1);
+    });
+  });
+
+  describe('data files', () => {
+    function createCsvRequest(): LlmRequest {
+      return createLlmRequest({
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {text: 'Summarize this file.'},
+              {
+                inlineData: {
+                  mimeType: 'text/csv',
+                  data: base64Encode(CSV_TEXT),
+                },
+              },
+            ],
+          },
+        ],
+      });
+    }
+
+    function createAgent(executor: BaseCodeExecutor): LlmAgent {
+      return new LlmAgent({
+        name: 'data_agent',
+        model: 'gemini-flash-latest',
+        codeExecutor: executor,
+      });
+    }
+
+    it('executes crop from the generated data-file helper', async () => {
+      const executor = new RecordingCodeExecutor({
+        stdout: '',
+        stderr: '',
+        outputFiles: [],
+      });
+      const {ctx} = createContextWithArtifacts(createAgent(executor));
+
+      await collectEvents(
+        CODE_EXECUTION_REQUEST_PROCESSOR.runAsync(ctx, createCsvRequest()),
+      );
+
+      // Run the actual helper with Python's standard library, without pandas
+      // or a remote code executor.
+      const result = execFileSync(
+        process.env.PYTHON ??
+          (process.platform === 'win32' ? 'python' : 'python3'),
+        [
+          '-c',
+          `import ast, json, sys
+source = ast.parse(sys.stdin.read())
+functions = ast.Module(body=[node for node in source.body
+    if isinstance(node, ast.FunctionDef) and node.name == 'crop'], type_ignores=[])
+namespace = {}
+exec(compile(functions, '<data-file-helper>', 'exec'), namespace)
+crop = namespace['crop']
+print(json.dumps([crop('short'), crop('a' * 65), crop('abcd', 3), crop('abcd', 2)]))`,
+        ],
+        {input: executor.inputs[0].code, encoding: 'utf8'},
+      );
+      expect(JSON.parse(result)).toEqual([
+        'short',
+        'a'.repeat(61) + '...',
+        '...',
+        'ab',
+      ]);
+    });
+
+    it('replaces the inline CSV part with a text placeholder and passes the file to the executor', async () => {
+      const executor = new RecordingCodeExecutor({
+        stdout: 'explored',
+        stderr: '',
+        outputFiles: [],
+      });
+      const {ctx} = createContextWithArtifacts(createAgent(executor));
+      const llmRequest = createCsvRequest();
+
+      await collectEvents(
+        CODE_EXECUTION_REQUEST_PROCESSOR.runAsync(ctx, llmRequest),
+      );
+
+      expect(llmRequest.contents[0].parts![1]).toEqual({
+        text: '\nAvailable file: `data_1_2.csv`\n',
+      });
+      expect(executor.inputs).toHaveLength(1);
+      expect(executor.inputs[0].inputFiles).toEqual([
+        {name: 'data_1_2.csv', content: CSV_TEXT, mimeType: 'text/csv'},
+      ]);
+    });
+
+    it('adds the executor stdout to the request as user text', async () => {
+      const executor = new RecordingCodeExecutor({
+        stdout: 'Total rows: 1',
+        stderr: '',
+        outputFiles: [],
+      });
+      const {ctx} = createContextWithArtifacts(createAgent(executor));
+      const llmRequest = createCsvRequest();
+
+      await collectEvents(
+        CODE_EXECUTION_REQUEST_PROCESSOR.runAsync(ctx, llmRequest),
+      );
+
+      const last = llmRequest.contents[llmRequest.contents.length - 1];
+      expect(last.role).toBe('user');
+      expect(last.parts).toEqual([
+        {
+          text: '```tool_output\nCode execution result:\nTotal rows: 1\n\n```',
+        },
+      ]);
+    });
+
+    it('saves a UTF-8 output file as base64 inline data', async () => {
+      const executor = new RecordingCodeExecutor({
+        stdout: '',
+        stderr: '',
+        outputFiles: [
+          {
+            name: 'summary.txt',
+            content: 'hello',
+            contentEncoding: FileContentEncoding.UTF8,
+            mimeType: 'text/plain',
+          },
+        ],
+      });
+      const {ctx, artifactService} = createContextWithArtifacts(
+        createAgent(executor),
+      );
+      const saveSpy = vi.spyOn(artifactService, 'saveArtifact');
+
+      await collectEvents(
+        CODE_EXECUTION_REQUEST_PROCESSOR.runAsync(ctx, createCsvRequest()),
+      );
+
+      expect(saveSpy).toHaveBeenCalledWith({
+        filename: 'summary.txt',
+        artifact: {
+          inlineData: {data: base64Encode('hello'), mimeType: 'text/plain'},
+        },
+      });
+    });
+
+    it('saves a base64 output file unchanged', async () => {
+      const encoded = base64Encode('\x89PNG');
+      const executor = new RecordingCodeExecutor({
+        stdout: '',
+        stderr: '',
+        outputFiles: [
+          {
+            name: 'chart.png',
+            content: encoded,
+            contentEncoding: FileContentEncoding.BASE64,
+            mimeType: 'image/png',
+          },
+        ],
+      });
+      const {ctx, artifactService} = createContextWithArtifacts(
+        createAgent(executor),
+      );
+      const saveSpy = vi.spyOn(artifactService, 'saveArtifact');
+
+      await collectEvents(
+        CODE_EXECUTION_REQUEST_PROCESSOR.runAsync(ctx, createCsvRequest()),
+      );
+
+      expect(saveSpy).toHaveBeenCalledWith({
+        filename: 'chart.png',
+        artifact: {inlineData: {data: encoded, mimeType: 'image/png'}},
+      });
     });
   });
 });
@@ -276,6 +435,56 @@ describe('CodeExecutionResponseProcessor', () => {
       );
 
       expect(events).toHaveLength(0);
+    });
+  });
+
+  describe('code execution', () => {
+    it('runs the code block, reports the output and saves a UTF-8 file as base64', async () => {
+      const executor = new RecordingCodeExecutor({
+        stdout: '2',
+        stderr: '',
+        outputFiles: [
+          {
+            name: 'result.txt',
+            content: '2',
+            contentEncoding: FileContentEncoding.UTF8,
+            mimeType: 'text/plain',
+          },
+        ],
+      });
+      const agent = new LlmAgent({
+        name: 'agent-with-executor',
+        model: 'gemini-flash-latest',
+        codeExecutor: executor,
+      });
+      const {ctx, artifactService} = createContextWithArtifacts(agent);
+      const saveSpy = vi.spyOn(artifactService, 'saveArtifact');
+      const llmResponse = {
+        partial: false,
+        content: {
+          role: 'model',
+          parts: [{text: '```python\nprint(1 + 1)\n```'}],
+        },
+      };
+
+      const events = await collectEvents(
+        responseProcessor.runAsync(ctx, llmResponse),
+      );
+
+      expect(executor.inputs.map((input) => input.code)).toEqual([
+        'print(1 + 1)',
+      ]);
+      expect(events).toHaveLength(2);
+      expect(events[1].content?.parts?.[0].codeExecutionResult?.output).toBe(
+        'Code execution result:\n2\n\n\nSaved artifacts:\n`result.txt`',
+      );
+      expect(saveSpy).toHaveBeenCalledWith({
+        filename: 'result.txt',
+        artifact: {
+          inlineData: {data: base64Encode('2'), mimeType: 'text/plain'},
+        },
+      });
+      expect(llmResponse.content).toBeUndefined();
     });
   });
 });

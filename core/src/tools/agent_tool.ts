@@ -19,6 +19,62 @@ import {State} from '../sessions/state.js';
 import {BaseTool, RunAsyncToolRequest} from './base_tool.js';
 import {ForwardingArtifactService} from './forwarding_artifact_service.js';
 
+import {parseWithSchema} from '../utils/schema.js';
+import {isZodSchema} from '../utils/simple_zod_to_json.js';
+
+type LlmAgentInstance = typeof isLlmAgent extends (
+  obj: unknown,
+) => obj is infer T
+  ? T
+  : never;
+
+function excludeNone<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => excludeNone(item)) as unknown as T;
+  }
+  if (value !== null && typeof value === 'object') {
+    const result: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+      if (val !== null && val !== undefined) {
+        result[key] = excludeNone(val);
+      }
+    }
+    return result as T;
+  }
+  return value;
+}
+
+function validateAndStripAgentInput(
+  agent: LlmAgentInstance,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  if (typeof args !== 'object' || args === null || Array.isArray(args)) {
+    throw new Error('AgentTool input args must be a plain object.');
+  }
+  const schema = isZodSchema(agent.inputSchema)
+    ? agent.inputSchema
+    : (agent.inputSchemaSource ?? agent.inputSchema);
+  const validated = parseWithSchema(schema, args);
+  return excludeNone(validated);
+}
+
+function validateAndStripAgentOutput(
+  agent: LlmAgentInstance,
+  mergedText: string,
+): unknown {
+  const parsed: unknown = JSON.parse(mergedText);
+  const validated =
+    typeof agent.validateOutput === 'function'
+      ? agent.validateOutput(parsed)
+      : parseWithSchema(
+          isZodSchema(agent.outputSchema)
+            ? agent.outputSchema
+            : (agent.outputSchemaSource ?? agent.outputSchema),
+          parsed,
+        );
+  return excludeNone(validated);
+}
+
 /**
  * The configuration of the agent tool.
  */
@@ -130,6 +186,9 @@ export class AgentTool extends BaseTool {
     // skipSummarization.
 
     const hasInputSchema = isLlmAgent(this.agent) && this.agent.inputSchema;
+    if (hasInputSchema && isLlmAgent(this.agent)) {
+      args = validateAndStripAgentInput(this.agent, args);
+    }
     const content: Content = {
       role: 'user',
       parts: [
@@ -203,6 +262,10 @@ export class AgentTool extends BaseTool {
       .map((part) => part.text)
       .filter((text) => text)
       .join('\n');
+
+    if (hasOutputSchema && isLlmAgent(this.agent)) {
+      return validateAndStripAgentOutput(this.agent, mergedText);
+    }
 
     // TODO - b/425992518: In case of output schema, the output should be
     // validated against that schema before being returned.

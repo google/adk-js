@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {metrics, trace} from '@opentelemetry/api';
+import {metrics} from '@opentelemetry/api';
 import {logs} from '@opentelemetry/api-logs';
 import {OTLPLogExporter} from '@opentelemetry/exporter-logs-otlp-http';
 import {OTLPMetricExporter} from '@opentelemetry/exporter-metrics-otlp-http';
@@ -83,7 +83,6 @@ export function maybeSetOtelProviders(
       spanProcessors,
     });
     tracerProvider.register();
-    trace.setGlobalTracerProvider(tracerProvider);
   }
 
   if (metricReaders.length > 0) {

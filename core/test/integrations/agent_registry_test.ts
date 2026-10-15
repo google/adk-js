@@ -28,7 +28,7 @@ let mockClientQuotaProjectId: string | undefined = 'quota-project-123';
 
 vi.mock('google-auth-library', () => {
   return {
-    GoogleAuth: vi.fn().mockImplementation(() => {
+    GoogleAuth: vi.fn().mockImplementation(function () {
       return {
         getClient: vi.fn().mockImplementation(() => {
           if (shouldAuthThrow) {
@@ -63,12 +63,16 @@ const mockMcpClient = {
 // Mock MCP Client
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
   return {
-    Client: vi.fn().mockImplementation(() => mockMcpClient),
+    Client: vi.fn().mockImplementation(function () {
+      return mockMcpClient;
+    }),
   };
 });
 
 vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
-  StreamableHTTPClientTransport: vi.fn().mockImplementation(() => ({})),
+  StreamableHTTPClientTransport: vi.fn().mockImplementation(function () {
+    return {};
+  }),
 }));
 
 describe('AgentRegistry Helpers', () => {

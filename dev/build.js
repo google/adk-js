@@ -3,17 +3,15 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import AdmZip from 'adm-zip';
 import esbuild from 'esbuild';
+import {shimPlugin} from 'esbuild-shim-plugin';
+import fg from 'fast-glob';
 import {createWriteStream, existsSync, unlink} from 'node:fs';
 import {mkdir, readFile, rename, rm, writeFile} from 'node:fs/promises';
 import * as https from 'node:https';
 import * as path from 'node:path';
 import {fileURLToPath} from 'node:url';
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import AdmZip from 'adm-zip';
-import {shimPlugin} from 'esbuild-shim-plugin';
-import fg from 'fast-glob';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

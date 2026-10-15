@@ -50,13 +50,15 @@ vi.mock('node:fs/promises', () => {
 });
 
 vi.mock('../../src/utils/agent_loader.js', () => ({
-  AgentLoader: vi.fn().mockImplementation(() => ({
-    listAgents: vi.fn().mockResolvedValue(['agent1']),
-    getAgentFile: vi.fn().mockResolvedValue({
-      getFilePath: vi.fn().mockReturnValue('path/to/agent1.ts'),
-    }),
-    disposeAll: vi.fn().mockResolvedValue(undefined),
-  })),
+  AgentLoader: vi.fn().mockImplementation(function () {
+    return {
+      listAgents: vi.fn().mockResolvedValue(['agent1']),
+      getAgentFile: vi.fn().mockResolvedValue({
+        getFilePath: vi.fn().mockReturnValue('path/to/agent1.ts'),
+      }),
+      disposeAll: vi.fn().mockResolvedValue(undefined),
+    };
+  }),
 }));
 
 vi.mock('../../src/utils/file_utils.js', () => ({
@@ -89,6 +91,30 @@ describe('createDockerFileContent', () => {
       a2a: true,
     });
     expect(content).toContain('--a2a');
+  });
+
+  it('should skip container compile/bundle when the staged file is already an esbuild output (default)', () => {
+    const content = createDockerFileContent(defaultOptions);
+    expect(content).toContain('--compile=false');
+    expect(content).toContain('--bundle=false');
+  });
+
+  it('should skip container compile/bundle when agentFileLoadOptions had compile or bundle on', () => {
+    const content = createDockerFileContent({
+      ...defaultOptions,
+      agentFileLoadOptions: {compile: false, bundle: true},
+    });
+    expect(content).toContain('--compile=false');
+    expect(content).toContain('--bundle=false');
+  });
+
+  it('should leave container compile/bundle at their own defaults when staging did neither', () => {
+    const content = createDockerFileContent({
+      ...defaultOptions,
+      agentFileLoadOptions: {compile: false, bundle: false},
+    });
+    expect(content).not.toContain('--compile=');
+    expect(content).not.toContain('--bundle=');
   });
 
   it('should use web command when withUi is true', () => {
@@ -232,6 +258,18 @@ describe('createDockerFileContent', () => {
     expect(content).toContain('agents/my-agent_v2.1/');
     expect(content).toContain('GOOGLE_CLOUD_PROJECT=my-project.example-123');
   });
+
+  it('should pin the base image to an explicit Node major', () => {
+    // The tag is spelled out here rather than imported from the source, so
+    // that changing the pin has to be a deliberate edit of this expectation.
+    const content = createDockerFileContent(defaultOptions);
+    expect(content.trimStart().split('\n')[0]).toBe('FROM node:24-alpine');
+  });
+
+  it('should not use a floating Node base image tag', () => {
+    const content = createDockerFileContent(defaultOptions);
+    expect(content).not.toMatch(/FROM node:(lts|latest|current)/);
+  });
 });
 
 describe('deployToCloudRun', () => {
@@ -265,13 +303,15 @@ describe('deployToCloudRun', () => {
       },
     });
 
-    (AgentLoader as Mock).mockImplementation(() => ({
-      listAgents: vi.fn().mockResolvedValue(['agent1']),
-      getAgentFile: vi.fn().mockResolvedValue({
-        getFilePath: vi.fn().mockReturnValue('path/to/agent1.ts'),
-      }),
-      disposeAll: vi.fn().mockResolvedValue(undefined),
-    }));
+    (AgentLoader as Mock).mockImplementation(function () {
+      return {
+        listAgents: vi.fn().mockResolvedValue(['agent1']),
+        getAgentFile: vi.fn().mockResolvedValue({
+          getFilePath: vi.fn().mockReturnValue('path/to/agent1.ts'),
+        }),
+        disposeAll: vi.fn().mockResolvedValue(undefined),
+      };
+    });
 
     execMock.mockImplementation((cmd: string, callback: Callback) => {
       if (cmd.includes('config get-value project')) {
@@ -538,5 +578,19 @@ describe('deployToCloudRun', () => {
       expect.stringContaining('Command failed with exit code 1'),
       expect.stringContaining('\x1b[0m'),
     );
+  });
+
+  describe('appName option', () => {
+    it('uses options.appName when provided instead of deriving from agentPath', async () => {
+      await deployToCloudRun({
+        ...defaultOptions,
+        appName: 'custom-app-name',
+      });
+
+      expect(saveToFile).toHaveBeenCalledWith(
+        path.join('/tmp/test-deploy', 'Dockerfile'),
+        expect.stringContaining('agents/custom-app-name'),
+      );
+    });
   });
 });

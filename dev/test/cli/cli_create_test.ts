@@ -6,16 +6,7 @@
 
 import {isCancel, select, text} from '@clack/prompts';
 import {execSync} from 'node:child_process';
-import {
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  Mock,
-  vi,
-} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 import {createAgent} from '../../src/cli/cli_create.js';
 import {
   createFolder,
@@ -64,13 +55,10 @@ describe('createAgent', () => {
     language: '',
   });
 
-  beforeAll(() => {
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-  });
-
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     // getGcpProject()/getGcpRegion() read these before falling back to
     // `gcloud config get-value`, so on a developer machine that exports them
     // the mocked execSync is never consulted and the assertions below see the

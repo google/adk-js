@@ -19,16 +19,20 @@ import {
 } from '@google/adk';
 import {describe, expect, it, vi} from 'vitest';
 
+import {z} from 'zod/v4';
+
 vi.mock('../../src/runner/runner.js', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('../../src/runner/runner.js')>();
   return {
     ...actual,
-    Runner: vi.fn().mockImplementation((config) => ({
-      appName: config?.appName,
-      sessionService: config?.sessionService,
-      runAsync: vi.fn(),
-    })),
+    Runner: vi.fn().mockImplementation(function (config) {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: vi.fn(),
+      };
+    }),
   };
 });
 
@@ -74,7 +78,7 @@ describe('AgentTool', () => {
       });
     };
 
-    vi.mocked(Runner).mockImplementation((config) => {
+    vi.mocked(Runner).mockImplementation(function (config) {
       return {
         appName: config?.appName,
         sessionService: config?.sessionService,
@@ -142,7 +146,7 @@ describe('AgentTool', () => {
       });
     };
 
-    vi.mocked(Runner).mockImplementation((config) => {
+    vi.mocked(Runner).mockImplementation(function (config) {
       return {
         appName: config?.appName,
         sessionService: config?.sessionService,
@@ -197,7 +201,7 @@ describe('AgentTool', () => {
       });
     };
 
-    vi.mocked(Runner).mockImplementation((config) => {
+    vi.mocked(Runner).mockImplementation(function (config) {
       return {
         appName: config?.appName,
         sessionService: config?.sessionService,
@@ -280,7 +284,7 @@ describe('AgentTool', () => {
       });
     };
 
-    vi.mocked(Runner).mockImplementation((config) => {
+    vi.mocked(Runner).mockImplementation(function (config) {
       return {
         appName: config?.appName,
         sessionService: config?.sessionService,
@@ -336,7 +340,7 @@ describe('AgentTool', () => {
       });
     };
 
-    vi.mocked(Runner).mockImplementation((config) => {
+    vi.mocked(Runner).mockImplementation(function (config) {
       return {
         appName: config?.appName,
         sessionService: config?.sessionService,
@@ -385,14 +389,13 @@ describe('AgentTool', () => {
       });
     };
 
-    vi.mocked(Runner).mockImplementation(
-      (config) =>
-        ({
-          appName: config?.appName,
-          sessionService: config?.sessionService,
-          runAsync: mockRunAsync,
-        }) as unknown as Runner,
-    );
+    vi.mocked(Runner).mockImplementation(function (config) {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: mockRunAsync,
+      } as unknown as Runner;
+    });
 
     await tool.runAsync({args: {request: 'go'}, toolContext});
 
@@ -434,14 +437,13 @@ describe('AgentTool', () => {
       });
     };
 
-    vi.mocked(Runner).mockImplementation(
-      (config) =>
-        ({
-          appName: config?.appName,
-          sessionService: config?.sessionService,
-          runAsync: mockRunAsync,
-        }) as unknown as Runner,
-    );
+    vi.mocked(Runner).mockImplementation(function (config) {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: mockRunAsync,
+      } as unknown as Runner;
+    });
 
     await tool.runAsync({args: {request: 'go'}, toolContext});
 
@@ -486,7 +488,7 @@ describe('AgentTool', () => {
       });
     };
 
-    vi.mocked(Runner).mockImplementation((config) => {
+    vi.mocked(Runner).mockImplementation(function (config) {
       return {
         appName: config?.appName,
         sessionService: config?.sessionService,
@@ -510,5 +512,136 @@ describe('AgentTool', () => {
     expect(subAgentSession?.state).not.toHaveProperty(
       `${State.TEMP_PREFIX}tempKey`,
     );
+  });
+
+  describe('inputSchema and outputSchema validation', () => {
+    it('test_custom_schema', async () => {
+      const subAgent = new LlmAgent({
+        name: 'custom_schema_agent',
+        description: 'Agent with custom input and output schemas',
+        inputSchema: z.object({
+          query: z.string(),
+          optionalNote: z.string().nullable().optional(),
+        }),
+        outputSchema: z.object({
+          answer: z.string(),
+          confidence: z.number(),
+          debugInfo: z.string().nullable().optional(),
+        }),
+      });
+
+      const tool = new AgentTool({agent: subAgent});
+      const session = createSession({
+        id: 'parent-session',
+        appName: 'custom_schema_agent',
+        userId: 'parent-user',
+      });
+      const invocationContext = new InvocationContext({
+        invocationId: 'test-invocation',
+        agent: subAgent,
+        session,
+        pluginManager: new PluginManager([]),
+      });
+      const toolContext = new Context({invocationContext});
+
+      let capturedMessageText = '';
+      const mockRunAsync = vi.fn().mockImplementation(async function* (params: {
+        newMessage?: {parts?: Array<{text?: string}>};
+      }) {
+        capturedMessageText = params.newMessage?.parts?.[0]?.text ?? '';
+        yield createEvent({
+          author: 'custom_schema_agent',
+          content: {
+            role: 'model',
+            parts: [
+              {
+                text: JSON.stringify({
+                  answer: 'validated response',
+                  confidence: 0.95,
+                  debugInfo: null,
+                }),
+              },
+            ],
+          },
+        });
+      });
+
+      vi.mocked(Runner).mockImplementation(function (config) {
+        return {
+          appName: config?.appName,
+          sessionService: config?.sessionService,
+          runAsync: mockRunAsync,
+        } as unknown as Runner;
+      });
+
+      const result = await tool.runAsync({
+        args: {query: 'test query', optionalNote: null},
+        toolContext,
+      });
+
+      expect(JSON.parse(capturedMessageText)).toEqual({query: 'test query'});
+      expect(result).toEqual({
+        answer: 'validated response',
+        confidence: 0.95,
+      });
+    });
+
+    it('rejects invalid input args against inputSchema and invalid output JSON against outputSchema', async () => {
+      const subAgent = new LlmAgent({
+        name: 'strict_schema_agent',
+        inputSchema: z.object({
+          count: z.number(),
+        }),
+        outputSchema: z.object({
+          total: z.number(),
+        }),
+      });
+
+      const tool = new AgentTool({agent: subAgent});
+      const session = createSession({
+        id: 'parent-session',
+        appName: 'strict_schema_agent',
+        userId: 'parent-user',
+      });
+      const invocationContext = new InvocationContext({
+        invocationId: 'test-invocation',
+        agent: subAgent,
+        session,
+        pluginManager: new PluginManager([]),
+      });
+      const toolContext = new Context({invocationContext});
+
+      await expect(
+        tool.runAsync({
+          args: {count: 'not-a-number'},
+          toolContext,
+        }),
+      ).rejects.toThrow();
+
+      const invalidOutputRunAsync = async function* () {
+        yield createEvent({
+          author: 'strict_schema_agent',
+          content: {
+            role: 'model',
+            parts: [{text: JSON.stringify({total: 'invalid-total'})}],
+          },
+        });
+      };
+
+      vi.mocked(Runner).mockImplementation(function (config) {
+        return {
+          appName: config?.appName,
+          sessionService: config?.sessionService,
+          runAsync: invalidOutputRunAsync,
+        } as unknown as Runner;
+      });
+
+      await expect(
+        tool.runAsync({
+          args: {count: 3},
+          toolContext,
+        }),
+      ).rejects.toThrow();
+    });
   });
 });

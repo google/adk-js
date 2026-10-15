@@ -20,7 +20,7 @@ export class Task<T = void> {
     };
 
     this.promise = executable(this.abortController.signal);
-    this.promise.then(markDone).catch(markDone);
+    this.promise.then(markDone, markDone);
   }
 
   /**

@@ -7,7 +7,7 @@
 import {Schema, Type} from '@google/genai';
 import {toSnakeCaseName} from './case_utils.js';
 
-type MCPToolSchema = {
+export type MCPToolSchema = {
   type: 'object';
   properties?: Record<string, unknown>;
   required?: string[];
