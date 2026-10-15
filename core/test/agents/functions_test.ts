@@ -5,6 +5,11 @@
  */
 import {
   ActiveStreamingTool,
+  AgentTool,
+  AUTH_PREPROCESSOR,
+  AuthConfig,
+  AuthCredentialTypes,
+  BaseAgent,
   BasePlugin,
   BaseTool,
   Context,
@@ -20,6 +25,7 @@ import {
   LlmAgent,
   LongRunningFunctionTool,
   PluginManager,
+  REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
   Session,
   SingleAfterToolCallback,
   SingleBeforeToolCallback,
@@ -36,6 +42,7 @@ import {
   generateClientFunctionCallId,
   getConflictingFunctionResponseAuthors,
   getLongRunningFunctionCalls,
+  handleFunctionCallsAsync,
   mergeParallelFunctionResponseEvents,
 } from '../../src/agents/functions.js';
 import {tracer} from '../../src/telemetry/tracing.js';
@@ -2117,5 +2124,291 @@ describe('handleFunctionCallsLive and processFunctionLiveHelper', () => {
       warnSpy.mockRestore();
       vi.useRealTimers();
     }
+  });
+
+  it('executes an AgentTool in handleFunctionCallsLive and returns the sub-agent output', async () => {
+    class StubSubAgent extends BaseAgent {
+      protected override async *runAsyncImpl(
+        context: InvocationContext,
+      ): AsyncGenerator<Event, void, void> {
+        const lastMessage =
+          context.session.events.at(-1)?.content?.parts?.[0]?.text ?? '';
+        yield createEvent({
+          invocationId: context.invocationId,
+          author: this.name,
+          content: {
+            role: 'model',
+            parts: [{text: `sub-agent answer: ${lastMessage}`}],
+          },
+          actions: createEventActions({
+            stateDelta: {subAgentRan: true},
+          }),
+        });
+      }
+
+      protected override async *runLiveImpl(
+        _context: InvocationContext,
+      ): AsyncGenerator<Event, void, void> {}
+    }
+
+    const ctx = createLiveInvocationContext();
+    const subAgent = new StubSubAgent({
+      name: 'sub_agent_tool',
+      description: 'delegates to a sub-agent',
+    });
+    const agentTool = new AgentTool({agent: subAgent});
+    const callEvent = createEvent({
+      invocationId: ctx.invocationId,
+      author: 'live_test_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'fc-agent-tool-1',
+              name: 'sub_agent_tool',
+              args: {request: 'check status'},
+            },
+          },
+        ],
+      },
+    });
+
+    const responseEvent = await handleFunctionCallsLive({
+      invocationContext: ctx,
+      functionCallEvent: callEvent,
+      toolsDict: {sub_agent_tool: agentTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(responseEvent).not.toBeNull();
+    expect(responseEvent?.content?.parts).toEqual([
+      {
+        functionResponse: {
+          id: 'fc-agent-tool-1',
+          name: 'sub_agent_tool',
+          response: {result: 'sub-agent answer: check status'},
+        },
+      },
+    ]);
+    expect(responseEvent?.actions?.stateDelta).toEqual({
+      subAgentRan: true,
+    });
+  });
+});
+
+describe('OAuth2 credential request and response flows', () => {
+  const oauth2AuthConfig: AuthConfig = {
+    credentialKey: 'oauth2_tool_credential',
+    authScheme: {
+      type: 'oauth2',
+      flows: {
+        authorizationCode: {
+          authorizationUrl: 'https://example.com/oauth2/authorize',
+          tokenUrl: 'https://example.com/oauth2/token',
+          scopes: {read: 'Read access'},
+        },
+      },
+    },
+    rawAuthCredential: {
+      authType: AuthCredentialTypes.OAUTH2,
+      oauth2: {
+        clientId: 'client-id-123',
+        clientSecret: 'client-secret-456',
+        redirectUri: 'https://example.com/callback',
+      },
+    },
+  };
+
+  function createProtectedTool() {
+    return new FunctionTool({
+      name: 'protectedTool',
+      description: 'tool requiring OAuth2 credentials',
+      parameters: z.object({query: z.string()}),
+      execute: async ({query}, toolContext) => {
+        const credential = toolContext?.getAuthResponse(oauth2AuthConfig);
+        if (!credential) {
+          toolContext?.requestCredential(oauth2AuthConfig);
+          return {status: 'pending_credentials'};
+        }
+        return {
+          query,
+          accessToken: credential.oauth2?.accessToken ?? null,
+          refreshToken: credential.oauth2?.refreshToken ?? null,
+        };
+      },
+    });
+  }
+
+  it('requests OAuth2 credentials via requestedAuthConfigs and emits an adk_request_credential call', async () => {
+    const protectedTool = createProtectedTool();
+    const agent = new LlmAgent({
+      name: 'auth_agent',
+      model: 'gemini-2.0-flash',
+      tools: [protectedTool],
+    });
+    const session = createSession({
+      id: 'sess-euc-1',
+      userId: 'user-euc-1',
+      appName: 'app-euc-1',
+    });
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv-euc-1',
+      agent,
+      session,
+      pluginManager: new PluginManager(),
+    });
+    const functionCallEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: 'auth_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'fc-protected-1',
+              name: 'protectedTool',
+              args: {query: 'secret-report'},
+            },
+          },
+        ],
+      },
+    });
+
+    const functionResponseEvent = await handleFunctionCallsAsync({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {protectedTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(functionResponseEvent).not.toBeNull();
+    expect(
+      functionResponseEvent?.content?.parts?.[0]?.functionResponse?.response,
+    ).toEqual({
+      status: 'pending_credentials',
+    });
+
+    const requestedConfig =
+      functionResponseEvent?.actions?.requestedAuthConfigs?.['fc-protected-1'];
+    expect(requestedConfig).toBeDefined();
+    expect(requestedConfig?.exchangedAuthCredential?.oauth2?.authUri).toContain(
+      'https://example.com/oauth2/authorize',
+    );
+    expect(
+      requestedConfig?.exchangedAuthCredential?.oauth2?.state,
+    ).toBeTruthy();
+
+    const authEvent = generateAuthEvent(
+      invocationContext,
+      functionResponseEvent!,
+    );
+    expect(authEvent).not.toBeNull();
+    const authCall = authEvent?.content?.parts?.[0]?.functionCall;
+    expect(authCall?.name).toBe(REQUEST_CREDENTIAL_FUNCTION_CALL_NAME);
+    expect(authCall?.args).toEqual({
+      function_call_id: 'fc-protected-1',
+      auth_config: requestedConfig,
+    });
+  });
+
+  it('stores exchanged OAuth2 accessToken and refreshToken and resumes the waiting tool via AUTH_PREPROCESSOR', async () => {
+    const protectedTool = createProtectedTool();
+    const agent = new LlmAgent({
+      name: 'auth_agent',
+      model: 'gemini-2.0-flash',
+      tools: [protectedTool],
+    });
+    const originalCallEvent = createEvent({
+      invocationId: 'inv-euc-2',
+      author: 'auth_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'fc-protected-2',
+              name: 'protectedTool',
+              args: {query: 'secret-report'},
+            },
+          },
+        ],
+      },
+    });
+    const authRequestEvent = createEvent({
+      invocationId: 'inv-euc-2',
+      author: 'auth_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'fc-auth-req-2',
+              name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+              args: {
+                functionCallId: 'fc-protected-2',
+                authConfig: oauth2AuthConfig,
+              },
+            },
+          },
+        ],
+      },
+    });
+    const userAuthResponseEvent = createEvent({
+      invocationId: 'inv-euc-2',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-auth-req-2',
+              name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+              response: {
+                exchangedAuthCredential: {
+                  authType: AuthCredentialTypes.OAUTH2,
+                  oauth2: {
+                    clientId: 'client-id-123',
+                    clientSecret: 'client-secret-456',
+                    accessToken: 'exchanged-access-token',
+                    refreshToken: 'exchanged-refresh-token',
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
+    const session = createSession({
+      id: 'sess-euc-2',
+      userId: 'user-euc-2',
+      appName: 'app-euc-2',
+      events: [originalCallEvent, authRequestEvent, userAuthResponseEvent],
+    });
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv-euc-2',
+      agent,
+      session,
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of AUTH_PREPROCESSOR.runAsync(invocationContext)) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(1);
+    expect(events[0].content?.parts?.[0]?.functionResponse).toEqual({
+      id: 'fc-protected-2',
+      name: 'protectedTool',
+      response: {
+        query: 'secret-report',
+        accessToken: 'exchanged-access-token',
+        refreshToken: 'exchanged-refresh-token',
+      },
+    });
   });
 });

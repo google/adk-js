@@ -593,4 +593,21 @@ describe('deployToCloudRun', () => {
       );
     });
   });
+
+  describe('service URI options', () => {
+    it('forwards sessionServiceUri and artifactServiceUri into the generated Dockerfile CMD', async () => {
+      await deployToCloudRun({
+        ...defaultOptions,
+        sessionServiceUri: 'sqlite:///tmp/sessions.db',
+        artifactServiceUri: 'gs://my-artifact-bucket',
+      });
+
+      expect(saveToFile).toHaveBeenCalledWith(
+        path.join('/tmp/test-deploy', 'Dockerfile'),
+        expect.stringContaining(
+          "--artifact_service_uri='gs://my-artifact-bucket' --session_service_uri='sqlite:///tmp/sessions.db'",
+        ),
+      );
+    });
+  });
 });
