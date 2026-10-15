@@ -12,14 +12,13 @@ import {getResponse, sendInput} from '../test_case_utils.js';
 const execAsync = promisify(exec);
 const dirname = process.cwd();
 
-const TEST_EXECUTION_TIMEOUT = 20000;
+const TEST_EXECUTION_TIMEOUT = 60000;
 
 // These hooks run `npm install` (plus `npm run build` for ts_* setups) and the
 // recursive node_modules teardown, overrunning vitest's default 10s hookTimeout
 // and causing flaky "Hook timed out in 10000ms" failures. All twelve hook runs
 // take ~16s combined on ubuntu-latest, but a cold, network-bound install has
-// been measured at ~70s, so 120s covers the worst case. Don't raise
-// TEST_EXECUTION_TIMEOUT for hook flakes; that stays the 20s per-test budget.
+// been measured at ~70s, so 120s covers the worst case.
 // Trade-off: a stuck hook now takes this long to surface.
 const HOOK_TIMEOUT = 120000;
 

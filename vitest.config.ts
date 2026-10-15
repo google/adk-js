@@ -18,10 +18,11 @@ import {defineConfig} from 'vitest/config';
 const WORKER_MAX_OLD_SPACE_MB = 2048;
 
 /**
- * Test budget (ms) for the `unit:core` and `unit:dev` projects: Vitest's 5s
- * default has been observed to expire when these share a worker pool with the
- * install-heavy `integration` fixtures under `npm run test:coverage`. A project
- * entry does not inherit the root `test` timeout, so it is set per project.
+ * Test budget (ms) for the `unit:core`, `unit:dev`, `unit:integrations` and
+ * `e2e` projects: Vitest's 5s default has been observed to expire when these
+ * share a worker pool with the install-heavy `integration` fixtures under
+ * `npm run test:coverage`. A project entry does not inherit the root `test`
+ * timeout, so it is set per project.
  */
 const UNIT_TEST_TIMEOUT_MS = 30000;
 
@@ -114,6 +115,7 @@ export default defineConfig({
           environment: 'node',
           execArgv: EXEC_ARGV,
           setupFiles: SETUP_FILES,
+          testTimeout: UNIT_TEST_TIMEOUT_MS,
           alias: {
             '@google/adk': path.resolve(import.meta.dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
@@ -149,6 +151,7 @@ export default defineConfig({
           environment: 'node',
           execArgv: EXEC_ARGV,
           setupFiles: SETUP_FILES,
+          testTimeout: UNIT_TEST_TIMEOUT_MS,
           alias: {
             '@google/adk': path.resolve(import.meta.dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
