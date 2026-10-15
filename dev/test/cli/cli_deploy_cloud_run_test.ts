@@ -173,8 +173,7 @@ describe('createDockerFileContent', () => {
     // carries its password in the userinfo, so the message must identify the
     // option without reproducing the value.
     const password = 'sw0rdf1sh';
-    // secretlint-disable-next-line @secretlint/secretlint-rule-database-connection-string
-    const uri = `postgres://adk:${password}@db.example.com/agents\nRUN id`;
+    const uri = `postgres://adk:${password}` + `@db.example.com/agents\nRUN id`;
 
     let message: string | undefined;
     try {

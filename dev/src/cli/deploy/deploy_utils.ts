@@ -100,12 +100,10 @@ function assertSafeDockerfileToken(value: string, label: string): void {
 // does, and once inside the CMD line they're read by /bin/sh at container
 // start, so shell metacharacters must be neutralized too.
 //
-// The rejected value is deliberately not echoed: sessionServiceUri and
-// artifactServiceUri routinely carry a password in their userinfo, and the
-// deploy commands log this Error's message, so echoing the value would put
-// the credential in CLI output, logs and bug attachments. The index of the
-// offending character is reported instead, which makes a stray trailing
-// newline diagnosable without reproducing the value.
+// The rejected value is never echoed: these URIs routinely carry a password
+// in their userinfo and this message is logged by the deploy commands. The
+// index of the offending character is reported instead, which keeps a stray
+// trailing newline diagnosable.
 function assertNoDockerfileNewline(value: string, label: string): void {
   const index = value.search(/[\r\n]/);
   if (index !== -1) {
