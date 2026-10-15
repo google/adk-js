@@ -20,9 +20,14 @@ import {
 
 import {toA2AParts} from '../../src/a2a/part_converter_utils.js';
 
-vi.mock('../../src/utils/env_aware_utils.js', () => ({
-  randomUUID: () => 'mock-uuid',
-}));
+vi.mock('../../src/utils/env_aware_utils.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../src/utils/env_aware_utils.js')>();
+  return {
+    ...actual,
+    randomUUID: () => 'mock-uuid',
+  };
+});
 
 describe('event_processor_utils', () => {
   describe('getFinalTaskStatusUpdate', () => {
