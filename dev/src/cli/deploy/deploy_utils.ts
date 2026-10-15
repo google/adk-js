@@ -38,6 +38,17 @@ export const spawnAsync = (
 
 export const REQUIRED_NPM_PACKAGES = ['@google/adk'];
 
+/**
+ * Base image for the generated Dockerfile.
+ *
+ * Pinned to an explicit Node major instead of the floating `node:lts-alpine`
+ * tag. `lts` re-points to the next Node LTS line when it is promoted, so an
+ * unchanged agent rebuilt later would move to a Node major that this SDK was
+ * never exercised against, with no diff to show for it. Bump this deliberately
+ * when the SDK adopts a newer LTS.
+ */
+const NODE_BASE_IMAGE = 'node:24-alpine';
+
 export interface CreateDockerFileContentOptions {
   appName?: string;
   project: string;
@@ -50,6 +61,7 @@ export interface CreateDockerFileContentOptions {
   artifactServiceUri?: string;
   otelToCloud?: boolean;
   a2a?: boolean;
+  agentFileLoadOptions?: AgentFileOptions;
 }
 
 export interface BaseDeployOptions extends CreateDockerFileContentOptions {
@@ -61,7 +73,6 @@ export interface BaseDeployOptions extends CreateDockerFileContentOptions {
    */
   tempFolder?: string;
   adkVersion: string;
-  agentFileLoadOptions?: AgentFileOptions;
 }
 
 // Dockerfile instructions and the generated CMD's shell form have no
@@ -114,6 +125,16 @@ export function createDockerFileContent(
   const adkCommand = options.withUi ? 'web' : 'api_server';
   const adkServerOptions = [`--port=${options.port}`, '--host=0.0.0.0'];
 
+  // Only skip the container's own compile/bundle when the agent file was
+  // already compiled/bundled before being copied into the image.
+  const stagedFileIsBundleOutput = options.agentFileLoadOptions
+    ? Boolean(options.agentFileLoadOptions.compile) ||
+      Boolean(options.agentFileLoadOptions.bundle)
+    : true;
+  if (stagedFileIsBundleOutput) {
+    adkServerOptions.push('--compile=false', '--bundle=false');
+  }
+
   if (options.logLevel) {
     assertNoDockerfileNewline(options.logLevel, 'logLevel');
     adkServerOptions.push(`--log_level=${shellQuote(options.logLevel)}`);
@@ -149,7 +170,7 @@ export function createDockerFileContent(
   }
 
   return `
-FROM node:lts-alpine
+FROM ${NODE_BASE_IMAGE}
 WORKDIR /app
 
 # Create a non-root user. WORKDIR creates /app as root, so hand it to myuser:

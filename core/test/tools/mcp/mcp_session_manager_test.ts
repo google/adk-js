@@ -9,8 +9,11 @@ import {
   MCPConnectionParams,
   MCPSessionManager,
   runWithClientLabel,
+  SseConnectionParams,
+  SseServerParams,
 } from '@google/adk';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
+import {SSEClientTransport} from '@modelcontextprotocol/sdk/client/sse.js';
 import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {describe, expect, it, vi} from 'vitest';
@@ -24,10 +27,12 @@ vi.hoisted(() => {
 
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
   return {
-    Client: vi.fn().mockImplementation(() => ({
-      connect: vi.fn().mockResolvedValue(undefined),
-      close: vi.fn().mockResolvedValue(undefined),
-    })),
+    Client: vi.fn().mockImplementation(function () {
+      return {
+        connect: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+      };
+    }),
   };
 });
 
@@ -40,6 +45,12 @@ vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => {
 vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => {
   return {
     StreamableHTTPClientTransport: vi.fn(),
+  };
+});
+
+vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => {
+  return {
+    SSEClientTransport: vi.fn(),
   };
 });
 
@@ -377,22 +388,21 @@ describe('MCPSessionManager', () => {
 
   describe('connection error handling', () => {
     it('wraps a connect failure with a formatted message', async () => {
-      vi.mocked(Client).mockImplementationOnce(
-        () =>
-          ({
-            connect: vi
-              .fn()
-              .mockRejectedValue(
-                Object.assign(
-                  new Error(
-                    'Streamable HTTP error: Error POSTing to endpoint: Forbidden',
-                  ),
-                  {code: 403},
+      vi.mocked(Client).mockImplementationOnce(function () {
+        return {
+          connect: vi
+            .fn()
+            .mockRejectedValue(
+              Object.assign(
+                new Error(
+                  'Streamable HTTP error: Error POSTing to endpoint: Forbidden',
                 ),
+                {code: 403},
               ),
-            close: vi.fn().mockResolvedValue(undefined),
-          }) as unknown as Client,
-      );
+            ),
+          close: vi.fn().mockResolvedValue(undefined),
+        } as unknown as Client;
+      });
 
       const manager = new MCPSessionManager({
         type: 'StreamableHTTPConnectionParams',
@@ -410,13 +420,12 @@ describe('MCPSessionManager', () => {
 
     it('preserves the original error as the cause', async () => {
       const original = Object.assign(new Error('boom'), {code: 401});
-      vi.mocked(Client).mockImplementationOnce(
-        () =>
-          ({
-            connect: vi.fn().mockRejectedValue(original),
-            close: vi.fn().mockResolvedValue(undefined),
-          }) as unknown as Client,
-      );
+      vi.mocked(Client).mockImplementationOnce(function () {
+        return {
+          connect: vi.fn().mockRejectedValue(original),
+          close: vi.fn().mockResolvedValue(undefined),
+        } as unknown as Client;
+      });
 
       const manager = new MCPSessionManager({
         type: 'StreamableHTTPConnectionParams',
@@ -428,17 +437,16 @@ describe('MCPSessionManager', () => {
     });
 
     it('wraps an AggregateError connect failure with joined leaves', async () => {
-      vi.mocked(Client).mockImplementationOnce(
-        () =>
-          ({
-            connect: vi
-              .fn()
-              .mockRejectedValue(
-                new AggregateError([new Error('err A'), new Error('err B')]),
-              ),
-            close: vi.fn().mockResolvedValue(undefined),
-          }) as unknown as Client,
-      );
+      vi.mocked(Client).mockImplementationOnce(function () {
+        return {
+          connect: vi
+            .fn()
+            .mockRejectedValue(
+              new AggregateError([new Error('err A'), new Error('err B')]),
+            ),
+          close: vi.fn().mockResolvedValue(undefined),
+        } as unknown as Client;
+      });
 
       const manager = new MCPSessionManager({
         type: 'StdioConnectionParams',
@@ -475,6 +483,132 @@ describe('MCPSessionManager', () => {
       );
 
       errorSpy.mockRestore();
+    });
+  });
+
+  describe('SseConnectionParams', () => {
+    it('creates an SSE client with headers merged into requestInit', async () => {
+      const params: SseServerParams = {
+        type: 'SseConnectionParams',
+        url: 'http://test-sse-url/sse',
+        headers: {
+          'x-sse-header': 'sse-value',
+        },
+        timeout: 10,
+        sseReadTimeout: 60,
+      };
+      const manager = new MCPSessionManager(params);
+
+      const client = await manager.createSession();
+
+      expect(SSEClientTransport).toHaveBeenLastCalledWith(
+        new URL('http://test-sse-url/sse'),
+        {
+          requestInit: {
+            headers: {'x-sse-header': 'sse-value', ...trackingHeaders()},
+          },
+        },
+      );
+      expect(client.connect).toHaveBeenCalled();
+    });
+
+    it('creates an SSE client with deprecated header param', async () => {
+      const params: SseConnectionParams = {
+        type: 'SseConnectionParams',
+        url: 'http://test-sse-url/sse',
+        header: {
+          'x-legacy-header': 'legacy-value',
+        },
+      };
+      const manager = new MCPSessionManager(params);
+
+      await manager.createSession();
+
+      expect(SSEClientTransport).toHaveBeenLastCalledWith(
+        new URL('http://test-sse-url/sse'),
+        {
+          requestInit: {
+            headers: {'x-legacy-header': 'legacy-value', ...trackingHeaders()},
+          },
+        },
+      );
+    });
+
+    it('prioritizes transportOptions.requestInit.headers over header and headers', async () => {
+      const manager = new MCPSessionManager({
+        type: 'SseConnectionParams',
+        url: 'http://test-sse-url/sse',
+        transportOptions: {
+          requestInit: {
+            headers: {
+              'x-priority': 'transport-options',
+            },
+          },
+        },
+        header: {
+          'x-priority': 'header',
+        },
+        headers: {
+          'x-priority': 'headers',
+        },
+      });
+
+      await manager.createSession();
+
+      expect(SSEClientTransport).toHaveBeenLastCalledWith(
+        new URL('http://test-sse-url/sse'),
+        {
+          requestInit: {
+            headers: {'x-priority': 'transport-options', ...trackingHeaders()},
+          },
+        },
+      );
+    });
+
+    it('logs a formatted message for a background SSE transport error', async () => {
+      const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+      const manager = new MCPSessionManager({
+        type: 'SseConnectionParams',
+        url: 'http://test-sse-url/sse',
+      });
+      await manager.createSession();
+
+      const transport = vi.mocked(SSEClientTransport).mock.instances.at(-1);
+      expect(transport?.onerror).toBeTypeOf('function');
+      transport?.onerror?.(new Error('sse stream dropped'));
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('MCP transport error'),
+      );
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('sse stream dropped'),
+      );
+
+      errorSpy.mockRestore();
+    });
+
+    it('wraps an SSE connect failure with the original error as cause', async () => {
+      const cause = new Error('SSE endpoint unreachable');
+      vi.mocked(Client).mockImplementationOnce(function () {
+        return {
+          connect: vi.fn().mockRejectedValue(cause),
+          close: vi.fn().mockResolvedValue(undefined),
+        } as unknown as Client;
+      });
+
+      const manager = new MCPSessionManager({
+        type: 'SseConnectionParams',
+        url: 'http://test-sse-url/sse',
+      });
+
+      const error = await manager.createSession().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain(
+        'Failed to create MCP session',
+      );
+      expect((error as Error).message).toContain('SSE endpoint unreachable');
+      expect((error as Error).cause).toBe(cause);
     });
   });
 });

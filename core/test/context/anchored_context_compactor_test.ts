@@ -176,6 +176,23 @@ describe('AnchoredContextCompactor', () => {
     expect(context.session.events[2].id).toBe('4');
   });
 
+  it('counts the initial prompt tokens of a resumed generation', async () => {
+    const compactor = new AnchoredContextCompactor({
+      tokenThreshold: 10,
+      eventRetentionSize: 2,
+      summarizer: new MockSummarizer(),
+    });
+    const resumed = createMockEvent('3');
+    resumed.usageMetadata = {promptTokenCount: 9, initialPromptTokenCount: 3};
+    const context = createMockInvocationContext([
+      createMockEvent('1', 2),
+      createMockEvent('2', 2),
+      resumed,
+    ]);
+
+    expect(await compactor.shouldCompact(context)).toBe(false);
+  });
+
   it('should compact if token threshold exceeded (subsequent compaction - merges into existing scratchpad)', async () => {
     const compactor = new AnchoredContextCompactor({
       tokenThreshold: 10,

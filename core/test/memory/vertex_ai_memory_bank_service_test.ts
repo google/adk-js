@@ -18,6 +18,9 @@ import {
 import {Content, Language, Outcome, Part, ToolType} from '@google/genai';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
+const TEST_PROJECT = 'test-project';
+const TEST_LOCATION = 'us-central1';
+
 const clientConstructor = vi.hoisted(() => vi.fn());
 
 // The service imports Client from the package root, so the mock must target it.
@@ -127,7 +130,7 @@ describe('VertexAiMemoryBankService', () => {
     it.each([
       ['an expressModeApiKey option', {expressModeApiKey: 'test-api-key'}],
       ['an API key from the environment', {}],
-      ['an API key and only a project', {projectId: 'test-project'}],
+      ['an API key and only a project', {projectId: TEST_PROJECT}],
     ])('throws for %s instead of dropping the key', (_, options) => {
       expect(
         () =>
@@ -142,13 +145,13 @@ describe('VertexAiMemoryBankService', () => {
     it('keeps using project and location when an API key is also in the environment', () => {
       new VertexAiMemoryBankService({
         agentEngineId: 'test-engine-id',
-        projectId: 'test-project',
-        location: 'us-central1',
+        projectId: TEST_PROJECT,
+        location: TEST_LOCATION,
       });
 
       expect(clientConstructor).toHaveBeenCalledWith({
-        project: 'test-project',
-        location: 'us-central1',
+        project: TEST_PROJECT,
+        location: TEST_LOCATION,
       });
     });
 

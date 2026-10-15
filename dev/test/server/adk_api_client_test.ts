@@ -27,10 +27,11 @@ describe('AdkApiClient', () => {
   beforeEach(() => {
     client = new AdkApiClient({backendUrl: mockBackendUrl});
     fetchMock = vi.fn();
-    global.fetch = fetchMock;
+    vi.stubGlobal('fetch', fetchMock);
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 

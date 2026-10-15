@@ -9,6 +9,9 @@
  * barrel. Also re-exported from `@google/adk`.
  */
 
+export {toGeminiSchema} from '../../utils/gemini_schema_util.js';
+export type {MCPToolSchema} from '../../utils/gemini_schema_util.js';
+export {genaiSchemaToJsonSchema} from '../../utils/genai_schema_to_json.js';
 export * from './load_mcp_resource_tool.js';
 export * from './mcp_session_manager.js';
 export * from './mcp_tool.js';

@@ -1,6 +1,6 @@
 {
   "name": "@google/adk-devtools",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Google ADK JS Development Tools",
   "author": "Google",
   "license": "Apache-2.0",
@@ -42,25 +42,21 @@
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^4.17.21",
-    "@types/node": "^20.12.7",
-    "@typescript-eslint/eslint-plugin": "^7.7.1",
-    "@typescript-eslint/parser": "^7.7.1",
+    "@types/node": "^22.20.5",
     "adm-zip": "^0.6.1",
-    "eslint": "^8.57.0",
-    "eslint-config-prettier": "^9.1.0",
-    "prettier": "^3.2.5",
+    "prettier": "^3.9.10",
     "tslib": "^2.6.2",
     "typescript": "^5.9.2",
-    "vitest": "^3.2.4"
+    "vitest": "^5.0.4"
   },
   "dependencies": {
     "@clack/prompts": "^0.11.0",
-    "@google/adk": "^2.2.0",
-    "@mikro-orm/mariadb": "^7.2.0",
-    "@mikro-orm/mssql": "^7.2.0",
-    "@mikro-orm/mysql": "^7.2.0",
-    "@mikro-orm/postgresql": "^7.2.0",
-    "@mikro-orm/sqlite": "^7.2.0",
+    "@google/adk": "^2.3.0",
+    "@mikro-orm/mariadb": "^7.2.5",
+    "@mikro-orm/mssql": "^7.2.5",
+    "@mikro-orm/mysql": "^7.2.5",
+    "@mikro-orm/postgresql": "^7.2.5",
+    "@mikro-orm/sqlite": "^7.2.5",
     "camelcase-keys": "^6.2.2",
     "commander": "^14.0.0",
     "cors": "^2.8.5",
@@ -69,9 +65,9 @@
     "esbuild-shim-plugin": "^1.0.3",
     "express": "^4.21.2",
     "fast-glob": "^3.3.3",
-    "js-yaml": "^4.1.1",
+    "js-yaml": "^5.4.3",
     "ts-graphviz": "^1.0.1",
     "winston": "^3.19.0",
-    "zod": "^4.2.1"
+    "zod": "^4.6.7"
   }
 }

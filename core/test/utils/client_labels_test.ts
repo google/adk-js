@@ -278,6 +278,50 @@ describe('client_labels', () => {
       });
     });
 
+    it('preserves repeated non-tracking headers from header pairs', () => {
+      const callerHeaders: Array<[string, string]> = [
+        ['X-Custom', 'first'],
+        ['X-Custom', 'second'],
+      ];
+
+      const merged = mergeTrackingHeaders(callerHeaders);
+
+      expect(merged['X-Custom']).toBe(
+        new Headers(callerHeaders).get('X-Custom'),
+      );
+    });
+
+    it('matches repeated non-tracking header names case-insensitively', () => {
+      const callerHeaders: Array<[string, string]> = [
+        ['X-Custom', 'first'],
+        ['x-custom', 'second'],
+      ];
+
+      const merged = mergeTrackingHeaders(callerHeaders);
+
+      expect(merged['X-Custom']).toBe(
+        new Headers(callerHeaders).get('X-Custom'),
+      );
+      expect(
+        Object.keys(merged).filter((name) => name.toLowerCase() === 'x-custom'),
+      ).toHaveLength(1);
+    });
+
+    it('uses Fetch cookie semantics for repeated mixed-case Cookie headers', () => {
+      const callerHeaders: Array<[string, string]> = [
+        ['Cookie', 'a=1'],
+        ['cookie', 'b=2'],
+      ];
+
+      const merged = mergeTrackingHeaders(callerHeaders);
+
+      expect(merged['Cookie']).toBe('a=1; b=2');
+      expect(merged['Cookie']).toBe(new Headers(callerHeaders).get('cookie'));
+      expect(
+        Object.keys(merged).filter((name) => name.toLowerCase() === 'cookie'),
+      ).toHaveLength(1);
+    });
+
     it('does not mutate the input', () => {
       const input = {'User-Agent': 'my-app/1.0', 'X-Custom': 'value'};
       const pairs: Array<[string, string]> = [['User-Agent', 'my-app/1.0']];

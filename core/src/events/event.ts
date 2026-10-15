@@ -287,10 +287,17 @@ export function stringifyContent(event: Event): string {
 
 /**
  * Estimates the number of tokens in the event based on usage metadata or characters.
+ *
+ * Prefers `initialPromptTokenCount`, because the promptTokenCount of a
+ * generation that @google/genai resumed after continuation pauses is summed
+ * over every resumed request, each of which resent the prompt.
  */
 export function getEventTokens(event: Event): number {
-  if (event.usageMetadata?.promptTokenCount !== undefined) {
-    return event.usageMetadata.promptTokenCount;
+  const usage = event.usageMetadata;
+  const promptTokenCount =
+    usage?.initialPromptTokenCount ?? usage?.promptTokenCount;
+  if (promptTokenCount !== undefined) {
+    return promptTokenCount;
   }
   // Estimate: 4 chars per token.
   const contentStr = stringifyContent(event);

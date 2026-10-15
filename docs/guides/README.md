@@ -8,17 +8,46 @@ This index is the only table of contents. A guide that is not listed here is unr
 
 ## Index
 
+### Agents
+
+Model-backed, workflow, graph-backed, and remote agents (`BaseAgent`, `LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `LangGraphAgent`, and `RemoteAgent`), along with invocation contexts and `RunConfig`.
+
+- [Agents](agents/index.md) - `BaseAgent`, `LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `LangGraphAgent`, `RemoteAgent`, `InvocationContext`, `CallbackContext`, `RunConfig`, and `LlmCallsLimitExceededError`.
+
 ### Artifacts
 
 Versioned binary and text storage (`Part` payloads) scoped to an individual session or shared across a user's sessions via the `user:` prefix.
 
 - [Artifacts](artifacts/index.md) - `BaseArtifactService`, `InMemoryArtifactService`, `FileArtifactService`, `GcsArtifactService`, and session-bound `ctx.artifactService` (`SessionArtifactService`).
 
+### Auth
+
+Credentials for tools that call protected APIs: how a credential is described, how the agent asks the user for one, and how it is exchanged for the credential a request carries.
+
+- [Auth](auth/index.md) - `AuthCredential`, `AuthConfig`, `AuthHandler`, `AuthPreprocessor`, `AuthSchemeType`, and the OpenAPI credential exchangers.
+### CLI
+
+Environment loading, session-to-eval conversion, instruction placeholder initialization, log routing, and batch evaluation utilities backing the ADK CLI and development server.
+
+- [CLI and Evaluation Utilities](cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalFormat`, `logToStderr`, `logToTmpFolder`, `runEvals`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun`.
+
+### Code executors
+
+Executors that let an agent answer by writing code and running it, either server-side in Gemini or client-side in a process, a container or a cloud sandbox.
+
+- [Code executors](code_executors/index.md) - Choosing between server-side and client-side execution, what each executor needs and how safe it is, the code execution processors, and writing a custom executor.
+
 ### Events
 
 The record of everything that happens during an invocation, and the side effects attached to it.
 
 - [Event](events/event/index.md) - The `Event` and `EventActions` shapes, `isFinalResponse`, and the fields that diverge from adk-python.
+
+### Flows
+
+The `LlmAgent` request/response processor pipeline, live streaming function-call dispatch (`handleFunctionCallsLive` and `stop_streaming`), and Compositional Function Calling (`supportCfc`).
+
+- [Flows](flows/index.md) - `BaseLlmRequestProcessor`, `BaseLlmResponseProcessor`, `CONTENT_REQUEST_PROCESSOR`, `AgentTransferLlmRequestProcessor`, `CodeExecutionResponseProcessor`, `handleFunctionCallsLive`, and `supportCfc`.
 
 ### Memory
 
@@ -38,7 +67,25 @@ Planning for an `LlmAgent` through its `planner` option: the model's built-in th
 
 - [Planners](planners/index.md) - `BasePlanner`, `BuiltInPlanner`, `PlanReActPlanner`, and the `isBasePlanner` and `isBuiltInPlanner` type guards.
 
+### Runners
+
+- [Runner](runners/index.md) - Running an agent for an application, the entry points, which agent answers a resumed conversation, and archiving a finished conversation into memory.
+
+### Sessions
+
+Conversations and their state: the events of each session, and the `app:`, `user:` and `temp:` scopes that state keys can carry.
+
+- [Sessions](sessions/index.md) - `Session`, `State`, `BaseSessionService`, `InMemorySessionService`, `DatabaseSessionService`, `VertexAiSessionService`, and `getSessionServiceFromUri`.
+
+### Runners
+
+- [Runner](runners/index.md) - Running an agent for an application, the entry points, which agent answers a resumed conversation, and archiving a finished conversation into memory.
+
 ### Tools
+
+Function, agent, ecosystem-adapter, and built-in model tools (`BaseTool`, `FunctionTool`, `LongRunningFunctionTool`, `AgentTool`, `ToolContext`, `CrewaiTool`, `LangchainTool`, `ToolboxTool`, and built-in grounding and control-flow tools).
+
+- [Tools](tools/index.md) - `BaseTool`, `FunctionTool` (with `response` schema and `_callLive` streaming), `LongRunningFunctionTool`, `AgentTool` (with `inputSchema` and `outputSchema`), `ToolContext`, `CrewaiTool`, `LangchainTool`, `ToolboxTool`, and built-in utility tools.
 
 #### Retrieval
 
@@ -51,6 +98,24 @@ Client-side retrieval tools. The agent calls a one-argument search function, you
 #### OpenAPI Tool
 
 - [OpenAPI tool](tools/openapi_tool/index.md) - Turning an OpenAPI specification into one tool per operation, selecting the operations an agent gets, and configuring the credential the requests carry.
+
+#### Application Integration Tool
+
+- [Application Integration tool](tools/application_integration_tool/index.md) - Tools for a Google Cloud Application Integration API trigger, or for the entities and actions of an Integration Connectors connection, and the credential they carry.
+
+#### Google API Tool
+
+- [Google API tool](tools/google_api_tool/index.md) - Converting Google API Discovery documents into OpenAPI v3 tools, configuring OpenID Connect credentials, and using pre-configured Google API toolsets.
+
+- [Telemetry](telemetry/index.md) - The spans and attributes ADK writes, attaching exporters with `maybeSetOtelProviders`, and turning off message content in spans.
+
+#### API Hub Tool
+
+- [API Hub tool](tools/apihub_tool/index.md) - Building tools from an API registered in Google Cloud API Hub, the resource names it accepts, custom spec clients, and `SecretManagerClient`.
+
+#### MCP Tool
+
+- [MCP tool](tools/mcp_tool/index.md) - Connecting `MCPToolset` over stdio, Streamable HTTP, or SSE, loading MCP resources with `LoadMcpResourceTool`, and converting schemas with `toGeminiSchema` and `genaiSchemaToJsonSchema`.
 
 ### Telemetry
 

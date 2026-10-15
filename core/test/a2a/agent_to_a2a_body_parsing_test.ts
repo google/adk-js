@@ -33,12 +33,18 @@ vi.mock('@a2a-js/sdk/server/express', () => {
 });
 
 vi.mock('@a2a-js/sdk/server', () => ({
-  DefaultRequestHandler: vi.fn().mockImplementation(() => ({})),
-  InMemoryTaskStore: vi.fn().mockImplementation(() => ({})),
+  DefaultRequestHandler: vi.fn().mockImplementation(function () {
+    return {};
+  }),
+  InMemoryTaskStore: vi.fn().mockImplementation(function () {
+    return {};
+  }),
 }));
 
 vi.mock('../../src/a2a/agent_executor.js', () => ({
-  A2AAgentExecutor: vi.fn().mockImplementation(() => ({})),
+  A2AAgentExecutor: vi.fn().mockImplementation(function () {
+    return {};
+  }),
 }));
 
 vi.mock('../../src/a2a/agent_card.js', () => ({

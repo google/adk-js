@@ -16,6 +16,8 @@ import {
   InMemoryMemoryService,
   InMemorySessionService,
   isApp,
+  loadDotenvForAgent,
+  logToTmpFolder,
   markRestored,
   publicSession,
   requiresUserInput,
@@ -360,8 +362,12 @@ export interface RunAgentOptions {
   otelToCloud?: boolean;
   agentFileLoadOptions?: AgentFileOptions;
   reloadAgents?: boolean;
+  logToTmp?: boolean;
 }
 export async function runAgent(options: RunAgentOptions): Promise<void> {
+  if (options.logToTmp) {
+    logToTmpFolder();
+  }
   const userId = 'test_user';
   const artifactService =
     options.artifactService || new InMemoryArtifactService();
@@ -373,6 +379,9 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
   // as failed, rather than being swallowed or printed to stdout with exit 0.
   let watcher: fs.FSWatcher | undefined;
   try {
+    const absAgentPath = getAbsolutePath(options.agentPath);
+    loadDotenvForAgent(path.basename(absAgentPath), path.dirname(absAgentPath));
+
     const inputFileContent = options.inputFile
       ? await loadInputFile(options.inputFile)
       : undefined;

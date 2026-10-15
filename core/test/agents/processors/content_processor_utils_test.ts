@@ -926,6 +926,44 @@ describe('getContents', () => {
       const contents = getCurrentTurnContents([e0], '');
       expect(contents).toEqual([]);
     });
+
+    it('should skip trailing thought-only foreign events when finding turn start', () => {
+      const e0 = createEvent({
+        author: 'other_agent',
+        content: {
+          role: 'model',
+          parts: [{text: 'answer from other agent'}],
+        },
+      });
+      const e1 = createEvent({
+        author: 'other_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              text: 'trailing thought',
+              thought: true,
+              thoughtSignature: 'sig-1',
+            },
+            {
+              text: '',
+              thoughtSignature: 'sig-2',
+            },
+          ],
+        },
+      });
+
+      const contents = getCurrentTurnContents([e0, e1], 'current_agent');
+      expect(contents).toEqual([
+        {
+          role: 'user',
+          parts: [
+            {text: 'For context:'},
+            {text: '[other_agent] said: answer from other agent'},
+          ],
+        },
+      ]);
+    });
   });
 
   it('should handle media parts in convertForeignEvent', () => {
@@ -980,6 +1018,178 @@ describe('getContents', () => {
 
     // Check if original event was mutated
     expect(event.content?.parts?.[0]?.inlineData?.data).toBe('base64data');
+  });
+
+  it('should exclude thought parts and thoughtSignature in convertForeignEvent', () => {
+    const event = createEvent({
+      author: 'other_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            text: 'private reasoning',
+            thought: true,
+            thoughtSignature: 'c2lnLWZyb20tYWdlbnQtYQ==',
+          },
+          {
+            text: 'answer from other agent',
+          },
+        ],
+      },
+    });
+
+    const contents = getContents([event], 'current_agent');
+    expect(contents).toEqual([
+      {
+        role: 'user',
+        parts: [
+          {text: 'For context:'},
+          {text: '[other_agent] said: answer from other agent'},
+        ],
+      },
+    ]);
+  });
+
+  it('should drop foreign event completely when all parts are thought parts', () => {
+    const events = [
+      createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'first user turn'}]},
+      }),
+      createEvent({
+        author: 'other_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              text: 'deliberating about the request',
+              thought: true,
+              thoughtSignature: 'c2lnLXRoaW5raW5n',
+            },
+          ],
+        },
+      }),
+      createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'second user turn'}]},
+      }),
+    ];
+
+    const contents = getContents(events, 'current_agent');
+    expect(contents).toEqual([
+      {role: 'user', parts: [{text: 'first user turn'}]},
+      {role: 'user', parts: [{text: 'second user turn'}]},
+    ]);
+  });
+
+  it('should summarize thought-marked functionCall and functionResponse parts in convertForeignEvent without leaking thought metadata', () => {
+    const events = [
+      createEvent({
+        author: 'other_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              thought: true,
+              thoughtSignature: 'c2lnLXRvb2wtY2FsbA==',
+              functionCall: {
+                name: 'lookup_weather',
+                args: {city: 'Paris'},
+              },
+            },
+          ],
+        },
+      }),
+      createEvent({
+        author: 'other_agent',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              thought: true,
+              functionResponse: {
+                name: 'lookup_weather',
+                response: {temp: '20C'},
+              },
+            },
+          ],
+        },
+      }),
+    ];
+
+    const contents = getContents(events, 'current_agent');
+    expect(contents).toEqual([
+      {
+        role: 'user',
+        parts: [
+          {text: 'For context:'},
+          {
+            text: '[other_agent] called tool `lookup_weather` with parameters: {"city":"Paris"}',
+          },
+        ],
+      },
+      {
+        role: 'user',
+        parts: [
+          {text: 'For context:'},
+          {
+            text: '[other_agent] tool `lookup_weather` returned result: {"temp":"20C"}',
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('should skip trailing empty-text thoughtSignature parts in convertForeignEvent', () => {
+    const event = createEvent({
+      author: 'other_agent',
+      content: {
+        role: 'model',
+        parts: [{text: 'answer'}, {text: '', thoughtSignature: 'sig-a'}],
+      },
+    });
+
+    const contents = getContents([event], 'current_agent');
+    expect(contents).toEqual([
+      {
+        role: 'user',
+        parts: [{text: 'For context:'}, {text: '[other_agent] said: answer'}],
+      },
+    ]);
+  });
+
+  it('should strip thoughtSignature from non-thought media parts in convertForeignEvent', () => {
+    const event = createEvent({
+      author: 'other_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            inlineData: {
+              mimeType: 'image/png',
+              data: 'base64data',
+            },
+            thoughtSignature: 'sig-b',
+          },
+        ],
+      },
+    });
+
+    const contents = getContents([event], 'current_agent');
+    expect(contents).toEqual([
+      {
+        role: 'user',
+        parts: [
+          {text: 'For context:'},
+          {
+            inlineData: {
+              mimeType: 'image/png',
+              data: 'base64data',
+            },
+          },
+        ],
+      },
+    ]);
   });
 
   describe('mergeFunctionResponseEvents', () => {
