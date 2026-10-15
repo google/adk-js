@@ -168,6 +168,29 @@ describe('createDockerFileContent', () => {
     }
   });
 
+  it('should not echo a credentialed sessionServiceUri in the rejection message', () => {
+    // The deploy commands log this Error's message, and a session service URI
+    // carries its password in the userinfo, so the message must identify the
+    // option without reproducing the value.
+    const password = 'sw0rdf1sh';
+    // secretlint-disable-next-line @secretlint/secretlint-rule-database-connection-string
+    const uri = `postgres://adk:${password}@db.example.com/agents\nRUN id`;
+
+    let message: string | undefined;
+    try {
+      createDockerFileContent({...defaultOptions, sessionServiceUri: uri});
+    } catch (error) {
+      if (error instanceof Error) {
+        message = error.message;
+      }
+    }
+
+    expect(message).toContain('Invalid sessionServiceUri');
+    expect(message).toContain(`index ${uri.indexOf('\n')}`);
+    expect(message).not.toContain(password);
+    expect(message).not.toContain('db.example.com');
+  });
+
   it('should shell-quote logLevel/allowOrigins/sessionServiceUri/artifactServiceUri in the CMD line', () => {
     // These values reach /bin/sh at container start via the CMD line's
     // shell form, so shell metacharacters must be neutralized by quoting.

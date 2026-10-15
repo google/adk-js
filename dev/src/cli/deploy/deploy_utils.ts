@@ -99,10 +99,18 @@ function assertSafeDockerfileToken(value: string, label: string): void {
 // any of them still breaks out of that instruction the same way appName
 // does, and once inside the CMD line they're read by /bin/sh at container
 // start, so shell metacharacters must be neutralized too.
+//
+// The rejected value is deliberately not echoed: sessionServiceUri and
+// artifactServiceUri routinely carry a password in their userinfo, and the
+// deploy commands log this Error's message, so echoing the value would put
+// the credential in CLI output, logs and bug attachments. The index of the
+// offending character is reported instead, which makes a stray trailing
+// newline diagnosable without reproducing the value.
 function assertNoDockerfileNewline(value: string, label: string): void {
-  if (/[\r\n]/.test(value)) {
+  const index = value.search(/[\r\n]/);
+  if (index !== -1) {
     throw new Error(
-      `Invalid ${label} ${JSON.stringify(value)}: must not contain newline characters to be safely embedded in the generated Dockerfile.`,
+      `Invalid ${label}: must not contain newline characters to be safely embedded in the generated Dockerfile (first one at index ${index}).`,
     );
   }
 }
