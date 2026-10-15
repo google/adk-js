@@ -14,7 +14,12 @@ import {
   buildFunctionDeclarationForLangchain,
   buildFunctionDeclarationForParamsForCrewai,
   buildFunctionDeclarationUtil,
+  functionsExportedForTestingOnly,
   GoogleLLMVariant,
+  InvocationContext,
+  LlmAgent,
+  PluginManager,
+  Session,
 } from '@google/adk';
 
 describe('FunctionTool', () => {
@@ -1002,6 +1007,375 @@ describe('FunctionTool', () => {
       });
       expect(vertexDecl.response).toEqual({type: Type.TYPE_UNSPECIFIED});
       expect(GoogleLLMVariant.VERTEX_AI).toBe('VERTEX_AI');
+    });
+  });
+
+  describe('execution and mandatory parameter validation', () => {
+    const {handleFunctionCallList} = functionsExportedForTestingOnly;
+
+    const twoArgSchema = z4.object({
+      arg1: z4.string(),
+      arg2: z4.string(),
+    });
+
+    const fourArgSchema = z4.object({
+      arg1: z4.string(),
+      arg2: z4.string(),
+      arg3: z4.string(),
+      arg4: z4.string(),
+    });
+
+    function createTestInvocationContext(): InvocationContext {
+      return new InvocationContext({
+        invocationId: 'inv_func_tool_test',
+        session: {} as Session,
+        agent: new LlmAgent({name: 'test_agent', model: 'gemini-flash-latest'}),
+        pluginManager: new PluginManager(),
+      });
+    }
+
+    function functionForTestingWithNoArgs(): undefined {
+      return undefined;
+    }
+
+    async function asyncFunctionForTestingWith1ArgAndToolContext(
+      {arg1}: {arg1: string},
+      toolContext?: Context,
+    ): Promise<string> {
+      expect(arg1).toBeTruthy();
+      expect(toolContext).toBeDefined();
+      return arg1;
+    }
+
+    async function asyncFunctionForTestingWith2ArgAndNoToolContext({
+      arg1,
+      arg2,
+    }: {
+      arg1: string;
+      arg2: string;
+    }): Promise<string> {
+      expect(arg1).toBeTruthy();
+      expect(arg2).toBeTruthy();
+      return arg1;
+    }
+
+    function functionForTestingWith1ArgAndToolContext(
+      {arg1}: {arg1: string},
+      toolContext?: Context,
+    ): string {
+      expect(arg1).toBeTruthy();
+      expect(toolContext).toBeDefined();
+      return arg1;
+    }
+
+    function functionForTestingWith2ArgAndNoToolContext({
+      arg1,
+      arg2,
+    }: {
+      arg1: string;
+      arg2: string;
+    }): string {
+      expect(arg1).toBeTruthy();
+      expect(arg2).toBeTruthy();
+      return arg1;
+    }
+
+    async function asyncFunctionForTestingWith4ArgAndNoToolContext(
+      _args: z4.infer<typeof fourArgSchema>,
+    ): Promise<void> {}
+
+    function functionForTestingWith4ArgAndNoToolContext(
+      _args: z4.infer<typeof fourArgSchema>,
+    ): void {}
+
+    it('test_init', async () => {
+      const tool = new FunctionTool({
+        name: 'function_for_testing_with_no_args',
+        description: 'Function for testing with no args.',
+        execute: functionForTestingWithNoArgs,
+      });
+      expect(tool.name).toBe('function_for_testing_with_no_args');
+      expect(tool.description).toBe('Function for testing with no args.');
+      const result = await tool.runAsync({
+        args: {},
+        toolContext: emptyContext,
+      });
+      expect(result).toBeUndefined();
+
+      expect(
+        () =>
+          new FunctionTool({
+            description: 'Anonymous function without a name.',
+            execute: (
+              () => () =>
+                'ok'
+            )(),
+          }),
+      ).toThrow('Tool name cannot be empty');
+    });
+
+    it('test_run_async_with_tool_context_async_func', async () => {
+      const tool = new FunctionTool({
+        name: 'async_function_for_testing_with_1_arg_and_tool_context',
+        description: 'Async function for testing with 1 arg and tool context.',
+        parameters: z4.object({arg1: z4.string()}),
+        execute: asyncFunctionForTestingWith1ArgAndToolContext,
+      });
+      const result = await tool.runAsync({
+        args: {arg1: 'test_value_1'},
+        toolContext: emptyContext,
+      });
+      expect(result).toBe('test_value_1');
+    });
+
+    it('test_run_async_without_tool_context_async_func', async () => {
+      const tool = new FunctionTool({
+        name: 'async_function_for_testing_with_2_arg_and_no_tool_context',
+        description:
+          'Async function for testing with 2 args and no tool context.',
+        parameters: twoArgSchema,
+        execute: asyncFunctionForTestingWith2ArgAndNoToolContext,
+      });
+      const result = await tool.runAsync({
+        args: {arg1: 'test_value_1', arg2: 'test_value_2'},
+        toolContext: emptyContext,
+      });
+      expect(result).toBe('test_value_1');
+    });
+
+    it('test_run_async_with_tool_context_sync_func', async () => {
+      const tool = new FunctionTool({
+        name: 'function_for_testing_with_1_arg_and_tool_context',
+        description: 'Function for testing with 1 arg and tool context.',
+        parameters: z4.object({arg1: z4.string()}),
+        execute: functionForTestingWith1ArgAndToolContext,
+      });
+      const result = await tool.runAsync({
+        args: {arg1: 'test_value_1'},
+        toolContext: emptyContext,
+      });
+      expect(result).toBe('test_value_1');
+    });
+
+    it('test_run_async_without_tool_context_sync_func', async () => {
+      const tool = new FunctionTool({
+        name: 'function_for_testing_with_2_arg_and_no_tool_context',
+        description: 'Function for testing with 2 args and no tool context.',
+        parameters: twoArgSchema,
+        execute: functionForTestingWith2ArgAndNoToolContext,
+      });
+      const result = await tool.runAsync({
+        args: {arg1: 'test_value_1', arg2: 'test_value_2'},
+        toolContext: emptyContext,
+      });
+      expect(result).toBe('test_value_1');
+    });
+
+    it('test_run_async_1_missing_arg_sync_func', async () => {
+      const tool = new FunctionTool({
+        name: 'function_for_testing_with_2_arg_and_no_tool_context',
+        description: 'Function for testing with 2 args and no tool context.',
+        parameters: twoArgSchema,
+        execute: functionForTestingWith2ArgAndNoToolContext,
+      });
+      const args = {arg1: 'test_value_1'};
+      await expect(
+        tool.runAsync({args, toolContext: emptyContext}),
+      ).rejects.toThrow(
+        /Error in tool 'function_for_testing_with_2_arg_and_no_tool_context':[\s\S]*arg2/,
+      );
+
+      const event = await handleFunctionCallList({
+        invocationContext: createTestInvocationContext(),
+        functionCalls: [{id: 'call-1', name: tool.name, args}],
+        toolsDict: {[tool.name]: tool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+      expect(event?.content?.parts?.[0]?.functionResponse?.response).toEqual({
+        error: expect.stringMatching(
+          /Error in tool 'function_for_testing_with_2_arg_and_no_tool_context':[\s\S]*arg2/,
+        ),
+      });
+    });
+
+    it('test_run_async_1_missing_arg_async_func', async () => {
+      const tool = new FunctionTool({
+        name: 'async_function_for_testing_with_2_arg_and_no_tool_context',
+        description:
+          'Async function for testing with 2 args and no tool context.',
+        parameters: twoArgSchema,
+        execute: asyncFunctionForTestingWith2ArgAndNoToolContext,
+      });
+      const args = {arg2: 'test_value_1'};
+      await expect(
+        tool.runAsync({args, toolContext: emptyContext}),
+      ).rejects.toThrow(
+        /Error in tool 'async_function_for_testing_with_2_arg_and_no_tool_context':[\s\S]*arg1/,
+      );
+
+      const event = await handleFunctionCallList({
+        invocationContext: createTestInvocationContext(),
+        functionCalls: [{id: 'call-1', name: tool.name, args}],
+        toolsDict: {[tool.name]: tool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+      expect(event?.content?.parts?.[0]?.functionResponse?.response).toEqual({
+        error: expect.stringMatching(
+          /Error in tool 'async_function_for_testing_with_2_arg_and_no_tool_context':[\s\S]*arg1/,
+        ),
+      });
+    });
+
+    it('test_run_async_3_missing_arg_sync_func', async () => {
+      const tool = new FunctionTool({
+        name: 'function_for_testing_with_4_arg_and_no_tool_context',
+        description: 'Function for testing with 4 args.',
+        parameters: fourArgSchema,
+        execute: functionForTestingWith4ArgAndNoToolContext,
+      });
+      const args = {arg2: 'test_value_1'};
+      await expect(
+        tool.runAsync({args, toolContext: emptyContext}),
+      ).rejects.toThrow(
+        /Error in tool 'function_for_testing_with_4_arg_and_no_tool_context':[\s\S]*arg1[\s\S]*arg3[\s\S]*arg4/,
+      );
+
+      const event = await handleFunctionCallList({
+        invocationContext: createTestInvocationContext(),
+        functionCalls: [{id: 'call-1', name: tool.name, args}],
+        toolsDict: {[tool.name]: tool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+      expect(event?.content?.parts?.[0]?.functionResponse?.response).toEqual({
+        error: expect.stringMatching(
+          /Error in tool 'function_for_testing_with_4_arg_and_no_tool_context':[\s\S]*arg1[\s\S]*arg3[\s\S]*arg4/,
+        ),
+      });
+    });
+
+    it('test_run_async_3_missing_arg_async_func', async () => {
+      const tool = new FunctionTool({
+        name: 'async_function_for_testing_with_4_arg_and_no_tool_context',
+        description: 'Async function for testing with 4 args.',
+        parameters: fourArgSchema,
+        execute: asyncFunctionForTestingWith4ArgAndNoToolContext,
+      });
+      const args = {arg3: 'test_value_1'};
+      await expect(
+        tool.runAsync({args, toolContext: emptyContext}),
+      ).rejects.toThrow(
+        /Error in tool 'async_function_for_testing_with_4_arg_and_no_tool_context':[\s\S]*arg1[\s\S]*arg2[\s\S]*arg4/,
+      );
+
+      const event = await handleFunctionCallList({
+        invocationContext: createTestInvocationContext(),
+        functionCalls: [{id: 'call-1', name: tool.name, args}],
+        toolsDict: {[tool.name]: tool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+      expect(event?.content?.parts?.[0]?.functionResponse?.response).toEqual({
+        error: expect.stringMatching(
+          /Error in tool 'async_function_for_testing_with_4_arg_and_no_tool_context':[\s\S]*arg1[\s\S]*arg2[\s\S]*arg4/,
+        ),
+      });
+    });
+
+    it('test_run_async_missing_all_arg_sync_func', async () => {
+      const tool = new FunctionTool({
+        name: 'function_for_testing_with_4_arg_and_no_tool_context',
+        description: 'Function for testing with 4 args.',
+        parameters: fourArgSchema,
+        execute: functionForTestingWith4ArgAndNoToolContext,
+      });
+      const args = {};
+      await expect(
+        tool.runAsync({args, toolContext: emptyContext}),
+      ).rejects.toThrow(
+        /Error in tool 'function_for_testing_with_4_arg_and_no_tool_context':[\s\S]*arg1[\s\S]*arg2[\s\S]*arg3[\s\S]*arg4/,
+      );
+
+      const event = await handleFunctionCallList({
+        invocationContext: createTestInvocationContext(),
+        functionCalls: [{id: 'call-1', name: tool.name, args}],
+        toolsDict: {[tool.name]: tool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+      expect(event?.content?.parts?.[0]?.functionResponse?.response).toEqual({
+        error: expect.stringMatching(
+          /Error in tool 'function_for_testing_with_4_arg_and_no_tool_context':[\s\S]*arg1[\s\S]*arg2[\s\S]*arg3[\s\S]*arg4/,
+        ),
+      });
+    });
+
+    it('test_run_async_missing_all_arg_async_func', async () => {
+      const tool = new FunctionTool({
+        name: 'async_function_for_testing_with_4_arg_and_no_tool_context',
+        description: 'Async function for testing with 4 args.',
+        parameters: fourArgSchema,
+        execute: asyncFunctionForTestingWith4ArgAndNoToolContext,
+      });
+      const args = {};
+      await expect(
+        tool.runAsync({args, toolContext: emptyContext}),
+      ).rejects.toThrow(
+        /Error in tool 'async_function_for_testing_with_4_arg_and_no_tool_context':[\s\S]*arg1[\s\S]*arg2[\s\S]*arg3[\s\S]*arg4/,
+      );
+
+      const event = await handleFunctionCallList({
+        invocationContext: createTestInvocationContext(),
+        functionCalls: [{id: 'call-1', name: tool.name, args}],
+        toolsDict: {[tool.name]: tool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+      expect(event?.content?.parts?.[0]?.functionResponse?.response).toEqual({
+        error: expect.stringMatching(
+          /Error in tool 'async_function_for_testing_with_4_arg_and_no_tool_context':[\s\S]*arg1[\s\S]*arg2[\s\S]*arg3[\s\S]*arg4/,
+        ),
+      });
+    });
+
+    it('test_run_async_with_optional_args_not_set_sync_func', async () => {
+      const tool = new FunctionTool({
+        name: 'func_with_optional_args',
+        description: 'Sync function with optional args.',
+        parameters: z4.object({
+          arg1: z4.string(),
+          arg2: z4.string().optional(),
+          arg3: z4.string(),
+          arg4: z4.string().optional(),
+        }),
+        execute: ({arg1, arg3}) => `${arg1},${arg3}`,
+      });
+      const result = await tool.runAsync({
+        args: {arg1: 'test_value_1', arg3: 'test_value_3'},
+        toolContext: emptyContext,
+      });
+      expect(result).toBe('test_value_1,test_value_3');
+    });
+
+    it('test_run_async_with_optional_args_not_set_async_func', async () => {
+      const tool = new FunctionTool({
+        name: 'async_func_with_optional_args',
+        description: 'Async function with optional args.',
+        parameters: z4.object({
+          arg1: z4.string(),
+          arg2: z4.string().optional(),
+          arg3: z4.string(),
+          arg4: z4.string().optional(),
+        }),
+        execute: async ({arg1, arg3}) => `${arg1},${arg3}`,
+      });
+      const result = await tool.runAsync({
+        args: {arg1: 'test_value_1', arg3: 'test_value_3'},
+        toolContext: emptyContext,
+      });
+      expect(result).toBe('test_value_1,test_value_3');
     });
   });
 });

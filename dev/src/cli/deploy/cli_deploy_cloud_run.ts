@@ -208,6 +208,8 @@ export async function deployToCloudRun(options: DeployToCloudRunOptions) {
       withUi: options.withUi,
       logLevel: options.logLevel,
       allowOrigins: options.allowOrigins,
+      sessionServiceUri: options.sessionServiceUri,
+      artifactServiceUri: options.artifactServiceUri,
       otelToCloud: options.otelToCloud,
       a2a: options.a2a,
       agentFileLoadOptions: options.agentFileLoadOptions,
