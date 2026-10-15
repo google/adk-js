@@ -27,9 +27,11 @@ const WORKER_MAX_OLD_SPACE_MB = 2048;
 const UNIT_TEST_TIMEOUT_MS = 30000;
 
 /**
- * Hook budget (ms) for the `integration` project: install-heavy `beforeAll`
- * hooks run `npm install` (and sometimes `npm run build`) per fixture, which
- * exceeds Vitest's 10s default on a slow or loaded machine.
+ * Hook budget (ms) for the `integration` project. The `beforeAll` hooks run
+ * `npm install` (and sometimes `npm run build`) per fixture, and the `afterAll`
+ * hooks remove `node_modules` recursively, which exceeds Vitest's 10s default.
+ * A cold, network-bound install has been measured at ~70s, so 120s covers the
+ * worst case. Trade-off: a stuck hook takes this long to surface.
  */
 const INTEGRATION_HOOK_TIMEOUT_MS = 120000;
 
