@@ -784,8 +784,17 @@ describe('toGeminiSchema', () => {
 });
 
 describe('openApiSchemaToGeminiSchema', () => {
-  it('leaves the type unspecified when the schema declares a type union', () => {
+  it('normalizes a nullable type array into the non-null type with nullable set', () => {
     const schema = openApiSchemaToGeminiSchema({type: ['string', 'null']});
+
+    expect(schema).toEqual({
+      type: Type.STRING,
+      nullable: true,
+    });
+  });
+
+  it('leaves the type unspecified when the schema declares an unrecognized type', () => {
+    const schema = openApiSchemaToGeminiSchema({type: 'custom'});
 
     expect(schema?.type).toBe(Type.TYPE_UNSPECIFIED);
   });
