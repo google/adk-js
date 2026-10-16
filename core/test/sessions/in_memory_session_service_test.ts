@@ -201,6 +201,76 @@ describe('InMemorySessionService', () => {
         [`${State.APP_PREFIX}key`]: 'newValue',
       });
     });
+
+    it('includes events matching afterTimestamp boundary inclusively', async () => {
+      const session = await service.createSession({
+        appName: 'app',
+        userId: 'user',
+      });
+      for (let i = 1; i <= 5; i++) {
+        await service.appendEvent({
+          session,
+          event: createEvent({author: 'user', timestamp: i}),
+        });
+      }
+
+      const retrievedSession = await service.getSession({
+        appName: 'app',
+        userId: 'user',
+        sessionId: session.id,
+        config: {afterTimestamp: 4},
+      });
+
+      expect(retrievedSession?.events).toHaveLength(2);
+      expect(retrievedSession?.events[0].timestamp).toBe(4);
+      expect(retrievedSession?.events[1].timestamp).toBe(5);
+    });
+
+    it('returns no events when afterTimestamp is newer than all events', async () => {
+      const session = await service.createSession({
+        appName: 'app',
+        userId: 'user',
+      });
+      for (let i = 1; i <= 5; i++) {
+        await service.appendEvent({
+          session,
+          event: createEvent({author: 'user', timestamp: i}),
+        });
+      }
+
+      const retrievedSession = await service.getSession({
+        appName: 'app',
+        userId: 'user',
+        sessionId: session.id,
+        config: {afterTimestamp: 50},
+      });
+
+      expect(retrievedSession?.events).toEqual([]);
+    });
+
+    it('applies both numRecentEvents and afterTimestamp filters when configured', async () => {
+      const session = await service.createSession({
+        appName: 'app',
+        userId: 'user',
+      });
+      for (let i = 1; i <= 5; i++) {
+        await service.appendEvent({
+          session,
+          event: createEvent({author: 'user', timestamp: i}),
+        });
+      }
+
+      const retrievedSession = await service.getSession({
+        appName: 'app',
+        userId: 'user',
+        sessionId: session.id,
+        config: {afterTimestamp: 4, numRecentEvents: 3},
+      });
+
+      expect(retrievedSession?.events).toHaveLength(2);
+      expect(retrievedSession?.events[0].timestamp).toBe(4);
+      expect(retrievedSession?.events[1].timestamp).toBe(5);
+    });
   });
 
   describe('listSessions', () => {

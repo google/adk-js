@@ -114,11 +114,11 @@ export class OperationParser {
           originalName,
           paramLocation: location,
           paramSchema:
-            schema.description == null && description !== ''
+            !schema.description && description !== ''
               ? {...schema, description}
               : schema,
           description,
-          required: param.required || false,
+          required: param.required ?? false,
           name: this.getParamName(originalName),
         });
       }
