@@ -77,6 +77,112 @@ describe('BaseLlm', () => {
       expect(headers['user-agent']).toContain(customLabel);
     });
   });
+
+  describe('maybeAppendUserContent', () => {
+    it('should append a user prompt when contents is empty', () => {
+      const llm = new TestLlm();
+      const llmRequest: LlmRequest = {
+        contents: [],
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      llm.maybeAppendUserContent(llmRequest);
+
+      expect(llmRequest.contents).toEqual([
+        {
+          role: 'user',
+          parts: [
+            {
+              text: 'Handle the requests as specified in the System Instruction.',
+            },
+          ],
+        },
+      ]);
+    });
+
+    it('should append a continuation user prompt when contents has no user message', () => {
+      const llm = new TestLlm();
+      const llmRequest: LlmRequest = {
+        contents: [
+          {
+            role: 'developer',
+            parts: [{text: 'Test prompt'}],
+          },
+        ],
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      llm.maybeAppendUserContent(llmRequest);
+
+      expect(llmRequest.contents).toHaveLength(2);
+      expect(llmRequest.contents[1]).toEqual({
+        role: 'user',
+        parts: [
+          {
+            text: 'Continue processing previous requests as instructed. Exit or provide a summary if no more outputs are needed.',
+          },
+        ],
+      });
+    });
+
+    it('should not append user content when the last message is from user', () => {
+      const llm = new TestLlm();
+      const llmRequest: LlmRequest = {
+        contents: [
+          {
+            role: 'user',
+            parts: [{text: 'user prompt'}],
+          },
+        ],
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      llm.maybeAppendUserContent(llmRequest);
+
+      expect(llmRequest.contents).toHaveLength(1);
+      expect(llmRequest.contents[0]).toEqual({
+        role: 'user',
+        parts: [{text: 'user prompt'}],
+      });
+    });
+
+    it('should append a continuation user prompt when user content is not the last message', () => {
+      const llm = new TestLlm();
+      const llmRequest: LlmRequest = {
+        contents: [
+          {
+            role: 'model',
+            parts: [{text: 'model prompt'}],
+          },
+          {
+            role: 'user',
+            parts: [{text: 'user prompt'}],
+          },
+          {
+            role: 'model',
+            parts: [{text: 'model prompt'}],
+          },
+        ],
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      llm.maybeAppendUserContent(llmRequest);
+
+      expect(llmRequest.contents).toHaveLength(4);
+      expect(llmRequest.contents[3]).toEqual({
+        role: 'user',
+        parts: [
+          {
+            text: 'Continue processing previous requests as instructed. Exit or provide a summary if no more outputs are needed.',
+          },
+        ],
+      });
+    });
+  });
 });
 
 describe('isBaseLlm', () => {
