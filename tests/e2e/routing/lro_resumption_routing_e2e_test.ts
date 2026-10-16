@@ -106,6 +106,17 @@ class RootOrchestratorAgent extends BaseAgent {
       }
     }
 
+    const lroResponse = lastEvent?.content?.parts?.find(
+      (p) => p.functionResponse?.name === 'vertex_ai_batch_predict',
+    );
+    if (lroResponse) {
+      const targetAgent = this.findSubAgent('DataProcessingAgent');
+      if (targetAgent) {
+        yield* targetAgent.runAsync(ctx);
+        return;
+      }
+    }
+
     yield createEvent({
       author: this.name,
       content: {
