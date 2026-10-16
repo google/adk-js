@@ -73,27 +73,44 @@ function postOperation(options: {
   summary: string;
   description: string;
   operationId: string;
+  xOperation: string;
+  xEntity?: string;
+  xAction?: string;
   requestSchema: string;
   responseSchema: object;
 }) {
-  const {summary, description, operationId, requestSchema, responseSchema} =
-    options;
-  return {
-    post: {
-      summary,
-      description,
-      operationId,
-      requestBody: {
-        content: {'application/json': {schema: ref(requestSchema)}},
-      },
-      responses: {
-        '200': {
-          description: 'Success response',
-          content: {'application/json': {schema: responseSchema}},
-        },
+  const {
+    summary,
+    description,
+    operationId,
+    xOperation,
+    xEntity,
+    xAction,
+    requestSchema,
+    responseSchema,
+  } = options;
+  const post: Record<string, unknown> = {
+    summary,
+    description,
+    operationId,
+    'x-operation': xOperation,
+    requestBody: {
+      content: {'application/json': {schema: ref(requestSchema)}},
+    },
+    responses: {
+      '200': {
+        description: 'Success response',
+        content: {'application/json': {schema: responseSchema}},
       },
     },
   };
+  if (xEntity !== undefined) {
+    post['x-entity'] = xEntity;
+  }
+  if (xAction !== undefined) {
+    post['x-action'] = xAction;
+  }
+  return {post};
 }
 
 describe('ConnectionsClient', () => {
@@ -188,6 +205,7 @@ describe('ConnectionsClient', () => {
     it('uses the TLS service directory when the connection has a host', async () => {
       fetchMock.mockResolvedValue(
         jsonResponse({
+          name: 'projects/test-project/locations/us-central1/connections/test-connection',
           serviceDirectory: 'test_service',
           host: 'test.host',
           tlsServiceDirectory: 'tls_test_service',
@@ -196,6 +214,7 @@ describe('ConnectionsClient', () => {
       );
 
       await expect(client().getConnectionDetails()).resolves.toEqual({
+        name: 'projects/test-project/locations/us-central1/connections/test-connection',
         serviceName: 'tls_test_service',
         host: 'test.host',
         authOverrideEnabled: true,
@@ -205,12 +224,14 @@ describe('ConnectionsClient', () => {
     it('uses the service directory when the connection has no host', async () => {
       fetchMock.mockResolvedValue(
         jsonResponse({
+          name: 'projects/test-project/locations/us-central1/connections/test-connection',
           serviceDirectory: 'test_service',
           authOverrideEnabled: false,
         }),
       );
 
       await expect(client().getConnectionDetails()).resolves.toEqual({
+        name: 'projects/test-project/locations/us-central1/connections/test-connection',
         serviceName: 'test_service',
         host: '',
         authOverrideEnabled: false,
@@ -221,6 +242,7 @@ describe('ConnectionsClient', () => {
       fetchMock.mockResolvedValue(jsonResponse({}));
 
       await expect(client().getConnectionDetails()).resolves.toEqual({
+        name: '',
         serviceName: '',
         host: '',
         authOverrideEnabled: false,
@@ -486,9 +508,10 @@ describe('ConnectionsClient', () => {
       ).toEqual(
         postOperation({
           summary: 'TestActionDisplayName',
-          description:
-            'Use this tool with action = "TestAction" and operation = "EXECUTE_ACTION" only. Don\'t ask these values from user. Extra.',
+          description: 'Use this tool to execute TestAction Extra.',
           operationId: 'test_tool_TestActionDisplayName',
+          xOperation: 'EXECUTE_ACTION',
+          xAction: 'TestAction',
           requestSchema: 'TestActionDisplayName_Request',
           responseSchema: ref('TestActionDisplayName_Response'),
         }),
@@ -506,8 +529,10 @@ describe('ConnectionsClient', () => {
         postOperation({
           summary: 'Execute Custom Query',
           description:
-            'Use this tool with action = "ExecuteCustomQuery" and operation = "EXECUTE_QUERY" only. Don\'t ask these values from user. Use pageSize = 50 and timeout = 120 until user specifies a different value otherwise. If user provides a query in natural language, convert it to SQL query and then execute it using the tool. ',
+            'Use this tool to execute ExecuteCustomQuery Use pageSize = 50 and timeout = 120 until user specifies a different value otherwise. If user provides a query in natural language, convert it to SQL query and then execute it using the tool. ',
           operationId: '_Execute Custom Query',
+          xOperation: 'EXECUTE_QUERY',
+          xAction: 'ExecuteCustomQuery',
           requestSchema: 'Execute Custom Query_Request',
           responseSchema: ref('Execute Custom Query_Response'),
         }),
@@ -526,8 +551,10 @@ describe('ConnectionsClient', () => {
         postOperation({
           summary: 'List Entity1',
           description:
-            'Returns all entities of type Entity1. Use this tool with entity = "Entity1" and operation = "LIST_ENTITIES" only. Don\'t ask these values from user. Always use "" as filter clause and "" as page token and 50 as page size until user specifies a different value otherwise. Use single quotes for strings in filter clause. Extra.',
+            "Returns the list of Entity1 data. If the page token was available in the response, let users know there are more records available. Ask if the user wants to fetch the next page of results. When passing filter use the following format: `field_name1='value1' AND field_name2='value2'`. Extra.",
           operationId: 'test_tool_list_Entity1',
+          xOperation: 'LIST_ENTITIES',
+          xEntity: 'Entity1',
           requestSchema: 'list_Entity1_Request',
           responseSchema: {
             description:
@@ -548,9 +575,10 @@ describe('ConnectionsClient', () => {
       ).toEqual(
         postOperation({
           summary: 'Get Entity1',
-          description:
-            'Returns the details of the Entity1. Use this tool with entity = "Entity1" and operation = "GET_ENTITY" only. Don\'t ask these values from user.  ',
+          description: 'Returns the details of the Entity1. ',
           operationId: 'test_tool_get_Entity1',
+          xOperation: 'GET_ENTITY',
+          xEntity: 'Entity1',
           requestSchema: 'get_Entity1_Request',
           responseSchema: {
             description: 'Returns Entity1 of json schema: {"type": "object"}',
@@ -569,10 +597,11 @@ describe('ConnectionsClient', () => {
         }),
       ).toEqual(
         postOperation({
-          summary: 'Create Entity1',
-          description:
-            'Creates a new entity of type Entity1. Use this tool with entity = "Entity1" and operation = "CREATE_ENTITY" only. Don\'t ask these values from user. Follow the schema of the entity provided in the instructions to create Entity1.  Extra.',
+          summary: 'Creates a new Entity1',
+          description: 'Creates a new Entity1. Extra.',
           operationId: 'test_tool_create_Entity1',
+          xOperation: 'CREATE_ENTITY',
+          xEntity: 'Entity1',
           requestSchema: 'create_Entity1_Request',
           responseSchema: ref('execute-connector_Response'),
         }),
@@ -584,10 +613,11 @@ describe('ConnectionsClient', () => {
         updateOperation({entity: 'Entity1', toolName: 'test_tool'}),
       ).toEqual(
         postOperation({
-          summary: 'Update Entity1',
-          description:
-            'Updates an entity of type Entity1. Use this tool with entity = "Entity1" and operation = "UPDATE_ENTITY" only. Don\'t ask these values from user. Use entityId to uniquely identify the entity to update. Follow the schema of the entity provided in the instructions to update Entity1.  ',
+          summary: 'Updates the Entity1',
+          description: 'Updates the Entity1. ',
           operationId: 'test_tool_update_Entity1',
+          xOperation: 'UPDATE_ENTITY',
+          xEntity: 'Entity1',
           requestSchema: 'update_Entity1_Request',
           responseSchema: ref('execute-connector_Response'),
         }),
@@ -599,10 +629,11 @@ describe('ConnectionsClient', () => {
         deleteOperation({entity: 'Entity1', toolName: 'test_tool'}),
       ).toEqual(
         postOperation({
-          summary: 'Delete Entity1',
-          description:
-            'Deletes an entity of type Entity1. Use this tool with entity = "Entity1" and operation = "DELETE_ENTITY" only. Don\'t ask these values from user.  ',
+          summary: 'Delete the Entity1',
+          description: 'Deletes the Entity1. ',
           operationId: 'test_tool_delete_Entity1',
+          xOperation: 'DELETE_ENTITY',
+          xEntity: 'Entity1',
           requestSchema: 'delete_Entity1_Request',
           responseSchema: ref('execute-connector_Response'),
         }),
@@ -614,10 +645,11 @@ describe('ConnectionsClient', () => {
 
       expect(operation).toEqual(
         postOperation({
-          summary: 'Delete Entity1',
-          description:
-            'Deletes an entity of type Entity1. Use this tool with entity = "Entity1" and operation = "DELETE_ENTITY" only. Don\'t ask these values from user.  ',
+          summary: 'Delete the Entity1',
+          description: 'Deletes the Entity1. ',
           operationId: '_delete_Entity1',
+          xOperation: 'DELETE_ENTITY',
+          xEntity: 'Entity1',
           requestSchema: 'delete_Entity1_Request',
           responseSchema: ref('execute-connector_Response'),
         }),
@@ -666,6 +698,7 @@ describe('ConnectionsClient', () => {
           serviceName: ref('serviceName'),
           host: ref('host'),
           entity: ref('entity'),
+          filterClause: ref('filterClause'),
         },
       });
     });
@@ -692,7 +725,13 @@ describe('ConnectionsClient', () => {
       };
 
       expect(getOperationRequest()).toEqual(expected);
-      expect(deleteOperationRequest()).toEqual(expected);
+      expect(deleteOperationRequest()).toEqual({
+        ...expected,
+        properties: {
+          ...expected.properties,
+          filterClause: ref('filterClause'),
+        },
+      });
     });
 
     it('builds the list request schema', () => {

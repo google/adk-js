@@ -10,17 +10,29 @@ import {
   AuthCredentialTypes,
 } from '../../auth/auth_credential.js';
 import {experimental} from '../../utils/experimental.js';
-import {isJsonObject, JsonObject} from '../../utils/json_utils.js';
+import {
+  isJsonObject,
+  JsonObject,
+  toJsonObject,
+} from '../../utils/json_utils.js';
 import {BaseTool} from '../base_tool.js';
 import {BaseToolset} from '../base_toolset.js';
 import {serviceAccountDictToSchemeCredential} from '../openapi_tool/auth/auth_helpers.js';
+import {OpenApiSpecParser} from '../openapi_tool/openapi_spec_parser/openapi_spec_parser.js';
 import {OpenAPIToolset} from '../openapi_tool/openapi_toolset.js';
+import {createRestApiTool} from '../openapi_tool/rest_api_tool.js';
 import {CLOUD_PLATFORM_SCOPE} from './clients/cloud_request.js';
 import {
   ConnectionsClient,
   ConnectorSpec,
 } from './clients/connections_client.js';
 import {IntegrationClient} from './clients/integration_client.js';
+import {
+  IntegrationConnectorTool,
+  type IntegrationConnectorToolOptions,
+} from './integration_connector_tool.js';
+
+export {IntegrationConnectorTool, type IntegrationConnectorToolOptions};
 
 /** The scheme the credential of every generated tool is applied with. */
 const AUTH_SCHEME: OpenAPIV3.HttpSecurityScheme = {
@@ -160,43 +172,81 @@ export class ApplicationIntegrationToolset extends BaseToolset {
       serviceAccountJson,
     });
 
-    let specDict: JsonObject | ConnectorSpec;
-    if (integration && trigger) {
-      specDict = await integrationClient.getOpenApiSpecForIntegration();
-    } else {
-      const connectionName = connection ?? '';
-      const {serviceName, host} = await new ConnectionsClient({
-        project,
-        location,
-        connection: connectionName,
-        serviceAccountJson,
-      }).getConnectionDetails();
-      const instructions = `${toolInstructions}ALWAYS use serviceName = ${serviceName}, host = ${host} and the connection name = projects/${project}/locations/${location}/connections/${connectionName} when using this tool. DO NOT ask the user for these values as you already have those.`;
-      specDict = await integrationClient.getOpenApiSpecForConnection(
-        toolName,
-        instructions,
-      );
-    }
-
-    const spec = specDict as OpenAPIV3.Document;
     const authCredential = buildAuthCredential(serviceAccountJson);
     const toolsByName = new Map<string, BaseTool>();
+
+    if (integration && trigger) {
+      const specDict = await integrationClient.getOpenApiSpecForIntegration();
+      const spec = toOpenApiDocument(specDict);
+      for (const [path, pathItem] of Object.entries(spec.paths ?? {})) {
+        const tools = await new OpenAPIToolset({
+          specDict: {...spec, paths: {[removeFragment(path)]: pathItem}},
+          authCredential,
+          authScheme: AUTH_SCHEME,
+        }).getTools();
+        for (const tool of tools) {
+          toolsByName.set(tool.name, tool);
+        }
+      }
+      return [...toolsByName.values()];
+    }
+
+    const connectionName = connection ?? '';
+    const connectionDetails = await new ConnectionsClient({
+      project,
+      location,
+      connection: connectionName,
+      serviceAccountJson,
+    }).getConnectionDetails();
+    const specDict = await integrationClient.getOpenApiSpecForConnection(
+      toolName,
+      toolInstructions,
+    );
+    const spec = toOpenApiDocument(specDict);
+    const operations = new OpenApiSpecParser().parse(spec);
     // A connection spec tells its operations apart by a URL fragment, such as
     // `…?triggerId=api_trigger/ExecuteConnection#list_Issues`. A fragment is
     // never sent, and a tool would carry it into the query string, so each
-    // path is turned into tools on its own with the fragment removed.
-    for (const [path, pathItem] of Object.entries(spec.paths ?? {})) {
-      const tools = await new OpenAPIToolset({
-        specDict: {...spec, paths: {[removeFragment(path)]: pathItem}},
-        authCredential,
-        authScheme: AUTH_SCHEME,
-      }).getTools();
-      for (const tool of tools) {
-        toolsByName.set(tool.name, tool);
-      }
+    // operation has the fragment removed from its path.
+    for (const openApiOperation of operations) {
+      const operationObject = toJsonObject(openApiOperation.operation);
+      const operation = toStringValue(operationObject['x-operation']);
+      const entity = toStringValue(operationObject['x-entity']);
+      const action = toStringValue(operationObject['x-action']);
+      const restApiTool = createRestApiTool({
+        ...openApiOperation,
+        endpoint: {
+          ...openApiOperation.endpoint,
+          path: removeFragment(openApiOperation.endpoint.path),
+        },
+      });
+      restApiTool.configureAuthScheme(AUTH_SCHEME);
+      restApiTool.configureAuthCredential(authCredential);
+      const tool = new IntegrationConnectorTool({
+        name: restApiTool.name,
+        description: restApiTool.description,
+        connectionName: connectionDetails.name ?? '',
+        connectionHost: connectionDetails.host,
+        connectionServiceName: connectionDetails.serviceName,
+        entity,
+        action,
+        operation,
+        restApiTool,
+      });
+      toolsByName.set(tool.name, tool);
     }
     return [...toolsByName.values()];
   }
+}
+
+function toOpenApiDocument(
+  specDict: JsonObject | ConnectorSpec,
+): OpenAPIV3.Document {
+  return specDict as OpenAPIV3.Document;
+}
+
+function toStringValue(value: unknown): string {
+  return typeof value === 'string' ? value : '';
 }
 
 /**

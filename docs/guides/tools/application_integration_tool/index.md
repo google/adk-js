@@ -3,7 +3,8 @@
 `ApplicationIntegrationToolset` gives an agent tools for a Google Cloud
 Application Integration API trigger, or for the entities and actions of an
 Integration Connectors connection. It gets or builds an OpenAPI spec for the
-resource and turns each operation in it into a `RestApiTool`.
+resource and turns each operation in it into a `RestApiTool` or an
+`IntegrationConnectorTool`.
 
 ## Introduction
 
@@ -11,8 +12,8 @@ Application Integration and Integration Connectors already describe what a
 resource can do. An integration with an API trigger can produce an OpenAPI
 spec for that trigger, and a connection can report the schema of each entity
 and action it exposes. `ApplicationIntegrationToolset` reads that description
-and hands it to [`OpenAPIToolset`](../openapi_tool/index.md), so an agent can
-call the resource without you writing a spec or a tool by hand.
+and turns each operation into a callable tool, so an agent can call the
+resource without you writing a spec or a tool by hand.
 
 The toolset has two modes:
 
@@ -22,11 +23,13 @@ The toolset has two modes:
   and builds the spec itself. Every operation runs through an integration
   named `ExecuteConnection`, which executes it on the connection.
 
-Two lower-level classes do the work, and both are exported for callers who
-want the spec rather than the tools. `IntegrationClient` returns the spec for
-either mode, and `ConnectionsClient` reads connection details and schemas.
+Lower-level classes fetch the specs and schemas, and `IntegrationConnectorTool`
+wraps each connection tool. `IntegrationClient` returns the spec for either
+mode, `ConnectionsClient` reads connection details and schemas, and
+`IntegrationConnectorTool` hides the internal connection routing fields from
+the model declaration and injects them into each request at runtime.
 
-All three classes are marked experimental, so each logs a warning the first
+All four classes are marked experimental, so each logs a warning the first
 time one is constructed. They are exported from the Node entry point of
 `@google/adk` and not from the browser entry point, because they depend on
 `google-auth-library`.
@@ -86,15 +89,15 @@ The network calls happen on the first `getTools` call, which the agent makes
 at the start of its first turn. That call does the following:
 
 1. In integration mode, it asks Application Integration to generate the
-   OpenAPI spec of the trigger.
-2. In connection mode, it reads the service name and host of the connection,
-   then reads the schema of every entity and action you named. It builds a
-   spec with one operation per entity operation and per action.
-3. It passes the spec to `OpenAPIToolset`, together with one credential, and
-   returns the tools that come back. Connection-mode paths share one URL and
-   differ only by a fragment, such as `#list_Issues`. The toolset removes the
-   fragment from each path first, so the request carries only
-   `triggerId=api_trigger/ExecuteConnection`.
+   OpenAPI spec of the trigger, passes the spec to `OpenAPIToolset` with one
+   credential, and returns the `RestApiTool` instances that come back.
+2. In connection mode, it reads the resource name, service name and host of
+   the connection, then reads the schema of every entity and action you named.
+   It builds a spec with one operation per entity operation and per action.
+3. In connection mode, it parses the spec with `OpenApiSpecParser`, creates a
+   `RestApiTool` for each operation with its URL fragment removed so the
+   request carries only `triggerId=api_trigger/ExecuteConnection`, and wraps
+   each tool in an `IntegrationConnectorTool`.
 
 Later calls return the same tool objects without another request. Concurrent
 calls share one load. When the load fails, `getTools` rejects, and the next
@@ -137,11 +140,15 @@ characters, so `tracker_list_Issues` reaches the model as
 `tracker_list_issues`. With the default empty `toolName`, the name is
 `list_issues`.
 
-Every tool description tells the model which entity or action and which
-operation to send, so the model does not ask the user for them. The toolset
-also adds the service name, the host and the full connection name to the end
-of `toolInstructions`, because every request must carry them and the user has
-no reason to know them.
+Each connection operation is wrapped in an `IntegrationConnectorTool`. Its
+`_getDeclaration` removes the internal routing fields (`connection_name`,
+`connectionName`, `service_name`, `serviceName`, `host`, `entity`, `operation`
+and `action`) from `parameters.properties` and removes those fields along with
+`page_size`, `pageSize`, `page_token`, `pageToken`, `filter`, `filter_clause`
+and `filterClause` from `parameters.required`. When the agent calls the tool,
+`runAsync` injects the connection name, service name, host, and any configured
+entity, action and operation before delegating the request to the wrapped
+`RestApiTool`.
 
 The entity schema reaches the model in two places. The list and get tools
 quote it in their response description, and the create and update tools take
@@ -197,9 +204,9 @@ to choose between.
 mode. `toolName` keeps the tool names of two connections apart when one agent
 holds both, because the operation part of the names would otherwise collide.
 `toolInstructions` is the place for guidance that applies to every tool of
-the connection. The toolset writes the connection details after it with no
-separator, so end it with a space or a full stop. Integration mode takes the
-names and descriptions from the generated spec and ignores both options.
+the connection. Each operation description appends it at the end. Integration
+mode takes the names and descriptions from the generated spec and ignores both
+options.
 
 `serviceAccountJson` is the content of a service-account key file, not its
 path. Use it when the process has no Application Default Credentials, or when

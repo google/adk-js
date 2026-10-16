@@ -111,6 +111,10 @@ export {
   IntegrationClient,
   type IntegrationClientOptions,
 } from './tools/application_integration_tool/clients/integration_client.js';
+export {
+  IntegrationConnectorTool,
+  type IntegrationConnectorToolOptions,
+} from './tools/application_integration_tool/integration_connector_tool.js';
 export {LOAD_WEB_PAGE, loadWebPage} from './tools/load_web_page.js';
 export type {LoadWebPageOptions} from './tools/load_web_page.js';
 export {
