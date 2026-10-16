@@ -118,4 +118,30 @@ describe('Runner with a workflow as its root', () => {
         }),
     ).toThrow(/expected a BaseAgent, a Workflow, or a node-like value/);
   });
+
+  it('stores a node event before the node continues', async () => {
+    // adk-python parity (InvocationContext._enqueue_event): a non-partial
+    // event is appended to the session before the node that emitted it runs
+    // on, so a later step reads its own history.
+    let storedBeforeContinuing: boolean | undefined;
+    const workflow = new Workflow({
+      name: 'wf',
+      edges: [
+        [
+          'START',
+          new FunctionNode('step', async function* (ctx: NodeContext) {
+            yield 'first';
+            storedBeforeContinuing = ctx.invocationContext.session.events.some(
+              (e) => e.output === 'first',
+            );
+            yield 'second';
+          }),
+        ],
+      ],
+    });
+
+    await runToCompletion(workflow);
+
+    expect(storedBeforeContinuing).toBe(true);
+  });
 });
