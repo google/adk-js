@@ -37,8 +37,7 @@ import {expect} from 'vitest';
  * ubuntu-latest and macos-latest budgets untouched so a genuine hang still
  * fails fast there. Widen this one number rather than a per-suite literal.
  */
-export const PLATFORM_TIMEOUT_MULTIPLIER =
-  process.platform === 'win32' ? 2 : 1;
+export const PLATFORM_TIMEOUT_MULTIPLIER = process.platform === 'win32' ? 2 : 1;
 
 /**
  * Represents a raw generate content response.
