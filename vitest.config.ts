@@ -18,17 +18,20 @@ import {defineConfig} from 'vitest/config';
 const WORKER_MAX_OLD_SPACE_MB = 2048;
 
 /**
- * Test budget (ms) for the `unit:core` and `unit:dev` projects: Vitest's 5s
- * default has been observed to expire when these share a worker pool with the
- * install-heavy `integration` fixtures under `npm run test:coverage`. A project
- * entry does not inherit the root `test` timeout, so it is set per project.
+ * Test budget (ms) for the `unit:core`, `unit:dev`, `unit:integrations` and
+ * `e2e` projects: Vitest's 5s default has been observed to expire when these
+ * share a worker pool with the install-heavy `integration` fixtures under
+ * `npm run test:coverage`. A project entry does not inherit the root `test`
+ * timeout, so it is set per project.
  */
 const UNIT_TEST_TIMEOUT_MS = 30000;
 
 /**
- * Hook budget (ms) for the `integration` project: install-heavy `beforeAll`
- * hooks run `npm install` (and sometimes `npm run build`) per fixture, which
- * exceeds Vitest's 10s default on a slow or loaded machine.
+ * Hook budget (ms) for the `integration` project. The `beforeAll` hooks run
+ * `npm install` (and sometimes `npm run build`) per fixture, and the `afterAll`
+ * hooks remove `node_modules` recursively, which exceeds Vitest's 10s default.
+ * A cold, network-bound install has been measured at ~70s, so 120s covers the
+ * worst case. Trade-off: a stuck hook takes this long to surface.
  */
 const INTEGRATION_HOOK_TIMEOUT_MS = 120000;
 
@@ -114,6 +117,7 @@ export default defineConfig({
           environment: 'node',
           execArgv: EXEC_ARGV,
           setupFiles: SETUP_FILES,
+          testTimeout: UNIT_TEST_TIMEOUT_MS,
           alias: {
             '@google/adk': path.resolve(import.meta.dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
@@ -149,6 +153,7 @@ export default defineConfig({
           environment: 'node',
           execArgv: EXEC_ARGV,
           setupFiles: SETUP_FILES,
+          testTimeout: UNIT_TEST_TIMEOUT_MS,
           alias: {
             '@google/adk': path.resolve(import.meta.dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
