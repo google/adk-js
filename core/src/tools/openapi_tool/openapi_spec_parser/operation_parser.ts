@@ -113,7 +113,10 @@ export class OperationParser {
         this.params.push({
           originalName,
           paramLocation: location,
-          paramSchema: schema,
+          paramSchema:
+            schema.description == null && description !== ''
+              ? {...schema, description}
+              : schema,
           description,
           required: param.required || false,
           name: this.getParamName(originalName),

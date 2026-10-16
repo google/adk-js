@@ -2412,3 +2412,76 @@ describe('OAuth2 credential request and response flows', () => {
     });
   });
 });
+
+describe('async tool callbacks on LlmAgent', () => {
+  async function invokeToolWithCallbacks({
+    beforeToolCallback,
+    afterToolCallback,
+  }: {
+    beforeToolCallback?: SingleBeforeToolCallback;
+    afterToolCallback?: SingleAfterToolCallback;
+  }): Promise<Event | null> {
+    const tool = new FunctionTool({
+      name: 'simple_fn',
+      description: 'simple function',
+      parameters: z.object({}),
+      execute: () => ({initial: 'response'}),
+    });
+    const agent = new LlmAgent({
+      name: 'agent',
+      model: 'gemini-flash-latest',
+      tools: [tool],
+      beforeToolCallback,
+      afterToolCallback,
+    });
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv-async-cb',
+      agent,
+      session: createSession({
+        id: 'sess-async-cb',
+        userId: 'user-async-cb',
+        appName: 'app-async-cb',
+      }),
+      pluginManager: new PluginManager(),
+    });
+    const functionCallEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: agent.name,
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'call-1', name: tool.name, args: {}}}],
+      },
+    });
+    return handleFunctionCallsAsync({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {[tool.name]: tool},
+      beforeToolCallbacks: agent.canonicalBeforeToolCallbacks,
+      afterToolCallbacks: agent.canonicalAfterToolCallbacks,
+    });
+  }
+
+  it('test_async_before_tool_callback', async () => {
+    const mockResp = {test: 'before_tool_callback'};
+    const resultEvent = await invokeToolWithCallbacks({
+      beforeToolCallback: async () => mockResp,
+    });
+
+    expect(resultEvent).not.toBeNull();
+    expect(
+      resultEvent?.content?.parts?.[0]?.functionResponse?.response,
+    ).toEqual(mockResp);
+  });
+
+  it('test_async_after_tool_callback', async () => {
+    const mockResp = {test: 'after_tool_callback'};
+    const resultEvent = await invokeToolWithCallbacks({
+      afterToolCallback: async () => mockResp,
+    });
+
+    expect(resultEvent).not.toBeNull();
+    expect(
+      resultEvent?.content?.parts?.[0]?.functionResponse?.response,
+    ).toEqual(mockResp);
+  });
+});
