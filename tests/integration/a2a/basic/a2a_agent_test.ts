@@ -15,14 +15,14 @@ import turn2ExpectedEvents from './events_turn_2.json' with {type: 'json'};
 describe('A2A: Remote Agent Basic', () => {
   let server: AdkTsApiServer;
 
+  // No hook budget: the 120s project hookTimeout outlasts the 60s watchdog.
   beforeAll(async () => {
     server = new AdkTsApiServer({
       agentsDir: path.join(__dirname, 'remote_a2a/'),
       a2a: true,
-      startFailureTimeout: 60000,
     });
     await server.start();
-  }, 60000);
+  });
 
   afterAll(async () => {
     await server.stop();
