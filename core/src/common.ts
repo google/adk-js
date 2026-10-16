@@ -587,6 +587,7 @@ export type {
   CrewaiToolConfig,
   CrewaiToolLike,
 } from './tools/crewai_tool.js';
+export * from './tools/environment/index.js';
 export {
   buildFunctionDeclarationForLangchain,
   buildFunctionDeclarationForParamsForCrewai,
