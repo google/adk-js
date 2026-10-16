@@ -118,15 +118,23 @@ describe('Build setup', () => {
     );
 
     afterAll(async () => {
-      await fs
-        .rm(`${projectPath}/node_modules`, {recursive: true, force: true})
-        .catch(() => {});
-      await fs.unlink(`${projectPath}/package-lock.json`).catch(() => {});
-
+      const targets = ['node_modules', 'package-lock.json'];
       if (buildSetup.startsWith('ts_')) {
+        targets.push('dist');
+      }
+
+      // One target that cannot be removed must not stop the others, and must
+      // not turn a passing suite red. It does change the next run's install
+      // though, so report it.
+      for (const target of targets) {
         await fs
-          .rm(`${projectPath}/dist`, {recursive: true, force: true})
-          .catch(() => {});
+          .rm(`${projectPath}/${target}`, {recursive: true, force: true})
+          .catch((error: unknown) => {
+            console.error(
+              `Teardown failed for ${buildSetup} at ${target}:`,
+              error,
+            );
+          });
       }
     }, HOOK_TIMEOUT);
   });
