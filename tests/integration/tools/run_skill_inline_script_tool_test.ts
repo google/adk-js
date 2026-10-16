@@ -8,7 +8,10 @@ import {
   CodeExecutionLanguage,
   CodeExecutionResult,
   Context,
+  createSession,
   InvocationContext,
+  LlmAgent,
+  PluginManager,
   RunSkillInlineScriptTool,
   SkillToolset,
   ToolConfirmation,
@@ -42,11 +45,15 @@ describe('RunSkillInlineScriptTool Integration with UnsafeLocalCodeExecutor', ()
   // a human-in-the-loop confirmation. Supply an already-confirmed confirmation
   // so the tool proceeds to execute (see run_skill_inline_script_tool.ts).
   function createMockContext(agentName = 'test-agent') {
+    const invocationContext = new InvocationContext({
+      invocationId: 'test-invocation',
+      agent: new LlmAgent({name: agentName}),
+      session: createSession({id: 'test-session', appName: 'test-app'}),
+      pluginManager: new PluginManager([]),
+    });
+
     return new Context({
-      invocationContext: {
-        session: {state: {}},
-        agent: {name: agentName},
-      } as unknown as InvocationContext,
+      invocationContext,
       toolConfirmation: new ToolConfirmation({confirmed: true}),
     });
   }

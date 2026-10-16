@@ -7,7 +7,10 @@
 import {
   CodeExecutionResult,
   Context,
+  createSession,
   InvocationContext,
+  LlmAgent,
+  PluginManager,
   RunSkillScriptTool,
   Skill,
   SkillToolset,
@@ -47,12 +50,14 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
   });
 
   function createMockContext(agentName = 'test-agent') {
-    return new Context({
-      invocationContext: {
-        session: {state: {}},
-        agent: {name: agentName},
-      } as unknown as InvocationContext,
+    const invocationContext = new InvocationContext({
+      invocationId: 'test-invocation',
+      agent: new LlmAgent({name: agentName}),
+      session: createSession({id: 'test-session', appName: 'test-app'}),
+      pluginManager: new PluginManager([]),
     });
+
+    return new Context({invocationContext});
   }
 
   const testSkill: Skill = {
