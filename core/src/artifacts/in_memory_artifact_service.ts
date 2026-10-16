@@ -39,7 +39,11 @@ export class InMemoryArtifactService implements BaseArtifactService {
     artifact,
     customMetadata,
   }: SaveArtifactRequest): Promise<number> {
-    if (!artifact.inlineData && !artifact.text && !artifact.fileData) {
+    if (
+      !artifact.inlineData &&
+      artifact.text === undefined &&
+      !artifact.fileData
+    ) {
       return Promise.reject(
         new Error('Artifact must have either inlineData or text content.'),
       );
