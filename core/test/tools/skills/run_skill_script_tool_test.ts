@@ -24,9 +24,14 @@ import * as path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {materializeFiles} from '../../../src/utils/file_utils.js';
 
-vi.mock('../../../src/utils/file_utils.js', () => ({
-  materializeFiles: vi.fn(),
-}));
+vi.mock('../../../src/utils/file_utils.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../../src/utils/file_utils.js')>();
+  return {
+    ...actual,
+    materializeFiles: vi.fn(),
+  };
+});
 
 class MockCodeExecutor extends BaseCodeExecutor {
   mockResult: CodeExecutionResult = {
