@@ -13,6 +13,7 @@ import {
   bearerTokenUserBuilder,
   convertSessionToEvalFormat,
   createEmptyState,
+  createRunConfig,
   EVAL_SESSION_ID_PREFIX,
   EvalEntry,
   EvalMetric,
@@ -1231,7 +1232,13 @@ export class AdkApiServer {
         newMessage,
         stateDelta,
         customMetadata,
+        serviceTier,
+        service_tier,
       } = req.body;
+      const resolvedServiceTier = serviceTier ?? service_tier;
+      const runConfig: RunConfig | undefined = resolvedServiceTier
+        ? {serviceTier: resolvedServiceTier}
+        : undefined;
       const session = await this.sessionService.getSession({
         appName,
         userId,
@@ -1264,6 +1271,7 @@ export class AdkApiServer {
           newMessage,
           stateDelta,
           customMetadata,
+          runConfig,
           abortSignal: abortController.signal,
         })) {
           events.push(e);
@@ -1366,7 +1374,23 @@ export class AdkApiServer {
         streaming,
         stateDelta,
         customMetadata,
+        serviceTier,
+        service_tier,
       } = req.body;
+      const resolvedServiceTier = serviceTier ?? service_tier;
+
+      let runConfig: RunConfig;
+      try {
+        runConfig = createRunConfig({
+          streamingMode: streaming ? StreamingMode.SSE : StreamingMode.NONE,
+          ...(resolvedServiceTier ? {serviceTier: resolvedServiceTier} : {}),
+        });
+      } catch (e: unknown) {
+        const error = (e as Error).message;
+        res.status(422).json({error});
+        this.logger.error(error);
+        return;
+      }
 
       const session = await this.sessionService.getSession({
         appName,
@@ -1407,9 +1431,7 @@ export class AdkApiServer {
           newMessage,
           stateDelta,
           customMetadata,
-          runConfig: {
-            streamingMode: streaming ? StreamingMode.SSE : StreamingMode.NONE,
-          },
+          runConfig,
           abortSignal: abortController.signal,
         })) {
           res.write(`data: ${JSON.stringify(event)}\n\n`);

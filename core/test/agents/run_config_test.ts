@@ -5,7 +5,11 @@
  */
 
 import {describe, expect, it, vi} from 'vitest';
-import {createRunConfig, StreamingMode} from '../../src/agents/run_config.js';
+import {
+  createRunConfig,
+  ServiceTier,
+  StreamingMode,
+} from '../../src/agents/run_config.js';
 import {logger} from '../../src/utils/logger.js';
 
 describe('StreamingMode', () => {
@@ -13,6 +17,15 @@ describe('StreamingMode', () => {
     expect(StreamingMode.NONE).toBe('none');
     expect(StreamingMode.SSE).toBe('sse');
     expect(StreamingMode.BIDI).toBe('bidi');
+  });
+});
+
+describe('ServiceTier', () => {
+  it('has FLEX, STANDARD, PRIORITY, and DEFERRED values', () => {
+    expect(ServiceTier.FLEX).toBe('flex');
+    expect(ServiceTier.STANDARD).toBe('standard');
+    expect(ServiceTier.PRIORITY).toBe('priority');
+    expect(ServiceTier.DEFERRED).toBe('deferred');
   });
 });
 
@@ -25,6 +38,7 @@ describe('createRunConfig', () => {
     expect(config.streamingMode).toBe(StreamingMode.NONE);
     expect(config.maxLlmCalls).toBe(500);
     expect(config.pauseOnToolCalls).toBe(false);
+    expect(config.serviceTier).toBeUndefined();
   });
 
   it('overrides defaults with provided params', () => {
@@ -33,11 +47,41 @@ describe('createRunConfig', () => {
       supportCfc: true,
       streamingMode: StreamingMode.SSE,
       pauseOnToolCalls: true,
+      serviceTier: ServiceTier.PRIORITY,
     });
     expect(config.saveInputBlobsAsArtifacts).toBe(true);
     expect(config.supportCfc).toBe(true);
     expect(config.streamingMode).toBe(StreamingMode.SSE);
     expect(config.pauseOnToolCalls).toBe(true);
+    expect(config.serviceTier).toBe(ServiceTier.PRIORITY);
+  });
+
+  it('accepts ServiceTier enum and plain string values', () => {
+    const deferredConfig = createRunConfig({
+      serviceTier: ServiceTier.DEFERRED,
+    });
+    expect(deferredConfig.serviceTier).toBe('deferred');
+
+    const stringConfig = createRunConfig({
+      serviceTier: 'some_future_tier',
+    });
+    expect(stringConfig.serviceTier).toBe('some_future_tier');
+  });
+
+  it('throws when serviceTier is DEFERRED and streamingMode is SSE', () => {
+    expect(() =>
+      createRunConfig({
+        serviceTier: ServiceTier.DEFERRED,
+        streamingMode: StreamingMode.SSE,
+      }),
+    ).toThrow("serviceTier='deferred' cannot be used with StreamingMode.SSE.");
+
+    expect(() =>
+      createRunConfig({
+        serviceTier: 'deferred',
+        streamingMode: StreamingMode.SSE,
+      }),
+    ).toThrow("serviceTier='deferred' cannot be used with StreamingMode.SSE.");
   });
 
   it('uses provided maxLlmCalls when specified', () => {
