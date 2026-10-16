@@ -327,9 +327,23 @@ Instructions`,
       const testPath = '/non/existent/path';
       const problems = await validateSkillDir(testPath);
       expect(problems.length).toBe(1);
-      expect(problems[0]).toContain(
-        `SKILL.md (or any case variation like skill.md) not found in '${path.resolve(testPath)}'.`,
+      expect(problems[0]).toBe(
+        `Directory '${path.resolve(testPath)}' does not exist.`,
       );
+    });
+
+    it('returns problem if path is a file, not a directory', async () => {
+      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-skill-test-'));
+      const filePath = path.join(tempDir, 'test-skill');
+      await fs.writeFile(filePath, 'not a directory');
+
+      const problems = await validateSkillDir(filePath);
+      expect(problems.length).toBe(1);
+      expect(problems[0]).toBe(
+        `'${path.resolve(filePath)}' is not a directory.`,
+      );
+
+      await fs.rm(tempDir, {recursive: true, force: true});
     });
 
     it('returns problem if SKILL.md missing', async () => {
