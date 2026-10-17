@@ -5,6 +5,7 @@
  */
 import {
   ActiveStreamingTool,
+  AfterToolCallback,
   AgentTool,
   AUTH_PREPROCESSOR,
   AuthConfig,
@@ -12,6 +13,7 @@ import {
   BaseAgent,
   BasePlugin,
   BaseTool,
+  BeforeToolCallback,
   Context,
   createEvent,
   createEventActions,
@@ -2418,8 +2420,8 @@ describe('async tool callbacks on LlmAgent', () => {
     beforeToolCallback,
     afterToolCallback,
   }: {
-    beforeToolCallback?: SingleBeforeToolCallback;
-    afterToolCallback?: SingleAfterToolCallback;
+    beforeToolCallback?: BeforeToolCallback;
+    afterToolCallback?: AfterToolCallback;
   }): Promise<Event | null> {
     const tool = new FunctionTool({
       name: 'simple_fn',
@@ -2484,4 +2486,92 @@ describe('async tool callbacks on LlmAgent', () => {
       resultEvent?.content?.parts?.[0]?.functionResponse?.response,
     ).toEqual(mockResp);
   });
+
+  const CALLBACK_PARAMS: Array<{
+    name: string;
+    callbacks: Array<{
+      response: Record<string, unknown> | undefined;
+      isAsync: boolean;
+    }>;
+    expectedResponse: Record<string, unknown>;
+    expectedCalls: number[];
+  }> = [
+    {
+      name: 'middle_async_callback_returns',
+      callbacks: [
+        {response: undefined, isAsync: false},
+        {response: {test: 'callback_2_response'}, isAsync: true},
+        {response: {test: 'callback_3_response'}, isAsync: false},
+        {response: undefined, isAsync: true},
+      ],
+      expectedResponse: {test: 'callback_2_response'},
+      expectedCalls: [1, 1, 0, 0],
+    },
+    {
+      name: 'all_callbacks_return_undefined',
+      callbacks: [
+        {response: undefined, isAsync: false},
+        {response: undefined, isAsync: true},
+        {response: undefined, isAsync: false},
+        {response: undefined, isAsync: true},
+      ],
+      expectedResponse: {initial: 'response'},
+      expectedCalls: [1, 1, 1, 1],
+    },
+    {
+      name: 'first_sync_callback_returns',
+      callbacks: [
+        {response: {test: 'callback_1_response'}, isAsync: false},
+        {response: {test: 'callback_2_response'}, isAsync: true},
+      ],
+      expectedResponse: {test: 'callback_1_response'},
+      expectedCalls: [1, 0],
+    },
+  ];
+
+  it.each(CALLBACK_PARAMS)(
+    'test_before_tool_callbacks_chain ($name)',
+    async ({callbacks, expectedResponse, expectedCalls}) => {
+      const mockBeforeCbs: SingleBeforeToolCallback[] = callbacks.map(
+        ({response, isAsync}) =>
+          isAsync ? vi.fn(async () => response) : vi.fn(() => response),
+      );
+
+      const resultEvent = await invokeToolWithCallbacks({
+        beforeToolCallback: mockBeforeCbs,
+      });
+
+      expect(resultEvent).not.toBeNull();
+      expect(
+        resultEvent?.content?.parts?.[0]?.functionResponse?.response,
+      ).toEqual(expectedResponse);
+
+      for (let i = 0; i < mockBeforeCbs.length; i++) {
+        expect(mockBeforeCbs[i]).toHaveBeenCalledTimes(expectedCalls[i]);
+      }
+    },
+  );
+
+  it.each(CALLBACK_PARAMS)(
+    'test_after_tool_callbacks_chain ($name)',
+    async ({callbacks, expectedResponse, expectedCalls}) => {
+      const mockAfterCbs: SingleAfterToolCallback[] = callbacks.map(
+        ({response, isAsync}) =>
+          isAsync ? vi.fn(async () => response) : vi.fn(() => response),
+      );
+
+      const resultEvent = await invokeToolWithCallbacks({
+        afterToolCallback: mockAfterCbs,
+      });
+
+      expect(resultEvent).not.toBeNull();
+      expect(
+        resultEvent?.content?.parts?.[0]?.functionResponse?.response,
+      ).toEqual(expectedResponse);
+
+      for (let i = 0; i < mockAfterCbs.length; i++) {
+        expect(mockAfterCbs[i]).toHaveBeenCalledTimes(expectedCalls[i]);
+      }
+    },
+  );
 });
