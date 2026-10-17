@@ -789,6 +789,99 @@ describe('GoogleLlm', () => {
         ]);
       });
     });
+
+    it('preserves usageMetadata on the final aggregated LlmResponse', async () => {
+      const finalUsageMetadata = {
+        promptTokenCount: 10,
+        candidatesTokenCount: 5,
+        totalTokenCount: 15,
+      };
+      const gemini = createStreamingGemini([
+        {
+          candidates: [
+            {
+              content: {role: 'model', parts: [{text: 'Hello'}]},
+            },
+          ],
+          usageMetadata: {
+            promptTokenCount: 10,
+            candidatesTokenCount: 1,
+            totalTokenCount: 11,
+          },
+        },
+        {
+          candidates: [
+            {
+              content: {role: 'model', parts: [{text: ', how'}]},
+            },
+          ],
+          usageMetadata: {
+            promptTokenCount: 10,
+            candidatesTokenCount: 2,
+            totalTokenCount: 12,
+          },
+        },
+        {
+          candidates: [
+            {
+              content: {role: 'model', parts: [{text: ' can I help you?'}]},
+              finishReason: 'STOP',
+            },
+          ],
+          usageMetadata: finalUsageMetadata,
+        },
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      expect(responses).toHaveLength(4);
+      expect(responses[0].partial).toBe(true);
+      expect(responses[1].partial).toBe(true);
+      expect(responses[2].partial).toBe(true);
+      expect(responses[3].partial).toBe(false);
+      expect(responses[3].content?.parts?.[0]?.text).toBe(
+        'Hello, how can I help you?',
+      );
+      expect(responses[3].usageMetadata).toEqual(finalUsageMetadata);
+    });
+
+    it('preserves usageMetadata when flushing accumulated text before a function call chunk', async () => {
+      const usageMetadata = {
+        promptTokenCount: 8,
+        candidatesTokenCount: 4,
+        totalTokenCount: 12,
+      };
+      const functionCallPart = {
+        functionCall: {id: 'call-1', name: 'lookup', args: {}},
+      };
+      const gemini = createStreamingGemini([
+        {
+          candidates: [{content: {role: 'model', parts: [{text: 'Hello'}]}}],
+        },
+        {
+          candidates: [
+            {
+              content: {role: 'model', parts: [functionCallPart]},
+              finishReason: 'STOP',
+            },
+          ],
+          usageMetadata,
+        },
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      expect(responses).toHaveLength(4);
+      expect(responses[1].partial).toBe(false);
+      expect(responses[1].content?.parts).toEqual([{text: 'Hello'}]);
+      expect(responses[1].usageMetadata).toEqual(usageMetadata);
+      expect(responses[2].partial).toBe(false);
+      expect(responses[2].content?.parts).toEqual([functionCallPart]);
+      expect(responses[2].usageMetadata).toEqual(usageMetadata);
+      expect(responses[3].partial).toBe(false);
+      expect(responses[3].content).toBeUndefined();
+      expect(responses[3].usageMetadata).toEqual(usageMetadata);
+    });
   });
 
   describe('connect', () => {
