@@ -441,6 +441,24 @@ export abstract class BaseAgent<
   }
 
   /**
+   * The resolved beforeAgentCallback field as a list of SingleAgentCallback.
+   *
+   * This method is only for use by Agent Development Kit.
+   */
+  get canonicalBeforeAgentCallbacks(): SingleAgentCallback[] {
+    return this.beforeAgentCallback;
+  }
+
+  /**
+   * The resolved afterAgentCallback field as a list of SingleAgentCallback.
+   *
+   * This method is only for use by Agent Development Kit.
+   */
+  get canonicalAfterAgentCallbacks(): SingleAgentCallback[] {
+    return this.afterAgentCallback;
+  }
+
+  /**
    * Runs the before agent callback if it exists.
    *
    * @param invocationContext The invocation context of the agent.
@@ -450,12 +468,12 @@ export abstract class BaseAgent<
   protected async handleBeforeAgentCallback(
     invocationContext: InvocationContext,
   ): Promise<Event | undefined> {
-    if (this.beforeAgentCallback.length === 0) {
+    if (this.canonicalBeforeAgentCallbacks.length === 0) {
       return undefined;
     }
 
     const callbackContext = new Context({invocationContext});
-    for (const callback of this.beforeAgentCallback) {
+    for (const callback of this.canonicalBeforeAgentCallbacks) {
       const content = await callback(callbackContext);
 
       if (invocationContext.abortSignal?.aborted) {
@@ -497,12 +515,12 @@ export abstract class BaseAgent<
   protected async handleAfterAgentCallback(
     invocationContext: InvocationContext,
   ): Promise<Event | undefined> {
-    if (this.afterAgentCallback.length === 0) {
+    if (this.canonicalAfterAgentCallbacks.length === 0) {
       return undefined;
     }
 
     const callbackContext = new Context({invocationContext});
-    for (const callback of this.afterAgentCallback) {
+    for (const callback of this.canonicalAfterAgentCallbacks) {
       const content = await callback(callbackContext);
 
       if (invocationContext.abortSignal?.aborted) {

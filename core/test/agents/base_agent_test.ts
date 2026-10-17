@@ -8,15 +8,21 @@ import {
   AgentTransferLlmRequestProcessor,
   BaseAgent,
   BaseAgentConfig,
+  Context,
   Event,
   FunctionTool,
+  InMemoryArtifactService,
   InvocationContext,
   LlmAgent,
   PluginManager,
+  ScopedArtifactService,
   Session,
+  SingleAgentCallback,
   createEvent,
+  createSession,
 } from '@google/adk';
-import {describe, expect, it} from 'vitest';
+import {Content} from '@google/genai';
+import {describe, expect, it, vi} from 'vitest';
 
 class MockAgent extends BaseAgent {
   constructor(config: BaseAgentConfig) {
@@ -296,6 +302,410 @@ describe('BaseAgent', () => {
       expect(clone).toBeInstanceOf(MockAgent);
       expect(clone.name).toBe('mock');
       expect(clone.description).toBe('a mock');
+    });
+  });
+
+  describe('agent callbacks', () => {
+    function createParentInvocationContext(
+      agent: BaseAgent,
+    ): InvocationContext {
+      return new InvocationContext({
+        invocationId: 'test_invocation',
+        agent,
+        session: createSession({
+          id: 'test-session',
+          appName: 'test-app',
+          userId: 'test-user',
+        }),
+        pluginManager: new PluginManager(),
+      });
+    }
+
+    async function collectEvents(
+      agent: BaseAgent,
+      parentContext = createParentInvocationContext(agent),
+    ): Promise<Event[]> {
+      const events: Event[] = [];
+      for await (const event of agent.runAsync(parentContext)) {
+        events.push(event);
+      }
+      return events;
+    }
+
+    describe('canonicalBeforeAgentCallbacks and canonicalAfterAgentCallbacks', () => {
+      it('returns empty arrays when no callbacks are configured', () => {
+        const agent = new MockAgent({name: 'test_agent'});
+
+        expect(agent.canonicalBeforeAgentCallbacks).toEqual([]);
+        expect(agent.canonicalAfterAgentCallbacks).toEqual([]);
+      });
+
+      it('normalizes single callbacks into single-element arrays', () => {
+        const beforeCb: SingleAgentCallback = () => undefined;
+        const afterCb: SingleAgentCallback = () => undefined;
+        const agent = new MockAgent({
+          name: 'test_agent',
+          beforeAgentCallback: beforeCb,
+          afterAgentCallback: afterCb,
+        });
+
+        expect(agent.canonicalBeforeAgentCallbacks).toEqual([beforeCb]);
+        expect(agent.canonicalAfterAgentCallbacks).toEqual([afterCb]);
+      });
+
+      it('preserves callback arrays in order', () => {
+        const beforeCb1: SingleAgentCallback = () => undefined;
+        const beforeCb2: SingleAgentCallback = async () => undefined;
+        const afterCb1: SingleAgentCallback = () => undefined;
+        const afterCb2: SingleAgentCallback = async () => undefined;
+        const agent = new MockAgent({
+          name: 'test_agent',
+          beforeAgentCallback: [beforeCb1, beforeCb2],
+          afterAgentCallback: [afterCb1, afterCb2],
+        });
+
+        expect(agent.canonicalBeforeAgentCallbacks).toEqual([
+          beforeCb1,
+          beforeCb2,
+        ]);
+        expect(agent.canonicalAfterAgentCallbacks).toEqual([
+          afterCb1,
+          afterCb2,
+        ]);
+      });
+    });
+
+    describe('single sync and async callbacks', () => {
+      it('runs agent when sync beforeAgentCallback returns undefined', async () => {
+        const beforeCb = vi.fn((_context: Context) => undefined);
+        const agent = new MockAgent({
+          name: 'test_agent',
+          beforeAgentCallback: beforeCb,
+        });
+
+        const events = await collectEvents(agent);
+
+        expect(beforeCb).toHaveBeenCalledOnce();
+        expect(beforeCb.mock.calls[0][0]).toBeInstanceOf(Context);
+        expect(events).toHaveLength(1);
+        expect(events[0].content?.parts?.[0]?.text).toBe(
+          'Response from test_agent',
+        );
+      });
+
+      it('runs agent when async beforeAgentCallback resolves to undefined', async () => {
+        const beforeCb = vi.fn(async (_context: Context) => undefined);
+        const agent = new MockAgent({
+          name: 'test_agent',
+          beforeAgentCallback: beforeCb,
+        });
+
+        const events = await collectEvents(agent);
+
+        expect(beforeCb).toHaveBeenCalledOnce();
+        expect(beforeCb.mock.calls[0][0]).toBeInstanceOf(Context);
+        expect(events).toHaveLength(1);
+        expect(events[0].content?.parts?.[0]?.text).toBe(
+          'Response from test_agent',
+        );
+      });
+
+      it('bypasses agent run when sync beforeAgentCallback returns content', async () => {
+        const beforeCb = vi.fn((): Content => ({
+          parts: [{text: 'agent run is bypassed.'}],
+        }));
+        const afterCb = vi.fn(() => undefined);
+        const agent = new MockAgent({
+          name: 'test_agent',
+          beforeAgentCallback: beforeCb,
+          afterAgentCallback: afterCb,
+        });
+
+        const events = await collectEvents(agent);
+
+        expect(beforeCb).toHaveBeenCalledOnce();
+        expect(afterCb).not.toHaveBeenCalled();
+        expect(events).toHaveLength(1);
+        expect(events[0].author).toBe('test_agent');
+        expect(events[0].content?.parts?.[0]?.text).toBe(
+          'agent run is bypassed.',
+        );
+      });
+
+      it('bypasses agent run when async beforeAgentCallback resolves to content', async () => {
+        const beforeCb = vi.fn(async (): Promise<Content> => ({
+          parts: [{text: 'agent run is bypassed.'}],
+        }));
+        const afterCb = vi.fn(() => undefined);
+        const agent = new MockAgent({
+          name: 'test_agent',
+          beforeAgentCallback: beforeCb,
+          afterAgentCallback: afterCb,
+        });
+
+        const events = await collectEvents(agent);
+
+        expect(beforeCb).toHaveBeenCalledOnce();
+        expect(afterCb).not.toHaveBeenCalled();
+        expect(events).toHaveLength(1);
+        expect(events[0].author).toBe('test_agent');
+        expect(events[0].content?.parts?.[0]?.text).toBe(
+          'agent run is bypassed.',
+        );
+      });
+
+      it('leaves response unchanged when sync afterAgentCallback returns undefined', async () => {
+        const afterCb = vi.fn((_context: Context) => undefined);
+        const agent = new MockAgent({
+          name: 'test_agent',
+          afterAgentCallback: afterCb,
+        });
+
+        const events = await collectEvents(agent);
+
+        expect(afterCb).toHaveBeenCalledOnce();
+        expect(afterCb.mock.calls[0][0]).toBeInstanceOf(Context);
+        expect(events).toHaveLength(1);
+        expect(events[0].content?.parts?.[0]?.text).toBe(
+          'Response from test_agent',
+        );
+      });
+
+      it('leaves response unchanged when async afterAgentCallback resolves to undefined', async () => {
+        const afterCb = vi.fn(async (_context: Context) => undefined);
+        const agent = new MockAgent({
+          name: 'test_agent',
+          afterAgentCallback: afterCb,
+        });
+
+        const events = await collectEvents(agent);
+
+        expect(afterCb).toHaveBeenCalledOnce();
+        expect(afterCb.mock.calls[0][0]).toBeInstanceOf(Context);
+        expect(events).toHaveLength(1);
+        expect(events[0].content?.parts?.[0]?.text).toBe(
+          'Response from test_agent',
+        );
+      });
+
+      it('appends reply when sync afterAgentCallback returns content', async () => {
+        const afterCb = vi.fn((): Content => ({
+          parts: [{text: 'Agent reply from after agent callback.'}],
+        }));
+        const agent = new MockAgent({
+          name: 'test_agent',
+          afterAgentCallback: afterCb,
+        });
+
+        const events = await collectEvents(agent);
+
+        expect(afterCb).toHaveBeenCalledOnce();
+        expect(events).toHaveLength(2);
+        expect(events[0].content?.parts?.[0]?.text).toBe(
+          'Response from test_agent',
+        );
+        expect(events[1].author).toBe('test_agent');
+        expect(events[1].content?.parts?.[0]?.text).toBe(
+          'Agent reply from after agent callback.',
+        );
+      });
+
+      it('appends reply when async afterAgentCallback resolves to content', async () => {
+        const afterCb = vi.fn(async (): Promise<Content> => ({
+          parts: [{text: 'Agent reply from after agent callback.'}],
+        }));
+        const agent = new MockAgent({
+          name: 'test_agent',
+          afterAgentCallback: afterCb,
+        });
+
+        const events = await collectEvents(agent);
+
+        expect(afterCb).toHaveBeenCalledOnce();
+        expect(events).toHaveLength(2);
+        expect(events[0].content?.parts?.[0]?.text).toBe(
+          'Response from test_agent',
+        );
+        expect(events[1].author).toBe('test_agent');
+        expect(events[1].content?.parts?.[0]?.text).toBe(
+          'Agent reply from after agent callback.',
+        );
+      });
+    });
+
+    describe('callback chaining', () => {
+      interface ChainSpec {
+        name: string;
+        callbacks: Array<{response?: string; isAsync: boolean}>;
+        expectedBeforeTexts: string[];
+        expectedAfterTexts: string[];
+        expectedCalls: number[];
+      }
+
+      const CHAIN_CASES: ChainSpec[] = [
+        {
+          name: 'middle_async_callback_returns',
+          callbacks: [
+            {response: undefined, isAsync: false},
+            {response: 'callback_2_response', isAsync: true},
+            {response: 'callback_3_response', isAsync: false},
+            {response: undefined, isAsync: true},
+          ],
+          expectedBeforeTexts: ['callback_2_response'],
+          expectedAfterTexts: [
+            'Response from test_agent',
+            'callback_2_response',
+          ],
+          expectedCalls: [1, 1, 0, 0],
+        },
+        {
+          name: 'all_callbacks_return_undefined',
+          callbacks: [
+            {response: undefined, isAsync: false},
+            {response: undefined, isAsync: true},
+            {response: undefined, isAsync: false},
+            {response: undefined, isAsync: true},
+          ],
+          expectedBeforeTexts: ['Response from test_agent'],
+          expectedAfterTexts: ['Response from test_agent'],
+          expectedCalls: [1, 1, 1, 1],
+        },
+        {
+          name: 'first_sync_callback_returns',
+          callbacks: [
+            {response: 'callback_1_response', isAsync: false},
+            {response: 'callback_2_response', isAsync: true},
+          ],
+          expectedBeforeTexts: ['callback_1_response'],
+          expectedAfterTexts: [
+            'Response from test_agent',
+            'callback_1_response',
+          ],
+          expectedCalls: [1, 0],
+        },
+      ];
+
+      it.each(CHAIN_CASES)(
+        'chains beforeAgentCallback ($name)',
+        async ({callbacks, expectedBeforeTexts, expectedCalls}) => {
+          const spies = callbacks.map(({response, isAsync}) =>
+            vi.fn<SingleAgentCallback>(() => {
+              const content: Content | undefined = response
+                ? {parts: [{text: response}]}
+                : undefined;
+              return isAsync ? Promise.resolve(content) : content;
+            }),
+          );
+
+          const agent = new MockAgent({
+            name: 'test_agent',
+            beforeAgentCallback: spies,
+          });
+
+          const events = await collectEvents(agent);
+
+          expect(events.map((e) => e.content?.parts?.[0]?.text)).toEqual(
+            expectedBeforeTexts,
+          );
+          spies.forEach((spy, index) => {
+            expect(spy).toHaveBeenCalledTimes(expectedCalls[index]);
+          });
+        },
+      );
+
+      it.each(CHAIN_CASES)(
+        'chains afterAgentCallback ($name)',
+        async ({callbacks, expectedAfterTexts, expectedCalls}) => {
+          const spies = callbacks.map(({response, isAsync}) =>
+            vi.fn<SingleAgentCallback>(() => {
+              const content: Content | undefined = response
+                ? {parts: [{text: response}]}
+                : undefined;
+              return isAsync ? Promise.resolve(content) : content;
+            }),
+          );
+
+          const agent = new MockAgent({
+            name: 'test_agent',
+            afterAgentCallback: spies,
+          });
+
+          const events = await collectEvents(agent);
+
+          expect(events.map((e) => e.content?.parts?.[0]?.text)).toEqual(
+            expectedAfterTexts,
+          );
+          spies.forEach((spy, index) => {
+            expect(spy).toHaveBeenCalledTimes(expectedCalls[index]);
+          });
+        },
+      );
+    });
+
+    describe('Context async artifact methods in callbacks', () => {
+      it('rejects asynchronously when loadArtifact or saveArtifact is called without artifactService', async () => {
+        const parentContext = createParentInvocationContext(
+          new MockAgent({name: 'test_agent'}),
+        );
+        const callbackContext = new Context({invocationContext: parentContext});
+
+        const loadPromise = callbackContext.loadArtifact('missing.txt');
+        const savePromise = callbackContext.saveArtifact('missing.txt', {
+          text: 'content',
+        });
+
+        await expect(loadPromise).rejects.toThrow(
+          'Artifact service is not initialized.',
+        );
+        await expect(savePromise).rejects.toThrow(
+          'Artifact service is not initialized.',
+        );
+      });
+
+      it('saves and loads artifacts asynchronously inside agent callbacks', async () => {
+        const artifactService = new ScopedArtifactService(
+          new InMemoryArtifactService(),
+          'test-app',
+          'test-user',
+          'test-session',
+        );
+        let loadedText: string | undefined;
+
+        const agent = new MockAgent({
+          name: 'test_agent',
+          beforeAgentCallback: async (context: Context) => {
+            await context.saveArtifact('greeting.txt', {
+              text: 'stored from before callback',
+            });
+            return undefined;
+          },
+          afterAgentCallback: async (context: Context) => {
+            const loaded = await context.loadArtifact('greeting.txt');
+            loadedText = loaded?.text;
+            return undefined;
+          },
+        });
+
+        const parentContext = new InvocationContext({
+          invocationId: 'test_invocation',
+          agent,
+          session: createSession({
+            id: 'test-session',
+            appName: 'test-app',
+            userId: 'test-user',
+          }),
+          artifactService,
+          pluginManager: new PluginManager(),
+        });
+
+        const events = await collectEvents(agent, parentContext);
+
+        expect(loadedText).toBe('stored from before callback');
+        expect(events).toHaveLength(1);
+        expect(events[0].content?.parts?.[0]?.text).toBe(
+          'Response from test_agent',
+        );
+      });
     });
   });
 });

@@ -91,7 +91,10 @@ export class Context extends ReadonlyContext {
    *     version will be used.
    * @return A promise that resolves to the loaded artifact.
    */
-  loadArtifact(filename: string, version?: number): Promise<Part | undefined> {
+  async loadArtifact(
+    filename: string,
+    version?: number,
+  ): Promise<Part | undefined> {
     if (!this.invocationContext.artifactService) {
       throw new Error('Artifact service is not initialized.');
     }
