@@ -37,6 +37,8 @@ import {
   RunAsyncToolRequest,
   Runner,
   Session,
+  SingleAfterModelCallback,
+  SingleBeforeModelCallback,
   SkillToolset,
   StreamingMode,
   ToolProcessLlmRequest,
@@ -2557,5 +2559,325 @@ describe('LlmAgent live streaming tools and supportCfc', () => {
       events[0].id,
       events[3].id,
     ]);
+  });
+});
+
+describe('LlmAgent model callbacks', () => {
+  async function runAgentTurn(
+    agent: LlmAgent,
+  ): Promise<Array<[string | undefined, string | undefined]>> {
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'sess_callbacks',
+    });
+    const runner = new Runner({
+      appName: 'test-app',
+      agent,
+      sessionService,
+    });
+    const simplified: Array<[string | undefined, string | undefined]> = [];
+    for await (const event of runner.runAsync({
+      userId: 'test-user',
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'test'}]},
+    })) {
+      simplified.push([event.author, event.content?.parts?.[0]?.text]);
+    }
+    return simplified;
+  }
+
+  describe('canonicalBeforeModelCallbacks and canonicalAfterModelCallbacks', () => {
+    it('returns empty arrays when no model callbacks are configured', () => {
+      const agent = new LlmAgent({name: 'root_agent'});
+
+      expect(agent.canonicalBeforeModelCallbacks).toEqual([]);
+      expect(agent.canonicalAfterModelCallbacks).toEqual([]);
+    });
+
+    it('normalizes single model callbacks into single-element arrays', () => {
+      const beforeCb: SingleBeforeModelCallback = () => undefined;
+      const afterCb: SingleAfterModelCallback = () => undefined;
+      const agent = new LlmAgent({
+        name: 'root_agent',
+        beforeModelCallback: beforeCb,
+        afterModelCallback: afterCb,
+      });
+
+      expect(agent.canonicalBeforeModelCallbacks).toEqual([beforeCb]);
+      expect(agent.canonicalAfterModelCallbacks).toEqual([afterCb]);
+    });
+
+    it('preserves model callback arrays in order', () => {
+      const beforeCb1: SingleBeforeModelCallback = () => undefined;
+      const beforeCb2: SingleBeforeModelCallback = async () => undefined;
+      const afterCb1: SingleAfterModelCallback = () => undefined;
+      const afterCb2: SingleAfterModelCallback = async () => undefined;
+      const agent = new LlmAgent({
+        name: 'root_agent',
+        beforeModelCallback: [beforeCb1, beforeCb2],
+        afterModelCallback: [afterCb1, afterCb2],
+      });
+
+      expect(agent.canonicalBeforeModelCallbacks).toEqual([
+        beforeCb1,
+        beforeCb2,
+      ]);
+      expect(agent.canonicalAfterModelCallbacks).toEqual([afterCb1, afterCb2]);
+    });
+  });
+
+  describe('single sync and async model callbacks', () => {
+    it('overrides model call when sync beforeModelCallback returns a response', async () => {
+      const model = new CountingMockLlm([
+        [{content: {role: 'model', parts: [{text: 'model_response'}]}}],
+      ]);
+      const agent = new LlmAgent({
+        name: 'root_agent',
+        model,
+        beforeModelCallback: () => ({
+          content: {role: 'model', parts: [{text: 'before_model_callback'}]},
+        }),
+      });
+
+      const events = await runAgentTurn(agent);
+
+      expect(events).toEqual([['root_agent', 'before_model_callback']]);
+      expect(model.callCount).toBe(0);
+    });
+
+    it('proceeds to model call when sync beforeModelCallback returns undefined', async () => {
+      const model = new CountingMockLlm([
+        [{content: {role: 'model', parts: [{text: 'model_response'}]}}],
+      ]);
+      const agent = new LlmAgent({
+        name: 'root_agent',
+        model,
+        beforeModelCallback: () => undefined,
+      });
+
+      const events = await runAgentTurn(agent);
+
+      expect(events).toEqual([['root_agent', 'model_response']]);
+      expect(model.callCount).toBe(1);
+    });
+
+    it('overrides model call when async beforeModelCallback resolves to a response', async () => {
+      const model = new CountingMockLlm([
+        [{content: {role: 'model', parts: [{text: 'model_response'}]}}],
+      ]);
+      const agent = new LlmAgent({
+        name: 'root_agent',
+        model,
+        beforeModelCallback: async () => ({
+          content: {
+            role: 'model',
+            parts: [{text: 'async_before_model_callback'}],
+          },
+        }),
+      });
+
+      const events = await runAgentTurn(agent);
+
+      expect(events).toEqual([['root_agent', 'async_before_model_callback']]);
+      expect(model.callCount).toBe(0);
+    });
+
+    it('proceeds to model call when async beforeModelCallback resolves to undefined', async () => {
+      const model = new CountingMockLlm([
+        [{content: {role: 'model', parts: [{text: 'model_response'}]}}],
+      ]);
+      const agent = new LlmAgent({
+        name: 'root_agent',
+        model,
+        beforeModelCallback: async () => undefined,
+      });
+
+      const events = await runAgentTurn(agent);
+
+      expect(events).toEqual([['root_agent', 'model_response']]);
+      expect(model.callCount).toBe(1);
+    });
+
+    it('overrides model response when sync afterModelCallback returns a response', async () => {
+      const model = new CountingMockLlm([
+        [{content: {role: 'model', parts: [{text: 'model_response'}]}}],
+      ]);
+      const agent = new LlmAgent({
+        name: 'root_agent',
+        model,
+        afterModelCallback: () => ({
+          content: {role: 'model', parts: [{text: 'after_model_callback'}]},
+        }),
+      });
+
+      const events = await runAgentTurn(agent);
+
+      expect(events).toEqual([['root_agent', 'after_model_callback']]);
+      expect(model.callCount).toBe(1);
+    });
+
+    it('preserves model response when sync afterModelCallback returns undefined', async () => {
+      const model = new CountingMockLlm([
+        [{content: {role: 'model', parts: [{text: 'model_response'}]}}],
+      ]);
+      const agent = new LlmAgent({
+        name: 'root_agent',
+        model,
+        afterModelCallback: () => undefined,
+      });
+
+      const events = await runAgentTurn(agent);
+
+      expect(events).toEqual([['root_agent', 'model_response']]);
+      expect(model.callCount).toBe(1);
+    });
+
+    it('overrides model response when async afterModelCallback resolves to a response', async () => {
+      const model = new CountingMockLlm([
+        [{content: {role: 'model', parts: [{text: 'model_response'}]}}],
+      ]);
+      const agent = new LlmAgent({
+        name: 'root_agent',
+        model,
+        afterModelCallback: async () => ({
+          content: {
+            role: 'model',
+            parts: [{text: 'async_after_model_callback'}],
+          },
+        }),
+      });
+
+      const events = await runAgentTurn(agent);
+
+      expect(events).toEqual([['root_agent', 'async_after_model_callback']]);
+      expect(model.callCount).toBe(1);
+    });
+
+    it('preserves model response when async afterModelCallback resolves to undefined', async () => {
+      const model = new CountingMockLlm([
+        [{content: {role: 'model', parts: [{text: 'model_response'}]}}],
+      ]);
+      const agent = new LlmAgent({
+        name: 'root_agent',
+        model,
+        afterModelCallback: async () => undefined,
+      });
+
+      const events = await runAgentTurn(agent);
+
+      expect(events).toEqual([['root_agent', 'model_response']]);
+      expect(model.callCount).toBe(1);
+    });
+  });
+
+  describe('model callback chaining', () => {
+    interface ModelCallbackChainSpec {
+      name: string;
+      callbacks: Array<{response?: string; isAsync: boolean}>;
+      expectedResponse: string;
+      expectedCalls: number[];
+    }
+
+    const MODEL_CALLBACK_CHAIN_CASES: ModelCallbackChainSpec[] = [
+      {
+        name: 'middle_async_callback_returns',
+        callbacks: [
+          {response: undefined, isAsync: false},
+          {response: 'callback_2_response', isAsync: true},
+          {response: 'callback_3_response', isAsync: false},
+          {response: undefined, isAsync: true},
+        ],
+        expectedResponse: 'callback_2_response',
+        expectedCalls: [1, 1, 0, 0],
+      },
+      {
+        name: 'all_callbacks_return_undefined',
+        callbacks: [
+          {response: undefined, isAsync: false},
+          {response: undefined, isAsync: true},
+          {response: undefined, isAsync: false},
+          {response: undefined, isAsync: true},
+        ],
+        expectedResponse: 'model_response',
+        expectedCalls: [1, 1, 1, 1],
+      },
+      {
+        name: 'first_sync_callback_returns',
+        callbacks: [
+          {response: 'callback_1_response', isAsync: false},
+          {response: 'callback_2_response', isAsync: true},
+        ],
+        expectedResponse: 'callback_1_response',
+        expectedCalls: [1, 0],
+      },
+    ];
+
+    it.each(MODEL_CALLBACK_CHAIN_CASES)(
+      'chains beforeModelCallback ($name)',
+      async ({callbacks, expectedResponse, expectedCalls}) => {
+        const model = new CountingMockLlm([
+          [{content: {role: 'model', parts: [{text: 'model_response'}]}}],
+        ]);
+        const spies = callbacks.map(({response, isAsync}) =>
+          vi.fn<SingleBeforeModelCallback>(({context, request}) => {
+            expect(context).toBeInstanceOf(Context);
+            expect(request).toBeDefined();
+            const llmResponse: LlmResponse | undefined = response
+              ? {content: {role: 'model', parts: [{text: response}]}}
+              : undefined;
+            return isAsync ? Promise.resolve(llmResponse) : llmResponse;
+          }),
+        );
+
+        const agent = new LlmAgent({
+          name: 'root_agent',
+          model,
+          beforeModelCallback: spies,
+        });
+
+        const events = await runAgentTurn(agent);
+
+        expect(events).toEqual([['root_agent', expectedResponse]]);
+        spies.forEach((spy, index) => {
+          expect(spy).toHaveBeenCalledTimes(expectedCalls[index]);
+        });
+      },
+    );
+
+    it.each(MODEL_CALLBACK_CHAIN_CASES)(
+      'chains afterModelCallback ($name)',
+      async ({callbacks, expectedResponse, expectedCalls}) => {
+        const model = new CountingMockLlm([
+          [{content: {role: 'model', parts: [{text: 'model_response'}]}}],
+        ]);
+        const spies = callbacks.map(({response, isAsync}) =>
+          vi.fn<SingleAfterModelCallback>(
+            ({context, response: modelResponse}) => {
+              expect(context).toBeInstanceOf(Context);
+              expect(modelResponse).toBeDefined();
+              const llmResponse: LlmResponse | undefined = response
+                ? {content: {role: 'model', parts: [{text: response}]}}
+                : undefined;
+              return isAsync ? Promise.resolve(llmResponse) : llmResponse;
+            },
+          ),
+        );
+
+        const agent = new LlmAgent({
+          name: 'root_agent',
+          model,
+          afterModelCallback: spies,
+        });
+
+        const events = await runAgentTurn(agent);
+
+        expect(events).toEqual([['root_agent', expectedResponse]]);
+        spies.forEach((spy, index) => {
+          expect(spy).toHaveBeenCalledTimes(expectedCalls[index]);
+        });
+      },
+    );
   });
 });
