@@ -163,13 +163,16 @@ describe('event_converter_utils', () => {
 
     describe('Message', () => {
       it('preserves messages without parts as contentless events', () => {
-        const userMessage: Message = {
+        // Both messages come off the peer's response stream; `role` is the
+        // peer's own claim. Whichever role it claims, the event is authored by
+        // the peer (`agent1`), never by the local user.
+        const peerMessageClaimingUserRole: Message = {
           kind: 'message',
           messageId: 'msg-empty-user',
           role: 'user',
           parts: [],
         };
-        const agentMessage: Message = {
+        const peerMessageClaimingAgentRole: Message = {
           kind: 'message',
           messageId: 'msg-empty-agent',
           role: 'agent',
@@ -177,15 +180,23 @@ describe('event_converter_utils', () => {
           metadata: {'adk_error_code': 'EMPTY_RESPONSE'},
         };
 
-        const userEvent = toAdkEvent(userMessage, 'inv1', 'agent1');
-        const agentEvent = toAdkEvent(agentMessage, 'inv1', 'agent1');
+        const eventFromUserRoleClaim = toAdkEvent(
+          peerMessageClaimingUserRole,
+          'inv1',
+          'agent1',
+        );
+        const eventFromAgentRoleClaim = toAdkEvent(
+          peerMessageClaimingAgentRole,
+          'inv1',
+          'agent1',
+        );
 
-        expect(userEvent).toMatchObject({
+        expect(eventFromUserRoleClaim).toMatchObject({
           author: 'agent1',
           content: undefined,
           turnComplete: true,
         });
-        expect(agentEvent).toMatchObject({
+        expect(eventFromAgentRoleClaim).toMatchObject({
           author: 'agent1',
           content: undefined,
           errorCode: 'EMPTY_RESPONSE',
