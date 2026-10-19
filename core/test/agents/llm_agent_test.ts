@@ -23,6 +23,7 @@ import {
   createSession,
   Event,
   FunctionTool,
+  Gemini,
   InMemorySessionService,
   INTERACTIONS_REQUEST_PROCESSOR,
   InvocationContext,
@@ -1086,10 +1087,14 @@ describe('LlmAgent outputSchema with tools', () => {
   }
 
   async function captureRequest(options: {
-    model: string;
+    model: string | BaseLlm;
     withTools: boolean;
   }): Promise<LlmRequest> {
-    const llm = new CapturingLlm({model: options.model});
+    let capturedRequest: LlmRequest | undefined;
+    const llm =
+      typeof options.model === 'string'
+        ? new CapturingLlm({model: options.model})
+        : options.model;
     const agent = new LlmAgent({
       name: 'test_agent',
       model: llm,
@@ -1104,6 +1109,15 @@ describe('LlmAgent outputSchema with tools', () => {
             }),
           ]
         : [],
+      beforeModelCallback:
+        typeof options.model === 'string'
+          ? undefined
+          : ({request}) => {
+              capturedRequest = request;
+              return {
+                content: {role: 'model', parts: [{text: '{"answer": "42"}'}]},
+              };
+            },
     });
     const invocationContext = new InvocationContext({
       invocationId: 'inv_123',
@@ -1121,7 +1135,8 @@ describe('LlmAgent outputSchema with tools', () => {
       // Drain the run so that the request is fully built.
     }
 
-    const request = llm.capturedRequest;
+    const request =
+      llm instanceof CapturingLlm ? llm.capturedRequest : capturedRequest;
     if (!request) {
       expect.fail('the agent never called the model');
     }
@@ -1143,6 +1158,46 @@ describe('LlmAgent outputSchema with tools', () => {
     expect(request.config?.systemInstruction).not.toContain(
       'set_model_response',
     );
+  });
+
+  it('uses the native response schema for a Gemini({ vertexai: true }) 2.0+ instance when env var is unset', async () => {
+    vi.stubEnv(VERTEX_ENV_VAR, undefined);
+
+    const request = await captureRequest({
+      model: new Gemini({
+        model: 'gemini-2.5-flash',
+        vertexai: true,
+        project: 'test-project',
+        location: 'us-central1',
+      }),
+      withTools: true,
+    });
+
+    expect(request.config?.responseSchema).toBeDefined();
+    expect(request.config?.responseMimeType).toBe('application/json');
+    expect(request.toolsDict).not.toHaveProperty('set_model_response');
+    expect(request.toolsDict).toHaveProperty('some_tool');
+    expect(request.config?.systemInstruction).not.toContain(
+      'set_model_response',
+    );
+  });
+
+  it('uses the set_model_response workaround for a Gemini({ vertexai: false }) instance even when env var is true', async () => {
+    vi.stubEnv(VERTEX_ENV_VAR, 'true');
+
+    const request = await captureRequest({
+      model: new Gemini({
+        model: 'gemini-2.5-flash',
+        vertexai: false,
+        apiKey: 'test-key',
+      }),
+      withTools: true,
+    });
+
+    expect(request.config?.responseSchema).toBeUndefined();
+    expect(request.toolsDict).toHaveProperty('set_model_response');
+    expect(request.toolsDict).toHaveProperty('some_tool');
+    expect(request.config?.systemInstruction).toContain('set_model_response');
   });
 
   it('uses the set_model_response workaround outside the Vertex AI variant', async () => {
