@@ -10,6 +10,7 @@ import {
   BaseLlmConnection,
   createSession,
   FunctionTool,
+  Gemini,
   InvocationContext,
   LlmAgent,
   LlmRequest,
@@ -195,12 +196,15 @@ describe('InstructionsLlmRequestProcessor', () => {
     });
 
     async function runWithOutputSchema(options: {
-      model: string;
+      model: string | BaseLlm;
       withTools: boolean;
     }): Promise<LlmRequest> {
       const agent = new LlmAgent({
         name: 'test_agent',
-        model: new MockLlm({model: options.model}),
+        model:
+          typeof options.model === 'string'
+            ? new MockLlm({model: options.model})
+            : options.model,
         instruction: 'Base instruction',
         outputSchema: OUTPUT_SCHEMA,
         tools: options.withTools
@@ -256,6 +260,44 @@ describe('InstructionsLlmRequestProcessor', () => {
       );
       expect(llmRequest.config?.systemInstruction).toContain(
         'Base instruction',
+      );
+    });
+
+    it('should not append set_model_response instruction for a Gemini({ vertexai: true }) 2.0+ instance when env var is unset', async () => {
+      vi.stubEnv(VERTEX_ENV_VAR, undefined);
+
+      const llmRequest = await runWithOutputSchema({
+        model: new Gemini({
+          model: 'gemini-2.5-flash',
+          vertexai: true,
+          project: 'test-project',
+          location: 'us-central1',
+        }),
+        withTools: true,
+      });
+
+      expect(llmRequest.config?.systemInstruction).not.toContain(
+        'set_model_response',
+      );
+      expect(llmRequest.config?.systemInstruction).toContain(
+        'Base instruction',
+      );
+    });
+
+    it('should append set_model_response instruction for a Gemini({ vertexai: false }) instance even when env var is true', async () => {
+      vi.stubEnv(VERTEX_ENV_VAR, 'true');
+
+      const llmRequest = await runWithOutputSchema({
+        model: new Gemini({
+          model: 'gemini-2.5-flash',
+          vertexai: false,
+          apiKey: 'test-key',
+        }),
+        withTools: true,
+      });
+
+      expect(llmRequest.config?.systemInstruction).toContain(
+        SET_MODEL_RESPONSE_INSTRUCTION,
       );
     });
 

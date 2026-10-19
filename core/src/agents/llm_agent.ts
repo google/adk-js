@@ -1574,7 +1574,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     } else if (
       this.outputSchema &&
       allTools.length > 0 &&
-      !canUseOutputSchemaWithTools(this.canonicalModel.model)
+      !canUseOutputSchemaWithTools(this.canonicalModel)
     ) {
       const setModelResponseTool = new FunctionTool({
         name: 'set_model_response',
