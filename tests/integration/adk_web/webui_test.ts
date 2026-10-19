@@ -14,6 +14,20 @@ import {AdkTsApiServer as AdkCliApiServer} from '../test_api_server.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+/**
+ * Budget (ms) for `beforeAll`: the CLI case boots the server as a child
+ * process.
+ */
+const SERVER_START_TIMEOUT = 20000;
+
+/**
+ * Budget (ms) for `afterAll`: `stop()` is `http.Server.close()`, which settles
+ * only once every open connection has drained. Stated explicitly so a socket
+ * that never closes fails fast here, rather than on whatever hook budget the
+ * `integration` project supplies.
+ */
+const SERVER_STOP_TIMEOUT = 10000;
+
 describe('WebUI Integration Test', () => {
   describe.each([
     {
@@ -42,13 +56,13 @@ describe('WebUI Integration Test', () => {
         });
         await server.start();
         url = server.url;
-      }, 20000);
+      }, SERVER_START_TIMEOUT);
 
       afterAll(async () => {
         if (server) {
           await server.stop();
         }
-      });
+      }, SERVER_STOP_TIMEOUT);
 
       it('should load the WebUI correctly while running the agent from adk CLI', async () => {
         return new Promise<void>((resolve, reject) => {
