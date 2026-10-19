@@ -256,9 +256,13 @@ export async function validateSkillDir(skillDir: string): Promise<string[]> {
     if (!stats.isDirectory()) {
       return [`'${resolvedDir}' is not a directory.`];
     }
-  } catch {
-    // Any stat failure reports "does not exist", matching adk-python Path.exists().
-    return [`Directory '${resolvedDir}' does not exist.`];
+  } catch (e: unknown) {
+    const code = (e as {code?: string}).code;
+    // ENOTDIR means a parent path component is a file, so the path is absent too.
+    if (code === 'ENOENT' || code === 'ENOTDIR') {
+      return [`Directory '${resolvedDir}' does not exist.`];
+    }
+    return [`Failed to access '${resolvedDir}': ${(e as Error).message}`];
   }
 
   let skill;

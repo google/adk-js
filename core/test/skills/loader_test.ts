@@ -346,6 +346,42 @@ Instructions`,
       await fs.rm(tempDir, {recursive: true, force: true});
     });
 
+    it('reports a parent path that is a file as missing', async () => {
+      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-skill-test-'));
+      const filePath = path.join(tempDir, 'file');
+      await fs.writeFile(filePath, 'not a directory');
+      const testPath = path.join(filePath, 'test-skill');
+
+      const problems = await validateSkillDir(testPath);
+      expect(problems).toEqual([
+        `Directory '${path.resolve(testPath)}' does not exist.`,
+      ]);
+
+      await fs.rm(tempDir, {recursive: true, force: true});
+    });
+
+    it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+      'reports an access error instead of a missing directory',
+      async () => {
+        tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-skill-test-'));
+        const lockedDir = path.join(tempDir, 'locked');
+        await fs.mkdir(lockedDir);
+        const testPath = path.join(lockedDir, 'test-skill');
+        await fs.chmod(lockedDir, 0o000);
+
+        try {
+          const problems = await validateSkillDir(testPath);
+          expect(problems.length).toBe(1);
+          expect(problems[0]).toMatch(
+            new RegExp(`^Failed to access '.*test-skill': EACCES`),
+          );
+        } finally {
+          await fs.chmod(lockedDir, 0o755);
+          await fs.rm(tempDir, {recursive: true, force: true});
+        }
+      },
+    );
+
     it('returns problem if SKILL.md missing', async () => {
       tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-skill-test-'));
       const skillDir = path.join(tempDir, 'test-skill');
