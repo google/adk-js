@@ -607,5 +607,57 @@ describe('OperationParser', () => {
       expect(params[0].paramSchema.description).toBeUndefined();
       expect(params[1].paramSchema.description).toBeUndefined();
     });
+
+    it('should copy a non-empty parameter description when schema.description is an empty string', () => {
+      const inputSchema: OpenAPIV3.SchemaObject = {
+        type: 'string',
+        description: '',
+      };
+      const op: OpenAPIV3.OperationObject = {
+        operationId: 'searchItems',
+        parameters: [
+          {
+            name: 'queryText',
+            in: 'query',
+            description: 'Search query text',
+            schema: inputSchema,
+          },
+        ],
+        responses: {},
+      };
+
+      const parser = new OperationParser(op);
+      const params = parser.getParameters();
+
+      expect(params[0].paramSchema.description).toBe('Search query text');
+      expect(parser.getJsonSchema().properties).toEqual({
+        query_text: {
+          type: 'string',
+          description: 'Search query text',
+        },
+      });
+      expect(inputSchema.description).toBe('');
+    });
+
+    it('should default required to false when param.required is null in JSON input', () => {
+      const parser = new OperationParser(
+        JSON.stringify({
+          operationId: 'searchItems',
+          parameters: [
+            {
+              name: 'queryText',
+              in: 'query',
+              required: null,
+              schema: {type: 'string'},
+            },
+          ],
+          responses: {},
+        }),
+      );
+      const params = parser.getParameters();
+
+      expect(params[0].required).toBe(false);
+      expect(parser.getJsonSchema().required).toEqual([]);
+    });
   });
 });
