@@ -75,12 +75,14 @@ export default defineConfig({
     reporters,
     // Keep test stdout for failures only; a passing run has nothing to say.
     silent: process.env.CI ? 'passed-only' : false,
+    isolate: false,
     execArgv: EXEC_ARGV,
     projects: [
       {
         test: {
           name: 'unit:core',
           environment: 'node',
+          isolate: false,
           execArgv: EXEC_ARGV,
           setupFiles: SETUP_FILES,
           testTimeout: UNIT_TEST_TIMEOUT_MS,
@@ -98,6 +100,7 @@ export default defineConfig({
         test: {
           name: 'unit:dev',
           environment: 'node',
+          isolate: false,
           execArgv: EXEC_ARGV,
           setupFiles: SETUP_FILES,
           testTimeout: UNIT_TEST_TIMEOUT_MS,
@@ -123,6 +126,7 @@ export default defineConfig({
         test: {
           name: 'unit:integrations',
           environment: 'node',
+          isolate: false,
           execArgv: EXEC_ARGV,
           setupFiles: SETUP_FILES,
           testTimeout: UNIT_TEST_TIMEOUT_MS,
@@ -140,6 +144,7 @@ export default defineConfig({
         test: {
           name: 'integration',
           environment: 'node',
+          isolate: false,
           execArgv: EXEC_ARGV,
           setupFiles: SETUP_FILES,
           hookTimeout: INTEGRATION_HOOK_TIMEOUT_MS,
@@ -159,6 +164,7 @@ export default defineConfig({
         test: {
           name: 'e2e',
           environment: 'node',
+          isolate: false,
           execArgv: EXEC_ARGV,
           setupFiles: SETUP_FILES,
           testTimeout: UNIT_TEST_TIMEOUT_MS,
