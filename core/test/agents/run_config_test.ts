@@ -77,4 +77,17 @@ describe('createRunConfig', () => {
       createRunConfig({maxLlmCalls: Number.MAX_SAFE_INTEGER + 1}),
     ).toThrow();
   });
+
+  describe('inputAudioTranscription', () => {
+    it('defaults inputAudioTranscription to undefined', () => {
+      const config = createRunConfig();
+      expect(config.inputAudioTranscription).toBeUndefined();
+    });
+
+    it('preserves a custom inputAudioTranscription configuration', () => {
+      const inputAudioTranscription = {};
+      const config = createRunConfig({inputAudioTranscription});
+      expect(config.inputAudioTranscription).toBe(inputAudioTranscription);
+    });
+  });
 });
