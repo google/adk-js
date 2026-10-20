@@ -9,6 +9,8 @@ import {
   Event,
   InvocationContext,
   createEvent,
+  createEventActions,
+  functionsExportedForTestingOnly,
 } from '@google/adk';
 import {Mock, beforeEach, describe, expect, it, vi} from 'vitest';
 import {REQUEST_CREDENTIAL_FUNCTION_CALL_NAME} from '../../src/agents/functions.js';
@@ -345,6 +347,97 @@ describe('AuthPreprocessor', () => {
       id: 'mockResponseEvent',
       author: 'system',
     });
+
+    result = await generator.next();
+    expect(result.done).toBe(true);
+  });
+
+  it('processes adk_request_credential responses from generateAuthEvent and resumes tools', async () => {
+    storeCredential.mockClear();
+    const baseContext = {
+      invocationId: 'inv-auth-event',
+      agent: {
+        [LLM_AGENT_SYMBOL]: true,
+        name: 'agent',
+        canonicalTools: vi.fn().mockResolvedValue([{name: 'someTool'}]),
+        canonicalBeforeToolCallbacks: [],
+        canonicalAfterToolCallbacks: [],
+      },
+      session: {
+        state: {},
+        events: [],
+      },
+    } as unknown as InvocationContext;
+
+    const functionResponseWithAuthRequest = createEvent({
+      invocationId: 'inv-auth-event',
+      author: 'agent',
+      actions: createEventActions({
+        requestedAuthConfigs: {
+          toolFc1: {
+            credentialKey: 'testKey',
+            authScheme: {type: 'apiKey', in: 'header', name: 'X-API-Key'},
+          },
+        },
+      }),
+    });
+
+    const authRequestEvent = functionsExportedForTestingOnly.generateAuthEvent(
+      baseContext,
+      functionResponseWithAuthRequest,
+    );
+    expect(authRequestEvent).toBeDefined();
+    const requestFc = authRequestEvent?.content?.parts?.[0]?.functionCall;
+    expect(requestFc?.id).toBeDefined();
+    expect(requestFc?.args).toEqual({
+      function_call_id: 'toolFc1',
+      auth_config: {
+        credentialKey: 'testKey',
+        authScheme: API_KEY_SCHEME,
+      },
+    });
+
+    baseContext.session.events = [
+      createEvent({
+        author: 'agent',
+        content: {
+          parts: [
+            {
+              functionCall: {
+                id: 'toolFc1',
+                name: 'someTool',
+                args: {},
+              },
+            },
+          ],
+        },
+      }),
+      authRequestEvent as Event,
+      createEvent({
+        author: 'user',
+        content: {
+          parts: [
+            {
+              functionResponse: {
+                id: requestFc?.id,
+                name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+                response: CREDENTIAL_RESPONSE,
+              },
+            },
+          ],
+        },
+      }),
+    ];
+
+    const generator = AUTH_PREPROCESSOR.runAsync(baseContext);
+    let result = await generator.next();
+
+    expect(result.done).toBe(false);
+    expect(result.value).toEqual({
+      id: 'mockResponseEvent',
+      author: 'system',
+    });
+    expect(storeCredential).toHaveBeenCalledTimes(1);
 
     result = await generator.next();
     expect(result.done).toBe(true);
