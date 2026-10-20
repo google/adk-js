@@ -6,12 +6,27 @@
 
 import {FunctionDeclaration, Type} from '@google/genai';
 
+import type {MemoryEntry} from '../memory/memory_entry.js';
 import {appendInstructions} from '../models/llm_request.js';
 import {
   BaseTool,
   RunAsyncToolRequest,
   ToolProcessLlmRequest,
 } from './base_tool.js';
+
+/**
+ * Response returned by {@link LoadMemoryTool}.
+ */
+export interface LoadMemoryResponse {
+  memories: Array<
+    | MemoryEntry
+    | {
+        content: string;
+        author?: string;
+        timestamp?: string;
+      }
+  >;
+}
 
 /**
  * A tool that loads the memory for the current user.
