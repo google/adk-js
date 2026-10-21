@@ -176,9 +176,10 @@ export async function deployToCloudRun(options: DeployToCloudRunOptions) {
     ? path.dirname(options.agentPath)
     : options.agentPath;
   const appName =
-    options.appName || isFileProvided
+    options.appName ||
+    (isFileProvided
       ? path.parse(options.agentPath).name
-      : path.basename(options.agentPath);
+      : path.basename(options.agentPath));
 
   console.info('Starting deployment to Cloud Run...');
 
@@ -207,8 +208,11 @@ export async function deployToCloudRun(options: DeployToCloudRunOptions) {
       withUi: options.withUi,
       logLevel: options.logLevel,
       allowOrigins: options.allowOrigins,
+      sessionServiceUri: options.sessionServiceUri,
+      artifactServiceUri: options.artifactServiceUri,
       otelToCloud: options.otelToCloud,
       a2a: options.a2a,
+      agentFileLoadOptions: options.agentFileLoadOptions,
     });
 
     console.info('Deploying to Cloud Run...');

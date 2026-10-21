@@ -22,6 +22,24 @@ import {ChildProcessWithoutNullStreams} from 'node:child_process';
 import {expect} from 'vitest';
 
 /**
+ * Multiplier applied to the subprocess-bound per-test budgets under
+ * `tests/integration`.
+ *
+ * These suites spend nearly all of their time in spawned subprocesses -- an
+ * `npm install` per fixture, `npm run build`, an agent driven over stdio -- and
+ * process spawn plus filesystem work is markedly slower on the `windows-latest`
+ * runner: across recent `validation.yaml` runs the same job took 416-539s
+ * there against 264-342s on ubuntu-latest. Budgets sized on Linux therefore
+ * expire on Windows alone, which surfaces as a flake that a plain re-run
+ * clears.
+ *
+ * 2x covers the worst platform ratio measured with headroom, and leaves the
+ * ubuntu-latest and macos-latest budgets untouched so a genuine hang still
+ * fails fast there. Widen this one number rather than a per-suite literal.
+ */
+export const PLATFORM_TIMEOUT_MULTIPLIER = process.platform === 'win32' ? 2 : 1;
+
+/**
  * Represents a raw generate content response.
  */
 export interface RawGenerateContentResponse {
@@ -268,12 +286,8 @@ export abstract class BaseTestServer {
 
   constructor(host: string, port?: number) {
     this.host = host;
-    this.port = port || BaseTestServer.getRandomPort();
+    this.port = port ?? 0;
     this.url = `http://${this.host}:${this.port}`;
-  }
-
-  static getRandomPort(): number {
-    return 40000 + Math.floor(Math.random() * 10000);
   }
 
   protected async startProcess({
@@ -299,8 +313,10 @@ export abstract class BaseTestServer {
         const message = data.toString();
         stdoutChunks.push(message);
 
-        // Find URL like http://localhost:12345
-        const urlMatch = message.match(/http:\/\/localhost:([0-9]+)/i);
+        // Find URL like http://localhost:12345 or http://127.0.0.1:12345
+        const urlMatch = message.match(
+          /http:\/\/(?:localhost|127\.0\.0\.1):([0-9]+)/i,
+        );
         if (urlMatch && urlMatch[1]) {
           const parsedPort = parseInt(urlMatch[1], 10);
           if (parsedPort > 0) {

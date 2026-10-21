@@ -5,6 +5,7 @@
  */
 
 import {
+  actionRequest,
   ApplicationIntegrationToolset,
   ApplicationIntegrationToolsetOptions,
   AuthCredentialTypes,
@@ -13,7 +14,9 @@ import {
   ConnectorSpec,
   Context,
   createSession,
+  getActionOperation,
   IntegrationClient,
+  IntegrationConnectorTool,
   InvocationContext,
   listOperation,
   listOperationRequest,
@@ -24,12 +27,14 @@ import {
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 vi.mock('google-auth-library', () => ({
-  GoogleAuth: vi.fn(() => ({
-    getAccessToken: vi.fn().mockResolvedValue('test_token'),
-    getClient: vi.fn().mockResolvedValue({
-      getAccessToken: vi.fn().mockResolvedValue({token: 'tool_token'}),
-    }),
-  })),
+  GoogleAuth: vi.fn(function () {
+    return {
+      getAccessToken: vi.fn().mockResolvedValue('test_token'),
+      getClient: vi.fn().mockResolvedValue({
+        getAccessToken: vi.fn().mockResolvedValue({token: 'tool_token'}),
+      }),
+    };
+  }),
 }));
 
 const PROJECT = 'test-project';
@@ -57,8 +62,16 @@ function connectionSpec(): ConnectorSpec {
   return spec;
 }
 
-function connectionInstructions(serviceName: string, host: string): string {
-  return `ALWAYS use serviceName = ${serviceName}, host = ${host} and the connection name = projects/${PROJECT}/locations/${LOCATION}/connections/${CONNECTION} when using this tool. DO NOT ask the user for these values as you already have those.`;
+function actionSpec(): ConnectorSpec {
+  const spec = structuredClone(CONNECTOR_BASE_SPEC);
+  spec.paths['/v2/execute#ExecuteCustomQuery'] = getActionOperation({
+    action: 'ExecuteCustomQuery',
+    operation: 'EXECUTE_ACTION',
+    actionDisplayName: 'ExecuteCustomQuery',
+  });
+  spec.components.schemas['ExecuteCustomQuery_Request'] =
+    actionRequest('ExecuteCustomQuery');
+  return spec;
 }
 
 function toolset(
@@ -143,11 +156,12 @@ describe('ApplicationIntegrationToolset', () => {
   });
 
   describe('connection mode', () => {
-    it('adds the connection details to the instructions for entity operations', async () => {
+    it('passes toolName and toolInstructions and wraps entity tools in IntegrationConnectorTool', async () => {
       vi.spyOn(
         ConnectionsClient.prototype,
         'getConnectionDetails',
       ).mockResolvedValue({
+        name: `projects/${PROJECT}/locations/${LOCATION}/connections/${CONNECTION}`,
         serviceName: 'test-service',
         host: 'test.host',
         authOverrideEnabled: false,
@@ -160,7 +174,7 @@ describe('ApplicationIntegrationToolset', () => {
         'getOpenApiSpecForIntegration',
       );
 
-      await toolset({
+      const tools = await toolset({
         connection: CONNECTION,
         entityOperations: {Issues: ['LIST', 'GET']},
         toolName: 'My Connection Tool',
@@ -169,35 +183,53 @@ describe('ApplicationIntegrationToolset', () => {
 
       expect(connectionSpy).toHaveBeenCalledExactlyOnceWith(
         'My Connection Tool',
-        'Use this tool to manage entities.' +
-          connectionInstructions('test-service', 'test.host'),
+        'Use this tool to manage entities.',
       );
       expect(integrationSpy).not.toHaveBeenCalled();
+      expect(tools).toHaveLength(1);
+      expect(tools[0]).toBeInstanceOf(IntegrationConnectorTool);
+      expect(tools[0]).toEqual(
+        expect.objectContaining({
+          name: 'list_issues',
+          entity: 'Issues',
+          operation: 'LIST_ENTITIES',
+        }),
+      );
     });
 
-    it('adds the connection details to the instructions for actions', async () => {
+    it('passes toolName and toolInstructions and wraps action tools in IntegrationConnectorTool', async () => {
       vi.spyOn(
         ConnectionsClient.prototype,
         'getConnectionDetails',
       ).mockResolvedValue({
+        name: `projects/${PROJECT}/locations/${LOCATION}/connections/${CONNECTION}`,
         serviceName: 'custom-service',
         host: 'custom.host',
         authOverrideEnabled: false,
       });
       const connectionSpy = vi
         .spyOn(IntegrationClient.prototype, 'getOpenApiSpecForConnection')
-        .mockResolvedValue(connectionSpec());
+        .mockResolvedValue(actionSpec());
 
-      await toolset({
+      const tools = await toolset({
         connection: CONNECTION,
-        actions: ['create', 'delete'],
+        actions: ['ExecuteCustomQuery'],
         toolName: 'My Actions Tool',
         toolInstructions: 'Use this tool.',
       }).getTools();
 
       expect(connectionSpy).toHaveBeenCalledExactlyOnceWith(
         'My Actions Tool',
-        'Use this tool.ALWAYS use serviceName = custom-service, host = custom.host and the connection name = projects/test-project/locations/us-central1/connections/test-connection when using this tool. DO NOT ask the user for these values as you already have those.',
+        'Use this tool.',
+      );
+      expect(tools).toHaveLength(1);
+      expect(tools[0]).toBeInstanceOf(IntegrationConnectorTool);
+      expect(tools[0]).toEqual(
+        expect.objectContaining({
+          name: 'execute_custom_query',
+          action: 'ExecuteCustomQuery',
+          operation: 'EXECUTE_ACTION',
+        }),
       );
     });
 
@@ -206,6 +238,7 @@ describe('ApplicationIntegrationToolset', () => {
         ConnectionsClient.prototype,
         'getConnectionDetails',
       ).mockResolvedValue({
+        name: `projects/${PROJECT}/locations/${LOCATION}/connections/${CONNECTION}`,
         serviceName: 'svc',
         host: '',
         authOverrideEnabled: false,
@@ -216,10 +249,7 @@ describe('ApplicationIntegrationToolset', () => {
 
       await toolset({connection: CONNECTION, actions: ['a']}).getTools();
 
-      expect(connectionSpy).toHaveBeenCalledExactlyOnceWith(
-        '',
-        connectionInstructions('svc', ''),
-      );
+      expect(connectionSpy).toHaveBeenCalledExactlyOnceWith('', '');
     });
   });
 
@@ -391,7 +421,10 @@ describe('ApplicationIntegrationToolset', () => {
     it('turns a connector spec into one tool per operation', async () => {
       const connectionUrl = `https://connectors.googleapis.com/v1/projects/${PROJECT}/locations/${LOCATION}/connections/${CONNECTION}`;
       const routes: Record<string, unknown> = {
-        [`${connectionUrl}?view=BASIC`]: {serviceDirectory: 'test-service'},
+        [`${connectionUrl}?view=BASIC`]: {
+          name: `projects/${PROJECT}/locations/${LOCATION}/connections/${CONNECTION}`,
+          serviceDirectory: 'test-service',
+        },
         [`${connectionUrl}/connectionSchemaMetadata:getEntityType?entityId=Issues`]:
           {name: 'operations/entity'},
         'https://connectors.googleapis.com/v1/operations/entity': {
@@ -428,41 +461,27 @@ describe('ApplicationIntegrationToolset', () => {
         entityOperations: {Issues: ['LIST']},
         actions: ['ExecuteCustomQuery'],
         toolName: 'tracker',
+        toolInstructions: 'Custom instruction.',
       }).getTools();
 
       expect(tools.map((tool) => tool.name)).toEqual([
         'tracker_list_issues',
         'tracker_execute_custom_query',
       ]);
+      expect(tools[0]).toBeInstanceOf(IntegrationConnectorTool);
+      expect(tools[1]).toBeInstanceOf(IntegrationConnectorTool);
       expect(tools[0].description).toContain(
-        'Use this tool with entity = "Issues" and operation = "LIST_ENTITIES" only.',
+        'Returns the list of Issues data.',
       );
-      expect(tools[0].description).toContain(
-        connectionInstructions('test-service', ''),
-      );
+      expect(tools[0].description).toContain('Custom instruction.');
 
       expect(
         Object.keys(tools[0]._getDeclaration()?.parameters?.properties ?? {}),
-      ).toEqual([
-        'filter_clause',
-        'page_size',
-        'page_token',
-        'operation',
-        'connection_name',
-        'service_name',
-        'host',
-        'entity',
-      ]);
+      ).toEqual(['filter_clause', 'page_size', 'page_token']);
       fetchMock.mockReset();
       fetchMock.mockResolvedValue(jsonResponse({connectorOutputPayload: []}));
       await tools[0].runAsync({
-        args: {
-          operation: 'LIST_ENTITIES',
-          entity: 'Issues',
-          connection_name: `projects/${PROJECT}/locations/${LOCATION}/connections/${CONNECTION}`,
-          service_name: 'test-service',
-          host: '',
-        },
+        args: {},
         toolContext: toolContext(),
       });
 
@@ -483,6 +502,71 @@ describe('ApplicationIntegrationToolset', () => {
       expect(JSON.parse(String(init?.body))).toEqual({
         operation: 'LIST_ENTITIES',
         entity: 'Issues',
+        connectionName: `projects/${PROJECT}/locations/${LOCATION}/connections/${CONNECTION}`,
+        serviceName: 'test-service',
+        host: '',
+      });
+    });
+
+    it('includes filter_clause in update and delete tool declarations and request bodies', async () => {
+      const connectionUrl = `https://connectors.googleapis.com/v1/projects/${PROJECT}/locations/${LOCATION}/connections/${CONNECTION}`;
+      const routes: Record<string, unknown> = {
+        [`${connectionUrl}?view=BASIC`]: {
+          name: `projects/${PROJECT}/locations/${LOCATION}/connections/${CONNECTION}`,
+          serviceDirectory: 'test-service',
+        },
+        [`${connectionUrl}/connectionSchemaMetadata:getEntityType?entityId=Issues`]:
+          {name: 'operations/entity'},
+        'https://connectors.googleapis.com/v1/operations/entity': {
+          done: true,
+          response: {
+            jsonSchema: {
+              type: 'object',
+              properties: {summary: {type: 'string'}},
+            },
+            operations: ['UPDATE', 'DELETE'],
+          },
+        },
+      };
+      fetchMock.mockImplementation(async (input) => {
+        const url = String(input);
+        if (!(url in routes)) {
+          throw new Error(`No route for ${url}`);
+        }
+        return jsonResponse(routes[url]);
+      });
+
+      const tools = await toolset({
+        connection: CONNECTION,
+        entityOperations: {Issues: ['UPDATE', 'DELETE']},
+        toolName: 'tracker',
+      }).getTools();
+
+      expect(tools.map((tool) => tool.name)).toEqual([
+        'tracker_update_issues',
+        'tracker_delete_issues',
+      ]);
+      expect(
+        Object.keys(tools[0]._getDeclaration()?.parameters?.properties ?? {}),
+      ).toEqual(['connector_input_payload', 'entity_id', 'filter_clause']);
+      expect(
+        Object.keys(tools[1]._getDeclaration()?.parameters?.properties ?? {}),
+      ).toEqual(['entity_id', 'filter_clause']);
+
+      fetchMock.mockReset();
+      fetchMock.mockResolvedValue(jsonResponse({connectorOutputPayload: {}}));
+      await tools[1].runAsync({
+        args: {entity_id: 'issue-1', filter_clause: "status='closed'"},
+        toolContext: toolContext(),
+      });
+
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const [, init] = fetchMock.mock.calls[0];
+      expect(JSON.parse(String(init?.body))).toEqual({
+        operation: 'DELETE_ENTITY',
+        entity: 'Issues',
+        entityId: 'issue-1',
+        filterClause: "status='closed'",
         connectionName: `projects/${PROJECT}/locations/${LOCATION}/connections/${CONNECTION}`,
         serviceName: 'test-service',
         host: '',

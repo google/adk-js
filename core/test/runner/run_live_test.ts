@@ -18,6 +18,7 @@ import {
   LlmResponse,
   RunAsyncToolRequest,
   Runner,
+  SequentialAgent,
 } from '@google/adk';
 import {Blob, Content, FunctionDeclaration, Modality} from '@google/genai';
 import {beforeEach, describe, expect, it} from 'vitest';
@@ -1115,6 +1116,96 @@ describe('Runner.runLive', () => {
     }).rejects.toThrow('Simulated outbound connection error on empty receive');
 
     expect(llm.connection!.closed).toBe(true);
+  });
+
+  it('executes a SequentialAgent root agent across sub-agents in live mode', async () => {
+    const sub1Content: Content = {
+      role: 'model',
+      parts: [{text: 'step 1 done'}],
+    };
+    const sub2Content: Content = {
+      role: 'model',
+      parts: [{text: 'step 2 done'}],
+    };
+    const sub1Llm = new FakeLiveLlm([
+      {content: sub1Content},
+      {turnComplete: true},
+    ]);
+    const sub2Llm = new FakeLiveLlm([
+      {content: sub2Content},
+      {turnComplete: true},
+    ]);
+    const sub1 = new LlmAgent({
+      name: 'sub1',
+      model: sub1Llm,
+      instruction: 'First step.',
+    });
+    const sub2 = new LlmAgent({
+      name: 'sub2',
+      model: sub2Llm,
+      instruction: 'Second step.',
+    });
+    const sequentialAgent = new SequentialAgent({
+      name: 'seq_root',
+      subAgents: [sub1, sub2],
+    });
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: sequentialAgent,
+      sessionService,
+      artifactService,
+    });
+
+    const queue = new LiveRequestQueue();
+    queue.close();
+    const events: Event[] = [];
+    for await (const event of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+    })) {
+      events.push(event);
+    }
+
+    const contentEvents = events.filter((e) => e.content);
+    expect(contentEvents.map((e) => e.author)).toEqual(['sub1', 'sub2']);
+    expect(contentEvents.map((e) => e.content)).toEqual([
+      sub1Content,
+      sub2Content,
+    ]);
+    expect(sub1Llm.connection?.closed).toBe(true);
+    expect(sub2Llm.connection?.closed).toBe(true);
+  });
+
+  it('defaults inputAudioTranscription and outputAudioTranscription to empty objects when the root agent has sub-agents', async () => {
+    const parentLlm = new FakeLiveLlm([{turnComplete: true}]);
+    const childLlm = new FakeLiveLlm([{turnComplete: true}]);
+    const child = new LlmAgent({name: 'child', model: childLlm});
+    const parent = new LlmAgent({
+      name: 'parent',
+      model: parentLlm,
+      subAgents: [child],
+    });
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: parent,
+      sessionService,
+      artifactService,
+    });
+
+    const queue = new LiveRequestQueue();
+    queue.close();
+    for await (const _ of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+    })) {
+      // drain
+    }
+
+    const liveConfig = parentLlm.llmRequestSeen?.liveConnectConfig;
+    expect(liveConfig?.inputAudioTranscription).toEqual({});
+    expect(liveConfig?.outputAudioTranscription).toEqual({});
   });
 });
 

@@ -95,6 +95,15 @@ describe('core/package.json install weight', () => {
       Object.keys(pkg.peerDependencies).sort(),
     );
   });
+
+  it.each(Object.entries(pkg.dependencies))(
+    'declares the dependency %s with a semver range (%s)',
+    (_name, spec) => {
+      // Exact version pins prevent npm/Yarn from deduplicating shared packages
+      // (such as `@opentelemetry/api`) across co-consumers.
+      expect(spec).toMatch(/^[\^~><=]|x|\*/);
+    },
+  );
 });
 
 describe('core/package.json subpath exports', () => {
@@ -109,6 +118,7 @@ describe('core/package.json subpath exports', () => {
   it('exports the situational subsystems as their own entry points', () => {
     expect(subpaths.map(([subpath]) => subpath).sort()).toEqual([
       './a2a',
+      './agents/agent-engine',
       './artifacts/gcs',
       './sessions/database',
       './telemetry/gcp',

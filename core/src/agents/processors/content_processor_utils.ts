@@ -3,7 +3,7 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {Content, createUserContent} from '@google/genai';
+import {Content, createUserContent, Part} from '@google/genai';
 import {cloneDeep} from 'lodash-es';
 
 import {
@@ -80,11 +80,14 @@ export function getContents(
       continue;
     }
 
-    filteredEvents.push(
-      isEventFromAnotherAgent(agentName, event)
-        ? convertForeignEvent(event)
-        : event,
-    );
+    if (isEventFromAnotherAgent(agentName, event)) {
+      const converted = convertForeignEvent(event);
+      if (converted) {
+        filteredEvents.push(converted);
+      }
+    } else {
+      filteredEvents.push(event);
+    }
   }
 
   let resultEvents = rearrangeEventsForLatestFunctionResponse(filteredEvents);
@@ -190,7 +193,11 @@ export function getCurrentTurnContents(
     ) {
       continue;
     }
-    if (event.author === 'user' || isEventFromAnotherAgent(agentName, event)) {
+    if (
+      event.author === 'user' ||
+      (isEventFromAnotherAgent(agentName, event) &&
+        event.content!.parts?.some(isVisibleForeignPart))
+    ) {
       return getContents(
         events.slice(turnStart(events, i)),
         agentName,
@@ -295,6 +302,21 @@ function isEventFromAnotherAgent(agentName: string, event: Event): boolean {
 }
 
 /**
+ * Whether a part from another agent's event produces visible context.
+ *
+ * Thought parts and empty-text parts (such as trailing `{text: '',
+ * thoughtSignature}` chunks from streamed responses) are excluded unless they
+ * carry a `functionCall` or `functionResponse`, which are summarized as plain
+ * text without thought metadata.
+ */
+function isVisibleForeignPart(part: Part): boolean {
+  if (part.functionCall || part.functionResponse) {
+    return true;
+  }
+  return !part.thought && part.text !== '';
+}
+
+/**
  * Formats an event authored by another agent to a user-content event.
  *
  * This is to provide another agent's output as context to the current agent,
@@ -303,9 +325,10 @@ function isEventFromAnotherAgent(agentName: string, event: Event): boolean {
  *
  * @param event The event to convert.
  *
- * @returns The converted event.
+ * @returns The converted event, or `undefined` if no parts remain after
+ *     excluding invisible parts.
  */
-function convertForeignEvent(event: Event): Event {
+function convertForeignEvent(event: Event): Event | undefined {
   if (!event.content?.parts?.length) {
     return event;
   }
@@ -320,9 +343,14 @@ function convertForeignEvent(event: Event): Event {
   };
 
   for (const part of event.content.parts) {
-    // Exclude thoughts from the context.
+    // Exclude thoughts and empty-text signature parts from the context, except
+    // function calls and responses which are summarized as plain text without
+    // thought metadata.
     // TODO - b/425992518: filtring should be configurable.
-    if (part.text && !part.thought) {
+    if (!isVisibleForeignPart(part)) {
+      continue;
+    }
+    if (part.text) {
       content.parts?.push({
         text: `[${event.author}] said: ${part.text}`,
       });
@@ -339,8 +367,19 @@ function convertForeignEvent(event: Event): Event {
         )}`,
       });
     } else {
-      content.parts?.push(cloneDeep(part));
+      const {
+        thought: _thought,
+        thoughtSignature: _thoughtSignature,
+        ...rest
+      } = part;
+      content.parts?.push(cloneDeep(rest));
     }
+  }
+
+  // Only the "For context:" preamble is present when all parts were filtered out.
+  const preambleOnly = content.parts!.length === 1;
+  if (preambleOnly) {
+    return undefined;
   }
 
   return createEvent({

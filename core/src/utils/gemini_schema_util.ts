@@ -7,7 +7,7 @@
 import {Schema, Type} from '@google/genai';
 import {toSnakeCaseName} from './case_utils.js';
 
-type MCPToolSchema = {
+export type MCPToolSchema = {
   type: 'object';
   properties?: Record<string, unknown>;
   required?: string[];
@@ -250,6 +250,34 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/**
+ * Normalizes a JSON Schema `type` value into a single non-null type name and a
+ * `nullable` flag.
+ *
+ * When `type` is an array containing multiple non-null types, the first
+ * non-null entry is selected as the primary Gemini schema type.
+ */
+export function normalizeJsonSchemaType(
+  jsonSchemaType?: unknown,
+): [string | undefined, boolean] {
+  if (typeof jsonSchemaType === 'string') {
+    if (jsonSchemaType === 'null') {
+      return [undefined, true];
+    }
+    return [jsonSchemaType, false];
+  }
+
+  if (Array.isArray(jsonSchemaType)) {
+    const nullable = jsonSchemaType.includes('null');
+    const nonNullTypes = jsonSchemaType.filter(
+      (t): t is string => typeof t === 'string' && t !== 'null',
+    );
+    return [nonNullTypes[0], nullable];
+  }
+
+  return [undefined, false];
+}
+
 function convertSchemaField(field: string, value: unknown): unknown {
   if (field === 'type') {
     return toGeminiType(typeof value === 'string' ? value : undefined);
@@ -294,6 +322,11 @@ export function openApiSchemaToGeminiSchema(
   }
 
   const source: Record<string, unknown> = {...openApiSchema};
+  const [schemaType, nullable] = normalizeJsonSchemaType(source['type']);
+  source['type'] = schemaType;
+  if (nullable) {
+    source['nullable'] = true;
+  }
   // A schema with no type at all fails with "one_of or any_of must specify a
   // type", so an untyped schema is treated as an object.
   if (!source['type']) {

@@ -19,17 +19,6 @@ import {
   reconstructNodeStates,
 } from '../../src/workflow/utils/rehydration_utils.js';
 
-// Mock the unreleased nodejs-vertexai package so the import resolves
-vi.mock('nodejs-vertexai', () => ({
-  SessionsClient: class {
-    create = vi.fn();
-    get = vi.fn();
-    list = vi.fn();
-    delete = vi.fn();
-    events = {append: vi.fn()};
-  },
-}));
-
 const clientConstructor = vi.hoisted(() => vi.fn());
 
 // The service imports Client from the package root, so the mock must target
@@ -554,6 +543,78 @@ describe('VertexAiSessionService', () => {
 
       expect(session?.events).toHaveLength(1);
       expect(session?.events[0].id).toBe('e2');
+    });
+
+    it('follows nextPageToken across all event pages and preserves filter config', async () => {
+      const afterTimestamp = 1700000000000;
+      const expectedFilter = `timestamp>="${new Date(
+        afterTimestamp,
+      ).toISOString()}"`;
+
+      mockClient.events.listInternal
+        .mockResolvedValueOnce({
+          sessionEvents: [
+            {name: 'projects/p/locations/l/sessions/s/events/e1'},
+            {name: 'projects/p/locations/l/sessions/s/events/e2'},
+          ],
+          nextPageToken: 'page-2-token',
+        })
+        .mockResolvedValueOnce({
+          // Page with omitted sessionEvents to cover empty fallback on follow-up page
+          nextPageToken: 'page-3-token',
+        })
+        .mockResolvedValueOnce({
+          sessionEvents: [
+            {name: 'projects/p/locations/l/sessions/s/events/e3'},
+          ],
+        });
+
+      const session = await service.getSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'my-session-id',
+        config: {afterTimestamp, numRecentEvents: 2},
+      });
+
+      expect(mockClient.events.listInternal).toHaveBeenCalledTimes(3);
+      expect(mockClient.events.listInternal).toHaveBeenNthCalledWith(1, {
+        name: 'reasoningEngines/12345/sessions/my-session-id',
+        config: {filter: expectedFilter},
+      });
+      expect(mockClient.events.listInternal).toHaveBeenNthCalledWith(2, {
+        name: 'reasoningEngines/12345/sessions/my-session-id',
+        config: {filter: expectedFilter, pageToken: 'page-2-token'},
+      });
+      expect(mockClient.events.listInternal).toHaveBeenNthCalledWith(3, {
+        name: 'reasoningEngines/12345/sessions/my-session-id',
+        config: {filter: expectedFilter, pageToken: 'page-3-token'},
+      });
+      expect(session?.events.map((e) => e.id)).toEqual(['e2', 'e3']);
+    });
+
+    it('does not fetch subsequent event pages if session does not belong to user', async () => {
+      const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+      mockClient.get.mockResolvedValue({
+        name: 'reasoningEngines/12345/sessions/my-session-id',
+        userId: 'otherUser',
+      });
+      mockClient.events.listInternal.mockResolvedValueOnce({
+        sessionEvents: [{name: 'projects/p/locations/l/sessions/s/events/e1'}],
+        nextPageToken: 'page-2-token',
+      });
+
+      await expect(
+        service.getSession({
+          appName: '12345',
+          userId: 'testUser',
+          sessionId: 'my-session-id',
+        }),
+      ).rejects.toThrow(
+        'Session my-session-id does not belong to user testUser',
+      );
+
+      expect(mockClient.events.listInternal).toHaveBeenCalledTimes(1);
+      loggerSpy.mockRestore();
     });
 
     it('returns undefined if session does not exist (code 5)', async () => {

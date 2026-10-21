@@ -21,6 +21,7 @@ import {
   InvocationContext,
   LlmAgent,
   OperationEndpoint,
+  OperationParser,
   PluginManager,
   RestApiTool,
   ToolAuthHandler,
@@ -35,7 +36,10 @@ import {
 } from '../../../src/tools/openapi_tool/rest_api_tool.js';
 // `openApiSchemaToGeminiSchema` is internal, like `toGeminiSchema`, so the test
 // imports it the way `core/test/utils/gemini_schema_util_test.ts` does.
-import {openApiSchemaToGeminiSchema} from '../../../src/utils/gemini_schema_util.js';
+import {
+  normalizeJsonSchemaType,
+  openApiSchemaToGeminiSchema,
+} from '../../../src/utils/gemini_schema_util.js';
 
 const sampleEndpoint: OperationEndpoint = {
   baseUrl: 'https://example.com',
@@ -801,5 +805,161 @@ describe('openApiSchemaToGeminiSchema parity with adk-python v0.1.0', () => {
 
     expect(geminiSchema?.type).toBe(Type.STRING);
     expect(geminiSchema?.format).toBeUndefined();
+  });
+});
+
+describe('openApiSchemaToGeminiSchema type array normalization', () => {
+  it('test_to_gemini_schema_array_string_types', () => {
+    const openApiSchema = {
+      type: 'object',
+      properties: {
+        boolean_field: {type: 'boolean'},
+        nonnullable_string: {type: ['string']},
+        nullable_string: {type: ['string', 'null']},
+        nullable_number: {type: ['null', 'integer']},
+        object_nullable: {type: 'null'},
+        multi_types_nullable: {type: ['string', 'null', 'integer']},
+        empty_default_object: {},
+      },
+    };
+
+    const geminiSchema = openApiSchemaToGeminiSchema(openApiSchema);
+
+    expect(geminiSchema).toBeDefined();
+    expect(geminiSchema?.type).toBe(Type.OBJECT);
+    expect(geminiSchema?.properties?.['boolean_field'].type).toBe(Type.BOOLEAN);
+
+    expect(geminiSchema?.properties?.['nonnullable_string'].type).toBe(
+      Type.STRING,
+    );
+    expect(
+      geminiSchema?.properties?.['nonnullable_string'].nullable,
+    ).toBeFalsy();
+
+    expect(geminiSchema?.properties?.['nullable_string'].type).toBe(
+      Type.STRING,
+    );
+    expect(geminiSchema?.properties?.['nullable_string'].nullable).toBe(true);
+
+    expect(geminiSchema?.properties?.['nullable_number'].type).toBe(
+      Type.INTEGER,
+    );
+    expect(geminiSchema?.properties?.['nullable_number'].nullable).toBe(true);
+
+    expect(geminiSchema?.properties?.['object_nullable'].type).toBe(
+      Type.OBJECT,
+    );
+    expect(geminiSchema?.properties?.['object_nullable'].nullable).toBe(true);
+
+    expect(geminiSchema?.properties?.['multi_types_nullable'].type).toBe(
+      Type.STRING,
+    );
+    expect(geminiSchema?.properties?.['multi_types_nullable'].nullable).toBe(
+      true,
+    );
+
+    expect(geminiSchema?.properties?.['empty_default_object'].type).toBe(
+      Type.OBJECT,
+    );
+    expect(
+      geminiSchema?.properties?.['empty_default_object'].nullable,
+    ).toBeFalsy();
+  });
+
+  it('normalizes JSON Schema type strings and arrays via normalizeJsonSchemaType', () => {
+    expect(normalizeJsonSchemaType(undefined)).toEqual([undefined, false]);
+    expect(normalizeJsonSchemaType(null)).toEqual([undefined, false]);
+    expect(normalizeJsonSchemaType('string')).toEqual(['string', false]);
+    expect(normalizeJsonSchemaType('null')).toEqual([undefined, true]);
+    expect(normalizeJsonSchemaType(['string'])).toEqual(['string', false]);
+    expect(normalizeJsonSchemaType(['string', 'null'])).toEqual([
+      'string',
+      true,
+    ]);
+    expect(normalizeJsonSchemaType(['null', 'integer'])).toEqual([
+      'integer',
+      true,
+    ]);
+    expect(normalizeJsonSchemaType(['null'])).toEqual([undefined, true]);
+    expect(normalizeJsonSchemaType([])).toEqual([undefined, false]);
+  });
+
+  it('normalizes nested object, array, and anyOf schemas with nullable type arrays', () => {
+    expect(openApiSchemaToGeminiSchema(undefined)).toBeUndefined();
+    expect(openApiSchemaToGeminiSchema(null)).toBeUndefined();
+
+    const geminiSchema = openApiSchemaToGeminiSchema({
+      type: 'object',
+      additionalProperties: {type: ['string', 'null']},
+      properties: {
+        type: {type: ['string', 'null']},
+        tags: {
+          type: 'array',
+          items: {type: ['string', 'null']},
+        },
+        choice: {
+          anyOf: [{type: ['integer', 'null']}, {type: 'boolean'}],
+        },
+        metadata: {
+          type: 'object',
+          properties: {
+            key1: {type: 'object'},
+            key2: {type: 'string'},
+          },
+        },
+      },
+    });
+
+    expect(geminiSchema?.properties?.['type']).toEqual({
+      type: Type.STRING,
+      nullable: true,
+    });
+    expect(geminiSchema?.properties?.['tags']).toEqual({
+      type: Type.ARRAY,
+      items: {
+        type: Type.STRING,
+        nullable: true,
+      },
+    });
+    expect(geminiSchema?.properties?.['choice']?.anyOf).toEqual([
+      {type: Type.INTEGER, nullable: true},
+      {type: Type.BOOLEAN},
+    ]);
+    expect(
+      geminiSchema?.properties?.['metadata']?.properties?.['key1']?.type,
+    ).toBe(Type.OBJECT);
+    expect(
+      geminiSchema?.properties?.['metadata']?.properties?.['key2']?.type,
+    ).toBe(Type.STRING);
+  });
+
+  it('normalizes nullable parameter type arrays in RestApiTool._getDeclaration()', () => {
+    const operationParser = new OperationParser({
+      operationId: 'searchItems',
+      parameters: [
+        {
+          name: 'filter',
+          in: 'query',
+          schema: {type: ['string', 'null']},
+        },
+      ],
+      responses: {},
+    });
+    const tool = new RestApiTool(
+      'search_items',
+      'Searches items',
+      sampleEndpoint,
+      {operationId: 'searchItems', responses: {}},
+      undefined,
+      undefined,
+      {operationParser},
+    );
+
+    const declaration = tool._getDeclaration();
+
+    expect(declaration.parameters?.properties?.['filter']).toEqual({
+      type: Type.STRING,
+      nullable: true,
+    });
   });
 });

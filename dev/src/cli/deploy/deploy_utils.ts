@@ -38,6 +38,17 @@ export const spawnAsync = (
 
 export const REQUIRED_NPM_PACKAGES = ['@google/adk'];
 
+/**
+ * Base image for the generated Dockerfile.
+ *
+ * Pinned to an explicit Node major instead of the floating `node:lts-alpine`
+ * tag. `lts` re-points to the next Node LTS line when it is promoted, so an
+ * unchanged agent rebuilt later would move to a Node major that this SDK was
+ * never exercised against, with no diff to show for it. Bump this deliberately
+ * when the SDK adopts a newer LTS.
+ */
+const NODE_BASE_IMAGE = 'node:24-alpine';
+
 export interface CreateDockerFileContentOptions {
   appName?: string;
   project: string;
@@ -50,6 +61,7 @@ export interface CreateDockerFileContentOptions {
   artifactServiceUri?: string;
   otelToCloud?: boolean;
   a2a?: boolean;
+  agentFileLoadOptions?: AgentFileOptions;
 }
 
 export interface BaseDeployOptions extends CreateDockerFileContentOptions {
@@ -61,7 +73,6 @@ export interface BaseDeployOptions extends CreateDockerFileContentOptions {
    */
   tempFolder?: string;
   adkVersion: string;
-  agentFileLoadOptions?: AgentFileOptions;
 }
 
 // Dockerfile instructions and the generated CMD's shell form have no
@@ -88,10 +99,16 @@ function assertSafeDockerfileToken(value: string, label: string): void {
 // any of them still breaks out of that instruction the same way appName
 // does, and once inside the CMD line they're read by /bin/sh at container
 // start, so shell metacharacters must be neutralized too.
+//
+// The rejected value is never echoed: these URIs routinely carry a password
+// in their userinfo and this message is logged by the deploy commands. The
+// index of the offending character is reported instead, which keeps a stray
+// trailing newline diagnosable.
 function assertNoDockerfileNewline(value: string, label: string): void {
-  if (/[\r\n]/.test(value)) {
+  const index = value.search(/[\r\n]/);
+  if (index !== -1) {
     throw new Error(
-      `Invalid ${label} ${JSON.stringify(value)}: must not contain newline characters to be safely embedded in the generated Dockerfile.`,
+      `Invalid ${label}: must not contain newline characters to be safely embedded in the generated Dockerfile (first one at index ${index}).`,
     );
   }
 }
@@ -113,6 +130,16 @@ export function createDockerFileContent(
 
   const adkCommand = options.withUi ? 'web' : 'api_server';
   const adkServerOptions = [`--port=${options.port}`, '--host=0.0.0.0'];
+
+  // Only skip the container's own compile/bundle when the agent file was
+  // already compiled/bundled before being copied into the image.
+  const stagedFileIsBundleOutput = options.agentFileLoadOptions
+    ? Boolean(options.agentFileLoadOptions.compile) ||
+      Boolean(options.agentFileLoadOptions.bundle)
+    : true;
+  if (stagedFileIsBundleOutput) {
+    adkServerOptions.push('--compile=false', '--bundle=false');
+  }
 
   if (options.logLevel) {
     assertNoDockerfileNewline(options.logLevel, 'logLevel');
@@ -149,7 +176,7 @@ export function createDockerFileContent(
   }
 
   return `
-FROM node:lts-alpine
+FROM ${NODE_BASE_IMAGE}
 WORKDIR /app
 
 # Create a non-root user. WORKDIR creates /app as root, so hand it to myuser:

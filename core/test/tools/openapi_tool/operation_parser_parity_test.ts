@@ -392,3 +392,32 @@ describe('OperationParser parity with adk-python v0.1.0', () => {
     expect(parser.getReturnTypeHint()).toBe('str');
   });
 });
+
+describe('OperationParser requestBody empty object', () => {
+  it('test_process_request_body_empty_object', () => {
+    const operation: OpenAPIV3.OperationObject = {
+      requestBody: {
+        content: {
+          'application/json': {
+            schema: {type: 'object'},
+          },
+        },
+      },
+      responses: {},
+    };
+
+    const parser = new OperationParser(operation);
+    const params = parser.getParameters();
+
+    // An object request body without declared properties falls back to a single
+    // whole-body parameter so callers can still pass an arbitrary JSON object.
+    expect(params).toHaveLength(1);
+    expect(params[0]).toMatchObject({
+      name: 'body',
+      originalName: '',
+      paramLocation: 'body',
+      paramSchema: {type: 'object'},
+      required: true,
+    });
+  });
+});

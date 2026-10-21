@@ -5,7 +5,7 @@
  */
 
 import {InvocationContext, ReadonlyContext} from '@google/adk';
-import {describe, expect, it, vi} from 'vitest';
+import {afterEach, describe, expect, it, vi} from 'vitest';
 import {injectSessionState} from '../../src/agents/instructions.js';
 
 /**
@@ -334,13 +334,99 @@ describe('injectSessionState', () => {
   it('serializes non-text Part artifact object to JSON string', async () => {
     const mockArtifactService = {
       loadArtifact: vi.fn().mockResolvedValue({
-        inlineData: {mimeType: 'text/plain', data: 'abc'},
+        inlineData: {mimeType: 'image/png', data: 'abc'},
       }),
     };
     const ctx = makeContext({}, mockArtifactService);
-    expect(await injectSessionState('Data: {artifact.data.bin}', ctx)).toBe(
-      'Data: {"inlineData":{"mimeType":"text/plain","data":"abc"}}',
+    expect(await injectSessionState('Data: {artifact.chart.png}', ctx)).toBe(
+      'Data: {"inlineData":{"mimeType":"image/png","data":"abc"}}',
     );
+  });
+
+  describe('inlineData artifacts', () => {
+    // Base64 of 'Buy milk.' and of the bytes 00 01 02 03.
+    const textArtifact = {
+      inlineData: {mimeType: 'text/plain', data: 'QnV5IG1pbGsu'},
+    };
+    const binaryArtifact = {
+      inlineData: {mimeType: 'application/octet-stream', data: 'AAECAw=='},
+    };
+    const binaryPlaceholder =
+      '[Binary artifact: notes, type: application/octet-stream, size: 0.0 KB. Content cannot be displayed inline.]';
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('injects the decoded text of a text artifact', async () => {
+      const mockArtifactService = {
+        loadArtifact: vi.fn().mockResolvedValue(textArtifact),
+      };
+      const ctx = makeContext({}, mockArtifactService);
+      expect(await injectSessionState('Notes: {artifact.notes}', ctx)).toBe(
+        'Notes: Buy milk.',
+      );
+    });
+
+    it('injects a placeholder for a binary artifact', async () => {
+      const mockArtifactService = {
+        loadArtifact: vi.fn().mockResolvedValue(binaryArtifact),
+      };
+      const ctx = makeContext({}, mockArtifactService);
+      expect(await injectSessionState('Notes: {artifact.notes}', ctx)).toBe(
+        `Notes: ${binaryPlaceholder}`,
+      );
+    });
+
+    // 1484 bytes encode to 1980 base64 characters, the last one padding.
+    // Counting the padding as data gives 1485 bytes, which rounds to 1.5 KB.
+    it('reports the decoded size of a binary artifact', async () => {
+      const mockArtifactService = {
+        loadArtifact: vi.fn().mockResolvedValue({
+          inlineData: {
+            mimeType: 'application/octet-stream',
+            data: Buffer.alloc(1484).toString('base64'),
+          },
+        }),
+      };
+      const ctx = makeContext({}, mockArtifactService);
+      expect(
+        await injectSessionState('Notes: {artifact.notes}', ctx),
+      ).toContain('size: 1.4 KB');
+    });
+
+    it('does not need Buffer in a browser', async () => {
+      vi.stubGlobal('window', {atob: globalThis.atob.bind(globalThis)});
+      vi.stubGlobal('Buffer', undefined);
+      const mockArtifactService = {
+        loadArtifact: vi
+          .fn()
+          .mockResolvedValueOnce(textArtifact)
+          .mockResolvedValueOnce(binaryArtifact),
+      };
+      const ctx = makeContext({}, mockArtifactService);
+      expect(await injectSessionState('Notes: {artifact.notes}', ctx)).toBe(
+        'Notes: Buy milk.',
+      );
+      expect(await injectSessionState('Notes: {artifact.notes}', ctx)).toBe(
+        `Notes: ${binaryPlaceholder}`,
+      );
+    });
+
+    // 'Pz8_' is '???' in URL-safe base64. Node's Buffer reads it, atob does not.
+    it('reads URL-safe base64 in a browser', async () => {
+      vi.stubGlobal('window', {atob: globalThis.atob.bind(globalThis)});
+      vi.stubGlobal('Buffer', undefined);
+      const mockArtifactService = {
+        loadArtifact: vi.fn().mockResolvedValue({
+          inlineData: {mimeType: 'text/plain', data: 'Pz8_'},
+        }),
+      };
+      const ctx = makeContext({}, mockArtifactService);
+      expect(await injectSessionState('Notes: {artifact.notes}', ctx)).toBe(
+        'Notes: ???',
+      );
+    });
   });
 
   describe('workflow field placeholders', () => {

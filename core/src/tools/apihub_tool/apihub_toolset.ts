@@ -4,14 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import {OpenAPIV3} from 'openapi-types';
 import {ReadonlyContext} from '../../agents/readonly_context.js';
 import {AuthCredential} from '../../auth/auth_credential.js';
 import {toSnakeCaseName} from '../../utils/case_utils.js';
 import {experimental} from '../../utils/experimental.js';
 import {BaseTool} from '../base_tool.js';
-import {BaseToolset} from '../base_toolset.js';
+import {BaseToolset, ToolPredicate} from '../base_toolset.js';
 import {OpenAPIToolset} from '../openapi_tool/openapi_toolset.js';
 import {RestApiTool} from '../openapi_tool/rest_api_tool.js';
 import {APIHubClient, BaseAPIHubClient} from './clients/apihub_client.js';
@@ -63,6 +63,11 @@ export interface APIHubToolsetOptions {
    * built from `accessToken` and `serviceAccountJson`.
    */
   apihubClient?: BaseAPIHubClient;
+  /**
+   * Filter selecting which tools from the spec are exposed by `getTools`.
+   * Accepts a list of tool names or a {@link ToolPredicate} function.
+   */
+  toolFilter?: ToolPredicate | string[];
 }
 
 /**
@@ -108,7 +113,7 @@ export class APIHubToolset extends BaseToolset {
   private toolsetPromise?: Promise<OpenAPIToolset | undefined>;
 
   constructor(options: APIHubToolsetOptions) {
-    super([]);
+    super(options.toolFilter ?? []);
     this.name = options.name ?? '';
     this.description = options.description ?? '';
     this.apihubResourceName = options.apihubResourceName;
@@ -156,7 +161,13 @@ export class APIHubToolset extends BaseToolset {
     return toolset?.getTool(name);
   }
 
-  override async close(): Promise<void> {}
+  override async close(): Promise<void> {
+    if (!this.toolsetPromise) {
+      return;
+    }
+    const toolset = await this.toolsetPromise.catch(() => undefined);
+    await toolset?.close();
+  }
 
   private loadToolset(): Promise<OpenAPIToolset | undefined> {
     if (!this.toolsetPromise) {
@@ -175,6 +186,9 @@ export class APIHubToolset extends BaseToolset {
     const spec = await this.apihubClient.getSpecContent(
       this.apihubResourceName,
     );
+    if (!spec.trim()) {
+      return undefined;
+    }
     const specDict = yaml.load(spec) as OpenAPIV3.Document | undefined;
     if (!specDict) {
       return undefined;
@@ -187,6 +201,7 @@ export class APIHubToolset extends BaseToolset {
       specDict,
       authScheme: this.authScheme,
       authCredential: this.authCredential,
+      toolFilter: this.toolFilter,
     });
   }
 }

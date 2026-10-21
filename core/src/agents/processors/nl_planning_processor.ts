@@ -6,7 +6,7 @@
 
 import {Content, Part} from '@google/genai';
 
-import {Event} from '../../events/event.js';
+import {createEvent, Event} from '../../events/event.js';
 import {appendInstructions, LlmRequest} from '../../models/llm_request.js';
 import {LlmResponse} from '../../models/llm_response.js';
 import {BasePlanner, isBasePlanner} from '../../planners/base_planner.js';
@@ -91,12 +91,12 @@ export class NlPlanningRequestProcessor extends BaseLlmRequestProcessor {
 }
 
 /**
- * Replaces the LLM response parts with the planner's processed parts.
+ * Replaces the LLM response parts with the planner's processed parts and emits
+ * a state-update event when the planner modifies session state.
  *
  * Partial responses are processed too.
  */
 export class NlPlanningResponseProcessor extends BaseLlmResponseProcessor {
-  // eslint-disable-next-line require-yield -- this processor only rewrites the response and has no event to emit
   override async *runAsync(
     invocationContext: InvocationContext,
     llmResponse: LlmResponse,
@@ -106,12 +106,22 @@ export class NlPlanningResponseProcessor extends BaseLlmResponseProcessor {
       return;
     }
 
+    const callbackContext = new Context({invocationContext});
     const processedParts = planner.processPlanningResponse(
-      new Context({invocationContext}),
+      callbackContext,
       llmResponse.content.parts,
     );
     if (processedParts !== undefined) {
       llmResponse.content = {...llmResponse.content, parts: processedParts};
+    }
+
+    if (callbackContext.state.hasDelta()) {
+      yield createEvent({
+        invocationId: invocationContext.invocationId,
+        author: invocationContext.agent?.name,
+        branch: invocationContext.branch,
+        actions: callbackContext.eventActions,
+      });
     }
   }
 }

@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {BaseLlm} from '../models/base_llm.js';
+import {isGemini} from '../models/google_llm.js';
 import {isGemini2OrAbove} from './model_name.js';
 import {getGoogleLlmVariant, GoogleLLMVariant} from './variant_utils.js';
 
@@ -16,12 +18,13 @@ import {getGoogleLlmVariant, GoogleLLMVariant} from './variant_utils.js';
  * `false` for them even on Vertex AI, where they do support the capability.
  * That under-reporting is a known gap.
  *
- * @param modelString A simple or path-based model name.
+ * @param model A simple or path-based model name, or a `BaseLlm` instance.
  * @return True if the model supports an output schema alongside tools.
  */
-export function canUseOutputSchemaWithTools(modelString: string): boolean {
+export function canUseOutputSchemaWithTools(model: string | BaseLlm): boolean {
+  const modelString = typeof model === 'string' ? model : model.model;
+  const variant = isGemini(model) ? model.apiBackend : getGoogleLlmVariant();
   return (
-    getGoogleLlmVariant() === GoogleLLMVariant.VERTEX_AI &&
-    isGemini2OrAbove(modelString)
+    variant === GoogleLLMVariant.VERTEX_AI && isGemini2OrAbove(modelString)
   );
 }

@@ -66,7 +66,7 @@ export class InstructionsLlmRequestProcessor extends BaseLlmRequestProcessor {
     if (
       agent.outputSchema &&
       agent.tools?.length &&
-      !canUseOutputSchemaWithTools(agent.canonicalModel.model)
+      !canUseOutputSchemaWithTools(agent.canonicalModel)
     ) {
       appendInstructions(llmRequest, [
         'To output the final result, you must call the "set_model_response" function with the appropriate values. Do not output anything else.',

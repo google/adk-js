@@ -32,6 +32,8 @@ export interface ConnectionsClientOptions {
 
 /** Service details of an Integration Connectors connection. */
 export interface ConnectionDetails {
+  /** The resource name of the connection, or `''` when not reported. */
+  name?: string;
   /**
    * The Service Directory name of the connection. For a connection with a
    * `host`, the TLS Service Directory name.
@@ -124,6 +126,9 @@ interface PostOperationOptions {
   summary: string;
   description: string;
   operationId: string;
+  xOperation: string;
+  xEntity?: string;
+  xAction?: string;
   requestSchemaRef: string;
   responseSchema: JsonObject;
 }
@@ -302,54 +307,46 @@ export function connectorPayload(jsonSchema: JsonObject): JsonObject {
 
 /** Builds `{post: …}` for one connector operation. */
 function postOperation(options: PostOperationOptions): JsonObject {
-  const {summary, description, operationId, requestSchemaRef, responseSchema} =
-    options;
-  return {
-    post: {
-      summary,
-      description,
-      operationId,
-      requestBody: {
+  const {
+    summary,
+    description,
+    operationId,
+    xOperation,
+    xEntity,
+    xAction,
+    requestSchemaRef,
+    responseSchema,
+  } = options;
+  const post: JsonObject = {
+    summary,
+    description,
+    operationId,
+    'x-operation': xOperation,
+    requestBody: {
+      content: {
+        'application/json': {
+          schema: {$ref: requestSchemaRef},
+        },
+      },
+    },
+    responses: {
+      '200': {
+        description: 'Success response',
         content: {
           'application/json': {
-            schema: {$ref: requestSchemaRef},
-          },
-        },
-      },
-      responses: {
-        '200': {
-          description: 'Success response',
-          content: {
-            'application/json': {
-              schema: responseSchema,
-            },
+            schema: responseSchema,
           },
         },
       },
     },
   };
-}
-
-function entityIdRequest(): JsonObject {
-  return {
-    type: 'object',
-    required: [
-      'entityId',
-      'operation',
-      'connectionName',
-      'serviceName',
-      'host',
-      'entity',
-    ],
-    properties: {
-      entityId: schemaRef('entityId'),
-      operation: schemaRef('operation'),
-      connectionName: schemaRef('connectionName'),
-      serviceName: schemaRef('serviceName'),
-      host: schemaRef('host'),
-      entity: schemaRef('entity'),
-    },
-  };
+  if (xEntity !== undefined) {
+    post['x-entity'] = xEntity;
+  }
+  if (xAction !== undefined) {
+    post['x-action'] = xAction;
+  }
+  return {post};
 }
 
 /**
@@ -367,7 +364,7 @@ export function getActionOperation(
     toolName = '',
     toolInstructions = '',
   } = options;
-  let description = `Use this tool with action = "${action}" and operation = "${operation}" only. Don't ask these values from user.`;
+  let description = `Use this tool to execute ${action}`;
   if (operation === 'EXECUTE_QUERY') {
     description +=
       ' Use pageSize = 50 and timeout = 120 until user specifies a different value otherwise. If user provides a query in natural language, convert it to SQL query and then execute it using the tool.';
@@ -376,6 +373,8 @@ export function getActionOperation(
     summary: actionDisplayName,
     description: `${description} ${toolInstructions}`,
     operationId: `${toolName}_${actionDisplayName}`,
+    xOperation: operation,
+    xAction: action,
     requestSchemaRef: `#/components/schemas/${actionDisplayName}_Request`,
     responseSchema: schemaRef(`${actionDisplayName}_Response`),
   });
@@ -397,8 +396,10 @@ export function listOperation(
   } = options;
   return postOperation({
     summary: `List ${entity}`,
-    description: `Returns all entities of type ${entity}. Use this tool with entity = "${entity}" and operation = "LIST_ENTITIES" only. Don't ask these values from user. Always use "" as filter clause and "" as page token and 50 as page size until user specifies a different value otherwise. Use single quotes for strings in filter clause. ${toolInstructions}`,
+    description: `Returns the list of ${entity} data. If the page token was available in the response, let users know there are more records available. Ask if the user wants to fetch the next page of results. When passing filter use the following format: \`field_name1='value1' AND field_name2='value2'\`. ${toolInstructions}`,
     operationId: `${toolName}_list_${entity}`,
+    xOperation: 'LIST_ENTITIES',
+    xEntity: entity,
     requestSchemaRef: `#/components/schemas/list_${entity}_Request`,
     responseSchema: {
       description: `Returns a list of ${entity} of json schema: ${schemaAsString}`,
@@ -423,8 +424,10 @@ export function getOperation(
   } = options;
   return postOperation({
     summary: `Get ${entity}`,
-    description: `Returns the details of the ${entity}. Use this tool with entity = "${entity}" and operation = "GET_ENTITY" only. Don't ask these values from user.  ${toolInstructions}`,
+    description: `Returns the details of the ${entity}. ${toolInstructions}`,
     operationId: `${toolName}_get_${entity}`,
+    xOperation: 'GET_ENTITY',
+    xEntity: entity,
     requestSchemaRef: `#/components/schemas/get_${entity}_Request`,
     responseSchema: {
       description: `Returns ${entity} of json schema: ${schemaAsString}`,
@@ -441,9 +444,11 @@ export function getOperation(
 export function createOperation(options: EntityOperationOptions): JsonObject {
   const {entity, toolName = '', toolInstructions = ''} = options;
   return postOperation({
-    summary: `Create ${entity}`,
-    description: `Creates a new entity of type ${entity}. Use this tool with entity = "${entity}" and operation = "CREATE_ENTITY" only. Don't ask these values from user. Follow the schema of the entity provided in the instructions to create ${entity}.  ${toolInstructions}`,
+    summary: `Creates a new ${entity}`,
+    description: `Creates a new ${entity}. ${toolInstructions}`,
     operationId: `${toolName}_create_${entity}`,
+    xOperation: 'CREATE_ENTITY',
+    xEntity: entity,
     requestSchemaRef: `#/components/schemas/create_${entity}_Request`,
     responseSchema: schemaRef('execute-connector_Response'),
   });
@@ -457,9 +462,11 @@ export function createOperation(options: EntityOperationOptions): JsonObject {
 export function updateOperation(options: EntityOperationOptions): JsonObject {
   const {entity, toolName = '', toolInstructions = ''} = options;
   return postOperation({
-    summary: `Update ${entity}`,
-    description: `Updates an entity of type ${entity}. Use this tool with entity = "${entity}" and operation = "UPDATE_ENTITY" only. Don't ask these values from user. Use entityId to uniquely identify the entity to update. Follow the schema of the entity provided in the instructions to update ${entity}.  ${toolInstructions}`,
+    summary: `Updates the ${entity}`,
+    description: `Updates the ${entity}. ${toolInstructions}`,
     operationId: `${toolName}_update_${entity}`,
+    xOperation: 'UPDATE_ENTITY',
+    xEntity: entity,
     requestSchemaRef: `#/components/schemas/update_${entity}_Request`,
     responseSchema: schemaRef('execute-connector_Response'),
   });
@@ -473,9 +480,11 @@ export function updateOperation(options: EntityOperationOptions): JsonObject {
 export function deleteOperation(options: EntityOperationOptions): JsonObject {
   const {entity, toolName = '', toolInstructions = ''} = options;
   return postOperation({
-    summary: `Delete ${entity}`,
-    description: `Deletes an entity of type ${entity}. Use this tool with entity = "${entity}" and operation = "DELETE_ENTITY" only. Don't ask these values from user.  ${toolInstructions}`,
+    summary: `Delete the ${entity}`,
+    description: `Deletes the ${entity}. ${toolInstructions}`,
     operationId: `${toolName}_delete_${entity}`,
+    xOperation: 'DELETE_ENTITY',
+    xEntity: entity,
     requestSchemaRef: `#/components/schemas/delete_${entity}_Request`,
     responseSchema: schemaRef('execute-connector_Response'),
   });
@@ -525,18 +534,56 @@ export function updateOperationRequest(entity: string): JsonObject {
       serviceName: schemaRef('serviceName'),
       host: schemaRef('host'),
       entity: schemaRef('entity'),
+      filterClause: schemaRef('filterClause'),
     },
   };
 }
 
 /** Builds the request schema of the get operation. */
 export function getOperationRequest(): JsonObject {
-  return entityIdRequest();
+  return {
+    type: 'object',
+    required: [
+      'entityId',
+      'operation',
+      'connectionName',
+      'serviceName',
+      'host',
+      'entity',
+    ],
+    properties: {
+      entityId: schemaRef('entityId'),
+      operation: schemaRef('operation'),
+      connectionName: schemaRef('connectionName'),
+      serviceName: schemaRef('serviceName'),
+      host: schemaRef('host'),
+      entity: schemaRef('entity'),
+    },
+  };
 }
 
 /** Builds the request schema of the delete operation. */
 export function deleteOperationRequest(): JsonObject {
-  return entityIdRequest();
+  return {
+    type: 'object',
+    required: [
+      'entityId',
+      'operation',
+      'connectionName',
+      'serviceName',
+      'host',
+      'entity',
+    ],
+    properties: {
+      entityId: schemaRef('entityId'),
+      operation: schemaRef('operation'),
+      connectionName: schemaRef('connectionName'),
+      serviceName: schemaRef('serviceName'),
+      host: schemaRef('host'),
+      entity: schemaRef('entity'),
+      filterClause: schemaRef('filterClause'),
+    },
+  };
 }
 
 /** Builds the request schema of the list operation. */
@@ -637,18 +684,19 @@ export class ConnectionsClient {
   }
 
   /**
-   * Reads the service name and host of the connection, and whether it allows
-   * an authentication override.
+   * Reads the resource name, service name and host of the connection, and
+   * whether it allows an authentication override.
    */
   async getConnectionDetails(): Promise<ConnectionDetails> {
     const url = `${CONNECTOR_URL}/v1/projects/${this.project}/locations/${this.location}/connections/${this.connection}?view=BASIC`;
     const connectionData = toJsonObject(await this.executeApiCall(url));
+    const name = toStringValue(connectionData['name']);
     const host = toStringValue(connectionData['host']);
     const serviceName = host
       ? toStringValue(connectionData['tlsServiceDirectory'])
       : toStringValue(connectionData['serviceDirectory']);
     const authOverrideEnabled = connectionData['authOverrideEnabled'] === true;
-    return {serviceName, host, authOverrideEnabled};
+    return {name, serviceName, host, authOverrideEnabled};
   }
 
   /**

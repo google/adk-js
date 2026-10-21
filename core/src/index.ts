@@ -111,6 +111,10 @@ export {
   IntegrationClient,
   type IntegrationClientOptions,
 } from './tools/application_integration_tool/clients/integration_client.js';
+export {
+  IntegrationConnectorTool,
+  type IntegrationConnectorToolOptions,
+} from './tools/application_integration_tool/integration_connector_tool.js';
 export {LOAD_WEB_PAGE, loadWebPage} from './tools/load_web_page.js';
 export type {LoadWebPageOptions} from './tools/load_web_page.js';
 export {
@@ -185,4 +189,34 @@ export * from './telemetry/setup.js';
 export * from './tools/google_api_tool/index.js';
 // Also available as `@google/adk/tools/mcp`, which does not evaluate the rest
 // of this barrel.
+export {
+  DEFAULT_CRITERIA,
+  EVAL_SESSION_ID_PREFIX,
+  EvalStatus,
+  getEvaluationCriteriaOrDefault,
+  getRootAgent,
+  MISSING_EVAL_DEPENDENCIES_MESSAGE,
+  parseAndGetEvalsToRun,
+  RESPONSE_EVALUATION_SCORE_KEY,
+  RESPONSE_MATCH_SCORE_KEY,
+  runEvals,
+  TOOL_TRAJECTORY_SCORE_KEY,
+  tryGetResetFunc,
+} from './cli/cli_eval.js';
+export type {
+  AddSessionToEvalSetRequest,
+  EvalEntry,
+  EvalInitialSession,
+  EvalMetric,
+  EvalMetricResult,
+  EvalResult,
+  EvalSetItem,
+  InvocationEvalMetricResult,
+  RunEvalRequest,
+  RunEvalResult,
+  RunEvalsOptions,
+} from './cli/cli_eval.js';
+export {loadDotenvForAgent, walkToRootUntilFound} from './cli/utils/envs.js';
+export {LOGGING_FORMAT, logToStderr, logToTmpFolder} from './cli/utils/logs.js';
+export type {LogToTmpFolderOptions} from './cli/utils/logs.js';
 export * from './tools/mcp/index.js';

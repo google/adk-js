@@ -12,6 +12,7 @@ import {
   InvocationContext,
   LlmAgent,
   logger,
+  OpenAPIToolset,
   PluginManager,
   tokenToSchemeCredential,
 } from '@google/adk';
@@ -60,6 +61,27 @@ paths:
     delete:
       summary: Test DELETE endpoint
       operationId: emptyDescTest
+      responses:
+        '200':
+          description: Successful response
+`;
+
+const TWO_TOOLS_SPEC = `
+openapi: 3.0.0
+info:
+  version: 1.0.0
+  title: Two Tools API
+paths:
+  /items:
+    get:
+      summary: List items
+      operationId: listItems
+      responses:
+        '200':
+          description: Successful response
+    post:
+      summary: Create item
+      operationId: createItem
       responses:
         '200':
           description: Successful response
@@ -326,6 +348,79 @@ describe('APIHubToolset', () => {
       apihubResourceName: 'test_resource',
       apihubClient: client,
       lazyLoadSpec: true,
+    });
+
+    await expect(toolset.close()).resolves.toBeUndefined();
+  });
+
+  it('filters tools with a string[] toolFilter', async () => {
+    const {client} = mockClient(TWO_TOOLS_SPEC);
+    const toolset = new APIHubToolset({
+      apihubResourceName: 'test_resource',
+      apihubClient: client,
+      toolFilter: ['list_items'],
+    });
+
+    const tools = await toolset.getTools();
+
+    expect(tools.map((tool) => tool.name)).toEqual(['list_items']);
+    expect((await toolset.getTool('create_item'))?.name).toBe('create_item');
+  });
+
+  it('filters tools with a ToolPredicate when called without a ReadonlyContext', async () => {
+    const {client} = mockClient(TWO_TOOLS_SPEC);
+    const toolset = new APIHubToolset({
+      apihubResourceName: 'test_resource',
+      apihubClient: client,
+      toolFilter: (tool) => tool.name === 'create_item',
+    });
+
+    const tools = await toolset.getTools();
+
+    expect(tools.map((tool) => tool.name)).toEqual(['create_item']);
+  });
+
+  it('filters tools with a ToolPredicate when called with a ReadonlyContext', async () => {
+    const {client} = mockClient(TWO_TOOLS_SPEC);
+    const context = createToolContext();
+    const predicate = vi.fn(
+      (tool, ctx) => ctx === context && tool.name === 'list_items',
+    );
+    const toolset = new APIHubToolset({
+      apihubResourceName: 'test_resource',
+      apihubClient: client,
+      toolFilter: predicate,
+    });
+
+    const tools = await toolset.getTools(context);
+
+    expect(tools.map((tool) => tool.name)).toEqual(['list_items']);
+    expect(predicate).toHaveBeenCalledTimes(2);
+  });
+
+  it('delegates close() to the underlying OpenAPIToolset when loaded', async () => {
+    const closeSpy = vi.spyOn(OpenAPIToolset.prototype, 'close');
+    const {client} = mockClient(MOCK_SPEC);
+    const toolset = new APIHubToolset({
+      apihubResourceName: 'test_resource',
+      apihubClient: client,
+    });
+
+    await toolset.getTools();
+    await toolset.close();
+
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes without error when an eager spec fetch rejects', async () => {
+    const client: BaseAPIHubClient = {
+      getSpecContent: vi
+        .fn()
+        .mockRejectedValue(new Error('API Hub is unavailable')),
+    };
+    const toolset = new APIHubToolset({
+      apihubResourceName: 'test_resource',
+      apihubClient: client,
     });
 
     await expect(toolset.close()).resolves.toBeUndefined();

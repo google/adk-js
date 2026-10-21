@@ -357,7 +357,41 @@ describe('Runner.determineAgentForResumption', () => {
       artifactService,
     });
 
+    expect(appRunner.appName).toBe(TEST_APP_ID);
     expect(appRunner.resumabilityConfig?.isResumable).toBe(true);
+  });
+
+  it('should prefer explicit appName over app.name when both are provided', async () => {
+    const app = new App({
+      name: 'real_name',
+      rootAgent,
+    });
+    const appRunner = new Runner({
+      app,
+      appName: 'my_file',
+      sessionService,
+      artifactService,
+    });
+
+    expect(appRunner.appName).toBe('my_file');
+
+    await sessionService.createSession({
+      appName: 'my_file',
+      userId: TEST_USER_ID,
+      sessionId: 'session_explicit_app_name',
+    });
+
+    const events: Event[] = [];
+    for await (const event of appRunner.runAsync({
+      userId: TEST_USER_ID,
+      sessionId: 'session_explicit_app_name',
+      newMessage: {role: 'user', parts: [{text: TEST_MESSAGE}]},
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(1);
+    expect(events[0].author).toBe('root_agent');
   });
 
   it('should skip function response resumption routing when resumabilityConfig.isResumable is false or undefined', async () => {

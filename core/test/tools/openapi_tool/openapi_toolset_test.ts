@@ -10,7 +10,7 @@ import {
   OpenAPIToolset,
   ReadonlyContext,
 } from '@google/adk';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import {OpenAPIV3} from 'openapi-types';
 import {describe, expect, it, vi} from 'vitest';
 import {logger} from '../../../src/utils/logger.js';
@@ -158,6 +158,17 @@ describe('OpenAPIToolset', () => {
       toolFilter: (tool) => tool.name === 'get_users',
     });
     const tools = await toolset.getTools({} as unknown as ReadonlyContext);
+
+    expect(tools.length).toBe(1);
+    expect(tools[0].name).toBe('get_users');
+  });
+
+  it('should apply a predicate toolFilter when no context is provided', async () => {
+    const toolset = new OpenAPIToolset({
+      specDict: mockSpec,
+      toolFilter: (tool) => tool.name === 'get_users',
+    });
+    const tools = await toolset.getTools();
 
     expect(tools.length).toBe(1);
     expect(tools[0].name).toBe('get_users');

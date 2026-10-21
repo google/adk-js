@@ -201,6 +201,76 @@ describe('InMemorySessionService', () => {
         [`${State.APP_PREFIX}key`]: 'newValue',
       });
     });
+
+    it('includes events matching afterTimestamp boundary inclusively', async () => {
+      const session = await service.createSession({
+        appName: 'app',
+        userId: 'user',
+      });
+      for (let i = 1; i <= 5; i++) {
+        await service.appendEvent({
+          session,
+          event: createEvent({author: 'user', timestamp: i}),
+        });
+      }
+
+      const retrievedSession = await service.getSession({
+        appName: 'app',
+        userId: 'user',
+        sessionId: session.id,
+        config: {afterTimestamp: 4},
+      });
+
+      expect(retrievedSession?.events).toHaveLength(2);
+      expect(retrievedSession?.events[0].timestamp).toBe(4);
+      expect(retrievedSession?.events[1].timestamp).toBe(5);
+    });
+
+    it('returns no events when afterTimestamp is newer than all events', async () => {
+      const session = await service.createSession({
+        appName: 'app',
+        userId: 'user',
+      });
+      for (let i = 1; i <= 5; i++) {
+        await service.appendEvent({
+          session,
+          event: createEvent({author: 'user', timestamp: i}),
+        });
+      }
+
+      const retrievedSession = await service.getSession({
+        appName: 'app',
+        userId: 'user',
+        sessionId: session.id,
+        config: {afterTimestamp: 50},
+      });
+
+      expect(retrievedSession?.events).toEqual([]);
+    });
+
+    it('applies both numRecentEvents and afterTimestamp filters when configured', async () => {
+      const session = await service.createSession({
+        appName: 'app',
+        userId: 'user',
+      });
+      for (let i = 1; i <= 5; i++) {
+        await service.appendEvent({
+          session,
+          event: createEvent({author: 'user', timestamp: i}),
+        });
+      }
+
+      const retrievedSession = await service.getSession({
+        appName: 'app',
+        userId: 'user',
+        sessionId: session.id,
+        config: {afterTimestamp: 4, numRecentEvents: 3},
+      });
+
+      expect(retrievedSession?.events).toHaveLength(2);
+      expect(retrievedSession?.events[0].timestamp).toBe(4);
+      expect(retrievedSession?.events[1].timestamp).toBe(5);
+    });
   });
 
   describe('listSessions', () => {
@@ -671,6 +741,110 @@ describe('InMemorySessionService', () => {
       // Should just log warnings and return event
       const returnedEvent = await service.appendEvent({session, event});
       expect(returnedEvent).toBe(event);
+    });
+  });
+
+  describe('appendEvent event payload persistence', () => {
+    it('preserves inlineData parts when appending and retrieving events', async () => {
+      const session = await service.createSession({
+        appName: 'app',
+        userId: 'user',
+      });
+      const inlinePart = {
+        inlineData: {
+          data: Buffer.from('test_image_data').toString('base64'),
+          mimeType: 'image/png',
+        },
+      };
+      const event = createEvent({
+        invocationId: 'invocation',
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [inlinePart],
+        },
+      });
+
+      await service.appendEvent({session, event});
+
+      expect(session.events).toHaveLength(1);
+      expect(session.events[0].content?.parts?.[0]).toEqual(inlinePart);
+
+      const retrievedSession = await service.getSession({
+        appName: 'app',
+        userId: 'user',
+        sessionId: session.id,
+      });
+      expect(retrievedSession?.events).toHaveLength(1);
+      expect(retrievedSession?.events[0].content?.parts?.[0]).toEqual(
+        inlinePart,
+      );
+    });
+
+    it('persists and restores a complete event with all metadata and actions fields', async () => {
+      const session = await service.createSession({
+        appName: 'app',
+        userId: 'user',
+      });
+      const event = createEvent({
+        invocationId: 'invocation',
+        author: 'user',
+        branch: 'main',
+        content: {
+          role: 'user',
+          parts: [{text: 'test_text'}],
+        },
+        turnComplete: true,
+        partial: false,
+        actions: createEventActions({
+          artifactDelta: {file: 0},
+          transferToAgent: 'agent',
+          escalate: true,
+        }),
+        longRunningToolIds: ['tool1'],
+        errorCode: 'error_code',
+        errorMessage: 'error_message',
+        interrupted: true,
+        groundingMetadata: {
+          webSearchQueries: ['query1'],
+        },
+      });
+
+      await service.appendEvent({session, event});
+
+      const retrievedSession = await service.getSession({
+        appName: 'app',
+        userId: 'user',
+        sessionId: session.id,
+      });
+      expect(retrievedSession).toEqual(session);
+    });
+
+    it('ignores partial events with content', async () => {
+      const session = await service.createSession({
+        appName: 'app',
+        userId: 'user',
+      });
+      const event = createEvent({
+        invocationId: 'invocation',
+        author: 'model',
+        content: {
+          role: 'model',
+          parts: [{text: 'partial_text'}],
+        },
+        partial: true,
+      });
+
+      await service.appendEvent({session, event});
+
+      expect(session.events).toEqual([]);
+
+      const retrievedSession = await service.getSession({
+        appName: 'app',
+        userId: 'user',
+        sessionId: session.id,
+      });
+      expect(retrievedSession?.events).toEqual([]);
     });
   });
 

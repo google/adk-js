@@ -5,6 +5,7 @@
  */
 
 import {
+  ActiveStreamingTool,
   AUTH_PREPROCESSOR,
   BaseLlm,
   BaseLlmConnection,
@@ -12,17 +13,21 @@ import {
   BaseLlmResponseProcessor,
   BasePlugin,
   BaseTool,
+  BaseToolset,
   BuiltInPlanner,
   CONTENT_REQUEST_PROCESSOR,
   Context,
   ContextCompactorRequestProcessor,
   createEvent,
+  createRunConfig,
   createSession,
   Event,
   FunctionTool,
+  Gemini,
   InMemorySessionService,
   INTERACTIONS_REQUEST_PROCESSOR,
   InvocationContext,
+  LiveRequestQueue,
   LlmAgent,
   LlmRequest,
   LlmResponse,
@@ -33,9 +38,15 @@ import {
   RunAsyncToolRequest,
   Runner,
   Session,
+  SingleAfterModelCallback,
+  SingleAfterToolCallback,
+  SingleBeforeModelCallback,
+  SingleBeforeToolCallback,
+  SkillToolset,
+  StreamingMode,
   ToolProcessLlmRequest,
 } from '@google/adk';
-import {Content, Schema, Type} from '@google/genai';
+import {Content, Modality, Schema, Type} from '@google/genai';
 import {
   afterEach,
   beforeEach,
@@ -1080,10 +1091,14 @@ describe('LlmAgent outputSchema with tools', () => {
   }
 
   async function captureRequest(options: {
-    model: string;
+    model: string | BaseLlm;
     withTools: boolean;
   }): Promise<LlmRequest> {
-    const llm = new CapturingLlm({model: options.model});
+    let capturedRequest: LlmRequest | undefined;
+    const llm =
+      typeof options.model === 'string'
+        ? new CapturingLlm({model: options.model})
+        : options.model;
     const agent = new LlmAgent({
       name: 'test_agent',
       model: llm,
@@ -1098,6 +1113,15 @@ describe('LlmAgent outputSchema with tools', () => {
             }),
           ]
         : [],
+      beforeModelCallback:
+        typeof options.model === 'string'
+          ? undefined
+          : ({request}) => {
+              capturedRequest = request;
+              return {
+                content: {role: 'model', parts: [{text: '{"answer": "42"}'}]},
+              };
+            },
     });
     const invocationContext = new InvocationContext({
       invocationId: 'inv_123',
@@ -1115,7 +1139,8 @@ describe('LlmAgent outputSchema with tools', () => {
       // Drain the run so that the request is fully built.
     }
 
-    const request = llm.capturedRequest;
+    const request =
+      llm instanceof CapturingLlm ? llm.capturedRequest : capturedRequest;
     if (!request) {
       expect.fail('the agent never called the model');
     }
@@ -1137,6 +1162,46 @@ describe('LlmAgent outputSchema with tools', () => {
     expect(request.config?.systemInstruction).not.toContain(
       'set_model_response',
     );
+  });
+
+  it('uses the native response schema for a Gemini({ vertexai: true }) 2.0+ instance when env var is unset', async () => {
+    vi.stubEnv(VERTEX_ENV_VAR, undefined);
+
+    const request = await captureRequest({
+      model: new Gemini({
+        model: 'gemini-2.5-flash',
+        vertexai: true,
+        project: 'test-project',
+        location: 'us-central1',
+      }),
+      withTools: true,
+    });
+
+    expect(request.config?.responseSchema).toBeDefined();
+    expect(request.config?.responseMimeType).toBe('application/json');
+    expect(request.toolsDict).not.toHaveProperty('set_model_response');
+    expect(request.toolsDict).toHaveProperty('some_tool');
+    expect(request.config?.systemInstruction).not.toContain(
+      'set_model_response',
+    );
+  });
+
+  it('uses the set_model_response workaround for a Gemini({ vertexai: false }) instance even when env var is true', async () => {
+    vi.stubEnv(VERTEX_ENV_VAR, 'true');
+
+    const request = await captureRequest({
+      model: new Gemini({
+        model: 'gemini-2.5-flash',
+        vertexai: false,
+        apiKey: 'test-key',
+      }),
+      withTools: true,
+    });
+
+    expect(request.config?.responseSchema).toBeUndefined();
+    expect(request.toolsDict).toHaveProperty('set_model_response');
+    expect(request.toolsDict).toHaveProperty('some_tool');
+    expect(request.config?.systemInstruction).toContain('set_model_response');
   });
 
   it('uses the set_model_response workaround outside the Vertex AI variant', async () => {
@@ -1262,6 +1327,135 @@ describe('LlmAgent outputSchema with tools', () => {
     });
     expect(sessionAfterTurn2?.state?.['probe_counter']).toBe(2);
   });
+
+  it('calls BaseToolset.processLlmRequest before tool hooks and persists state writes across turns', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    onTestFinished(() => warnSpy.mockRestore());
+
+    const callOrder: string[] = [];
+
+    class OrderProbeTool extends BaseTool {
+      constructor() {
+        super({name: 'order_probe_tool', description: 'test order'});
+      }
+      override _getDeclaration() {
+        return {
+          name: this.name,
+          description: this.description,
+          parameters: {type: Type.OBJECT, properties: {}},
+        };
+      }
+      override async processLlmRequest(
+        request: ToolProcessLlmRequest,
+      ): Promise<void> {
+        await super.processLlmRequest(request);
+        callOrder.push('tool');
+      }
+      async runAsync(_request: RunAsyncToolRequest): Promise<unknown> {
+        return {result: 'ok'};
+      }
+    }
+
+    class InstructionToolset extends BaseToolset {
+      constructor() {
+        super([]);
+      }
+      override async getTools(): Promise<BaseTool[]> {
+        return [new OrderProbeTool()];
+      }
+      override async close(): Promise<void> {}
+      override async processLlmRequest(
+        toolContext: Context,
+        llmRequest: LlmRequest,
+      ): Promise<void> {
+        callOrder.push('toolset');
+        const count = toolContext.state.get<number>('toolset_counter') ?? 0;
+        toolContext.state.set('toolset_counter', count + 1);
+        llmRequest.config ??= {};
+        llmRequest.config.systemInstruction = `${llmRequest.config.systemInstruction ?? ''}\n\nTOOLSET INSTRUCTION`;
+      }
+    }
+
+    const seenInstructions: Array<string | undefined> = [];
+    class RecordingLlm extends BaseLlm {
+      constructor() {
+        super({model: 'recording-llm'});
+      }
+      async *generateContentAsync(
+        llmRequest: LlmRequest,
+      ): AsyncGenerator<LlmResponse, void, void> {
+        seenInstructions.push(
+          llmRequest.config?.systemInstruction as string | undefined,
+        );
+        yield {content: {role: 'model', parts: [{text: 'ok'}]}};
+      }
+      async connect(): Promise<BaseLlmConnection> {
+        return new MockLlmConnection();
+      }
+    }
+
+    const skillToolset = new SkillToolset([
+      {
+        frontmatter: {name: 'demo', description: 'demo skill'},
+        instructions: 'Do the demo.',
+      },
+    ]);
+
+    const agent = new LlmAgent({
+      name: 'a',
+      model: new RecordingLlm(),
+      instruction: 'Be brief.',
+      tools: [new InstructionToolset(), skillToolset],
+    });
+
+    const sessionService = new InMemorySessionService();
+    const runner = new Runner({
+      appName: 'test_app',
+      agent,
+      sessionService,
+    });
+    const session = await sessionService.createSession({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId: 'test_session',
+    });
+
+    for await (const _event of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'Turn 1'}]},
+    })) {
+      // Consume stream
+    }
+
+    expect(callOrder).toEqual(['toolset', 'tool']);
+    expect(seenInstructions).toHaveLength(1);
+    expect(seenInstructions[0]).toContain('TOOLSET INSTRUCTION');
+    expect(seenInstructions[0]).toContain('<available_skills>');
+    expect(seenInstructions[0]).toContain('<name>demo</name>');
+
+    const sessionAfterTurn1 = await sessionService.getSession({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId: 'test_session',
+    });
+    expect(sessionAfterTurn1?.state?.['toolset_counter']).toBe(1);
+
+    for await (const _event of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'Turn 2'}]},
+    })) {
+      // Consume stream
+    }
+
+    const sessionAfterTurn2 = await sessionService.getSession({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId: 'test_session',
+    });
+    expect(sessionAfterTurn2?.state?.['toolset_counter']).toBe(2);
+  });
 });
 
 describe('LlmAgent usage metadata on content-less responses', () => {
@@ -1345,6 +1539,79 @@ describe('LlmAgent usage metadata on content-less responses', () => {
     const events = await runAndCollect();
 
     expect(events.find((e) => e.usageMetadata)).toBeUndefined();
+  });
+
+  it('does not call the parent model again after transfer_to_agent when a trailing usage-only chunk arrives in SSE mode', async () => {
+    const usage = {
+      promptTokenCount: 10,
+      candidatesTokenCount: 2,
+      totalTokenCount: 12,
+    };
+    const childModel = new CountingMockLlm([
+      [
+        {
+          content: {role: 'model', parts: [{text: 'child answer'}]},
+          partial: false,
+        },
+        {usageMetadata: usage},
+      ],
+    ]);
+    const parentModel = new CountingMockLlm([
+      [
+        {
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  name: 'transfer_to_agent',
+                  args: {agent_name: 'child'},
+                },
+              },
+            ],
+          },
+        },
+        {usageMetadata: usage},
+      ],
+      [
+        {
+          content: {role: 'model', parts: [{text: 'parent answers again'}]},
+        },
+      ],
+    ]);
+
+    const child = new LlmAgent({name: 'child', model: childModel});
+    const parent = new LlmAgent({
+      name: 'parent',
+      subAgents: [child],
+      model: parentModel,
+    });
+
+    const sessionService = new InMemorySessionService();
+    await sessionService.createSession({
+      appName: 'app',
+      userId: 'u',
+      sessionId: 's',
+    });
+    const runner = new Runner({appName: 'app', agent: parent, sessionService});
+
+    const texts: Array<[string | undefined, string]> = [];
+    for await (const event of runner.runAsync({
+      userId: 'u',
+      sessionId: 's',
+      newMessage: {role: 'user', parts: [{text: 'hi'}]},
+      runConfig: {streamingMode: StreamingMode.SSE},
+    })) {
+      for (const part of event.content?.parts ?? []) {
+        if (part.text) {
+          texts.push([event.author, part.text]);
+        }
+      }
+    }
+
+    expect(parentModel.callCount).toBe(1);
+    expect(childModel.callCount).toBe(1);
+    expect(texts).toEqual([['child', 'child answer']]);
   });
 });
 
@@ -1757,5 +2024,1188 @@ describe('LlmAgent run with a planner', () => {
       {text: '/*REASONING*/simple/*FINAL_ANSWER*/', thought: true},
       {text: '42'},
     ]);
+  });
+});
+
+describe('LlmAgent live streaming tools and supportCfc', () => {
+  class ScriptedLiveConnection extends MockLlmConnection {
+    sentContents: Content[] = [];
+    sentBlobs: Array<{data: string; mimeType: string}> = [];
+    closed = false;
+    private yielded = false;
+
+    constructor(private readonly responses: LlmResponse[]) {
+      super();
+    }
+
+    override async sendContent(content: Content): Promise<void> {
+      this.sentContents.push(content);
+    }
+
+    override async sendRealtime(blob: {
+      data: string;
+      mimeType: string;
+    }): Promise<void> {
+      this.sentBlobs.push(blob);
+    }
+
+    override async *receive(): AsyncGenerator<LlmResponse, void, void> {
+      if (this.closed || this.yielded) {
+        return;
+      }
+      this.yielded = true;
+      for (const response of this.responses) {
+        if (this.closed) {
+          return;
+        }
+        yield response;
+      }
+    }
+
+    override async close(): Promise<void> {
+      this.closed = true;
+    }
+  }
+
+  class ScriptedLiveLlm extends BaseLlm {
+    lastConnectedRequest?: LlmRequest;
+
+    constructor(private readonly connection: ScriptedLiveConnection) {
+      super({model: 'gemini-2.0-flash'});
+    }
+
+    async *generateContentAsync(): AsyncGenerator<LlmResponse, void, void> {
+      yield* [];
+      throw new Error('generateContentAsync should not be called in live/CFC');
+    }
+
+    async connect(llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+      this.lastConnectedRequest = llmRequest;
+      return this.connection;
+    }
+  }
+
+  it('sets responseModalities to [Modality.TEXT], runs afterModelCallback, filters partial responses unless SSE, and closes queue on turnComplete when supportCfc is true', async () => {
+    const connection = new ScriptedLiveConnection([
+      {
+        content: {role: 'model', parts: [{text: 'partial chunk'}]},
+        partial: true,
+      },
+      {
+        content: {role: 'model', parts: [{text: 'final cfc answer'}]},
+        partial: false,
+        turnComplete: true,
+      },
+    ]);
+    const llm = new ScriptedLiveLlm(connection);
+    const afterSeen: string[] = [];
+    const agent = new LlmAgent({
+      name: 'cfc_agent',
+      model: llm,
+      afterModelCallback: ({response}) => {
+        const text = response.content?.parts?.[0]?.text;
+        if (text) {
+          afterSeen.push(text);
+        }
+        if (text === 'final cfc answer') {
+          return {
+            ...response,
+            content: {
+              role: 'model',
+              parts: [{text: 'final cfc answer (callback)'}],
+            },
+          };
+        }
+        return undefined;
+      },
+    });
+    const session = createSession({
+      id: 'sess_cfc_none',
+      appName: 'test-app',
+      userId: 'test-user',
+      events: [
+        createEvent({
+          invocationId: 'inv_cfc_none',
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'run cfc'}]},
+        }),
+      ],
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv_cfc_none',
+      session,
+      agent,
+      runConfig: createRunConfig({
+        supportCfc: true,
+        streamingMode: StreamingMode.NONE,
+        responseModalities: [Modality.AUDIO],
+      }),
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(ctx)) {
+      events.push(event);
+    }
+
+    expect(
+      llm.lastConnectedRequest?.liveConnectConfig?.responseModalities,
+    ).toEqual([Modality.TEXT]);
+    expect(afterSeen).toEqual(['partial chunk', 'final cfc answer']);
+    expect(events).toHaveLength(1);
+    expect(events[0].content?.parts).toEqual([
+      {text: 'final cfc answer (callback)'},
+    ]);
+    expect(connection.closed).toBe(true);
+  });
+
+  it('yields partial events in callLlmAsync when supportCfc is true and streamingMode is SSE', async () => {
+    const connection = new ScriptedLiveConnection([
+      {
+        content: {role: 'model', parts: [{text: 'sse partial'}]},
+        partial: true,
+      },
+      {
+        content: {role: 'model', parts: [{text: 'sse final'}]},
+        partial: false,
+        turnComplete: true,
+      },
+    ]);
+    const llm = new ScriptedLiveLlm(connection);
+    const agent = new LlmAgent({
+      name: 'cfc_sse_agent',
+      model: llm,
+    });
+    const session = createSession({
+      id: 'sess_cfc_sse',
+      appName: 'test-app',
+      userId: 'test-user',
+      events: [
+        createEvent({
+          invocationId: 'inv_cfc_sse',
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'stream cfc'}]},
+        }),
+      ],
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv_cfc_sse',
+      session,
+      agent,
+      runConfig: createRunConfig({
+        supportCfc: true,
+        streamingMode: StreamingMode.SSE,
+      }),
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(ctx)) {
+      events.push(event);
+    }
+
+    expect(
+      events.map((e) => ({
+        partial: e.partial,
+        text: e.content?.parts?.[0]?.text,
+      })),
+    ).toEqual([
+      {partial: true, text: 'sse partial'},
+      {partial: false, text: 'sse final'},
+    ]);
+  });
+
+  it('forwards liveRequestQueue items to activeStreamingTools streams and executes streaming tools in postprocessLive', async () => {
+    const toolStream = new LiveRequestQueue();
+    const streamTool = new FunctionTool({
+      name: 'liveStreamTool',
+      description: 'yields live updates',
+      parameters: z4.object({topic: z4.string()}),
+      execute: async function* ({topic}) {
+        yield `update:${topic}`;
+      },
+    });
+    const connection = new ScriptedLiveConnection([
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-live-stream-1',
+                name: 'liveStreamTool',
+                args: {topic: 'weather'},
+              },
+            },
+          ],
+        },
+      },
+    ]);
+    const llm = new ScriptedLiveLlm(connection);
+    const agent = new LlmAgent({
+      name: 'live_stream_agent',
+      model: llm,
+      tools: [streamTool],
+    });
+    const session = createSession({
+      id: 'sess_live_stream',
+      appName: 'test-app',
+      userId: 'test-user',
+    });
+    const liveRequestQueue = new LiveRequestQueue();
+    liveRequestQueue.sendRealtime({
+      data: 'audio-bytes',
+      mimeType: 'audio/pcm',
+    });
+    liveRequestQueue.close();
+
+    const ctx = new InvocationContext({
+      invocationId: 'inv_live_stream',
+      session,
+      agent,
+      liveRequestQueue,
+      activeStreamingTools: {
+        existingListener: new ActiveStreamingTool({stream: toolStream}),
+      },
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runLive(ctx)) {
+      events.push(event);
+    }
+
+    const forwardedBlob = await toolStream.get();
+    expect(forwardedBlob.blob).toEqual({
+      data: 'audio-bytes',
+      mimeType: 'audio/pcm',
+    });
+
+    const functionResponseEvent = events.find(
+      (e) => e.content?.parts?.[0]?.functionResponse !== undefined,
+    );
+    expect(functionResponseEvent?.content?.parts).toEqual([
+      {
+        functionResponse: {
+          id: 'fc-live-stream-1',
+          name: 'liveStreamTool',
+          response: {
+            status:
+              'The function is running asynchronously and the results are pending.',
+          },
+        },
+      },
+    ]);
+  });
+
+  it('executes a tool call and responseProcessors exactly once when supportCfc is true', async () => {
+    const toolExecute = vi.fn().mockResolvedValue({sum: 7});
+    const addTool = new FunctionTool({
+      name: 'add_numbers',
+      description: 'Adds two numbers',
+      parameters: z4.object({a: z4.number(), b: z4.number()}),
+      execute: toolExecute,
+    });
+    const connection = new ScriptedLiveConnection([
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-cfc-1',
+                name: 'add_numbers',
+                args: {a: 3, b: 4},
+              },
+            },
+          ],
+        },
+      },
+      {
+        content: {
+          role: 'model',
+          parts: [{text: 'The sum is 7.'}],
+        },
+        turnComplete: true,
+      },
+    ]);
+    const llm = new ScriptedLiveLlm(connection);
+    let responseProcessorRuns = 0;
+    class CountingResponseProcessor extends BaseLlmResponseProcessor {
+      async *runAsync(): AsyncGenerator<Event, void, void> {
+        responseProcessorRuns += 1;
+        yield* [];
+      }
+    }
+    const agent = new LlmAgent({
+      name: 'cfc_tool_agent',
+      model: llm,
+      tools: [addTool],
+      responseProcessors: [new CountingResponseProcessor()],
+    });
+    const session = createSession({
+      id: 'sess_cfc_tool',
+      appName: 'test-app',
+      userId: 'test-user',
+      events: [
+        createEvent({
+          invocationId: 'inv_cfc_tool',
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'add 3 and 4'}]},
+        }),
+      ],
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv_cfc_tool',
+      session,
+      agent,
+      runConfig: createRunConfig({
+        supportCfc: true,
+      }),
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(ctx)) {
+      events.push(event);
+    }
+
+    expect(toolExecute).toHaveBeenCalledTimes(1);
+    expect(toolExecute).toHaveBeenCalledWith({a: 3, b: 4}, expect.anything());
+    expect(responseProcessorRuns).toBe(2);
+    expect(events).toHaveLength(3);
+    expect(events[0].content?.parts?.[0]?.functionCall?.name).toBe(
+      'add_numbers',
+    );
+    expect(events[1].content?.parts?.[0]?.functionResponse?.response).toEqual({
+      sum: 7,
+    });
+    expect(events[2].content?.parts?.[0]?.text).toBe('The sum is 7.');
+  });
+
+  it('enforces maxLlmCalls, preserves an existing liveRequestQueue, and closes the queue on early exit when supportCfc is true', async () => {
+    const connection = new ScriptedLiveConnection([
+      {
+        content: {role: 'model', parts: [{text: 'first event'}]},
+        partial: false,
+      },
+      {
+        content: {role: 'model', parts: [{text: 'second event'}]},
+        partial: false,
+        turnComplete: true,
+      },
+    ]);
+    const llm = new ScriptedLiveLlm(connection);
+    const agent = new LlmAgent({
+      name: 'cfc_lifecycle_agent',
+      model: llm,
+    });
+    const session = createSession({
+      id: 'sess_cfc_lifecycle',
+      appName: 'test-app',
+      userId: 'test-user',
+      events: [
+        createEvent({
+          invocationId: 'inv_cfc_lifecycle',
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'test lifecycle'}]},
+        }),
+      ],
+    });
+    const existingQueue = new LiveRequestQueue();
+    const ctx = new InvocationContext({
+      invocationId: 'inv_cfc_lifecycle',
+      session,
+      agent,
+      liveRequestQueue: existingQueue,
+      runConfig: createRunConfig({
+        supportCfc: true,
+        maxLlmCalls: 1,
+      }),
+      pluginManager: new PluginManager(),
+    });
+
+    // Break early after the first yielded event (before turnComplete).
+    for await (const event of agent.runAsync(ctx)) {
+      expect(event.content?.parts?.[0]?.text).toBe('first event');
+      break;
+    }
+
+    expect(ctx.liveRequestQueue).toBe(existingQueue);
+    expect(() =>
+      existingQueue.sendContent({role: 'user', parts: [{text: 'late'}]}),
+    ).toThrow(/Cannot send to a closed queue/);
+
+    // A second call on the same context exceeds maxLlmCalls (1).
+    const secondRunEvents: Event[] = [];
+    for await (const event of agent.runAsync(ctx)) {
+      secondRunEvents.push(event);
+    }
+    expect(secondRunEvents).toHaveLength(1);
+    expect(secondRunEvents[0].errorMessage).toMatch(
+      /Max number of llm calls limit of 1 exceeded/,
+    );
+  });
+
+  it('calls BaseToolset.processLlmRequest before tool hooks in runLivePreprocess', async () => {
+    const callOrder: string[] = [];
+
+    class LiveProbeTool extends BaseTool {
+      constructor() {
+        super({name: 'live_probe_tool', description: 'live probe'});
+      }
+      override _getDeclaration() {
+        return {
+          name: this.name,
+          description: this.description,
+          parameters: {type: Type.OBJECT, properties: {}},
+        };
+      }
+      override async processLlmRequest(
+        request: ToolProcessLlmRequest,
+      ): Promise<void> {
+        await super.processLlmRequest(request);
+        callOrder.push('tool');
+      }
+      async runAsync(_request: RunAsyncToolRequest): Promise<unknown> {
+        return {result: 'ok'};
+      }
+    }
+
+    class LiveInstructionToolset extends BaseToolset {
+      constructor() {
+        super([]);
+      }
+      override async getTools(): Promise<BaseTool[]> {
+        return [new LiveProbeTool()];
+      }
+      override async close(): Promise<void> {}
+      override async processLlmRequest(
+        _toolContext: Context,
+        llmRequest: LlmRequest,
+      ): Promise<void> {
+        callOrder.push('toolset');
+        llmRequest.config ??= {};
+        llmRequest.config.systemInstruction = `${llmRequest.config.systemInstruction ?? ''}\n\nLIVE TOOLSET INSTRUCTION`;
+      }
+    }
+
+    const connection = new ScriptedLiveConnection([
+      {
+        content: {role: 'model', parts: [{text: 'live done'}]},
+        turnComplete: true,
+      },
+    ]);
+    const llm = new ScriptedLiveLlm(connection);
+    const agent = new LlmAgent({
+      name: 'live_toolset_agent',
+      model: llm,
+      instruction: 'Be brief.',
+      tools: [new LiveInstructionToolset()],
+    });
+    const session = createSession({
+      id: 'sess_live_toolset',
+      appName: 'test-app',
+      userId: 'test-user',
+    });
+    const liveRequestQueue = new LiveRequestQueue();
+    liveRequestQueue.close();
+    const ctx = new InvocationContext({
+      invocationId: 'inv_live_toolset',
+      session,
+      agent,
+      liveRequestQueue,
+      pluginManager: new PluginManager(),
+    });
+
+    for await (const _event of agent.runLive(ctx)) {
+      // Consume stream
+    }
+
+    expect(callOrder).toEqual(['toolset', 'tool']);
+    expect(llm.lastConnectedRequest?.config?.systemInstruction).toContain(
+      'LIVE TOOLSET INSTRUCTION',
+    );
+  });
+
+  it('keeps one event id across partial chunks and final event of a streamed response, minting a fresh id only after a complete event', async () => {
+    class MultiResponseLlm extends BaseLlm {
+      constructor(private readonly responses: LlmResponse[]) {
+        super({model: 'multi-response-llm'});
+      }
+
+      async *generateContentAsync(): AsyncGenerator<LlmResponse, void, void> {
+        for (const response of this.responses) {
+          yield response;
+        }
+      }
+
+      async connect(): Promise<BaseLlmConnection> {
+        return new MockLlmConnection();
+      }
+    }
+
+    const llm = new MultiResponseLlm([
+      {
+        content: {role: 'model', parts: [{text: 'Hello '}]},
+        partial: true,
+      },
+      {
+        content: {role: 'model', parts: [{text: 'world!'}]},
+        partial: true,
+      },
+      {
+        content: {role: 'model', parts: [{text: 'Hello world!'}]},
+        partial: false,
+      },
+      {
+        content: {role: 'model', parts: [{text: 'Second distinct response'}]},
+        partial: false,
+      },
+    ]);
+
+    const agent = new LlmAgent({
+      name: 'streaming_id_agent',
+      model: llm,
+    });
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'sess_stream_ids',
+    });
+    const runner = new Runner({
+      appName: 'test-app',
+      agent,
+      sessionService,
+    });
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: 'test-user',
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'stream please'}]},
+      runConfig: createRunConfig({streamingMode: StreamingMode.SSE}),
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(4);
+    expect(events[0].partial).toBe(true);
+    expect(events[1].partial).toBe(true);
+    expect(events[2].partial).toBe(false);
+    expect(events[3].partial).toBe(false);
+
+    // Partial chunks and the final complete event of the first response share one id.
+    expect(events[1].id).toBe(events[0].id);
+    expect(events[2].id).toBe(events[0].id);
+
+    // A subsequent complete response gets a newly minted id.
+    expect(events[3].id).not.toBe(events[0].id);
+
+    // Stored session events match the complete event IDs.
+    const reloadedSession = await sessionService.getSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: session.id,
+    });
+    const storedAgentEvents = reloadedSession!.events.filter(
+      (e) => e.author === 'streaming_id_agent',
+    );
+    expect(storedAgentEvents.map((e) => e.id)).toEqual([
+      events[0].id,
+      events[3].id,
+    ]);
+  });
+});
+
+describe('LlmAgent model callbacks', () => {
+  async function runAgentTurn(
+    agent: LlmAgent,
+  ): Promise<Array<[string | undefined, string | undefined]>> {
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'sess_callbacks',
+    });
+    const runner = new Runner({
+      appName: 'test-app',
+      agent,
+      sessionService,
+    });
+    const simplified: Array<[string | undefined, string | undefined]> = [];
+    for await (const event of runner.runAsync({
+      userId: 'test-user',
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'test'}]},
+    })) {
+      simplified.push([event.author, event.content?.parts?.[0]?.text]);
+    }
+    return simplified;
+  }
+
+  describe('canonicalBeforeModelCallbacks and canonicalAfterModelCallbacks', () => {
+    it('returns empty arrays when no model callbacks are configured', () => {
+      const agent = new LlmAgent({name: 'root_agent'});
+
+      expect(agent.canonicalBeforeModelCallbacks).toEqual([]);
+      expect(agent.canonicalAfterModelCallbacks).toEqual([]);
+    });
+
+    it('normalizes single model callbacks into single-element arrays', () => {
+      const beforeCb: SingleBeforeModelCallback = () => undefined;
+      const afterCb: SingleAfterModelCallback = () => undefined;
+      const agent = new LlmAgent({
+        name: 'root_agent',
+        beforeModelCallback: beforeCb,
+        afterModelCallback: afterCb,
+      });
+
+      expect(agent.canonicalBeforeModelCallbacks).toEqual([beforeCb]);
+      expect(agent.canonicalAfterModelCallbacks).toEqual([afterCb]);
+    });
+
+    it('preserves model callback arrays in order', () => {
+      const beforeCb1: SingleBeforeModelCallback = () => undefined;
+      const beforeCb2: SingleBeforeModelCallback = async () => undefined;
+      const afterCb1: SingleAfterModelCallback = () => undefined;
+      const afterCb2: SingleAfterModelCallback = async () => undefined;
+      const agent = new LlmAgent({
+        name: 'root_agent',
+        beforeModelCallback: [beforeCb1, beforeCb2],
+        afterModelCallback: [afterCb1, afterCb2],
+      });
+
+      expect(agent.canonicalBeforeModelCallbacks).toEqual([
+        beforeCb1,
+        beforeCb2,
+      ]);
+      expect(agent.canonicalAfterModelCallbacks).toEqual([afterCb1, afterCb2]);
+    });
+  });
+
+  describe('single sync and async model callbacks', () => {
+    it('overrides model call when sync beforeModelCallback returns a response', async () => {
+      const model = new CountingMockLlm([
+        [{content: {role: 'model', parts: [{text: 'model_response'}]}}],
+      ]);
+      const agent = new LlmAgent({
+        name: 'root_agent',
+        model,
+        beforeModelCallback: () => ({
+          content: {role: 'model', parts: [{text: 'before_model_callback'}]},
+        }),
+      });
+
+      const events = await runAgentTurn(agent);
+
+      expect(events).toEqual([['root_agent', 'before_model_callback']]);
+      expect(model.callCount).toBe(0);
+    });
+
+    it('proceeds to model call when sync beforeModelCallback returns undefined', async () => {
+      const model = new CountingMockLlm([
+        [{content: {role: 'model', parts: [{text: 'model_response'}]}}],
+      ]);
+      const agent = new LlmAgent({
+        name: 'root_agent',
+        model,
+        beforeModelCallback: () => undefined,
+      });
+
+      const events = await runAgentTurn(agent);
+
+      expect(events).toEqual([['root_agent', 'model_response']]);
+      expect(model.callCount).toBe(1);
+    });
+
+    it('overrides model call when async beforeModelCallback resolves to a response', async () => {
+      const model = new CountingMockLlm([
+        [{content: {role: 'model', parts: [{text: 'model_response'}]}}],
+      ]);
+      const agent = new LlmAgent({
+        name: 'root_agent',
+        model,
+        beforeModelCallback: async () => ({
+          content: {
+            role: 'model',
+            parts: [{text: 'async_before_model_callback'}],
+          },
+        }),
+      });
+
+      const events = await runAgentTurn(agent);
+
+      expect(events).toEqual([['root_agent', 'async_before_model_callback']]);
+      expect(model.callCount).toBe(0);
+    });
+
+    it('proceeds to model call when async beforeModelCallback resolves to undefined', async () => {
+      const model = new CountingMockLlm([
+        [{content: {role: 'model', parts: [{text: 'model_response'}]}}],
+      ]);
+      const agent = new LlmAgent({
+        name: 'root_agent',
+        model,
+        beforeModelCallback: async () => undefined,
+      });
+
+      const events = await runAgentTurn(agent);
+
+      expect(events).toEqual([['root_agent', 'model_response']]);
+      expect(model.callCount).toBe(1);
+    });
+
+    it('overrides model response when sync afterModelCallback returns a response', async () => {
+      const model = new CountingMockLlm([
+        [{content: {role: 'model', parts: [{text: 'model_response'}]}}],
+      ]);
+      const agent = new LlmAgent({
+        name: 'root_agent',
+        model,
+        afterModelCallback: () => ({
+          content: {role: 'model', parts: [{text: 'after_model_callback'}]},
+        }),
+      });
+
+      const events = await runAgentTurn(agent);
+
+      expect(events).toEqual([['root_agent', 'after_model_callback']]);
+      expect(model.callCount).toBe(1);
+    });
+
+    it('preserves model response when sync afterModelCallback returns undefined', async () => {
+      const model = new CountingMockLlm([
+        [{content: {role: 'model', parts: [{text: 'model_response'}]}}],
+      ]);
+      const agent = new LlmAgent({
+        name: 'root_agent',
+        model,
+        afterModelCallback: () => undefined,
+      });
+
+      const events = await runAgentTurn(agent);
+
+      expect(events).toEqual([['root_agent', 'model_response']]);
+      expect(model.callCount).toBe(1);
+    });
+
+    it('overrides model response when async afterModelCallback resolves to a response', async () => {
+      const model = new CountingMockLlm([
+        [{content: {role: 'model', parts: [{text: 'model_response'}]}}],
+      ]);
+      const agent = new LlmAgent({
+        name: 'root_agent',
+        model,
+        afterModelCallback: async () => ({
+          content: {
+            role: 'model',
+            parts: [{text: 'async_after_model_callback'}],
+          },
+        }),
+      });
+
+      const events = await runAgentTurn(agent);
+
+      expect(events).toEqual([['root_agent', 'async_after_model_callback']]);
+      expect(model.callCount).toBe(1);
+    });
+
+    it('preserves model response when async afterModelCallback resolves to undefined', async () => {
+      const model = new CountingMockLlm([
+        [{content: {role: 'model', parts: [{text: 'model_response'}]}}],
+      ]);
+      const agent = new LlmAgent({
+        name: 'root_agent',
+        model,
+        afterModelCallback: async () => undefined,
+      });
+
+      const events = await runAgentTurn(agent);
+
+      expect(events).toEqual([['root_agent', 'model_response']]);
+      expect(model.callCount).toBe(1);
+    });
+  });
+
+  describe('model callback chaining', () => {
+    interface ModelCallbackChainSpec {
+      name: string;
+      callbacks: Array<{response?: string; isAsync: boolean}>;
+      expectedResponse: string;
+      expectedCalls: number[];
+    }
+
+    const MODEL_CALLBACK_CHAIN_CASES: ModelCallbackChainSpec[] = [
+      {
+        name: 'middle_async_callback_returns',
+        callbacks: [
+          {response: undefined, isAsync: false},
+          {response: 'callback_2_response', isAsync: true},
+          {response: 'callback_3_response', isAsync: false},
+          {response: undefined, isAsync: true},
+        ],
+        expectedResponse: 'callback_2_response',
+        expectedCalls: [1, 1, 0, 0],
+      },
+      {
+        name: 'all_callbacks_return_undefined',
+        callbacks: [
+          {response: undefined, isAsync: false},
+          {response: undefined, isAsync: true},
+          {response: undefined, isAsync: false},
+          {response: undefined, isAsync: true},
+        ],
+        expectedResponse: 'model_response',
+        expectedCalls: [1, 1, 1, 1],
+      },
+      {
+        name: 'first_sync_callback_returns',
+        callbacks: [
+          {response: 'callback_1_response', isAsync: false},
+          {response: 'callback_2_response', isAsync: true},
+        ],
+        expectedResponse: 'callback_1_response',
+        expectedCalls: [1, 0],
+      },
+    ];
+
+    it.each(MODEL_CALLBACK_CHAIN_CASES)(
+      'chains beforeModelCallback ($name)',
+      async ({callbacks, expectedResponse, expectedCalls}) => {
+        const model = new CountingMockLlm([
+          [{content: {role: 'model', parts: [{text: 'model_response'}]}}],
+        ]);
+        const spies = callbacks.map(({response, isAsync}) =>
+          vi.fn<SingleBeforeModelCallback>(({context, request}) => {
+            expect(context).toBeInstanceOf(Context);
+            expect(request).toBeDefined();
+            const llmResponse: LlmResponse | undefined = response
+              ? {content: {role: 'model', parts: [{text: response}]}}
+              : undefined;
+            return isAsync ? Promise.resolve(llmResponse) : llmResponse;
+          }),
+        );
+
+        const agent = new LlmAgent({
+          name: 'root_agent',
+          model,
+          beforeModelCallback: spies,
+        });
+
+        const events = await runAgentTurn(agent);
+
+        expect(events).toEqual([['root_agent', expectedResponse]]);
+        spies.forEach((spy, index) => {
+          expect(spy).toHaveBeenCalledTimes(expectedCalls[index]);
+        });
+      },
+    );
+
+    it.each(MODEL_CALLBACK_CHAIN_CASES)(
+      'chains afterModelCallback ($name)',
+      async ({callbacks, expectedResponse, expectedCalls}) => {
+        const model = new CountingMockLlm([
+          [{content: {role: 'model', parts: [{text: 'model_response'}]}}],
+        ]);
+        const spies = callbacks.map(({response, isAsync}) =>
+          vi.fn<SingleAfterModelCallback>(
+            ({context, response: modelResponse}) => {
+              expect(context).toBeInstanceOf(Context);
+              expect(modelResponse).toBeDefined();
+              const llmResponse: LlmResponse | undefined = response
+                ? {content: {role: 'model', parts: [{text: response}]}}
+                : undefined;
+              return isAsync ? Promise.resolve(llmResponse) : llmResponse;
+            },
+          ),
+        );
+
+        const agent = new LlmAgent({
+          name: 'root_agent',
+          model,
+          afterModelCallback: spies,
+        });
+
+        const events = await runAgentTurn(agent);
+
+        expect(events).toEqual([['root_agent', expectedResponse]]);
+        spies.forEach((spy, index) => {
+          expect(spy).toHaveBeenCalledTimes(expectedCalls[index]);
+        });
+      },
+    );
+  });
+});
+
+class MockToolset extends BaseToolset {
+  receivedContext?: ReadonlyContext;
+
+  constructor(private readonly toolsToReturn: BaseTool[]) {
+    super([]);
+  }
+
+  override async getTools(context?: ReadonlyContext): Promise<BaseTool[]> {
+    this.receivedContext = context;
+    return this.toolsToReturn;
+  }
+
+  override async close(): Promise<void> {}
+}
+
+async function createReadonlyContext(
+  agent: LlmAgent,
+  state?: Record<string, unknown>,
+): Promise<ReadonlyContext> {
+  const sessionService = new InMemorySessionService();
+  const session = await sessionService.createSession({
+    appName: 'test_app',
+    userId: 'test_user',
+    state,
+  });
+  const invocationContext = new InvocationContext({
+    invocationId: 'test_id',
+    agent,
+    session,
+    sessionService,
+    pluginManager: new PluginManager(),
+  });
+  return new ReadonlyContext(invocationContext);
+}
+
+describe('LlmAgent canonical fields and config validation', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('test_canonical_model_empty', () => {
+    const agent = new LlmAgent({name: 'test_agent'});
+
+    expect(() => agent.canonicalModel).toThrow(
+      'No model found for test_agent.',
+    );
+  });
+
+  it('test_canonical_model_str', () => {
+    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
+    vi.stubEnv('GOOGLE_API_KEY', 'test-key');
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      model: 'gemini-flash-latest',
+    });
+
+    expect(agent.canonicalModel.model).toBe('gemini-flash-latest');
+  });
+
+  it('test_canonical_model_llm', () => {
+    const llm = new MockLlm(null);
+    const agent = new LlmAgent({name: 'test_agent', model: llm});
+
+    expect(agent.canonicalModel).toBe(llm);
+  });
+
+  it('test_canonical_model_inherit', () => {
+    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
+    vi.stubEnv('GOOGLE_API_KEY', 'test-key');
+    const subAgent = new LlmAgent({name: 'sub_agent'});
+    const parentAgent = new LlmAgent({
+      name: 'parent_agent',
+      model: 'gemini-flash-latest',
+      subAgents: [subAgent],
+    });
+
+    expect(subAgent.canonicalModel).toEqual(parentAgent.canonicalModel);
+  });
+
+  it('test_canonical_instruction_str', async () => {
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      instruction: 'instruction',
+    });
+    const ctx = await createReadonlyContext(agent);
+
+    expect(await agent.canonicalInstruction(ctx)).toEqual({
+      instruction: 'instruction',
+      requireStateInjection: true,
+    });
+  });
+
+  it('test_canonical_instruction', async () => {
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      instruction: (ctx: ReadonlyContext) =>
+        `instruction: ${ctx.state.get('state_var')}`,
+    });
+    const ctx = await createReadonlyContext(agent, {
+      state_var: 'state_value',
+    });
+
+    expect(await agent.canonicalInstruction(ctx)).toEqual({
+      instruction: 'instruction: state_value',
+      requireStateInjection: false,
+    });
+  });
+
+  it('test_async_canonical_instruction', async () => {
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      instruction: async (ctx: ReadonlyContext) =>
+        `instruction: ${ctx.state.get('state_var')}`,
+    });
+    const ctx = await createReadonlyContext(agent, {
+      state_var: 'state_value',
+    });
+
+    expect(await agent.canonicalInstruction(ctx)).toEqual({
+      instruction: 'instruction: state_value',
+      requireStateInjection: false,
+    });
+  });
+
+  it('test_canonical_global_instruction_str', async () => {
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      globalInstruction: 'global instruction',
+    });
+    const ctx = await createReadonlyContext(agent);
+
+    expect(await agent.canonicalGlobalInstruction(ctx)).toEqual({
+      instruction: 'global instruction',
+      requireStateInjection: true,
+    });
+  });
+
+  it('test_canonical_global_instruction', async () => {
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      globalInstruction: (ctx: ReadonlyContext) =>
+        `global instruction: ${ctx.state.get('state_var')}`,
+    });
+    const ctx = await createReadonlyContext(agent, {
+      state_var: 'state_value',
+    });
+
+    expect(await agent.canonicalGlobalInstruction(ctx)).toEqual({
+      instruction: 'global instruction: state_value',
+      requireStateInjection: false,
+    });
+  });
+
+  it('test_async_canonical_global_instruction', async () => {
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      globalInstruction: async (ctx: ReadonlyContext) =>
+        `global instruction: ${ctx.state.get('state_var')}`,
+    });
+    const ctx = await createReadonlyContext(agent, {
+      state_var: 'state_value',
+    });
+
+    expect(await agent.canonicalGlobalInstruction(ctx)).toEqual({
+      instruction: 'global instruction: state_value',
+      requireStateInjection: false,
+    });
+  });
+
+  it('test_validate_generate_content_config_tools_throw', () => {
+    expect(
+      () =>
+        new LlmAgent({
+          name: 'test_agent',
+          generateContentConfig: {
+            tools: [{functionDeclarations: []}],
+          },
+        }),
+    ).toThrow('All tools must be set via LlmAgent.tools.');
+  });
+
+  it('test_validate_generate_content_config_system_instruction_throw', () => {
+    expect(
+      () =>
+        new LlmAgent({
+          name: 'test_agent',
+          generateContentConfig: {
+            systemInstruction: 'system instruction',
+          },
+        }),
+    ).toThrow('System instruction must be set via LlmAgent.instruction.');
+  });
+
+  it('test_validate_generate_content_config_response_schema_throw', () => {
+    expect(
+      () =>
+        new LlmAgent({
+          name: 'test_agent',
+          generateContentConfig: {
+            responseSchema: {type: Type.OBJECT},
+          },
+        }),
+    ).toThrow('Response schema must be set via LlmAgent.output_schema.');
+  });
+
+  it('test_allow_transfer_by_default', () => {
+    const subAgent = new LlmAgent({name: 'sub_agent'});
+    const agent = new LlmAgent({name: 'test_agent', subAgents: [subAgent]});
+
+    expect(agent.disallowTransferToParent).toBe(false);
+    expect(agent.disallowTransferToPeers).toBe(false);
+  });
+
+  it('canonicalTools resolves BaseTool and BaseToolset entries and passes context to BaseToolset.getTools', async () => {
+    const directTool = new MockTool('direct_tool');
+    const toolsetTool1 = new MockTool('toolset_tool_1');
+    const toolsetTool2 = new MockTool('toolset_tool_2');
+    const toolset = new MockToolset([toolsetTool1, toolsetTool2]);
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      tools: [directTool, toolset],
+    });
+    const ctx = await createReadonlyContext(agent);
+
+    const resolvedTools = await agent.canonicalTools(ctx);
+
+    expect(resolvedTools).toEqual([directTool, toolsetTool1, toolsetTool2]);
+    expect(toolset.receivedContext).toBe(ctx);
+  });
+
+  describe('canonicalBeforeToolCallbacks and canonicalAfterToolCallbacks', () => {
+    it('returns empty arrays when no tool callbacks are configured', () => {
+      const agent = new LlmAgent({name: 'test_agent'});
+
+      expect(agent.canonicalBeforeToolCallbacks).toEqual([]);
+      expect(agent.canonicalAfterToolCallbacks).toEqual([]);
+    });
+
+    it('normalizes single tool callbacks into single-element arrays', () => {
+      const beforeCb: SingleBeforeToolCallback = () => undefined;
+      const afterCb: SingleAfterToolCallback = () => undefined;
+      const agent = new LlmAgent({
+        name: 'test_agent',
+        beforeToolCallback: beforeCb,
+        afterToolCallback: afterCb,
+      });
+
+      expect(agent.canonicalBeforeToolCallbacks).toEqual([beforeCb]);
+      expect(agent.canonicalAfterToolCallbacks).toEqual([afterCb]);
+    });
+
+    it('preserves tool callback arrays in order', () => {
+      const beforeCb1: SingleBeforeToolCallback = () => undefined;
+      const beforeCb2: SingleBeforeToolCallback = async () => undefined;
+      const afterCb1: SingleAfterToolCallback = () => undefined;
+      const afterCb2: SingleAfterToolCallback = async () => undefined;
+      const agent = new LlmAgent({
+        name: 'test_agent',
+        beforeToolCallback: [beforeCb1, beforeCb2],
+        afterToolCallback: [afterCb1, afterCb2],
+      });
+
+      expect(agent.canonicalBeforeToolCallbacks).toEqual([
+        beforeCb1,
+        beforeCb2,
+      ]);
+      expect(agent.canonicalAfterToolCallbacks).toEqual([afterCb1, afterCb2]);
+    });
   });
 });

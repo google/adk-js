@@ -34,6 +34,7 @@ describe('WebUI Integration Test', () => {
       let server: AdkApiServer | AdkCliApiServer;
       let url: string;
 
+      // No hook budget: the 120s project hookTimeout outlasts the 60s watchdog.
       beforeAll(async () => {
         server = new serverClass({
           agentsDir: path.resolve(__dirname, './agent'),
@@ -42,7 +43,7 @@ describe('WebUI Integration Test', () => {
         });
         await server.start();
         url = server.url;
-      }, 20000);
+      });
 
       afterAll(async () => {
         if (server) {

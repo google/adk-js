@@ -7,6 +7,8 @@
 import {BaseRetrievalTool, LlmRequest} from '@google/adk';
 import {Tool, Type} from '@google/genai';
 import {describe, expect, it} from 'vitest';
+import {FunctionTool} from '../../../src/tools/function_tool.js';
+import {isBaseRetrievalTool} from '../../../src/tools/retrieval/base_retrieval_tool.js';
 
 class StubRetrieval extends BaseRetrievalTool {
   constructor(name = 'stub_retrieval', description = 'A stub.') {
@@ -88,5 +90,27 @@ describe('BaseRetrievalTool', () => {
       'first',
       'second',
     ]);
+  });
+});
+
+describe('isBaseRetrievalTool', () => {
+  it('identifies BaseRetrievalTool instances via isBaseRetrievalTool', () => {
+    const retrievalTool = new StubRetrieval();
+    const fnTool = new FunctionTool({
+      name: 'fn_tool',
+      description: 'A regular function tool.',
+      execute: async () => 'ok',
+    });
+
+    expect(isBaseRetrievalTool(retrievalTool)).toBe(true);
+    expect(isBaseRetrievalTool(fnTool)).toBe(false);
+    expect(isBaseRetrievalTool(null)).toBe(false);
+    expect(isBaseRetrievalTool(undefined)).toBe(false);
+    expect(isBaseRetrievalTool({})).toBe(false);
+    expect(
+      isBaseRetrievalTool({
+        [Symbol.for('google.adk.baseRetrievalTool')]: true,
+      }),
+    ).toBe(true);
   });
 });

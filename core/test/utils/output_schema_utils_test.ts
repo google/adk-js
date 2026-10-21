@@ -4,12 +4,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {BaseLlm, Gemini} from '@google/adk';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 // `canUseOutputSchemaWithTools` is internal and deliberately not exported from
 // the package barrel.
 import {canUseOutputSchemaWithTools} from '../../src/utils/output_schema_utils.js';
 
 const VERTEX_ENV_VAR = 'GOOGLE_GENAI_USE_VERTEXAI';
+
+class CustomTestLlm extends BaseLlm {
+  async *generateContentAsync() {}
+  async connect(): Promise<never> {
+    throw new Error('Not implemented');
+  }
+}
 
 interface TestCase {
   model: string;
@@ -100,4 +108,52 @@ describe('canUseOutputSchemaWithTools', () => {
       expect(canUseOutputSchemaWithTools(model)).toBe(expected);
     });
   }
+
+  it('returns true for a Gemini({ vertexai: true }) 2.0+ instance even when env var is unset or false', () => {
+    vi.stubEnv(VERTEX_ENV_VAR, undefined);
+    const model = new Gemini({
+      model: 'gemini-2.5-flash',
+      vertexai: true,
+      project: 'test-project',
+      location: 'us-central1',
+    });
+
+    expect(canUseOutputSchemaWithTools(model)).toBe(true);
+
+    vi.stubEnv(VERTEX_ENV_VAR, 'false');
+    expect(canUseOutputSchemaWithTools(model)).toBe(true);
+  });
+
+  it('returns false for a Gemini({ vertexai: true }) pre-2.0 instance', () => {
+    vi.stubEnv(VERTEX_ENV_VAR, undefined);
+    const model = new Gemini({
+      model: 'gemini-1.5-pro',
+      vertexai: true,
+      project: 'test-project',
+      location: 'us-central1',
+    });
+
+    expect(canUseOutputSchemaWithTools(model)).toBe(false);
+  });
+
+  it('returns false for a Gemini({ vertexai: false }) instance even when env var is true', () => {
+    vi.stubEnv(VERTEX_ENV_VAR, 'true');
+    const model = new Gemini({
+      model: 'gemini-2.5-flash',
+      vertexai: false,
+      apiKey: 'test-key',
+    });
+
+    expect(canUseOutputSchemaWithTools(model)).toBe(false);
+  });
+
+  it('falls back to environment variant for non-Gemini BaseLlm instances', () => {
+    const model = new CustomTestLlm({model: 'gemini-2.5-flash'});
+
+    vi.stubEnv(VERTEX_ENV_VAR, undefined);
+    expect(canUseOutputSchemaWithTools(model)).toBe(false);
+
+    vi.stubEnv(VERTEX_ENV_VAR, 'true');
+    expect(canUseOutputSchemaWithTools(model)).toBe(true);
+  });
 });

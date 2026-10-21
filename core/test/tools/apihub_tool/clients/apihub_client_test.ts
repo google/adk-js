@@ -13,7 +13,12 @@ const {getAccessToken} = vi.hoisted(() => ({getAccessToken: vi.fn()}));
 
 vi.mock('google-auth-library', async (importOriginal) => {
   const actual = await importOriginal<typeof import('google-auth-library')>();
-  return {...actual, GoogleAuth: vi.fn(() => ({getAccessToken}))};
+  return {
+    ...actual,
+    GoogleAuth: vi.fn(function () {
+      return {getAccessToken};
+    }),
+  };
 });
 
 const API_NAME = 'projects/test-project/locations/us-central1/apis/api1';

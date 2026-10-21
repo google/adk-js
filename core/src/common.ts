@@ -21,13 +21,38 @@ export {
   findEventByFunctionCallId,
   findMatchingFunctionCall,
   functionsExportedForTestingOnly,
+  handleFunctionCallsLive,
   isToolNotFound,
 } from './agents/functions.js';
-export {InvocationContext, requireAgent} from './agents/invocation_context.js';
+export {
+  InvocationContext,
+  LlmCallsLimitExceededError,
+  isLlmCallsLimitExceededError,
+  requireAgent,
+} from './agents/invocation_context.js';
 export type {
   InvocationContextParams,
   WorkflowInstructionScope,
 } from './agents/invocation_context.js';
+export {
+  LangGraphAgent,
+  getLastHumanMessages,
+  isLangGraphAgent,
+} from './agents/langgraph_agent.js';
+export type {
+  CompiledGraphLike,
+  LangGraphAIMessage,
+  LangGraphAgentConfig,
+  LangGraphContentPart,
+  LangGraphHumanMessage,
+  LangGraphInvokeInput,
+  LangGraphInvokeOutput,
+  LangGraphMessageContent,
+  LangGraphMessageLike,
+  LangGraphRunnableConfig,
+  LangGraphStateSnapshot,
+  LangGraphSystemMessage,
+} from './agents/langgraph_agent.js';
 export {LiveRequestQueue} from './agents/live_request_queue.js';
 export type {LiveRequest} from './agents/live_request_queue.js';
 export {LlmAgent as Agent, LlmAgent, isLlmAgent} from './agents/llm_agent.js';
@@ -64,9 +89,14 @@ export {
   InteractionsRequestProcessor,
 } from './agents/processors/interactions_request_processor.js';
 export {ReadonlyContext} from './agents/readonly_context.js';
+export {RemoteAgent, isRemoteAgent} from './agents/remote_agent.js';
+export type {
+  RemoteAgentConfig,
+  RemoteAgentFetch,
+} from './agents/remote_agent.js';
 export {RoutedAgent, isRoutedAgent} from './agents/routed_agent.js';
 export type {AgentRouter, RoutedAgentConfig} from './agents/routed_agent.js';
-export {StreamingMode} from './agents/run_config.js';
+export {StreamingMode, createRunConfig} from './agents/run_config.js';
 export type {RunConfig} from './agents/run_config.js';
 export {SequentialAgent, isSequentialAgent} from './agents/sequential_agent.js';
 export type {TranscriptionEntry} from './agents/transcription_entry.js';
@@ -255,10 +285,7 @@ export type {GeminiParams} from './models/google_llm.js';
 export {appendInstructions} from './models/llm_request.js';
 export type {LlmRequest} from './models/llm_request.js';
 export {createLlmResponse} from './models/llm_response.js';
-export type {
-  GenerateContentResponseFields,
-  LlmResponse,
-} from './models/llm_response.js';
+export type {LlmResponse} from './models/llm_response.js';
 export {LLMRegistry} from './models/registry.js';
 export type {BaseLlmType} from './models/registry.js';
 export {RoutedLlm} from './models/routed_llm.js';
@@ -427,6 +454,9 @@ export type {
 export {AsyncQueue} from './utils/async_queue.js';
 export {renameReservedKeywords, toSnakeCaseName} from './utils/case_utils.js';
 export {getClientLabels, runWithClientLabel} from './utils/client_labels.js';
+export {toGeminiSchema} from './utils/gemini_schema_util.js';
+export type {MCPToolSchema} from './utils/gemini_schema_util.js';
+export {genaiSchemaToJsonSchema} from './utils/genai_schema_to_json.js';
 export {
   LogLevel,
   getLogger,
@@ -442,6 +472,7 @@ export {
   isGemini3xFlashLive,
   isGemini3xLive,
 } from './utils/model_name.js';
+export {toJsonSchema} from './utils/schema.js';
 export type {SchemaLike} from './utils/schema.js';
 export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
 export {Task} from './utils/task.js';
@@ -540,3 +571,44 @@ export * from './features/feature_registry.js';
 export * from './memory/base_memory_service.js';
 export * from './sessions/base_session_service.js';
 export * from './tools/base_tool.js';
+
+export {
+  convertSessionToEvalFormat,
+  createEmptyState,
+} from './cli/utils/evals.js';
+export type {
+  EvaluationItem,
+  IntermediateAgentResponseItem,
+  ToolUseItem,
+} from './cli/utils/evals.js';
+export {CrewaiTool, isCrewaiTool} from './tools/crewai_tool.js';
+export type {
+  CrewaiSchemaLike,
+  CrewaiToolConfig,
+  CrewaiToolLike,
+} from './tools/crewai_tool.js';
+export {
+  buildFunctionDeclarationForLangchain,
+  buildFunctionDeclarationForParamsForCrewai,
+  buildFunctionDeclarationUtil,
+} from './tools/function_tool.js';
+export type {CallLiveToolRequest} from './tools/function_tool.js';
+export {LangchainTool, isLangchainTool} from './tools/langchain_tool.js';
+export type {
+  LangchainSchemaLike,
+  LangchainToolConfig,
+  LangchainToolLike,
+} from './tools/langchain_tool.js';
+export type {LoadMemoryResponse} from './tools/load_memory_tool.js';
+export {isBaseRetrievalTool} from './tools/retrieval/base_retrieval_tool.js';
+export {ToolboxTool, isToolboxTool} from './tools/toolbox_tool.js';
+export type {
+  ToolboxClientLike,
+  ToolboxToolOptions,
+} from './tools/toolbox_tool.js';
+export {ToolboxToolset, isToolboxToolset} from './tools/toolbox_toolset.js';
+export type {
+  ToolboxLoadOptions,
+  ToolboxToolsetClientLike,
+  ToolboxToolsetOptions,
+} from './tools/toolbox_toolset.js';

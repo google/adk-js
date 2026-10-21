@@ -7,6 +7,7 @@
 import {
   Gemini,
   GeminiParams,
+  GoogleLLMVariant,
   LlmRequest,
   LlmResponse,
   geminiInitParams,
@@ -25,26 +26,35 @@ vi.mock('@google/genai', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@google/genai')>();
   return {
     ...actual,
-    GoogleGenAI: vi.fn().mockImplementation((options) => ({
-      apiClient: {
-        clientOptions: {
-          httpOptions: options.httpOptions,
+    GoogleGenAI: vi.fn().mockImplementation(function (options) {
+      return {
+        apiClient: {
+          clientOptions: {
+            httpOptions: options.httpOptions,
+          },
         },
-      },
-      models: {
-        generateContentStream: vi.fn(),
-        generateContent: vi.fn(),
-      },
-      live: {
-        connect: vi.fn().mockResolvedValue({
-          sendClientContent: vi.fn(),
-          sendToolResponse: vi.fn(),
-          sendRealtimeInput: vi.fn(),
-          close: vi.fn(),
-        }),
-      },
-      vertexai: options.vertexai || false,
-    })),
+        models: {
+          generateContentStream: vi.fn(),
+          generateContent: vi.fn(),
+        },
+        live: {
+          connect: vi.fn().mockResolvedValue({
+            sendClientContent: vi.fn(),
+            sendToolResponse: vi.fn(),
+            sendRealtimeInput: vi.fn(),
+            close: vi.fn(),
+          }),
+        },
+        vertexai:
+          options.vertexai ??
+          (['true', '1'].includes(
+            process.env['GOOGLE_GENAI_USE_ENTERPRISE'] ?? '',
+          ) ||
+            ['true', '1'].includes(
+              process.env['GOOGLE_GENAI_USE_VERTEXAI'] ?? '',
+            )),
+      };
+    }),
   };
 });
 
@@ -387,6 +397,28 @@ describe('GoogleLlm', () => {
       expect(params.vertexai).toBe(false);
     });
 
+    it('should not use Vertex AI when vertexai is explicitly false even if GOOGLE_GENAI_USE_ENTERPRISE is set', () => {
+      process.env['GOOGLE_GENAI_USE_ENTERPRISE'] = 'true';
+      process.env['GOOGLE_CLOUD_PROJECT'] = 'env-project';
+      process.env['GOOGLE_CLOUD_LOCATION'] = 'env-location';
+      const params = geminiInitParams({
+        model: 'gemini-1.5-flash',
+        vertexai: false,
+        apiKey: 'test-key',
+      });
+      expect(params.vertexai).toBe(false);
+    });
+
+    it('should not use Vertex AI when vertexai is explicitly false even if GOOGLE_GENAI_USE_VERTEXAI is set', () => {
+      process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'true';
+      const params = geminiInitParams({
+        model: 'gemini-1.5-flash',
+        vertexai: false,
+        apiKey: 'test-key',
+      });
+      expect(params.vertexai).toBe(false);
+    });
+
     it('should throw error if project is missing for Vertex AI', () => {
       const input = {
         model: 'gemini-1.5-flash',
@@ -395,6 +427,39 @@ describe('GoogleLlm', () => {
       };
       expect(() => geminiInitParams(input)).toThrow(/VertexAI project/);
     });
+  });
+
+  it('should use GEMINI_API backend and pass vertexai: false to clients when vertexai is explicitly false and GOOGLE_GENAI_USE_ENTERPRISE is set', () => {
+    process.env['GOOGLE_GENAI_USE_ENTERPRISE'] = 'true';
+    process.env['GOOGLE_CLOUD_PROJECT'] = 'env-project';
+    process.env['GOOGLE_CLOUD_LOCATION'] = 'env-location';
+
+    const spy = vi.mocked(GoogleGenAI);
+    spy.mockClear();
+
+    const llm = new TestGemini({
+      model: 'gemini-2.5-flash',
+      vertexai: false,
+      apiKey: 'test-key',
+    });
+
+    expect(llm.apiBackend).toBe(GoogleLLMVariant.GEMINI_API);
+    expect(llm.liveApiVersion).toBe('v1alpha');
+    expect(llm.liveApiClient.vertexai).toBe(false);
+    expect(spy).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        vertexai: false,
+        apiKey: 'test-key',
+      }),
+    );
+    expect(spy).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        vertexai: false,
+        apiKey: 'test-key',
+      }),
+    );
   });
 
   describe('generateContentAsync', () => {
@@ -723,6 +788,99 @@ describe('GoogleLlm', () => {
           [[functionCallPart], false],
         ]);
       });
+    });
+
+    it('preserves usageMetadata on the final aggregated LlmResponse', async () => {
+      const finalUsageMetadata = {
+        promptTokenCount: 10,
+        candidatesTokenCount: 5,
+        totalTokenCount: 15,
+      };
+      const gemini = createStreamingGemini([
+        {
+          candidates: [
+            {
+              content: {role: 'model', parts: [{text: 'Hello'}]},
+            },
+          ],
+          usageMetadata: {
+            promptTokenCount: 10,
+            candidatesTokenCount: 1,
+            totalTokenCount: 11,
+          },
+        },
+        {
+          candidates: [
+            {
+              content: {role: 'model', parts: [{text: ', how'}]},
+            },
+          ],
+          usageMetadata: {
+            promptTokenCount: 10,
+            candidatesTokenCount: 2,
+            totalTokenCount: 12,
+          },
+        },
+        {
+          candidates: [
+            {
+              content: {role: 'model', parts: [{text: ' can I help you?'}]},
+              finishReason: 'STOP',
+            },
+          ],
+          usageMetadata: finalUsageMetadata,
+        },
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      expect(responses).toHaveLength(4);
+      expect(responses[0].partial).toBe(true);
+      expect(responses[1].partial).toBe(true);
+      expect(responses[2].partial).toBe(true);
+      expect(responses[3].partial).toBe(false);
+      expect(responses[3].content?.parts?.[0]?.text).toBe(
+        'Hello, how can I help you?',
+      );
+      expect(responses[3].usageMetadata).toEqual(finalUsageMetadata);
+    });
+
+    it('preserves usageMetadata when flushing accumulated text before a function call chunk', async () => {
+      const usageMetadata = {
+        promptTokenCount: 8,
+        candidatesTokenCount: 4,
+        totalTokenCount: 12,
+      };
+      const functionCallPart = {
+        functionCall: {id: 'call-1', name: 'lookup', args: {}},
+      };
+      const gemini = createStreamingGemini([
+        {
+          candidates: [{content: {role: 'model', parts: [{text: 'Hello'}]}}],
+        },
+        {
+          candidates: [
+            {
+              content: {role: 'model', parts: [functionCallPart]},
+              finishReason: 'STOP',
+            },
+          ],
+          usageMetadata,
+        },
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      expect(responses).toHaveLength(4);
+      expect(responses[1].partial).toBe(false);
+      expect(responses[1].content?.parts).toEqual([{text: 'Hello'}]);
+      expect(responses[1].usageMetadata).toEqual(usageMetadata);
+      expect(responses[2].partial).toBe(false);
+      expect(responses[2].content?.parts).toEqual([functionCallPart]);
+      expect(responses[2].usageMetadata).toEqual(usageMetadata);
+      expect(responses[3].partial).toBe(false);
+      expect(responses[3].content).toBeUndefined();
+      expect(responses[3].usageMetadata).toEqual(usageMetadata);
     });
   });
 
