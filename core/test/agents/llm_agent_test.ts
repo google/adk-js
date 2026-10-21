@@ -39,7 +39,9 @@ import {
   Runner,
   Session,
   SingleAfterModelCallback,
+  SingleAfterToolCallback,
   SingleBeforeModelCallback,
+  SingleBeforeToolCallback,
   SkillToolset,
   StreamingMode,
   ToolProcessLlmRequest,
@@ -2934,5 +2936,276 @@ describe('LlmAgent model callbacks', () => {
         });
       },
     );
+  });
+});
+
+class MockToolset extends BaseToolset {
+  receivedContext?: ReadonlyContext;
+
+  constructor(private readonly toolsToReturn: BaseTool[]) {
+    super([]);
+  }
+
+  override async getTools(context?: ReadonlyContext): Promise<BaseTool[]> {
+    this.receivedContext = context;
+    return this.toolsToReturn;
+  }
+
+  override async close(): Promise<void> {}
+}
+
+async function createReadonlyContext(
+  agent: LlmAgent,
+  state?: Record<string, unknown>,
+): Promise<ReadonlyContext> {
+  const sessionService = new InMemorySessionService();
+  const session = await sessionService.createSession({
+    appName: 'test_app',
+    userId: 'test_user',
+    state,
+  });
+  const invocationContext = new InvocationContext({
+    invocationId: 'test_id',
+    agent,
+    session,
+    sessionService,
+    pluginManager: new PluginManager(),
+  });
+  return new ReadonlyContext(invocationContext);
+}
+
+describe('LlmAgent canonical fields and config validation', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('test_canonical_model_empty', () => {
+    const agent = new LlmAgent({name: 'test_agent'});
+
+    expect(() => agent.canonicalModel).toThrow(
+      'No model found for test_agent.',
+    );
+  });
+
+  it('test_canonical_model_str', () => {
+    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
+    vi.stubEnv('GOOGLE_API_KEY', 'test-key');
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      model: 'gemini-flash-latest',
+    });
+
+    expect(agent.canonicalModel.model).toBe('gemini-flash-latest');
+  });
+
+  it('test_canonical_model_llm', () => {
+    const llm = new MockLlm(null);
+    const agent = new LlmAgent({name: 'test_agent', model: llm});
+
+    expect(agent.canonicalModel).toBe(llm);
+  });
+
+  it('test_canonical_model_inherit', () => {
+    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
+    vi.stubEnv('GOOGLE_API_KEY', 'test-key');
+    const subAgent = new LlmAgent({name: 'sub_agent'});
+    const parentAgent = new LlmAgent({
+      name: 'parent_agent',
+      model: 'gemini-flash-latest',
+      subAgents: [subAgent],
+    });
+
+    expect(subAgent.canonicalModel).toEqual(parentAgent.canonicalModel);
+  });
+
+  it('test_canonical_instruction_str', async () => {
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      instruction: 'instruction',
+    });
+    const ctx = await createReadonlyContext(agent);
+
+    expect(await agent.canonicalInstruction(ctx)).toEqual({
+      instruction: 'instruction',
+      requireStateInjection: true,
+    });
+  });
+
+  it('test_canonical_instruction', async () => {
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      instruction: (ctx: ReadonlyContext) =>
+        `instruction: ${ctx.state.get('state_var')}`,
+    });
+    const ctx = await createReadonlyContext(agent, {
+      state_var: 'state_value',
+    });
+
+    expect(await agent.canonicalInstruction(ctx)).toEqual({
+      instruction: 'instruction: state_value',
+      requireStateInjection: false,
+    });
+  });
+
+  it('test_async_canonical_instruction', async () => {
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      instruction: async (ctx: ReadonlyContext) =>
+        `instruction: ${ctx.state.get('state_var')}`,
+    });
+    const ctx = await createReadonlyContext(agent, {
+      state_var: 'state_value',
+    });
+
+    expect(await agent.canonicalInstruction(ctx)).toEqual({
+      instruction: 'instruction: state_value',
+      requireStateInjection: false,
+    });
+  });
+
+  it('test_canonical_global_instruction_str', async () => {
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      globalInstruction: 'global instruction',
+    });
+    const ctx = await createReadonlyContext(agent);
+
+    expect(await agent.canonicalGlobalInstruction(ctx)).toEqual({
+      instruction: 'global instruction',
+      requireStateInjection: true,
+    });
+  });
+
+  it('test_canonical_global_instruction', async () => {
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      globalInstruction: (ctx: ReadonlyContext) =>
+        `global instruction: ${ctx.state.get('state_var')}`,
+    });
+    const ctx = await createReadonlyContext(agent, {
+      state_var: 'state_value',
+    });
+
+    expect(await agent.canonicalGlobalInstruction(ctx)).toEqual({
+      instruction: 'global instruction: state_value',
+      requireStateInjection: false,
+    });
+  });
+
+  it('test_async_canonical_global_instruction', async () => {
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      globalInstruction: async (ctx: ReadonlyContext) =>
+        `global instruction: ${ctx.state.get('state_var')}`,
+    });
+    const ctx = await createReadonlyContext(agent, {
+      state_var: 'state_value',
+    });
+
+    expect(await agent.canonicalGlobalInstruction(ctx)).toEqual({
+      instruction: 'global instruction: state_value',
+      requireStateInjection: false,
+    });
+  });
+
+  it('test_validate_generate_content_config_tools_throw', () => {
+    expect(
+      () =>
+        new LlmAgent({
+          name: 'test_agent',
+          generateContentConfig: {
+            tools: [{functionDeclarations: []}],
+          },
+        }),
+    ).toThrow('All tools must be set via LlmAgent.tools.');
+  });
+
+  it('test_validate_generate_content_config_system_instruction_throw', () => {
+    expect(
+      () =>
+        new LlmAgent({
+          name: 'test_agent',
+          generateContentConfig: {
+            systemInstruction: 'system instruction',
+          },
+        }),
+    ).toThrow('System instruction must be set via LlmAgent.instruction.');
+  });
+
+  it('test_validate_generate_content_config_response_schema_throw', () => {
+    expect(
+      () =>
+        new LlmAgent({
+          name: 'test_agent',
+          generateContentConfig: {
+            responseSchema: {type: Type.OBJECT},
+          },
+        }),
+    ).toThrow('Response schema must be set via LlmAgent.output_schema.');
+  });
+
+  it('test_allow_transfer_by_default', () => {
+    const subAgent = new LlmAgent({name: 'sub_agent'});
+    const agent = new LlmAgent({name: 'test_agent', subAgents: [subAgent]});
+
+    expect(agent.disallowTransferToParent).toBe(false);
+    expect(agent.disallowTransferToPeers).toBe(false);
+  });
+
+  it('canonicalTools resolves BaseTool and BaseToolset entries and passes context to BaseToolset.getTools', async () => {
+    const directTool = new MockTool('direct_tool');
+    const toolsetTool1 = new MockTool('toolset_tool_1');
+    const toolsetTool2 = new MockTool('toolset_tool_2');
+    const toolset = new MockToolset([toolsetTool1, toolsetTool2]);
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      tools: [directTool, toolset],
+    });
+    const ctx = await createReadonlyContext(agent);
+
+    const resolvedTools = await agent.canonicalTools(ctx);
+
+    expect(resolvedTools).toEqual([directTool, toolsetTool1, toolsetTool2]);
+    expect(toolset.receivedContext).toBe(ctx);
+  });
+
+  describe('canonicalBeforeToolCallbacks and canonicalAfterToolCallbacks', () => {
+    it('returns empty arrays when no tool callbacks are configured', () => {
+      const agent = new LlmAgent({name: 'test_agent'});
+
+      expect(agent.canonicalBeforeToolCallbacks).toEqual([]);
+      expect(agent.canonicalAfterToolCallbacks).toEqual([]);
+    });
+
+    it('normalizes single tool callbacks into single-element arrays', () => {
+      const beforeCb: SingleBeforeToolCallback = () => undefined;
+      const afterCb: SingleAfterToolCallback = () => undefined;
+      const agent = new LlmAgent({
+        name: 'test_agent',
+        beforeToolCallback: beforeCb,
+        afterToolCallback: afterCb,
+      });
+
+      expect(agent.canonicalBeforeToolCallbacks).toEqual([beforeCb]);
+      expect(agent.canonicalAfterToolCallbacks).toEqual([afterCb]);
+    });
+
+    it('preserves tool callback arrays in order', () => {
+      const beforeCb1: SingleBeforeToolCallback = () => undefined;
+      const beforeCb2: SingleBeforeToolCallback = async () => undefined;
+      const afterCb1: SingleAfterToolCallback = () => undefined;
+      const afterCb2: SingleAfterToolCallback = async () => undefined;
+      const agent = new LlmAgent({
+        name: 'test_agent',
+        beforeToolCallback: [beforeCb1, beforeCb2],
+        afterToolCallback: [afterCb1, afterCb2],
+      });
+
+      expect(agent.canonicalBeforeToolCallbacks).toEqual([
+        beforeCb1,
+        beforeCb2,
+      ]);
+      expect(agent.canonicalAfterToolCallbacks).toEqual([afterCb1, afterCb2]);
+    });
   });
 });

@@ -424,7 +424,11 @@ export interface LlmAgentConfig extends BaseAgentConfig {
   contextCompactors?: BaseContextCompactor[];
 
   /**
-   * Instructs the agent to make a plan and execute it step by step.
+   * Allows the agent to execute code blocks from model responses using the
+   * provided `BaseCodeExecutor`.
+   *
+   * NOTE: to use the model's built-in code executor, use the
+   * `BuiltInCodeExecutor`.
    */
   codeExecutor?: BaseCodeExecutor;
 
