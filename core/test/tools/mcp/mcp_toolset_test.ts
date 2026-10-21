@@ -9,6 +9,7 @@ import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {SSEClientTransport} from '@modelcontextprotocol/sdk/client/sse.js';
 import {describe, expect, it, vi} from 'vitest';
 import {ReadonlyContext} from '../../../src/agents/readonly_context.js';
+import {isBaseToolset} from '../../../src/tools/base_toolset.js';
 import {MCPConnectionParams} from '../../../src/tools/mcp/mcp_session_manager.js';
 import {MCPToolset} from '../../../src/tools/mcp/mcp_toolset.js';
 
@@ -46,6 +47,19 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
 
 /** A client method stub that resolves to nothing (connect/close). */
 const noop = () => vi.fn().mockResolvedValue(undefined);
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+}
+
+function createDeferred<T>(): Deferred<T> {
+  let resolve: (value: T) => void = () => {};
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return {promise, resolve};
+}
 
 vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => {
   return {
@@ -377,6 +391,115 @@ describe('MCPToolset', () => {
 
       expect(tools).toHaveLength(1);
       expect(tools[0].name).toBe('sse_test-tool');
+    });
+  });
+
+  describe('close', () => {
+    it('identifies MCPToolset as a BaseToolset via isBaseToolset', () => {
+      const toolset = new MCPToolset(stdioParams);
+
+      expect(isBaseToolset(toolset)).toBe(true);
+    });
+
+    it('resolves as a no-op when no sessions are active', async () => {
+      const toolset = new MCPToolset(stdioParams);
+
+      await expect(toolset.close()).resolves.toBeUndefined();
+    });
+
+    it('closes all active sessions', async () => {
+      const {Client} =
+        await import('@modelcontextprotocol/sdk/client/index.js');
+      const ready1 = createDeferred<void>();
+      const ready2 = createDeferred<void>();
+      const finishListTools = createDeferred<{tools: never[]}>();
+      const close1 = vi.fn().mockResolvedValue(undefined);
+      const close2 = vi.fn().mockResolvedValue(undefined);
+
+      vi.mocked(Client)
+        .mockImplementationOnce(function () {
+          return {
+            connect: noop(),
+            close: close1,
+            listTools: vi.fn().mockImplementation(() => {
+              ready1.resolve();
+              return finishListTools.promise;
+            }),
+          } as unknown as Client;
+        })
+        .mockImplementationOnce(function () {
+          return {
+            connect: noop(),
+            close: close2,
+            listTools: vi.fn().mockImplementation(() => {
+              ready2.resolve();
+              return finishListTools.promise;
+            }),
+          } as unknown as Client;
+        });
+
+      const toolset = new MCPToolset(stdioParams);
+      const pendingTools1 = toolset.getTools();
+      await ready1.promise;
+      const pendingTools2 = toolset.getTools();
+      await ready2.promise;
+
+      await toolset.close();
+
+      expect(close1).toHaveBeenCalledOnce();
+      expect(close2).toHaveBeenCalledOnce();
+
+      finishListTools.resolve({tools: []});
+      await Promise.all([pendingTools1, pendingTools2]);
+
+      expect(close1).toHaveBeenCalledOnce();
+      expect(close2).toHaveBeenCalledOnce();
+    });
+
+    it('resolves and closes remaining sessions when one session close rejects', async () => {
+      const {Client} =
+        await import('@modelcontextprotocol/sdk/client/index.js');
+      const ready1 = createDeferred<void>();
+      const ready2 = createDeferred<void>();
+      const finishListTools = createDeferred<{tools: never[]}>();
+      const close1 = vi.fn().mockRejectedValue(new Error('close failed'));
+      const close2 = vi.fn().mockResolvedValue(undefined);
+
+      vi.mocked(Client)
+        .mockImplementationOnce(function () {
+          return {
+            connect: noop(),
+            close: close1,
+            listTools: vi.fn().mockImplementation(() => {
+              ready1.resolve();
+              return finishListTools.promise;
+            }),
+          } as unknown as Client;
+        })
+        .mockImplementationOnce(function () {
+          return {
+            connect: noop(),
+            close: close2,
+            listTools: vi.fn().mockImplementation(() => {
+              ready2.resolve();
+              return finishListTools.promise;
+            }),
+          } as unknown as Client;
+        });
+
+      const toolset = new MCPToolset(stdioParams);
+      const pendingTools1 = toolset.getTools();
+      await ready1.promise;
+      const pendingTools2 = toolset.getTools();
+      await ready2.promise;
+
+      await expect(toolset.close()).resolves.toBeUndefined();
+
+      expect(close1).toHaveBeenCalledOnce();
+      expect(close2).toHaveBeenCalledOnce();
+
+      finishListTools.resolve({tools: []});
+      await Promise.all([pendingTools1, pendingTools2]);
     });
   });
 });
