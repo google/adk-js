@@ -5,6 +5,7 @@
  */
 
 import {State} from '../sessions/state.js';
+import {asSafePartForLlm} from '../tools/load_artifacts_tool.js';
 import type {WorkflowInstructionScope} from './invocation_context.js';
 import {ReadonlyContext} from './readonly_context.js';
 
@@ -62,7 +63,9 @@ async function resolveKey(
       }
       throw new Error(`Artifact ${fileName} not found.`);
     }
-    return formatValue(artifact, true);
+    // Same conversion as the load_artifacts tool, so text-like inline data is
+    // injected as text instead of base64 JSON.
+    return formatValue(asSafePartForLlm(artifact, fileName), true);
   }
 
   // Step 3: Handle state variable injection.
