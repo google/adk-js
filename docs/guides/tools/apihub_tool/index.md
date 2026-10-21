@@ -175,6 +175,7 @@ the spec describes.
 | `authScheme`         | `OpenAPIV3.SecuritySchemeObject` | `undefined`          | Auth scheme applied to every tool.                                                         |
 | `authCredential`     | `AuthCredential`                 | `undefined`          | Auth credential applied to every tool.                                                     |
 | `apihubClient`       | `BaseAPIHubClient`               | A new `APIHubClient` | The client that fetches the spec.                                                          |
+| `toolFilter`         | `ToolPredicate \| string[]`      | `[]`                 | Which tools `getTools()` exposes.                                                          |
 
 `apihubResourceName` is passed to the client unchanged, so a custom client can
 give it any meaning it likes. The default client parses it as described in
@@ -318,8 +319,7 @@ The version `@google/adk` declares, `^7.1.1`, requires Node.js 22 or later.
 
 **One spec per toolset.** The toolset reads exactly one spec, the first one
 unless the resource name says otherwise. An API with several specs needs one
-toolset per spec. The toolset has no `toolFilter` or `prefix` option, so it
-always exposes every operation in the spec.
+toolset per spec. The toolset has no `prefix` option.
 
 **No pagination.** `listApis` makes one request and returns the APIs in that
 response. A project with more APIs than API Hub returns in one page shows only
