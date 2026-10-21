@@ -280,4 +280,22 @@ describe('ParallelAgent', () => {
     expect(yieldedEvents.length).toBe(1);
     expect(yieldedEvents[0].content?.parts?.[0]?.text).toBe('hello');
   });
+
+  it('should throw when runLive is called', async () => {
+    const parallelAgent = new ParallelAgent({name: 'parallel'});
+    const session = createSession({
+      id: 'test-session',
+      appName: 'test-app',
+    });
+    const context = new InvocationContext({
+      invocationId: 'test-invocation',
+      agent: parallelAgent,
+      session,
+      pluginManager: new PluginManager(),
+    });
+
+    await expect(parallelAgent.runLive(context).next()).rejects.toThrow(
+      'This is not supported yet for ParallelAgent.',
+    );
+  });
 });
