@@ -1059,6 +1059,22 @@ describe('FunctionTool', () => {
       return arg1;
     }
 
+    class AsyncCallableWith2ArgsAndNoToolContext {
+      readonly prefix = '';
+
+      async execute({
+        arg1,
+        arg2,
+      }: {
+        arg1: string;
+        arg2: string;
+      }): Promise<string> {
+        expect(arg1).toBeTruthy();
+        expect(arg2).toBeTruthy();
+        return `${this.prefix}${arg1}`;
+      }
+    }
+
     function functionForTestingWith1ArgAndToolContext(
       {arg1}: {arg1: string},
       toolContext?: Context,
@@ -1066,6 +1082,19 @@ describe('FunctionTool', () => {
       expect(arg1).toBeTruthy();
       expect(toolContext).toBeDefined();
       return arg1;
+    }
+
+    class AsyncCallableWith1ArgAndToolContext {
+      readonly prefix = '';
+
+      async execute(
+        {arg1}: {arg1: string},
+        toolContext?: Context,
+      ): Promise<string> {
+        expect(arg1).toBeTruthy();
+        expect(toolContext).toBeDefined();
+        return `${this.prefix}${arg1}`;
+      }
     }
 
     function functionForTestingWith2ArgAndNoToolContext({
@@ -1128,6 +1157,22 @@ describe('FunctionTool', () => {
       expect(result).toBe('test_value_1');
     });
 
+    it('test_run_async_with_tool_context_async_callable', async () => {
+      const callable = new AsyncCallableWith1ArgAndToolContext();
+      const tool = new FunctionTool({
+        name: 'AsyncCallableWith1ArgAndToolContext',
+        description: 'Async callable with 1 arg and tool context.',
+        parameters: z4.object({arg1: z4.string()}),
+        execute: callable.execute.bind(callable),
+      });
+      expect(tool.name).toBe('AsyncCallableWith1ArgAndToolContext');
+      const result = await tool.runAsync({
+        args: {arg1: 'test_value_1'},
+        toolContext: emptyContext,
+      });
+      expect(result).toBe('test_value_1');
+    });
+
     it('test_run_async_without_tool_context_async_func', async () => {
       const tool = new FunctionTool({
         name: 'async_function_for_testing_with_2_arg_and_no_tool_context',
@@ -1136,6 +1181,22 @@ describe('FunctionTool', () => {
         parameters: twoArgSchema,
         execute: asyncFunctionForTestingWith2ArgAndNoToolContext,
       });
+      const result = await tool.runAsync({
+        args: {arg1: 'test_value_1', arg2: 'test_value_2'},
+        toolContext: emptyContext,
+      });
+      expect(result).toBe('test_value_1');
+    });
+
+    it('test_run_async_without_tool_context_async_callable', async () => {
+      const callable = new AsyncCallableWith2ArgsAndNoToolContext();
+      const tool = new FunctionTool({
+        name: 'AsyncCallableWith2ArgsAndNoToolContext',
+        description: 'Async callable with 2 args and no tool context.',
+        parameters: twoArgSchema,
+        execute: callable.execute.bind(callable),
+      });
+      expect(tool.name).toBe('AsyncCallableWith2ArgsAndNoToolContext');
       const result = await tool.runAsync({
         args: {arg1: 'test_value_1', arg2: 'test_value_2'},
         toolContext: emptyContext,

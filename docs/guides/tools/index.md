@@ -156,6 +156,23 @@ The `ToolboxToolOptions` interface configures `new ToolboxTool(urlOrOptions)`.
 
 `ToolboxTool` provides `getTool(toolName)` and `getToolset(toolsetName)` to load single tools or toolsets from `toolboxClient` and wrap each entry as an ADK `LangchainTool`.
 
+### `ToolboxToolsetOptions`
+
+The `ToolboxToolsetOptions` interface configures `new ToolboxToolset(options)` or `new ToolboxToolset(serverUrl, options)`.
+
+| Option             | Type                                              | Default     | Description                                                                                              |
+| :----------------- | :------------------------------------------------ | :---------- | :------------------------------------------------------------------------------------------------------- |
+| `serverUrl`        | `string`                                          | Required    | Base URL of the Google GenAI Toolbox server.                                                             |
+| `toolsetName`      | `string`                                          | `undefined` | Name of the Toolbox toolset to load; at least one of `toolsetName` or `toolNames` is required.           |
+| `toolNames`        | `readonly string[]`                               | `undefined` | Individual tool names to load from the Toolbox server.                                                   |
+| `authTokenGetters` | `Record<string, () => string \| Promise<string>>` | `{}`        | Mapping of authentication service names to callables returning authentication tokens.                    |
+| `boundParams`      | `Record<string, unknown>`                         | `{}`        | Mapping of parameter names bound to fixed values or value-producing callables.                           |
+| `client`           | `ToolboxToolsetClientLike`                        | `undefined` | Optional pre-configured Toolbox client implementing `loadToolset`/`load_toolset` and `loadTool`/`close`. |
+| `toolFilter`       | `ToolPredicate \| string[]`                       | `[]`        | Optional filter restricting which loaded tools are returned by `getTools(context)`.                      |
+| `prefix`           | `string`                                          | `undefined` | Optional prefix prepended (`${prefix}_`) to every loaded tool name.                                      |
+
+`ToolboxToolset` extends `BaseToolset`, loads tools asynchronously via `getTools(context)` while forwarding `authTokenGetters` and `boundParams`, wraps functions and tool descriptors into `BaseTool` instances, and releases client resources via `close()`.
+
 ### `VertexAiSearchToolParams`
 
 The `VertexAiSearchToolParams` union of `DataStoreParams` and `SearchEngineParams` configures `new VertexAiSearchTool(params)`.
@@ -293,6 +310,33 @@ export const toolbox = new ToolboxTool({
 });
 
 export const supportTools = toolbox.getToolset('support_tools');
+
+export const asyncToolboxToolset = new ToolboxToolset({
+  serverUrl: 'http://127.0.0.1:5000',
+  toolsetName: 'support_tools',
+  toolNames: ['escalate_ticket'],
+  authTokenGetters: {
+    support_auth: () => 'bearer-token',
+  },
+  boundParams: {
+    tenantId: 'default-tenant',
+  },
+  client: {
+    loadToolset: async () => [
+      {
+        name: 'search_kb',
+        description: 'Searches the support knowledge base.',
+        parameters: z.object({query: z.string()}),
+        execute: async ({query}: {query: string}) => ({matched: query}),
+      },
+    ],
+    loadTool: async (name: string) => ({
+      name,
+      description: `Executes ${name}`,
+      execute: async (input: unknown) => ({tool: name, input}),
+    }),
+  },
+});
 ```
 
 ## Limitations

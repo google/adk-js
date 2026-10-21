@@ -56,6 +56,7 @@ import {
   LongRunningFunctionTool,
   stringifyContent,
   ToolboxTool,
+  ToolboxToolset,
   ToolContext,
 } from '@google/adk';
 import {Type} from '@google/genai';
@@ -240,6 +241,30 @@ const toolboxShippingToolset = new ToolboxTool({
   },
 });
 
+const asyncToolboxCustomsToolset = new ToolboxToolset({
+  serverUrl: 'http://127.0.0.1:8080',
+  toolNames: ['check_customs_duty'],
+  authTokenGetters: {
+    customs_service: () => 'sample-token',
+  },
+  boundParams: {
+    originCountry: 'US',
+  },
+  client: {
+    loadTool: async (name: string) => ({
+      name,
+      description: 'Computes customs duty status for a destination region.',
+      execute: async (input: unknown) => {
+        const args = input as {region?: string};
+        return {
+          region: String(args.region ?? 'GLOBAL'),
+          dutyCleared: true,
+        };
+      },
+    }),
+  },
+});
+
 class ToolsShowcaseAgent extends BaseAgent {
   constructor() {
     super({
@@ -328,6 +353,13 @@ class ToolsShowcaseAgent extends BaseAgent {
       toolContext,
     });
 
+    const [customsTool] = await asyncToolboxCustomsToolset.getTools();
+    const customsResult = await customsTool.runAsync({
+      args: {region: 'EU'},
+      toolContext,
+    });
+    await asyncToolboxCustomsToolset.close();
+
     const exitLoopContext = new Context({
       invocationContext: ctx,
       functionCallId: 'call-exit-loop',
@@ -347,6 +379,7 @@ class ToolsShowcaseAgent extends BaseAgent {
       stockResult,
       taxResult,
       shippingResult,
+      customsResult,
       exitLoopActions: {
         escalate: exitLoopContext.actions.escalate,
         skipSummarization: exitLoopContext.actions.skipSummarization,

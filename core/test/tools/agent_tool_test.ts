@@ -643,5 +643,193 @@ describe('AgentTool', () => {
         }),
       ).rejects.toThrow();
     });
+
+    it('test_no_schema', async () => {
+      const toolAgent = new LlmAgent({
+        name: 'tool_agent',
+        description: 'Agent without explicit input or output schema',
+      });
+      const tool = new AgentTool({agent: toolAgent});
+      const session = createSession({
+        id: 'parent-session',
+        appName: 'tool_agent',
+        userId: 'parent-user',
+      });
+      const invocationContext = new InvocationContext({
+        invocationId: 'test-invocation',
+        agent: toolAgent,
+        session,
+        pluginManager: new PluginManager([]),
+      });
+      const toolContext = new Context({invocationContext});
+
+      let capturedRequestText = '';
+      const mockRunAsync = vi.fn().mockImplementation(async function* (params: {
+        newMessage?: {parts?: Array<{text?: string}>};
+      }) {
+        capturedRequestText = params.newMessage?.parts?.[0]?.text ?? '';
+        yield createEvent({
+          author: 'tool_agent',
+          content: {
+            role: 'model',
+            parts: [{text: 'response1'}],
+          },
+        });
+      });
+
+      vi.mocked(Runner).mockImplementation(function (config) {
+        return {
+          appName: config?.appName,
+          sessionService: config?.sessionService,
+          runAsync: mockRunAsync,
+        } as unknown as Runner;
+      });
+
+      const result = await tool.runAsync({
+        args: {request: 'test1'},
+        toolContext,
+      });
+
+      expect(capturedRequestText).toBe('test1');
+      expect(result).toBe('response1');
+    });
+
+    it('test_update_state', async () => {
+      const toolAgent = new LlmAgent({
+        name: 'tool_agent',
+        instruction: 'input: {state_1}',
+      });
+      const tool = new AgentTool({agent: toolAgent});
+      const sessionService = new InMemorySessionService();
+      const session = createSession({
+        id: 'parent-session',
+        appName: 'tool_agent',
+        userId: 'parent-user',
+        state: {state_1: 'state1_value'},
+      });
+      const invocationContext = new InvocationContext({
+        invocationId: 'test-invocation',
+        agent: toolAgent,
+        session,
+        pluginManager: new PluginManager([]),
+        sessionService,
+      });
+      const toolContext = new Context({invocationContext});
+
+      const mockRunAsync = async function* () {
+        const subSession = await sessionService.getSession({
+          appName: 'tool_agent',
+          userId: 'parent-user',
+          sessionId: 'parent-session',
+        });
+        expect(subSession?.state['state_1']).toBe('state1_value');
+        yield createEvent({
+          author: 'tool_agent',
+          content: {
+            role: 'model',
+            parts: [{text: '{"custom_output": "response1"}'}],
+          },
+          actions: createEventActions({
+            stateDelta: {state_1: 'changed_value'},
+          }),
+        });
+      };
+
+      vi.mocked(Runner).mockImplementation(function (config) {
+        return {
+          appName: config?.appName,
+          sessionService: config?.sessionService,
+          runAsync: mockRunAsync,
+        } as unknown as Runner;
+      });
+
+      const result = await tool.runAsync({
+        args: {request: 'test1'},
+        toolContext,
+      });
+
+      expect(result).toBe('{"custom_output": "response1"}');
+      expect(toolContext.state.get('state_1')).toBe('changed_value');
+    });
+
+    it('concatenates multiple non-thought text parts from the final event', async () => {
+      const plainAgent = new LlmAgent({
+        name: 'multi_part_plain_agent',
+      });
+      const plainTool = new AgentTool({agent: plainAgent});
+      const session = createSession({
+        id: 'parent-session',
+        appName: 'multi_part_plain_agent',
+        userId: 'parent-user',
+      });
+      const invocationContext = new InvocationContext({
+        invocationId: 'test-invocation',
+        agent: plainAgent,
+        session,
+        pluginManager: new PluginManager([]),
+      });
+      const toolContext = new Context({invocationContext});
+
+      const multiPartPlainRun = async function* () {
+        yield createEvent({
+          author: 'multi_part_plain_agent',
+          content: {
+            role: 'model',
+            parts: [
+              {text: 'thought chunk', thought: true},
+              {text: 'line one'},
+              {text: 'line two'},
+            ],
+          },
+        });
+      };
+
+      vi.mocked(Runner).mockImplementation(function (config) {
+        return {
+          appName: config?.appName,
+          sessionService: config?.sessionService,
+          runAsync: multiPartPlainRun,
+        } as unknown as Runner;
+      });
+
+      const plainResult = await plainTool.runAsync({
+        args: {request: 'combine lines'},
+        toolContext,
+      });
+      expect(plainResult).toBe('line one\nline two');
+
+      const schemaAgent = new LlmAgent({
+        name: 'multi_part_schema_agent',
+        outputSchema: z.object({
+          status: z.string(),
+          count: z.number(),
+        }),
+      });
+      const schemaTool = new AgentTool({agent: schemaAgent});
+
+      const multiPartSchemaRun = async function* () {
+        yield createEvent({
+          author: 'multi_part_schema_agent',
+          content: {
+            role: 'model',
+            parts: [{text: '{"status": "ok",'}, {text: '"count": 2}'}],
+          },
+        });
+      };
+
+      vi.mocked(Runner).mockImplementation(function (config) {
+        return {
+          appName: config?.appName,
+          sessionService: config?.sessionService,
+          runAsync: multiPartSchemaRun,
+        } as unknown as Runner;
+      });
+
+      const schemaResult = await schemaTool.runAsync({
+        args: {request: 'combine json'},
+        toolContext,
+      });
+      expect(schemaResult).toEqual({status: 'ok', count: 2});
+    });
   });
 });

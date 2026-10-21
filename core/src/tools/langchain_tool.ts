@@ -293,25 +293,36 @@ export class LangchainTool extends FunctionTool<ToolInputParameters> {
    * Builds the `FunctionDeclaration` for the wrapped LangChain tool.
    */
   override _getDeclaration(): FunctionDeclaration {
-    if (isStructuredLangchainTool(this.tool)) {
-      const propertiesMap = extractLangchainPropertiesMap(this.tool);
-      const rawFn =
-        this.tool._run ?? this.tool._call ?? this.tool.invoke ?? this.tool.run;
-      return buildFunctionDeclarationForLangchain(
+    try {
+      if (isStructuredLangchainTool(this.tool)) {
+        const propertiesMap = extractLangchainPropertiesMap(this.tool);
+        const rawFn =
+          this.tool._run ??
+          this.tool._call ??
+          this.tool.invoke ??
+          this.tool.run;
+        return buildFunctionDeclarationForLangchain(
+          this.apiVariant === GoogleLLMVariant.VERTEX_AI,
+          this.name,
+          this.description,
+          rawFn,
+          propertiesMap,
+        );
+      }
+
+      return buildFunctionDeclarationUtil(
         this.apiVariant === GoogleLLMVariant.VERTEX_AI,
         this.name,
         this.description,
-        rawFn,
-        propertiesMap,
+        this.tool.run,
+        {properties: extractLangchainPropertiesMap(this.tool)},
+      );
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Failed to build function declaration for Langchain tool: ${message}`,
+        {cause: error},
       );
     }
-
-    return buildFunctionDeclarationUtil(
-      this.apiVariant === GoogleLLMVariant.VERTEX_AI,
-      this.name,
-      this.description,
-      this.tool.run,
-      {properties: extractLangchainPropertiesMap(this.tool)},
-    );
   }
 }

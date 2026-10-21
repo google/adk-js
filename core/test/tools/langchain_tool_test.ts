@@ -145,4 +145,31 @@ describe('LangchainTool', () => {
         } as LangchainToolLike),
     ).toThrow(TypeError);
   });
+
+  it('wraps schema extraction errors in _getDeclaration with cause', () => {
+    const schemaError = new Error('broken modelJsonSchema');
+    const brokenTool = new LangchainTool({
+      name: 'broken_schema_tool',
+      description: 'Throws during schema extraction',
+      argsSchema: {
+        modelJsonSchema: () => {
+          throw schemaError;
+        },
+      },
+      _run: () => 'ok',
+    });
+
+    let caughtError: Error | undefined;
+    try {
+      brokenTool._getDeclaration();
+    } catch (e: unknown) {
+      caughtError = e as Error;
+    }
+
+    expect(caughtError).toBeInstanceOf(Error);
+    expect(caughtError?.message).toBe(
+      'Failed to build function declaration for Langchain tool: broken modelJsonSchema',
+    );
+    expect(caughtError?.cause).toBe(schemaError);
+  });
 });
