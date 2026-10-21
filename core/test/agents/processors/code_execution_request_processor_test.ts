@@ -15,6 +15,7 @@ import {
   ScopedArtifactService,
   createSession,
 } from '@google/adk';
+import {execFileSync} from 'node:child_process';
 import {describe, expect, it, vi} from 'vitest';
 import {
   CODE_EXECUTION_REQUEST_PROCESSOR,
@@ -201,6 +202,44 @@ describe('CodeExecutionRequestProcessor', () => {
         codeExecutor: executor,
       });
     }
+
+    it('executes crop from the generated data-file helper', async () => {
+      const executor = new RecordingCodeExecutor({
+        stdout: '',
+        stderr: '',
+        outputFiles: [],
+      });
+      const {ctx} = createContextWithArtifacts(createAgent(executor));
+
+      await collectEvents(
+        CODE_EXECUTION_REQUEST_PROCESSOR.runAsync(ctx, createCsvRequest()),
+      );
+
+      // Run the actual helper with Python's standard library, without pandas
+      // or a remote code executor.
+      const result = execFileSync(
+        process.env.PYTHON ??
+          (process.platform === 'win32' ? 'python' : 'python3'),
+        [
+          '-c',
+          `import ast, json, sys
+source = ast.parse(sys.stdin.read())
+functions = ast.Module(body=[node for node in source.body
+    if isinstance(node, ast.FunctionDef) and node.name == 'crop'], type_ignores=[])
+namespace = {}
+exec(compile(functions, '<data-file-helper>', 'exec'), namespace)
+crop = namespace['crop']
+print(json.dumps([crop('short'), crop('a' * 65), crop('abcd', 3), crop('abcd', 2)]))`,
+        ],
+        {input: executor.inputs[0].code, encoding: 'utf8'},
+      );
+      expect(JSON.parse(result)).toEqual([
+        'short',
+        'a'.repeat(61) + '...',
+        '...',
+        'ab',
+      ]);
+    });
 
     it('replaces the inline CSV part with a text placeholder and passes the file to the executor', async () => {
       const executor = new RecordingCodeExecutor({
