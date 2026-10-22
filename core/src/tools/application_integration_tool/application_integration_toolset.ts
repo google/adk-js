@@ -5,18 +5,21 @@
  */
 
 import {OpenAPIV3} from 'openapi-types';
+import {ReadonlyContext} from '../../agents/readonly_context.js';
 import {
   AuthCredential,
   AuthCredentialTypes,
 } from '../../auth/auth_credential.js';
+import {AuthScheme} from '../../auth/auth_schemes.js';
 import {experimental} from '../../utils/experimental.js';
 import {
   isJsonObject,
   JsonObject,
   toJsonObject,
 } from '../../utils/json_utils.js';
+import {logger} from '../../utils/logger.js';
 import {BaseTool} from '../base_tool.js';
-import {BaseToolset} from '../base_toolset.js';
+import {BaseToolset, ToolPredicate} from '../base_toolset.js';
 import {serviceAccountDictToSchemeCredential} from '../openapi_tool/auth/auth_helpers.js';
 import {OpenApiSpecParser} from '../openapi_tool/openapi_spec_parser/openapi_spec_parser.js';
 import {OpenAPIToolset} from '../openapi_tool/openapi_toolset.js';
@@ -47,10 +50,16 @@ export interface ApplicationIntegrationToolsetOptions {
   project: string;
   /** The Google Cloud location, such as `us-central1`. */
   location: string;
-  /** The integration name. Set it together with `trigger`. */
+  /** The integration name. Set it together with `trigger` or `triggers`. */
   integration?: string;
   /** The API trigger ID of the integration, such as `api_trigger/my_trigger`. */
   trigger?: string;
+  /**
+   * The API trigger IDs of the integration, such as
+   * `['api_trigger/my_trigger']`. When both `triggers` and `trigger` are
+   * provided, `triggers` takes precedence.
+   */
+  triggers?: string[];
   /**
    * The Integration Connectors connection name. Set it together with
    * `entityOperations`, `actions`, or both.
@@ -66,6 +75,11 @@ export interface ApplicationIntegrationToolsetOptions {
   actions?: string[];
   /** Prefix of every generated tool name. Defaults to `''`. */
   toolName?: string;
+  /**
+   * Prefix of every generated tool name. Takes precedence over `toolName` when
+   * both are set.
+   */
+  toolNamePrefix?: string;
   /** Text appended to every generated tool description. Defaults to `''`. */
   toolInstructions?: string;
   /**
@@ -74,6 +88,20 @@ export interface ApplicationIntegrationToolsetOptions {
    * Default Credentials.
    */
   serviceAccountJson?: string;
+  /**
+   * Authentication scheme for dynamic end-user credentials on connection tools,
+   * when `authOverrideEnabled` is enabled on the connection.
+   */
+  authScheme?: AuthScheme;
+  /**
+   * Authentication credential for dynamic end-user credentials on connection
+   * tools, when `authOverrideEnabled` is enabled on the connection.
+   */
+  authCredential?: AuthCredential;
+  /**
+   * Filter used to select which generated tools are exposed by `getTools`.
+   */
+  toolFilter?: ToolPredicate | string[];
 }
 
 /**
@@ -107,14 +135,18 @@ export interface ApplicationIntegrationToolsetOptions {
 export class ApplicationIntegrationToolset extends BaseToolset {
   private readonly options: ApplicationIntegrationToolsetOptions;
   private toolsPromise?: Promise<BaseTool[]>;
+  private openApiToolsets: OpenAPIToolset[] = [];
 
   /**
    * @throws Error Unless the options name either an integration and a trigger,
    *   or a connection with at least one entity operation or action.
    */
   constructor(options: ApplicationIntegrationToolsetOptions) {
-    super([]);
-    const hasIntegration = Boolean(options.integration && options.trigger);
+    super(options.toolFilter ?? []);
+    const hasIntegration = Boolean(
+      options.integration &&
+      (options.trigger || options.triggers !== undefined),
+    );
     const hasConnection = Boolean(
       options.connection &&
       (Object.keys(options.entityOperations ?? {}).length > 0 ||
@@ -134,19 +166,26 @@ export class ApplicationIntegrationToolset extends BaseToolset {
    * The first call fetches the spec and builds the tools. Concurrent calls
    * share that load. When it fails, the next call tries again.
    */
-  override async getTools(): Promise<BaseTool[]> {
+  override async getTools(context?: ReadonlyContext): Promise<BaseTool[]> {
     if (!this.toolsPromise) {
       this.toolsPromise = this.loadTools();
     }
     try {
-      return await this.toolsPromise;
+      const tools = await this.toolsPromise;
+      return tools.filter((tool) =>
+        this.isToolSelected(tool, context as ReadonlyContext),
+      );
     } catch (e: unknown) {
       this.toolsPromise = undefined;
       throw e;
     }
   }
 
-  override async close(): Promise<void> {}
+  override async close(): Promise<void> {
+    for (const openApiToolset of this.openApiToolsets) {
+      await openApiToolset.close();
+    }
+  }
 
   private async loadTools(): Promise<BaseTool[]> {
     const {
@@ -154,18 +193,26 @@ export class ApplicationIntegrationToolset extends BaseToolset {
       location,
       integration,
       trigger,
+      triggers,
       connection,
       entityOperations,
       actions,
-      toolName = '',
+      toolName,
+      toolNamePrefix,
       toolInstructions = '',
       serviceAccountJson,
+      authScheme,
+      authCredential: dynamicAuthCredential,
     } = this.options;
+    const resolvedToolName = toolNamePrefix ?? toolName ?? '';
+    this.openApiToolsets = [];
+
     const integrationClient = new IntegrationClient({
       project,
       location,
       integration,
       trigger,
+      triggers,
       connection,
       entityOperations,
       actions,
@@ -175,15 +222,17 @@ export class ApplicationIntegrationToolset extends BaseToolset {
     const authCredential = buildAuthCredential(serviceAccountJson);
     const toolsByName = new Map<string, BaseTool>();
 
-    if (integration && trigger) {
+    if (integration && (trigger || triggers !== undefined)) {
       const specDict = await integrationClient.getOpenApiSpecForIntegration();
       const spec = toOpenApiDocument(specDict);
       for (const [path, pathItem] of Object.entries(spec.paths ?? {})) {
-        const tools = await new OpenAPIToolset({
+        const openApiToolset = new OpenAPIToolset({
           specDict: {...spec, paths: {[removeFragment(path)]: pathItem}},
           authCredential,
           authScheme: AUTH_SCHEME,
-        }).getTools();
+        });
+        this.openApiToolsets.push(openApiToolset);
+        const tools = await openApiToolset.getTools();
         for (const tool of tools) {
           toolsByName.set(tool.name, tool);
         }
@@ -198,11 +247,21 @@ export class ApplicationIntegrationToolset extends BaseToolset {
       connection: connectionName,
       serviceAccountJson,
     }).getConnectionDetails();
+    if (
+      authScheme &&
+      dynamicAuthCredential &&
+      !connectionDetails.authOverrideEnabled
+    ) {
+      logger.warn(
+        'Authentication schema and credentials are not used because authOverrideEnabled is not enabled in the connection.',
+      );
+    }
     const specDict = await integrationClient.getOpenApiSpecForConnection(
-      toolName,
+      resolvedToolName,
       toolInstructions,
     );
     const spec = toOpenApiDocument(specDict);
+    addDynamicAuthConfigToConnectionSchemas(spec);
     const operations = new OpenApiSpecParser().parse(spec);
     // A connection spec tells its operations apart by a URL fragment, such as
     // `…?triggerId=api_trigger/ExecuteConnection#list_Issues`. A fragment is
@@ -232,10 +291,41 @@ export class ApplicationIntegrationToolset extends BaseToolset {
         action,
         operation,
         restApiTool,
+        authScheme: connectionDetails.authOverrideEnabled
+          ? authScheme
+          : undefined,
+        authCredential: connectionDetails.authOverrideEnabled
+          ? dynamicAuthCredential
+          : undefined,
       });
       toolsByName.set(tool.name, tool);
     }
     return [...toolsByName.values()];
+  }
+}
+
+function addDynamicAuthConfigToConnectionSchemas(
+  spec: OpenAPIV3.Document,
+): void {
+  const schemas = spec.components?.schemas;
+  if (!schemas) {
+    return;
+  }
+  for (const [schemaName, schema] of Object.entries(schemas)) {
+    if (
+      schemaName.endsWith('_Request') &&
+      isJsonObject(schema) &&
+      isJsonObject(schema.properties) &&
+      !('query' in schema.properties) &&
+      !('dynamicAuthConfig' in schema.properties)
+    ) {
+      schema.properties = {
+        ...schema.properties,
+        dynamicAuthConfig: {
+          $ref: '#/components/schemas/dynamicAuthConfig',
+        },
+      };
+    }
   }
 }
 

@@ -779,6 +779,29 @@ describe('ConnectionsClient', () => {
       });
     });
 
+    it('includes dynamicAuthConfig in request schemas when includeDynamicAuthConfig is true', () => {
+      const options = {includeDynamicAuthConfig: true};
+
+      expect(createOperationRequest('Entity1', options).properties).toEqual(
+        expect.objectContaining({dynamicAuthConfig: ref('dynamicAuthConfig')}),
+      );
+      expect(updateOperationRequest('Entity1', options).properties).toEqual(
+        expect.objectContaining({dynamicAuthConfig: ref('dynamicAuthConfig')}),
+      );
+      expect(getOperationRequest(options).properties).toEqual(
+        expect.objectContaining({dynamicAuthConfig: ref('dynamicAuthConfig')}),
+      );
+      expect(deleteOperationRequest(options).properties).toEqual(
+        expect.objectContaining({dynamicAuthConfig: ref('dynamicAuthConfig')}),
+      );
+      expect(listOperationRequest(options).properties).toEqual(
+        expect.objectContaining({dynamicAuthConfig: ref('dynamicAuthConfig')}),
+      );
+      expect(actionRequest('TestAction', options).properties).toEqual(
+        expect.objectContaining({dynamicAuthConfig: ref('dynamicAuthConfig')}),
+      );
+    });
+
     it('builds the action response schema', () => {
       expect(actionResponse('TestAction')).toEqual({
         type: 'object',

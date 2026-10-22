@@ -161,6 +161,92 @@ describe('IntegrationClient', () => {
       });
     });
 
+    it.each([
+      ['a single trigger in triggers', ['test-trigger']],
+      ['multiple triggers in triggers', ['test-trigger', 'test-trigger2']],
+    ])('posts %s and parses the returned spec', async (_, triggers) => {
+      const expectedSpec = {
+        openapi: '3.0.0',
+        info: {title: 'Test Integration'},
+      };
+      fetchMock.mockResolvedValue(
+        jsonResponse({openApiSpec: JSON.stringify(expectedSpec)}),
+      );
+      const client = new IntegrationClient({
+        project: PROJECT,
+        location: LOCATION,
+        integration: INTEGRATION,
+        triggers,
+      });
+
+      await expect(client.getOpenApiSpecForIntegration()).resolves.toEqual(
+        expectedSpec,
+      );
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe(GENERATE_SPEC_URL);
+      expect(init).toEqual({
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer test_token',
+        },
+        body: JSON.stringify({
+          apiTriggerResources: [
+            {integrationResource: INTEGRATION, triggerId: triggers},
+          ],
+          fileFormat: 'JSON',
+        }),
+      });
+    });
+
+    it('sends null triggerId when neither trigger nor triggers is provided', async () => {
+      const expectedSpec = {
+        openapi: '3.0.0',
+        info: {title: 'Test Integration'},
+      };
+      fetchMock.mockResolvedValue(
+        jsonResponse({openApiSpec: JSON.stringify(expectedSpec)}),
+      );
+      const client = new IntegrationClient({
+        project: PROJECT,
+        location: LOCATION,
+        integration: INTEGRATION,
+      });
+
+      await expect(client.getOpenApiSpecForIntegration()).resolves.toEqual(
+        expectedSpec,
+      );
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const [, init] = fetchMock.mock.calls[0];
+      expect(JSON.parse(String(init?.body))).toEqual({
+        apiTriggerResources: [
+          {integrationResource: INTEGRATION, triggerId: null},
+        ],
+        fileFormat: 'JSON',
+      });
+    });
+
+    it.each([
+      [404, 'Not Found'],
+      [400, 'Bad Request'],
+    ])(
+      'reports HTTP %i %j as an invalid request without trigger when triggers is used',
+      async (status, statusText) => {
+        fetchMock.mockResolvedValue(new Response('', {status, statusText}));
+        const client = new IntegrationClient({
+          project: PROJECT,
+          location: LOCATION,
+          integration: INTEGRATION,
+          triggers: [TRIGGER],
+        });
+
+        await expect(client.getOpenApiSpecForIntegration()).rejects.toThrow(
+          `Invalid request. Please check the provided values of project(${PROJECT}), location(${LOCATION}), integration(${INTEGRATION}).`,
+        );
+      },
+    );
+
     it('reports a missing credential as an unexpected error', async () => {
       mocks.getAccessToken.mockRejectedValue(new Error('no credentials'));
 
