@@ -1,17 +1,17 @@
 # CLI and Evaluation Utilities
 
-The CLI utilities in `@google/adk` prepare an agent's environment, state, logging, and evaluation datasets when running from the command line, the development server, or an automated test harness. This guide covers `.env` discovery (`walkToRootUntilFound`, `loadDotenvForAgent`), session-to-eval conversion and state initialization (`convertSessionToEvalFormat`, `createEmptyState`), CLI log routing (`logToStderr`, `logToTmpFolder`), and batch evaluation (`runEvals`, `getEvaluationCriteriaOrDefault`, `parseAndGetEvalsToRun`).
+The CLI utilities in `@google/adk` prepare an agent's environment, state, logging, and evaluation datasets when running from the command line, the development server, or an automated test harness. This guide covers `.env` discovery (`walkToRootUntilFound`, `loadDotenvForAgent`), session-to-eval conversion and state initialization (`convertSessionToEvalInvocations`, `convertSessionToEvalFormat`, `createEmptyState`), CLI log routing (`setupAdkLogger`, `logToStderr`, `logToTmpFolder`), and batch evaluation (`runEvals`, `getEvaluationCriteriaOrDefault`, `parseAndGetEvalsToRun`).
 
 - `walkToRootUntilFound` and `loadDotenvForAgent` - Locate a `.env` file by walking up from an agent directory to the filesystem root and load its variables into `process.env`.
-- `createEmptyState` and `convertSessionToEvalFormat` - Initialize `{var}` placeholders referenced in agent instructions and convert recorded `Session` events into `EvaluationItem` turns.
-- `logToStderr` and `logToTmpFolder` - Route the global ADK logger to `stderr` or to a timestamped log file in the system temporary folder with a `.latest.log` symlink.
-- `runEvals`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun` - Run multi-turn evaluation cases against an agent and score tool trajectory accuracy and ROUGE-1 response match.
+- `createEmptyState`, `convertSessionToEvalInvocations`, and `convertSessionToEvalFormat` - Initialize `{var}` placeholders referenced in agent instructions and convert recorded `Session` events into `Invocation` or `EvaluationItem` turns.
+- `setupAdkLogger`, `logToStderr`, and `logToTmpFolder` - Route the global ADK logger to `stderr` or to a timestamped log file in the system temporary folder with a `.latest.log` symlink.
+- `runEvals`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun` - Run multi-turn evaluation cases (`EvalCase` or `EvalEntry`) against an agent and score tool trajectory accuracy and ROUGE-1 response match.
 
 ## Introduction
 
 An agent run through `adk run`, `adk web`, `adk api_server`, or `adk eval` needs surrounding setup before the first turn starts. Environment variables often live in a `.env` file several directories above the agent file, instruction templates such as `'Answer questions about {topic}'` expect every placeholder key to exist in `session.state`, and interactive sessions captured during development need a way to become repeatable regression tests.
 
-`@google/adk` exports these building blocks directly so your own scripts and test suites can call the same functions the `@google/adk-devtools` CLI uses. Browser-safe helpers (`convertSessionToEvalFormat`, `createEmptyState`, and `isBaseRetrievalTool`) are also available from the `@google/adk` web entrypoint.
+`@google/adk` exports these building blocks directly so your own scripts and test suites can call the same functions the `@google/adk-devtools` CLI uses. Browser-safe helpers (`convertSessionToEvalInvocations`, `convertSessionToEvalFormat`, `createEmptyState`, and `isBaseRetrievalTool`) are also available from the `@google/adk` web entrypoint.
 
 ## Get started
 
@@ -116,7 +116,12 @@ Each helper handles one stage of preparing, observing, or evaluating an agent ru
 
 `createEmptyState(agent, initializedStates)` walks `agent.subAgents` recursively. For every `LlmAgent` whose `instruction` is a string, it finds `{var}` word placeholders (`/{([\w]+)}/g`) and sets each key to `''`. Keys passed in `initializedStates` are copied on top so caller-supplied values win over the empty defaults.
 
-`convertSessionToEvalFormat(session)` scans `session.events` in order and groups each `author === 'user'` event with all subsequent non-user events until the next user turn:
+`convertSessionToEvalInvocations(session)` scans `session.events` in order and groups each `author === 'user'` event that has non-empty `content.parts` with all subsequent non-user events until the next user turn:
+
+- Every `part.functionCall` is appended to `intermediate_data.tool_uses`.
+- Subsequent events containing text parts are collected as `[author, parts]` tuples; all but the last become `intermediate_data.intermediate_responses`, and the last becomes `final_response`.
+
+`convertSessionToEvalFormat(session)` (deprecated in favor of `convertSessionToEvalInvocations`) scans `session.events` in order and groups each `author === 'user'` event with all subsequent non-user events until the next user turn:
 
 - Every `part.functionCall` is appended to `expected_tool_use` as `{tool_name, tool_input}`.
 - Events that contain neither `functionCall` nor `functionResponse` parts are collected as `[author, parts]` tuples in `expected_intermediate_agent_responses`.
@@ -124,21 +129,21 @@ Each helper handles one stage of preparing, observing, or evaluating an agent ru
 
 ### Log routing
 
-`logToStderr(level)` installs a logger via `setLogger` that formats records with an ISO timestamp and level name and writes them to `process.stderr`.
+`setupAdkLogger(level)` and `logToStderr(level)` install a logger via `setLogger` that formats records with an ISO timestamp and level name and writes them to `process.stderr`.
 
 `logToTmpFolder(options)` creates `<os.tmpdir()>/<subFolder>/<logFilePrefix>.<timestamp>.log`, routes the global ADK logger to append to that file, and updates `<logFilePrefix>.latest.log` in the same folder as a symbolic link pointing to the newest log file.
 
 ### Evaluation runner
 
-`runEvals` accepts either a `RunEvalsOptions` object or positional arguments. For each `EvalEntry` in `evalCasesByEvalSetId`, it:
+`runEvals` accepts either a `RunEvalsOptions` object or positional arguments. Each entry in `evalCasesByEvalSetId` can be an array of `EvalCase` or `EvalEntry` objects, an `EvalSet` object, or an array of case IDs to filter from an `.evalset.json` file. For each case, it:
 
 1. Calls `resetFunc()` when provided.
 2. Creates an isolated session whose id starts with `EVAL_SESSION_ID_PREFIX` (`'___eval___session___'`) and whose state is populated via `createEmptyState`.
-3. Runs every user turn in `evalCase.data` through a `Runner` and converts the recorded session with `convertSessionToEvalFormat`.
+3. Runs every user turn in the case through a `Runner` and converts the recorded session.
 4. Scores each requested `EvalMetric`:
-   - `TOOL_TRAJECTORY_SCORE_KEY` (`'tool_trajectory_avg_score'`): `1.0` for a turn when the actual `expected_tool_use` list matches the expected list in length, `tool_name`, and deep `tool_input`; `0.0` otherwise.
-   - `RESPONSE_MATCH_SCORE_KEY` (`'response_match_score'`): unigram ROUGE-1 F1 score between the expected `reference` and the actual `reference`.
-5. Yields an `EvalResult` with per-invocation and overall metric results and sets `final_eval_status` to `EvalStatus.PASSED`, `EvalStatus.FAILED`, or `EvalStatus.NOT_EVALUATED`.
+   - `TOOL_TRAJECTORY_SCORE_KEY` (`'tool_trajectory_avg_score'`): `1.0` for a turn when the actual tool calls match the expected tool calls in length, `tool_name`, and deep `tool_input`; `0.0` otherwise.
+   - `RESPONSE_MATCH_SCORE_KEY` (`'response_match_score'`): unigram ROUGE-1 F1 score between the expected response and the actual response.
+5. Yields an `EvalCaseResult` (with `eval_set_id` and `session_details` attached) and logs per-case errors without aborting remaining cases.
 
 ## Configuration options
 
@@ -161,15 +166,15 @@ Each helper handles one stage of preparing, observing, or evaluating an agent ru
 
 ### RunEvalsOptions
 
-| Option                 | Type                          | Default                   | Description                                                                             |
-| :--------------------- | :---------------------------- | :------------------------ | :-------------------------------------------------------------------------------------- |
-| `evalCasesByEvalSetId` | `Record<string, EvalEntry[]>` | required                  | Map from evalset identifier or file path to the `EvalEntry` cases to run.               |
-| `rootAgent`            | `BaseAgent`                   | required                  | The root agent under evaluation.                                                        |
-| `resetFunc`            | `() => void \| Promise<void>` | `undefined`               | Optional hook invoked before each `EvalEntry`.                                          |
-| `evalMetrics`          | `EvalMetric[]`                | `DEFAULT_CRITERIA`        | Metrics and thresholds (`tool_trajectory_avg_score: 1.0`, `response_match_score: 0.8`). |
-| `printDetailedResults` | `boolean`                     | `false`                   | When `true`, prints per-case metric scores to stdout.                                   |
-| `sessionService`       | `BaseSessionService`          | `InMemorySessionService`  | Session service used to store the `___eval___session___` runs.                          |
-| `artifactService`      | `BaseArtifactService`         | `InMemoryArtifactService` | Artifact service passed to the evaluation `Runner`.                                     |
+| Option                 | Type                            | Default                   | Description                                                                             |
+| :--------------------- | :------------------------------ | :------------------------ | :-------------------------------------------------------------------------------------- |
+| `evalCasesByEvalSetId` | `Record<string, EvalSetSource>` | required                  | Map from evalset identifier or file path to the `EvalCase`, `EvalEntry`, or `EvalSet`.  |
+| `rootAgent`            | `BaseAgent`                     | required                  | The root agent under evaluation.                                                        |
+| `resetFunc`            | `() => void \| Promise<void>`   | `undefined`               | Optional hook invoked before each evaluation case.                                      |
+| `evalMetrics`          | `EvalMetric[]`                  | `DEFAULT_CRITERIA`        | Metrics and thresholds (`tool_trajectory_avg_score: 1.0`, `response_match_score: 0.8`). |
+| `printDetailedResults` | `boolean`                       | `false`                   | When `true`, prints per-case metric scores to stdout.                                   |
+| `sessionService`       | `BaseSessionService`            | `InMemorySessionService`  | Session service used to store the `___eval___session___` runs.                          |
+| `artifactService`      | `BaseArtifactService`           | `InMemoryArtifactService` | Artifact service passed to the evaluation `Runner`.                                     |
 
 ## Advanced applications
 

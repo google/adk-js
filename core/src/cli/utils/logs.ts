@@ -104,6 +104,15 @@ export function logToStderr(level: LogLevel = LogLevel.INFO): void {
 }
 
 /**
+ * Configures the global ADK logger to write formatted log records to `stderr`.
+ *
+ * @param level The minimum `LogLevel` to emit. Defaults to `LogLevel.INFO`.
+ */
+export function setupAdkLogger(level: LogLevel = LogLevel.INFO): void {
+  logToStderr(level);
+}
+
+/**
  * Configures the global ADK logger to write formatted log records to a timestamped
  * file in the system temporary directory and updates the `<prefix>.latest.log`
  * symlink to point to the newest file.

@@ -6,9 +6,11 @@
 
 import {
   convertSessionToEvalFormat,
+  convertSessionToEvalInvocations,
   createEmptyState,
   createEvent,
   createSession,
+  Invocation,
   LlmAgent,
   SequentialAgent,
 } from '@google/adk';
@@ -379,6 +381,302 @@ describe('cli/utils/evals', () => {
           reference: 'Response 2',
         },
       ]);
+    });
+  });
+
+  describe('convertSessionToEvalInvocations', () => {
+    it('returns an empty list for an empty or undefined session', () => {
+      expect(convertSessionToEvalInvocations(undefined)).toEqual([]);
+      const emptySession = createSession({
+        id: 'test_session',
+        userId: 'test_user',
+        appName: 'test_app',
+        events: [],
+      });
+      expect(convertSessionToEvalInvocations(emptySession)).toEqual([]);
+    });
+
+    it('converts a single user-agent turn into an Invocation', () => {
+      const event1 = createEvent({
+        author: 'user',
+        content: {parts: [{text: 'hello'}]},
+        invocationId: 'inv1',
+        timestamp: 1.0,
+      });
+      const event2 = createEvent({
+        author: 'agent1',
+        content: {parts: [{text: 'world'}]},
+        invocationId: 'inv1',
+        timestamp: 2.0,
+      });
+      const session = createSession({
+        id: 'test_session',
+        userId: 'test_user',
+        appName: 'test_app',
+        events: [event1, event2],
+      });
+
+      const expected: Invocation[] = [
+        {
+          invocation_id: 'inv1',
+          user_content: {parts: [{text: 'hello'}]},
+          intermediate_data: {
+            tool_uses: [],
+            intermediate_responses: [],
+          },
+          final_response: {parts: [{text: 'world'}]},
+          creation_timestamp: 1.0,
+        },
+      ];
+
+      expect(convertSessionToEvalInvocations(session)).toEqual(expected);
+    });
+
+    it('converts a turn with tool calls and intermediate agent responses', () => {
+      const event1 = createEvent({
+        author: 'user',
+        content: {parts: [{text: 'query'}]},
+        invocationId: 'inv1',
+        timestamp: 1.0,
+      });
+      const event2 = createEvent({
+        author: 'agent1',
+        content: {
+          parts: [{functionCall: {name: 'tool1', args: {arg1: 'val1'}}}],
+        },
+        invocationId: 'inv1',
+        timestamp: 2.0,
+      });
+      const event3 = createEvent({
+        author: 'agent1',
+        content: {parts: [{text: 'inter_resp'}]},
+        invocationId: 'inv1',
+        timestamp: 3.0,
+      });
+      const event4 = createEvent({
+        author: 'agent2',
+        content: {
+          parts: [
+            {functionCall: {name: 'tool2', args: {arg2: 'val2'}}},
+            {text: 'inter_resp2'},
+          ],
+        },
+        invocationId: 'inv1',
+        timestamp: 4.0,
+      });
+      const event5 = createEvent({
+        author: 'agent1',
+        content: {parts: [{text: 'final_resp'}]},
+        invocationId: 'inv1',
+        timestamp: 5.0,
+      });
+
+      const session = createSession({
+        id: 'test_session',
+        userId: 'test_user',
+        appName: 'test_app',
+        events: [event1, event2, event3, event4, event5],
+      });
+
+      const expected: Invocation[] = [
+        {
+          invocation_id: 'inv1',
+          user_content: {parts: [{text: 'query'}]},
+          intermediate_data: {
+            tool_uses: [
+              {name: 'tool1', args: {arg1: 'val1'}},
+              {name: 'tool2', args: {arg2: 'val2'}},
+            ],
+            intermediate_responses: [
+              ['agent1', [{text: 'inter_resp'}]],
+              ['agent2', [{text: 'inter_resp2'}]],
+            ],
+          },
+          final_response: {parts: [{text: 'final_resp'}]},
+          creation_timestamp: 1.0,
+        },
+      ];
+
+      expect(convertSessionToEvalInvocations(session)).toEqual(expected);
+    });
+
+    it('converts a multi-turn session into multiple Invocations', () => {
+      const event1 = createEvent({
+        author: 'user',
+        content: {parts: [{text: 'q1'}]},
+        invocationId: 'inv1',
+        timestamp: 1.0,
+      });
+      const event2 = createEvent({
+        author: 'agent1',
+        content: {parts: [{text: 'r1'}]},
+        invocationId: 'inv1',
+        timestamp: 2.0,
+      });
+      const event3 = createEvent({
+        author: 'user',
+        content: {parts: [{text: 'q2'}]},
+        invocationId: 'inv2',
+        timestamp: 3.0,
+      });
+      const event4 = createEvent({
+        author: 'agent1',
+        content: {parts: [{functionCall: {name: 'tool1', args: {}}}]},
+        invocationId: 'inv2',
+        timestamp: 4.0,
+      });
+      const event5 = createEvent({
+        author: 'agent1',
+        content: {parts: [{text: 'r2'}]},
+        invocationId: 'inv2',
+        timestamp: 5.0,
+      });
+
+      const session = createSession({
+        id: 'test_session',
+        userId: 'test_user',
+        appName: 'test_app',
+        events: [event1, event2, event3, event4, event5],
+      });
+
+      const expected: Invocation[] = [
+        {
+          invocation_id: 'inv1',
+          user_content: {parts: [{text: 'q1'}]},
+          intermediate_data: {
+            tool_uses: [],
+            intermediate_responses: [],
+          },
+          final_response: {parts: [{text: 'r1'}]},
+          creation_timestamp: 1.0,
+        },
+        {
+          invocation_id: 'inv2',
+          user_content: {parts: [{text: 'q2'}]},
+          intermediate_data: {
+            tool_uses: [{name: 'tool1', args: {}}],
+            intermediate_responses: [],
+          },
+          final_response: {parts: [{text: 'r2'}]},
+          creation_timestamp: 3.0,
+        },
+      ];
+
+      expect(convertSessionToEvalInvocations(session)).toEqual(expected);
+    });
+
+    it('skips user and agent events with missing or empty parts', () => {
+      const event1 = createEvent({
+        author: 'user',
+        content: undefined,
+        invocationId: 'inv1',
+        timestamp: 1.0,
+      });
+      const event2 = createEvent({
+        author: 'user',
+        content: {parts: []},
+        invocationId: 'inv2',
+        timestamp: 2.0,
+      });
+      const event3 = createEvent({
+        author: 'user',
+        content: {parts: [{text: 'valid user query'}]},
+        invocationId: 'inv3',
+        timestamp: 3.0,
+      });
+      const event4 = createEvent({
+        author: 'agent1',
+        content: undefined,
+        invocationId: 'inv3',
+        timestamp: 4.0,
+      });
+      const event5 = createEvent({
+        author: 'agent1',
+        content: {parts: []},
+        invocationId: 'inv3',
+        timestamp: 5.0,
+      });
+      const event6 = createEvent({
+        author: 'agent1',
+        content: {parts: [{}]},
+        invocationId: 'inv3',
+        timestamp: 6.0,
+      });
+      const event7 = createEvent({
+        author: 'agent1',
+        content: {parts: [{text: 'valid agent response'}]},
+        invocationId: 'inv3',
+        timestamp: 7.0,
+      });
+
+      const session = createSession({
+        id: 'test_session',
+        userId: 'test_user',
+        appName: 'test_app',
+        events: [event1, event2, event3, event4, event5, event6, event7],
+      });
+
+      const expected: Invocation[] = [
+        {
+          invocation_id: 'inv3',
+          user_content: {parts: [{text: 'valid user query'}]},
+          intermediate_data: {
+            tool_uses: [],
+            intermediate_responses: [],
+          },
+          final_response: {parts: [{text: 'valid agent response'}]},
+          creation_timestamp: 3.0,
+        },
+      ];
+
+      expect(convertSessionToEvalInvocations(session)).toEqual(expected);
+    });
+
+    it('sets final_response to undefined when a user turn has no agent text response', () => {
+      const event1 = createEvent({
+        author: 'user',
+        content: {parts: [{text: 'q1'}]},
+        invocationId: 'inv1',
+        timestamp: 1.0,
+      });
+      const event2 = createEvent({
+        author: 'user',
+        content: {parts: [{text: 'q2'}]},
+        invocationId: 'inv2',
+        timestamp: 2.0,
+      });
+
+      const session = createSession({
+        id: 'test_session',
+        userId: 'test_user',
+        appName: 'test_app',
+        events: [event1, event2],
+      });
+
+      const expected: Invocation[] = [
+        {
+          invocation_id: 'inv1',
+          user_content: {parts: [{text: 'q1'}]},
+          intermediate_data: {
+            tool_uses: [],
+            intermediate_responses: [],
+          },
+          final_response: undefined,
+          creation_timestamp: 1.0,
+        },
+        {
+          invocation_id: 'inv2',
+          user_content: {parts: [{text: 'q2'}]},
+          intermediate_data: {
+            tool_uses: [],
+            intermediate_responses: [],
+          },
+          final_response: undefined,
+          creation_timestamp: 2.0,
+        },
+      ];
+
+      expect(convertSessionToEvalInvocations(session)).toEqual(expected);
     });
   });
 });

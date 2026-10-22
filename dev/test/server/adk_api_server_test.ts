@@ -13,6 +13,7 @@ import {
   createEvent,
   createSession,
   EVAL_SESSION_ID_PREFIX,
+  EvalSetResult,
   EvalStatus,
   Event,
   FunctionTool,
@@ -2409,6 +2410,153 @@ describe('AdkWebServer', () => {
         expect(runEvalRes.data).toHaveLength(1);
         expect(runEvalRes.data?.[0].evalId).toBe('case_1');
         expect(runEvalRes.data?.[0].finalEvalStatus).toBe(EvalStatus.PASSED);
+      } finally {
+        await evalServer.stop();
+        fs.rmSync(tempAgentsDir, {recursive: true, force: true});
+      }
+    });
+  });
+
+  describe('Eval results endpoints', () => {
+    it('lists empty eval results before any run, persists EvalSetResult on run_eval, and serves or 404s eval_results by ID', async () => {
+      const tempAgentsDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-eval-results-test-'),
+      );
+      const evalServer = new AdkApiServer({
+        agentsDir: tempAgentsDir,
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+      });
+      await evalServer.start();
+      const evalClient = new HttpClient(evalServer.url);
+
+      try {
+        // 1. Before any eval run, listing eval_results returns [] even when .adk/eval_history does not exist.
+        const initialListRes = await evalClient.get<string[]>(
+          '/apps/testApp/eval_results',
+        );
+        expect(initialListRes.status).toBe(200);
+        expect(initialListRes.data).toEqual([]);
+
+        // 2. Create an eval set and populate a session.
+        await evalClient.post('/apps/testApp/eval_sets/set_history', {});
+        const sess = await sessionService.createSession({
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'sessForHistory',
+        });
+        await sessionService.appendEvent({
+          session: sess,
+          event: createEvent({
+            author: 'user',
+            content: {role: 'user', parts: [{text: 'Hi'}]},
+          }),
+        });
+        await sessionService.appendEvent({
+          session: sess,
+          event: createEvent({
+            author: 'testAgent',
+            content: {role: 'model', parts: [{text: 'Event 2'}]},
+          }),
+        });
+        await evalClient.post(
+          '/apps/testApp/eval_sets/set_history/add_session',
+          {
+            evalId: 'case_hist_1',
+            sessionId: 'sessForHistory',
+            userId: 'testUser',
+          },
+        );
+
+        // 3. Run the eval set, which persists an EvalSetResult file under .adk/eval_history.
+        const runRes = await evalClient.post<
+          Array<{evalId: string; finalEvalStatus: EvalStatus}>
+        >('/apps/testApp/eval_sets/set_history/run_eval', {
+          evalIds: ['case_hist_1'],
+          evalMetrics: [
+            {metric_name: 'tool_trajectory_avg_score', threshold: 1.0},
+            {metric_name: 'response_match_score', threshold: 0.8},
+          ],
+        });
+        expect(runRes.status).toBe(200);
+
+        // 4. List eval_results and verify the newly persisted result ID is returned.
+        const afterRunListRes = await evalClient.get<string[]>(
+          '/apps/testApp/eval_results',
+        );
+        expect(afterRunListRes.status).toBe(200);
+        expect(afterRunListRes.data).toHaveLength(1);
+        const evalResultId = afterRunListRes.data![0];
+        expect(evalResultId).toContain('testApp_set_history_');
+
+        // 5. Fetch the saved EvalSetResult by ID.
+        const getResultRes = await evalClient.get<EvalSetResult>(
+          `/apps/testApp/eval_results/${encodeURIComponent(evalResultId)}`,
+        );
+        expect(getResultRes.status).toBe(200);
+        expect(getResultRes.data?.eval_set_result_id).toBe(evalResultId);
+        expect(getResultRes.data?.eval_set_id).toBe('set_history');
+        expect(getResultRes.data?.eval_set_result_name).toBe(evalResultId);
+        expect(getResultRes.data?.eval_case_results).toHaveLength(1);
+        expect(getResultRes.data?.eval_case_results[0].eval_id).toBe(
+          'case_hist_1',
+        );
+        expect(
+          getResultRes.data?.eval_case_results[0].session_details,
+        ).toBeDefined();
+
+        // 6. Requesting a missing or path-traversal evalResultId or appName returns 404/400.
+        await expect(
+          evalClient.get('/apps/testApp/eval_results/nonexistent_result'),
+        ).rejects.toMatchObject({response: {status: 404}});
+        await expect(
+          evalClient.get('/apps/testApp/eval_results/..%2Fset_history'),
+        ).rejects.toMatchObject({response: {status: 404}});
+        await expect(
+          evalClient.get(
+            `/apps/..%2F..%2Fother/eval_results/${encodeURIComponent(evalResultId)}`,
+          ),
+        ).rejects.toMatchObject({response: {status: 404}});
+        await expect(
+          evalClient.get('/apps/..%2F..%2Fother/eval_results'),
+        ).rejects.toMatchObject({response: {status: 404}});
+        await expect(
+          evalClient.post(
+            '/apps/..%2F..%2Fother/eval_sets/set_history/run_eval',
+            {},
+          ),
+        ).rejects.toMatchObject({response: {status: 400}});
+        await expect(
+          evalClient.post(
+            '/apps/testApp/eval_sets/..%2Fset_history/run_eval',
+            {},
+          ),
+        ).rejects.toMatchObject({response: {status: 400}});
+
+        // 7. Listing evals supports EvalSet ({eval_cases: EvalCase[]}) files.
+        const evalSetSchemaFile = path.join(
+          tempAgentsDir,
+          'testApp',
+          'schema_set.evalset.json',
+        );
+        fs.writeFileSync(
+          evalSetSchemaFile,
+          JSON.stringify({
+            eval_set_id: 'schema_set',
+            eval_cases: [
+              {eval_id: 'beta_case', conversation: []},
+              {eval_id: 'alpha_case', conversation: []},
+            ],
+          }),
+          'utf-8',
+        );
+        const schemaEvalsRes = await evalClient.get<string[]>(
+          '/apps/testApp/eval_sets/schema_set/evals',
+        );
+        expect(schemaEvalsRes.status).toBe(200);
+        expect(schemaEvalsRes.data).toEqual(['alpha_case', 'beta_case']);
       } finally {
         await evalServer.stop();
         fs.rmSync(tempAgentsDir, {recursive: true, force: true});

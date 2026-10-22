@@ -205,18 +205,27 @@ export {
 } from './cli/cli_eval.js';
 export type {
   AddSessionToEvalSetRequest,
+  EvalCaseResult,
   EvalEntry,
   EvalInitialSession,
   EvalMetric,
   EvalMetricResult,
+  EvalMetricResultPerInvocation,
   EvalResult,
   EvalSetItem,
+  EvalSetResult,
+  EvalSetSource,
   InvocationEvalMetricResult,
   RunEvalRequest,
   RunEvalResult,
   RunEvalsOptions,
 } from './cli/cli_eval.js';
 export {loadDotenvForAgent, walkToRootUntilFound} from './cli/utils/envs.js';
-export {LOGGING_FORMAT, logToStderr, logToTmpFolder} from './cli/utils/logs.js';
+export {
+  LOGGING_FORMAT,
+  logToStderr,
+  logToTmpFolder,
+  setupAdkLogger,
+} from './cli/utils/logs.js';
 export type {LogToTmpFolderOptions} from './cli/utils/logs.js';
 export * from './tools/mcp/index.js';

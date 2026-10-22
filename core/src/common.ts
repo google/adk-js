@@ -574,11 +574,17 @@ export * from './tools/base_tool.js';
 
 export {
   convertSessionToEvalFormat,
+  convertSessionToEvalInvocations,
   createEmptyState,
 } from './cli/utils/evals.js';
 export type {
+  EvalCase,
+  EvalSet,
   EvaluationItem,
   IntermediateAgentResponseItem,
+  IntermediateData,
+  Invocation,
+  SessionInput,
   ToolUseItem,
 } from './cli/utils/evals.js';
 export {CrewaiTool, isCrewaiTool} from './tools/crewai_tool.js';

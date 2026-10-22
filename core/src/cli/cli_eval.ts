@@ -21,11 +21,15 @@ import {InMemoryArtifactService} from '../artifacts/in_memory_artifact_service.j
 import {Runner} from '../runner/runner.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {InMemorySessionService} from '../sessions/in_memory_session_service.js';
+import {Session} from '../sessions/session.js';
 import {logger} from '../utils/logger.js';
 import {
   convertSessionToEvalFormat,
   createEmptyState,
+  EvalCase,
+  EvalSet,
   EvaluationItem,
+  Invocation,
   ToolUseItem,
 } from './utils/evals.js';
 
@@ -98,17 +102,47 @@ export interface InvocationEvalMetricResult {
 }
 
 /**
+ * Per-invocation evaluation metric breakdown for a single turn.
+ */
+export interface EvalMetricResultPerInvocation {
+  actual_invocation: EvaluationItem;
+  expected_invocation: EvaluationItem;
+  eval_metric_results: EvalMetricResult[];
+}
+
+/**
  * Complete evaluation result for a single eval case in an evalset.
  */
 export interface EvalResult {
   eval_set_file: string;
+  eval_set_id?: string;
   eval_id: string;
   final_eval_status: EvalStatus;
   eval_metric_results: Array<[EvalMetric, EvalMetricResult]>;
   overall_eval_metric_results: EvalMetricResult[];
   eval_metric_result_per_invocation: InvocationEvalMetricResult[];
   session_id: string;
+  session_details?: Session;
   user_id?: string;
+}
+
+/**
+ * Evaluation result for a single evaluation case within an evaluation set.
+ */
+export interface EvalCaseResult extends EvalResult {
+  eval_set_id: string;
+  session_details?: Session;
+}
+
+/**
+ * Aggregated evaluation result for an evaluation set run.
+ */
+export interface EvalSetResult {
+  eval_set_result_id: string;
+  eval_set_result_name: string;
+  eval_set_id: string;
+  eval_case_results: EvalCaseResult[];
+  creation_timestamp?: number;
 }
 
 /**
@@ -167,10 +201,15 @@ export interface EvalEntry {
 export type EvalSetItem = EvalEntry;
 
 /**
+ * Supported evaluation case collection formats for a single evaluation set in `runEvals`.
+ */
+export type EvalSetSource = Array<EvalEntry | EvalCase> | EvalSet | string[];
+
+/**
  * Options for running evaluations via `runEvals`.
  */
 export interface RunEvalsOptions {
-  evalCasesByEvalSetId: Record<string, EvalEntry[] | string[]>;
+  evalCasesByEvalSetId: Record<string, EvalSetSource>;
   rootAgent: BaseAgent;
   resetFunc?: () => void | Promise<void>;
   evalMetrics?: EvalMetric[];
@@ -522,6 +561,7 @@ async function generateActualInvocations(
 ): Promise<{
   actualInvocations: EvaluationItem[];
   sessionId: string;
+  sessionDetails?: Session;
   userId: string;
 }> {
   if (resetFunc) {
@@ -618,28 +658,97 @@ async function generateActualInvocations(
     });
   }
 
-  return {actualInvocations, sessionId, userId};
+  return {
+    actualInvocations,
+    sessionId,
+    sessionDetails: recordedSession,
+    userId,
+  };
+}
+
+function invocationToEvaluationItem(invocation: Invocation): EvaluationItem {
+  const query =
+    invocation.user_content?.parts
+      ?.filter((part) => Boolean(part.text))
+      .map((part) => part.text ?? '')
+      .join('') ?? '';
+  const expectedToolUse: ToolUseItem[] = (
+    invocation.intermediate_data?.tool_uses ?? []
+  ).map((fc) => ({
+    tool_name: fc.name ?? '',
+    tool_input: (fc.args ?? {}) as Record<string, unknown>,
+  }));
+  const expectedIntermediateAgentResponses =
+    invocation.intermediate_data?.intermediate_responses ?? [];
+  const reference =
+    invocation.final_response?.parts
+      ?.filter((part) => Boolean(part.text))
+      .map((part) => part.text ?? '')
+      .join('') ?? '';
+
+  return {
+    query,
+    expected_tool_use: expectedToolUse,
+    expected_intermediate_agent_responses: expectedIntermediateAgentResponses,
+    reference,
+  };
+}
+
+function normalizeEvalCase(entry: EvalEntry | EvalCase): EvalEntry {
+  if ('eval_id' in entry && 'conversation' in entry) {
+    return {
+      name: entry.eval_id,
+      data: entry.conversation.map(invocationToEvaluationItem),
+      initial_session: entry.session_input
+        ? {
+            app_name: entry.session_input.app_name,
+            user_id: entry.session_input.user_id,
+            state: entry.session_input.state,
+          }
+        : undefined,
+    };
+  }
+  return entry;
+}
+
+function extractRawEvalCases(rawData: unknown): Array<EvalEntry | EvalCase> {
+  if (Array.isArray(rawData)) {
+    return rawData as Array<EvalEntry | EvalCase>;
+  }
+  if (
+    typeof rawData === 'object' &&
+    rawData !== null &&
+    'eval_cases' in rawData &&
+    Array.isArray((rawData as {eval_cases: unknown}).eval_cases)
+  ) {
+    return (rawData as EvalSet).eval_cases;
+  }
+  return [];
 }
 
 function resolveEvalCasesForSet(
   evalSetId: string,
-  entries: EvalEntry[] | string[],
+  entries: EvalSetSource,
 ): EvalEntry[] {
+  if (!Array.isArray(entries)) {
+    return extractRawEvalCases(entries).map(normalizeEvalCase);
+  }
   if (entries.length > 0 && typeof entries[0] === 'string') {
     const filterNames = entries as string[];
-    const fileData = JSON.parse(
-      fs.readFileSync(evalSetId, 'utf-8'),
-    ) as EvalEntry[];
-    return fileData.filter((e) => filterNames.includes(e.name));
+    const fileData: unknown = JSON.parse(fs.readFileSync(evalSetId, 'utf-8'));
+    return extractRawEvalCases(fileData)
+      .map(normalizeEvalCase)
+      .filter((e) => filterNames.includes(e.name));
   }
   if (
     entries.length === 0 &&
     fs.existsSync(evalSetId) &&
     fs.statSync(evalSetId).isFile()
   ) {
-    return JSON.parse(fs.readFileSync(evalSetId, 'utf-8')) as EvalEntry[];
+    const fileData: unknown = JSON.parse(fs.readFileSync(evalSetId, 'utf-8'));
+    return extractRawEvalCases(fileData).map(normalizeEvalCase);
   }
-  return entries as EvalEntry[];
+  return (entries as Array<EvalEntry | EvalCase>).map(normalizeEvalCase);
 }
 
 function printCaseDetailedResults(result: EvalResult): void {
@@ -655,18 +764,18 @@ function printCaseDetailedResults(result: EvalResult): void {
 
 /**
  * Runs a collection of evaluation cases against `rootAgent` and yields an
- * `EvalResult` for each case.
+ * `EvalCaseResult` for each case.
  */
 export async function* runEvals(
-  optionsOrMap: RunEvalsOptions | Record<string, EvalEntry[] | string[]>,
+  optionsOrMap: RunEvalsOptions | Record<string, EvalSetSource>,
   rootAgentArg?: BaseAgent,
   resetFuncArg?: () => void | Promise<void>,
   evalMetricsArg?: EvalMetric[],
   printDetailedResultsArg = false,
   sessionServiceArg?: BaseSessionService,
   artifactServiceArg?: BaseArtifactService,
-): AsyncGenerator<EvalResult, void, void> {
-  let evalCasesByEvalSetId: Record<string, EvalEntry[] | string[]>;
+): AsyncGenerator<EvalCaseResult, void, void> {
+  let evalCasesByEvalSetId: Record<string, EvalSetSource>;
   let rootAgent: BaseAgent;
   let resetFunc: (() => void | Promise<void>) | undefined;
   let evalMetrics: EvalMetric[];
@@ -694,10 +803,7 @@ export async function* runEvals(
     sessionService = opts.sessionService;
     artifactService = opts.artifactService;
   } else {
-    evalCasesByEvalSetId = optionsOrMap as Record<
-      string,
-      EvalEntry[] | string[]
-    >;
+    evalCasesByEvalSetId = optionsOrMap as Record<string, EvalSetSource>;
     if (!rootAgentArg) {
       throw new Error('rootAgent is required to run evaluations.');
     }
@@ -718,68 +824,75 @@ export async function* runEvals(
     const evalCases = resolveEvalCasesForSet(evalSetId, rawEntries);
     for (const evalCase of evalCases) {
       const evalName = evalCase.name;
-      const {actualInvocations, sessionId, userId} =
-        await generateActualInvocations(
-          rootAgent,
-          evalCase,
-          resetFunc,
-          sessionService,
-          artifactService,
-        );
+      try {
+        logger.info(`Running Eval: ${evalSetId}:${evalName}`);
+        const {actualInvocations, sessionId, sessionDetails, userId} =
+          await generateActualInvocations(
+            rootAgent,
+            evalCase,
+            resetFunc,
+            sessionService,
+            artifactService,
+          );
 
-      const overallEvalMetricResults: EvalMetricResult[] = [];
-      const evalMetricResultsPairs: Array<[EvalMetric, EvalMetricResult]> = [];
-      const perInvocationMap: InvocationEvalMetricResult[] = evalCase.data.map(
-        (expectedInvocation, idx) => ({
-          actual_invocation: actualInvocations[idx],
-          expected_invocation: expectedInvocation,
-          eval_metric_results: [],
-        }),
-      );
+        const overallEvalMetricResults: EvalMetricResult[] = [];
+        const evalMetricResultsPairs: Array<[EvalMetric, EvalMetricResult]> =
+          [];
+        const perInvocationMap: InvocationEvalMetricResult[] =
+          evalCase.data.map((expectedInvocation, idx) => ({
+            actual_invocation: actualInvocations[idx],
+            expected_invocation: expectedInvocation,
+            eval_metric_results: [],
+          }));
 
-      for (const metric of evalMetrics) {
-        const {overall, perInvocation} = evaluateSingleMetric(
-          metric,
-          actualInvocations,
-          evalCase.data,
-        );
-        overallEvalMetricResults.push(overall);
-        evalMetricResultsPairs.push([metric, overall]);
-        for (let i = 0; i < perInvocation.length; i++) {
-          if (perInvocationMap[i]) {
-            perInvocationMap[i].eval_metric_results.push(perInvocation[i]);
+        for (const metric of evalMetrics) {
+          const {overall, perInvocation} = evaluateSingleMetric(
+            metric,
+            actualInvocations,
+            evalCase.data,
+          );
+          overallEvalMetricResults.push(overall);
+          evalMetricResultsPairs.push([metric, overall]);
+          for (let i = 0; i < perInvocation.length; i++) {
+            if (perInvocationMap[i]) {
+              perInvocationMap[i].eval_metric_results.push(perInvocation[i]);
+            }
           }
         }
-      }
 
-      let finalEvalStatus = EvalStatus.NOT_EVALUATED;
-      for (const overallMetricResult of overallEvalMetricResults) {
-        if (overallMetricResult.eval_status === EvalStatus.PASSED) {
-          if (finalEvalStatus === EvalStatus.NOT_EVALUATED) {
-            finalEvalStatus = EvalStatus.PASSED;
+        let finalEvalStatus = EvalStatus.NOT_EVALUATED;
+        for (const overallMetricResult of overallEvalMetricResults) {
+          if (overallMetricResult.eval_status === EvalStatus.PASSED) {
+            if (finalEvalStatus === EvalStatus.NOT_EVALUATED) {
+              finalEvalStatus = EvalStatus.PASSED;
+            }
+          } else if (overallMetricResult.eval_status === EvalStatus.FAILED) {
+            finalEvalStatus = EvalStatus.FAILED;
+            break;
           }
-        } else if (overallMetricResult.eval_status === EvalStatus.FAILED) {
-          finalEvalStatus = EvalStatus.FAILED;
-          break;
         }
+
+        const result: EvalCaseResult = {
+          eval_set_file: evalSetId,
+          eval_set_id: evalSetId,
+          eval_id: evalName,
+          final_eval_status: finalEvalStatus,
+          eval_metric_results: evalMetricResultsPairs,
+          overall_eval_metric_results: overallEvalMetricResults,
+          eval_metric_result_per_invocation: perInvocationMap,
+          session_id: sessionId,
+          session_details: sessionDetails,
+          user_id: userId,
+        };
+
+        if (printDetailedResults) {
+          printCaseDetailedResults(result);
+        }
+
+        yield result;
+      } catch (e: unknown) {
+        logger.error(`Eval failed for \`${evalSetId}:${evalName}\`: ${e}`);
       }
-
-      const result: EvalResult = {
-        eval_set_file: evalSetId,
-        eval_id: evalName,
-        final_eval_status: finalEvalStatus,
-        eval_metric_results: evalMetricResultsPairs,
-        overall_eval_metric_results: overallEvalMetricResults,
-        eval_metric_result_per_invocation: perInvocationMap,
-        session_id: sessionId,
-        user_id: userId,
-      };
-
-      if (printDetailedResults) {
-        printCaseDetailedResults(result);
-      }
-
-      yield result;
     }
   }
 }

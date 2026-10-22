@@ -11,8 +11,11 @@ import {
   createEvent,
   DEFAULT_CRITERIA,
   EVAL_SESSION_ID_PREFIX,
+  EvalCase,
+  EvalCaseResult,
   EvalEntry,
   EvalResult,
+  EvalSet,
   EvalStatus,
   Event,
   getEvaluationCriteriaOrDefault,
@@ -20,6 +23,7 @@ import {
   InMemorySessionService,
   InvocationContext,
   LlmAgent,
+  logger,
   MISSING_EVAL_DEPENDENCIES_MESSAGE,
   parseAndGetEvalsToRun,
   RESPONSE_MATCH_SCORE_KEY,
@@ -30,7 +34,7 @@ import {
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 class DeterministicEvalAgent extends BaseAgent {
   constructor() {
@@ -331,6 +335,227 @@ describe('cli/cli_eval', () => {
       expect(results).toHaveLength(1);
       expect(interceptedOutput).toEqual({result: 'mocked_value_42'});
       expect(subLlmAgent.beforeToolCallback).toBeUndefined();
+    });
+  });
+
+  describe('runEvals with EvalCase and EvalSet schemas', () => {
+    class InvocationEvalTestAgent extends BaseAgent {
+      constructor() {
+        super({name: 'invocation_eval_test_agent'});
+      }
+
+      protected override async *runAsyncImpl(
+        ctx: InvocationContext,
+      ): AsyncGenerator<Event, void, void> {
+        const query =
+          ctx.userContent?.parts?.map((p) => p.text ?? '').join('') ?? '';
+
+        if (query.includes('throw_error')) {
+          throw new Error('simulated agent failure');
+        }
+
+        if (query.includes('use_tool')) {
+          yield createEvent({
+            invocationId: ctx.invocationId,
+            author: this.name,
+            content: {
+              role: 'model',
+              parts: [{functionCall: {name: 'lookup_item', args: {id: 42}}}],
+            },
+          });
+        }
+
+        yield createEvent({
+          invocationId: ctx.invocationId,
+          author: this.name,
+          content: {
+            role: 'model',
+            parts: [{text: `Echo: ${query}`}],
+          },
+        });
+      }
+
+      protected override async *runLiveImpl(
+        ctx: InvocationContext,
+      ): AsyncGenerator<Event, void, void> {
+        yield* this.runAsyncImpl(ctx);
+      }
+    }
+
+    it('evaluates EvalCase objects and populates eval_set_id and session_details', async () => {
+      const agent = new InvocationEvalTestAgent();
+      const sessionService = new InMemorySessionService();
+
+      const evalCase: EvalCase = {
+        eval_id: 'invocation_case_1',
+        conversation: [
+          {
+            invocation_id: 'inv-1',
+            user_content: {
+              role: 'user',
+              parts: [{text: 'use_tool for item'}],
+            },
+            intermediate_data: {
+              tool_uses: [{name: 'lookup_item', args: {id: 42}}],
+              intermediate_responses: [],
+            },
+            final_response: {
+              role: 'model',
+              parts: [{text: 'Echo: use_tool for item'}],
+            },
+          },
+        ],
+        session_input: {
+          app_name: 'eval_app',
+          user_id: 'eval_user',
+          state: {initialized_key: 'val'},
+        },
+      };
+
+      const results: EvalCaseResult[] = [];
+      for await (const result of runEvals({
+        evalCasesByEvalSetId: {
+          eval_set_alpha: [evalCase],
+        },
+        rootAgent: agent,
+        sessionService,
+      })) {
+        results.push(result);
+      }
+
+      expect(results).toHaveLength(1);
+      expect(results[0].eval_set_id).toBe('eval_set_alpha');
+      expect(results[0].eval_id).toBe('invocation_case_1');
+      expect(results[0].final_eval_status).toBe(EvalStatus.PASSED);
+      expect(results[0].session_details).toBeDefined();
+      expect(results[0].session_details?.id).toBe(results[0].session_id);
+      expect(results[0].session_details?.userId).toBe('eval_user');
+    });
+
+    it('loads and filters EvalSet files from disk', async () => {
+      const agent = new InvocationEvalTestAgent();
+      const evalSetFile = path.join(tempDir, 'suite.evalset.json');
+      const evalSet: EvalSet = {
+        eval_set_id: 'suite_set',
+        name: 'Suite Set',
+        eval_cases: [
+          {
+            eval_id: 'case_one',
+            conversation: [
+              {
+                user_content: {role: 'user', parts: [{text: 'hello one'}]},
+                final_response: {
+                  role: 'model',
+                  parts: [{text: 'Echo: hello one'}],
+                },
+              },
+            ],
+          },
+          {
+            eval_id: 'case_two',
+            conversation: [
+              {
+                user_content: {role: 'user', parts: [{text: 'hello two'}]},
+                final_response: {
+                  role: 'model',
+                  parts: [{text: 'Echo: hello two'}],
+                },
+              },
+            ],
+          },
+        ],
+      };
+      fs.writeFileSync(evalSetFile, JSON.stringify(evalSet, null, 2), 'utf-8');
+
+      const filteredResults: EvalCaseResult[] = [];
+      for await (const result of runEvals({
+        evalCasesByEvalSetId: {
+          [evalSetFile]: ['case_two'],
+        },
+        rootAgent: agent,
+      })) {
+        filteredResults.push(result);
+      }
+
+      expect(filteredResults).toHaveLength(1);
+      expect(filteredResults[0].eval_id).toBe('case_two');
+      expect(filteredResults[0].final_eval_status).toBe(EvalStatus.PASSED);
+
+      const allResults: EvalCaseResult[] = [];
+      for await (const result of runEvals({
+        evalCasesByEvalSetId: {
+          [evalSetFile]: [],
+        },
+        rootAgent: agent,
+      })) {
+        allResults.push(result);
+      }
+
+      expect(allResults.map((r) => r.eval_id)).toEqual([
+        'case_one',
+        'case_two',
+      ]);
+    });
+
+    it('logs per-case errors and continues evaluating remaining cases', async () => {
+      const agent = new InvocationEvalTestAgent();
+      const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+      try {
+        const cases: EvalCase[] = [
+          {
+            eval_id: 'throwing_case',
+            conversation: [
+              {
+                user_content: {
+                  role: 'user',
+                  parts: [{text: 'please throw_error now'}],
+                },
+                final_response: {
+                  role: 'model',
+                  parts: [{text: 'unreachable'}],
+                },
+              },
+            ],
+          },
+          {
+            eval_id: 'recovering_case',
+            conversation: [
+              {
+                user_content: {
+                  role: 'user',
+                  parts: [{text: 'healthy turn'}],
+                },
+                final_response: {
+                  role: 'model',
+                  parts: [{text: 'Echo: healthy turn'}],
+                },
+              },
+            ],
+          },
+        ];
+
+        const results: EvalCaseResult[] = [];
+        for await (const result of runEvals({
+          evalCasesByEvalSetId: {
+            resilient_set: cases,
+          },
+          rootAgent: agent,
+        })) {
+          results.push(result);
+        }
+
+        expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'Eval failed for `resilient_set:throwing_case`',
+          ),
+        );
+        expect(results).toHaveLength(1);
+        expect(results[0].eval_id).toBe('recovering_case');
+        expect(results[0].final_eval_status).toBe(EvalStatus.PASSED);
+      } finally {
+        errorSpy.mockRestore();
+      }
     });
   });
 });
