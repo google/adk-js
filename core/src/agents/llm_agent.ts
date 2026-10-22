@@ -51,10 +51,15 @@ import {ActiveStreamingTool} from './active_streaming_tool.js';
 import {Context} from './context.js';
 
 import {
+  finishInferenceSpan,
+  isReportedFinishReason,
   runAsyncGeneratorWithOtelContext,
+  startInferenceSpan,
   traceCallLlm,
+  traceInferenceResult,
   tracer,
   traceSendData,
+  type GenerateContentSpan,
 } from '../telemetry/tracing.js';
 import {parseWithSchema, SchemaLike} from '../utils/schema.js';
 import {isZodObject, zodObjectToSchema} from '../utils/simple_zod_to_json.js';
@@ -1944,72 +1949,124 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
 
     const llm = this.canonicalModel;
     invocationContext.incrementLlmCallCount();
-    if (invocationContext.runConfig?.supportCfc) {
-      invocationContext.liveRequestQueue ??= new LiveRequestQueue();
-      const liveRequestQueue = invocationContext.liveRequestQueue;
-      try {
-        for await (const llmResponse of this.runLiveFlow(invocationContext)) {
+    const gcSpan = startInferenceSpan({
+      llmRequest,
+      invocationContext,
+      modelResponseEvent,
+    });
+    try {
+      if (invocationContext.runConfig?.supportCfc) {
+        invocationContext.liveRequestQueue ??= new LiveRequestQueue();
+        const liveRequestQueue = invocationContext.liveRequestQueue;
+        try {
+          for await (const llmResponse of traceModelStream({
+            stream: this.runLiveFlow(invocationContext),
+            gcSpan,
+            invocationContext,
+          })) {
+            if (!gcSpan.ended) {
+              traceInferenceResult({
+                invocationContext,
+                generateContentSpan: gcSpan,
+                llmResponse,
+              });
+              if (isReportedFinishReason(llmResponse.finishReason)) {
+                finishInferenceSpan({
+                  generateContentSpan: gcSpan,
+                  invocationContext,
+                });
+              }
+            }
+            if (invocationContext.abortSignal?.aborted) {
+              return;
+            }
+            const alteredLlmResponse = await this.handleAfterModelCallback(
+              invocationContext,
+              llmResponse,
+              modelResponseEvent,
+            );
+            if (invocationContext.abortSignal?.aborted) {
+              return;
+            }
+            const effectiveResponse = alteredLlmResponse
+              ? createEvent({...llmResponse, ...alteredLlmResponse})
+              : llmResponse;
+            // Only yield partial responses in SSE streaming mode.
+            if (
+              invocationContext.runConfig.streamingMode === StreamingMode.SSE ||
+              !effectiveResponse.partial
+            ) {
+              yield effectiveResponse;
+            }
+            if (effectiveResponse.turnComplete) {
+              liveRequestQueue.close();
+            }
+          }
+        } finally {
+          liveRequestQueue.close();
+        }
+      } else {
+        const gcContext = trace.setSpan(context.active(), gcSpan.span);
+        const responsesGenerator = runAsyncGeneratorWithOtelContext(
+          gcContext,
+          llm,
+          () =>
+            llm.generateContentAsync(
+              llmRequest,
+              /* stream= */ invocationContext.runConfig?.streamingMode ===
+                StreamingMode.SSE,
+              invocationContext.abortSignal,
+            ),
+        );
+
+        for await (const llmResponse of traceModelStream({
+          stream: responsesGenerator,
+          gcSpan,
+          invocationContext,
+        })) {
+          traceCallLlm({
+            invocationContext,
+            eventId: modelResponseEvent.id,
+            llmRequest,
+            llmResponse,
+          });
+          if (!gcSpan.ended) {
+            traceInferenceResult({
+              invocationContext,
+              generateContentSpan: gcSpan,
+              llmResponse,
+            });
+            if (isReportedFinishReason(llmResponse.finishReason)) {
+              finishInferenceSpan({
+                generateContentSpan: gcSpan,
+                invocationContext,
+              });
+            }
+          }
+
           if (invocationContext.abortSignal?.aborted) {
             return;
           }
+
+          // Runs after_model_callback if it exists.
           const alteredLlmResponse = await this.handleAfterModelCallback(
             invocationContext,
             llmResponse,
             modelResponseEvent,
           );
+
           if (invocationContext.abortSignal?.aborted) {
             return;
           }
-          const effectiveResponse = alteredLlmResponse
-            ? createEvent({...llmResponse, ...alteredLlmResponse})
-            : llmResponse;
-          // Only yield partial responses in SSE streaming mode.
-          if (
-            invocationContext.runConfig.streamingMode === StreamingMode.SSE ||
-            !effectiveResponse.partial
-          ) {
-            yield effectiveResponse;
-          }
-          if (effectiveResponse.turnComplete) {
-            liveRequestQueue.close();
-          }
+
+          yield alteredLlmResponse ?? llmResponse;
         }
-      } finally {
-        liveRequestQueue.close();
       }
-    } else {
-      const responsesGenerator = llm.generateContentAsync(
-        llmRequest,
-        /* stream= */ invocationContext.runConfig?.streamingMode ===
-          StreamingMode.SSE,
-        invocationContext.abortSignal,
-      );
-
-      for await (const llmResponse of responsesGenerator) {
-        traceCallLlm({
-          invocationContext,
-          eventId: modelResponseEvent.id,
-          llmRequest,
-          llmResponse,
-        });
-
-        if (invocationContext.abortSignal?.aborted) {
-          return;
-        }
-
-        // Runs after_model_callback if it exists.
-        const alteredLlmResponse = await this.handleAfterModelCallback(
-          invocationContext,
-          llmResponse,
-          modelResponseEvent,
-        );
-
-        if (invocationContext.abortSignal?.aborted) {
-          return;
-        }
-
-        yield alteredLlmResponse ?? llmResponse;
-      }
+    } finally {
+      finishInferenceSpan({
+        generateContentSpan: gcSpan,
+        invocationContext,
+      });
     }
   }
 
@@ -2175,4 +2232,25 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
   // TODO - b/425992518: LlmAgent features not implemented yet.
   // - codeExecutor
   // - configuring agents from a YAML file
+}
+
+async function* traceModelStream({
+  stream,
+  gcSpan,
+  invocationContext,
+}: {
+  stream: AsyncGenerator<LlmResponse, void, void>;
+  gcSpan: GenerateContentSpan;
+  invocationContext: InvocationContext;
+}): AsyncGenerator<LlmResponse, void, void> {
+  try {
+    yield* stream;
+  } catch (error: unknown) {
+    finishInferenceSpan({
+      generateContentSpan: gcSpan,
+      invocationContext,
+      error,
+    });
+    throw error;
+  }
 }

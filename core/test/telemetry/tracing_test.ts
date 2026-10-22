@@ -4,8 +4,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {ApiError, Type} from '@google/genai';
+import {
+  ApiError,
+  FinishReason,
+  Language,
+  Outcome,
+  Part,
+  Type,
+} from '@google/genai';
 import {SpanStatusCode, trace} from '@opentelemetry/api';
+import type {AnyValue} from '@opentelemetry/api-logs';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 import {
@@ -13,6 +21,7 @@ import {
   BaseTool,
   Event,
   InvocationContext,
+  LlmAgent,
   LlmRequest,
   LlmResponse,
   Session,
@@ -21,11 +30,34 @@ import {
   createEventActions,
 } from '@google/adk';
 import {
+  ContentCapturingMode,
+  USER_CONTENT_ELIDED,
+  buildCompletionLogAttributes,
+  buildCompletionSpanAttributes,
+  choiceBody,
+  extractToolDefinitions,
+  getContentCapturingMode,
+  getTelemetryConfig,
+  guessGeminiSystemName,
   resolveErrorType,
+  resolveGenAiProviderName,
+  resolveGenAiSystemName,
+  resolveInferenceSystemName,
+  resolveSchemaVersion,
+  setOperationDetailsRequestAttributes,
+  setOperationDetailsResponseAttributes,
+  shouldUseExperimentalGenAiSemconv,
+  systemMessageBody,
+  toFinishReason,
+  toInputMessage,
+  toOutputMessage,
+  toPart,
+  toSystemInstructions,
   traceAgentInvocation,
   traceCallLlm,
   traceMergedToolCalls,
   traceToolCall,
+  userMessageBody,
 } from '../../src/telemetry/tracing.js';
 
 vi.hoisted(() => {
@@ -108,6 +140,7 @@ describe('Telemetry Tracing Functions', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -459,6 +492,664 @@ describe('Telemetry Tracing Functions', () => {
         Authorization: 'Bearer sentinel-secret-token',
       });
       expect(httpOptions.extraBody).toEqual({apiKey: 'sentinel-secret-token'});
+    });
+  });
+
+  describe('resolveSchemaVersion and shouldUseExperimentalGenAiSemconv', () => {
+    it('defaults to schema version 2 and experimental semconv', () => {
+      vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', '');
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', '');
+      expect(resolveSchemaVersion()).toBe(2);
+      expect(shouldUseExperimentalGenAiSemconv()).toBe(true);
+    });
+
+    it('resolves schema version 1 for 1 and otel_semconv_1_36', () => {
+      vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', '1');
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', '');
+      expect(resolveSchemaVersion()).toBe(1);
+      expect(shouldUseExperimentalGenAiSemconv()).toBe(false);
+
+      vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', 'otel_semconv_1_36');
+      expect(resolveSchemaVersion()).toBe(1);
+      expect(shouldUseExperimentalGenAiSemconv()).toBe(false);
+    });
+
+    it('resolves schema version 2 for 2, otel_semconv_1_44, and unknown values', () => {
+      vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', '2');
+      expect(resolveSchemaVersion()).toBe(2);
+
+      vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', 'otel_semconv_1_44');
+      expect(resolveSchemaVersion()).toBe(2);
+
+      vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', 'invalid_version');
+      expect(resolveSchemaVersion()).toBe(2);
+    });
+
+    it('overrides to experimental semconv when OTEL_SEMCONV_STABILITY_OPT_IN includes gen_ai_latest_experimental', () => {
+      vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', '1');
+      vi.stubEnv(
+        'OTEL_SEMCONV_STABILITY_OPT_IN',
+        'http, gen_ai_latest_experimental',
+      );
+      const config = getTelemetryConfig();
+      expect(config.schemaVersion).toBe(1);
+      expect(config.shouldUseExperimentalGenAiSemconv).toBe(true);
+    });
+
+    it('falls back safely to browser defaults when globalThis.process is undefined', () => {
+      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+      const savedProcess = globalThis.process;
+      Reflect.deleteProperty(globalThis, 'process');
+      try {
+        expect(resolveSchemaVersion()).toBe(2);
+        expect(shouldUseExperimentalGenAiSemconv()).toBe(true);
+        expect(getContentCapturingMode()).toBe(ContentCapturingMode.NO_CONTENT);
+        expect(guessGeminiSystemName()).toBe('gemini');
+        expect(getTelemetryConfig()).toEqual({
+          schemaVersion: 2,
+          shouldUseExperimentalGenAiSemconv: true,
+          captureMessageContent: ContentCapturingMode.NO_CONTENT,
+          shouldAddContentToLogs: false,
+          shouldAddContentToExperimentalSpans: false,
+        });
+        expect(() =>
+          traceCallLlm({
+            invocationContext: mockInvocationContext,
+            eventId: 'browser-event-id',
+            llmRequest: mockLlmRequest,
+            llmResponse: mockLlmResponse,
+          }),
+        ).not.toThrow();
+      } finally {
+        globalThis.process = savedProcess;
+      }
+    });
+  });
+
+  describe('getContentCapturingMode', () => {
+    it('resolves all content capturing modes case-insensitively', () => {
+      vi.stubEnv('OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT', 'false');
+      expect(getContentCapturingMode()).toBe(ContentCapturingMode.NO_CONTENT);
+
+      vi.stubEnv(
+        'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT',
+        'NO_CONTENT',
+      );
+      expect(getContentCapturingMode()).toBe(ContentCapturingMode.NO_CONTENT);
+
+      vi.stubEnv(
+        'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT',
+        'no_content',
+      );
+      expect(getContentCapturingMode()).toBe(ContentCapturingMode.NO_CONTENT);
+
+      vi.stubEnv('OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT', 'true');
+      expect(getContentCapturingMode()).toBe(ContentCapturingMode.EVENT_ONLY);
+
+      vi.stubEnv('OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT', 'True');
+      expect(getContentCapturingMode()).toBe(ContentCapturingMode.EVENT_ONLY);
+
+      vi.stubEnv('OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT', '1');
+      expect(getContentCapturingMode()).toBe(ContentCapturingMode.EVENT_ONLY);
+
+      vi.stubEnv(
+        'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT',
+        'SPAN_AND_EVENT',
+      );
+      expect(getContentCapturingMode()).toBe(
+        ContentCapturingMode.SPAN_AND_EVENT,
+      );
+
+      vi.stubEnv(
+        'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT',
+        'span_and_event',
+      );
+      expect(getContentCapturingMode()).toBe(
+        ContentCapturingMode.SPAN_AND_EVENT,
+      );
+
+      vi.stubEnv(
+        'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT',
+        'SPAN_ONLY',
+      );
+      expect(getContentCapturingMode()).toBe(ContentCapturingMode.SPAN_ONLY);
+
+      vi.stubEnv(
+        'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT',
+        'span_only',
+      );
+      expect(getContentCapturingMode()).toBe(ContentCapturingMode.SPAN_ONLY);
+
+      vi.stubEnv(
+        'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT',
+        'EVENT_ONLY',
+      );
+      expect(getContentCapturingMode()).toBe(ContentCapturingMode.EVENT_ONLY);
+
+      vi.stubEnv(
+        'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT',
+        'event_only',
+      );
+      expect(getContentCapturingMode()).toBe(ContentCapturingMode.EVENT_ONLY);
+
+      vi.stubEnv(
+        'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT',
+        'BOGUS_VALUE',
+      );
+      expect(getContentCapturingMode()).toBe(ContentCapturingMode.NO_CONTENT);
+    });
+  });
+
+  describe('system and provider name resolution', () => {
+    it('guesses Gemini system name from GOOGLE_GENAI_USE_VERTEXAI env var', () => {
+      vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', 'true');
+      expect(guessGeminiSystemName()).toBe('vertex_ai');
+      expect(resolveGenAiSystemName('gemini-2.5-flash')).toBe('vertex_ai');
+      expect(resolveGenAiProviderName('gemini-2.5-flash')).toBe(
+        'gcp.vertex_ai',
+      );
+      expect(resolveGenAiSystemName('gemini/gemini-2.0-flash')).toBe(
+        'vertex_ai',
+      );
+      expect(resolveGenAiProviderName('gemini/gemini-2.0-flash')).toBe(
+        'gcp.vertex_ai',
+      );
+
+      vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', '1');
+      expect(guessGeminiSystemName()).toBe('vertex_ai');
+
+      vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', 'false');
+      expect(guessGeminiSystemName()).toBe('gemini');
+      expect(resolveGenAiSystemName('gemini-2.5-flash')).toBe('gemini');
+      expect(resolveGenAiProviderName('gemini-2.5-flash')).toBe('gcp.gemini');
+      expect(resolveGenAiSystemName('gemini/gemini-2.0-flash')).toBe('gemini');
+      expect(resolveGenAiProviderName('gemini/gemini-2.0-flash')).toBe(
+        'gcp.gemini',
+      );
+    });
+
+    it('resolves Anthropic, provider-prefixed, and resource-path model names', () => {
+      vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', 'false');
+      expect(resolveGenAiSystemName('claude-sonnet-4-5')).toBe('anthropic');
+      expect(resolveGenAiProviderName('claude-sonnet-4-5')).toBe('anthropic');
+      expect(resolveGenAiSystemName('anthropic/claude-sonnet-4-5')).toBe(
+        'anthropic',
+      );
+      expect(resolveGenAiProviderName('anthropic/claude-sonnet-4-5')).toBe(
+        'anthropic',
+      );
+      expect(
+        resolveGenAiSystemName(
+          'projects/p/locations/l/publishers/anthropic/models/claude-sonnet-4-5',
+        ),
+      ).toBe('anthropic');
+      expect(resolveGenAiSystemName('openai/gpt-4o')).toBe('openai');
+      expect(resolveGenAiProviderName('openai/gpt-4o')).toBe('openai');
+
+      expect(
+        resolveGenAiSystemName(
+          'projects/p/locations/l/publishers/meta/models/llama-3',
+        ),
+      ).toBe('gemini');
+      expect(
+        resolveGenAiSystemName('projects/p/locations/l/endpoints/123456'),
+      ).toBe('gemini');
+      expect(resolveGenAiSystemName('tunedModels/my-tuned-model')).toBe(
+        'gemini',
+      );
+    });
+
+    it('resolves inference system name from response modelVersion or agent model', () => {
+      vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', 'false');
+      const agent = new LlmAgent({name: 'root', model: 'claude-sonnet-4-5'});
+      const ctx = {agent} as unknown as InvocationContext;
+
+      expect(resolveInferenceSystemName(ctx, {})).toBe('anthropic');
+      expect(
+        resolveInferenceSystemName(ctx, {modelVersion: 'gemini-2.5-flash-001'}),
+      ).toBe('gemini');
+    });
+  });
+
+  describe('experimental semconv helpers (v2)', () => {
+    it('converts all part types in toPart', () => {
+      expect(toPart({text: 'hello'})).toEqual({
+        type: 'text',
+        content: 'hello',
+      });
+
+      expect(toPart({text: 'thinking...', thought: true})).toEqual({
+        type: 'text',
+        content: 'thinking...',
+      });
+
+      expect(
+        toPart({functionCall: {id: 'call-1', name: 'my_tool', args: {x: 1}}}),
+      ).toEqual({
+        type: 'tool_call',
+        id: 'call-1',
+        name: 'my_tool',
+        arguments: {x: 1},
+      });
+      expect(
+        toPart({functionCall: {name: 'my_tool', args: {x: 1}}}, 2),
+      ).toEqual({
+        type: 'tool_call',
+        id: 'my_tool_2',
+        name: 'my_tool',
+        arguments: {x: 1},
+      });
+      expect(toPart({functionCall: {args: {x: 1}}}, 3)).toEqual({
+        type: 'tool_call',
+        id: '3',
+        name: '',
+        arguments: {x: 1},
+      });
+
+      expect(
+        toPart({
+          functionResponse: {
+            id: 'call-1',
+            name: 'my_tool',
+            response: {ok: true},
+          },
+        }),
+      ).toEqual({
+        type: 'tool_call_response',
+        id: 'call-1',
+        response: {ok: true},
+      });
+      expect(
+        toPart(
+          {
+            functionResponse: {
+              name: 'my_tool',
+              response: {ok: true},
+            },
+          },
+          4,
+        ),
+      ).toEqual({
+        type: 'tool_call_response',
+        id: 'my_tool_4',
+        response: {ok: true},
+      });
+
+      expect(
+        toPart({
+          codeExecutionResult: {
+            outcome: Outcome.OUTCOME_OK,
+            output: '42\n',
+          },
+        }),
+      ).toBeUndefined();
+
+      expect(
+        toPart({
+          executableCode: {
+            language: Language.PYTHON,
+            code: 'print(42)',
+          },
+        }),
+      ).toBeUndefined();
+
+      expect(
+        toPart({
+          fileData: {
+            fileUri: 'gs://bucket/img.png',
+            mimeType: 'image/png',
+          },
+        }),
+      ).toEqual({
+        type: 'file_data',
+        uri: 'gs://bucket/img.png',
+        mime_type: 'image/png',
+      });
+
+      expect(
+        toPart({
+          inlineData: {
+            data: 'aGVsbG8=',
+            mimeType: 'audio/wav',
+          },
+        }),
+      ).toEqual({
+        type: 'blob',
+        data: 'aGVsbG8=',
+        mime_type: 'audio/wav',
+      });
+
+      expect(toPart({})).toBeUndefined();
+    });
+
+    it('converts system instructions, input messages, output messages, finish reasons, and tool definitions', () => {
+      expect(toSystemInstructions('be helpful')).toEqual([
+        {type: 'text', content: 'be helpful'},
+      ]);
+      expect(toSystemInstructions({parts: [{text: 'sys part'}]})).toEqual([
+        {type: 'text', content: 'sys part'},
+      ]);
+
+      expect(toInputMessage({role: 'model', parts: [{text: 'hi'}]})).toEqual({
+        role: 'assistant',
+        parts: [{type: 'text', content: 'hi'}],
+      });
+      expect(toInputMessage({role: 'user', parts: []})).toEqual({
+        role: 'user',
+        parts: [],
+      });
+      expect(toInputMessage({role: 'tool', parts: []})).toEqual({
+        role: '',
+        parts: [],
+      });
+      expect(toInputMessage({parts: []})).toEqual({
+        role: '',
+        parts: [],
+      });
+      expect(
+        toInputMessage({
+          role: 'user',
+          parts: [
+            {text: 'first'},
+            {functionCall: {name: 'lookup', args: {q: 'a'}}},
+            {functionResponse: {response: {ok: true}}},
+          ],
+        }),
+      ).toEqual({
+        role: 'user',
+        parts: [
+          {type: 'text', content: 'first'},
+          {
+            type: 'tool_call',
+            id: 'lookup_1',
+            name: 'lookup',
+            arguments: {q: 'a'},
+          },
+          {
+            type: 'tool_call_response',
+            id: '2',
+            response: {ok: true},
+          },
+        ],
+      });
+
+      expect(toFinishReason(FinishReason.STOP)).toBe('stop');
+      expect(toFinishReason(FinishReason.MAX_TOKENS)).toBe('length');
+      expect(toFinishReason(FinishReason.SAFETY)).toBe('safety');
+      expect(toFinishReason(FinishReason.OTHER)).toBe('error');
+      expect(toFinishReason(undefined)).toBe('');
+
+      const outMsg = toOutputMessage({
+        content: {role: 'model', parts: [{text: 'answer'}]},
+        finishReason: FinishReason.STOP,
+      });
+      expect(outMsg).toEqual({
+        role: 'assistant',
+        parts: [{type: 'text', content: 'answer'}],
+        finish_reason: 'stop',
+      });
+      expect(
+        toOutputMessage({
+          content: {role: 'model', parts: []},
+          finishReason: FinishReason.STOP,
+        }),
+      ).toEqual({
+        role: 'assistant',
+        parts: [],
+        finish_reason: 'stop',
+      });
+      expect(
+        toOutputMessage({
+          content: {role: 'tool', parts: [{text: 'raw'}]},
+        }),
+      ).toEqual({
+        role: '',
+        parts: [{type: 'text', content: 'raw'}],
+        finish_reason: '',
+      });
+      expect(
+        toOutputMessage({
+          finishReason: FinishReason.STOP,
+        }),
+      ).toBeUndefined();
+
+      const tools = extractToolDefinitions({
+        model: 'gemini-2.5-flash',
+        contents: [],
+        config: {
+          tools: [
+            {
+              functionDeclarations: [
+                {
+                  name: 'lookup',
+                  description: 'Looks up an item',
+                  parametersJsonSchema: {type: 'object'},
+                },
+                {
+                  name: 'no_desc',
+                  parameters: {type: Type.OBJECT},
+                  parametersJsonSchema: {type: 'string'},
+                },
+              ],
+            },
+            {googleSearch: {}},
+          ],
+        },
+        liveConnectConfig: {},
+        toolsDict: {},
+      });
+      expect(tools).toEqual([
+        {
+          type: 'function',
+          name: 'lookup',
+          description: 'Looks up an item',
+          parameters: {type: 'object'},
+        },
+        {
+          type: 'function',
+          name: 'no_desc',
+          description: null,
+          parameters: {type: Type.OBJECT},
+        },
+        {name: 'google_search', type: 'google_search'},
+      ]);
+    });
+  });
+
+  describe('stable semconv helpers (v1)', () => {
+    it('formats systemMessageBody, userMessageBody, and choiceBody with and without content', () => {
+      const withContentConfig = {
+        schemaVersion: 1,
+        shouldUseExperimentalGenAiSemconv: false,
+        captureMessageContent: ContentCapturingMode.EVENT_ONLY,
+        shouldAddContentToLogs: true,
+        shouldAddContentToExperimentalSpans: false,
+      };
+      const noContentConfig = {
+        ...withContentConfig,
+        captureMessageContent: ContentCapturingMode.NO_CONTENT,
+        shouldAddContentToLogs: false,
+      };
+
+      const req: LlmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [],
+        config: {systemInstruction: 'inst 1'},
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+      expect(systemMessageBody(req, withContentConfig)).toEqual({
+        content: 'inst 1',
+      });
+      expect(systemMessageBody(req, noContentConfig)).toEqual({
+        content: USER_CONTENT_ELIDED,
+      });
+
+      const emptySysReq: LlmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [],
+        config: {},
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+      expect(systemMessageBody(emptySysReq, withContentConfig)).toEqual({
+        content: null,
+      });
+      expect(systemMessageBody(emptySysReq, noContentConfig)).toEqual({
+        content: USER_CONTENT_ELIDED,
+      });
+
+      const contentSysReq: LlmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [],
+        config: {
+          systemInstruction: {
+            role: 'user',
+            parts: [{text: 'You are helpful.'}],
+          },
+        },
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+      expect(systemMessageBody(contentSysReq, withContentConfig)).toEqual({
+        content: {
+          role: 'user',
+          parts: [{text: 'You are helpful.'}],
+        },
+      });
+
+      const partArraySysReq: LlmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [],
+        config: {
+          systemInstruction: [{text: 'part 1'}, {text: 'part 2'}] as Part[],
+        },
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+      expect(systemMessageBody(partArraySysReq, withContentConfig)).toEqual({
+        content: [{text: 'part 1'}, {text: 'part 2'}],
+      });
+
+      const userContent = {
+        role: 'user',
+        parts: [{text: 'hello'}],
+      };
+      expect(userMessageBody(userContent, withContentConfig)).toEqual({
+        content: {
+          role: 'user',
+          parts: [{text: 'hello'}],
+        },
+      });
+      expect(userMessageBody(userContent, noContentConfig)).toEqual({
+        content: USER_CONTENT_ELIDED,
+      });
+
+      const response: LlmResponse = {
+        content: {
+          role: 'model',
+          parts: [
+            {text: 'reply text'},
+            {functionCall: {id: 'call-1', name: 'fn', args: {a: 1}}},
+          ],
+        },
+        finishReason: FinishReason.STOP,
+      };
+      expect(choiceBody(response, withContentConfig)).toEqual({
+        content: {
+          role: 'model',
+          parts: [
+            {text: 'reply text'},
+            {function_call: {id: 'call-1', name: 'fn', args: {a: 1}}},
+          ],
+        },
+        finish_reason: FinishReason.STOP,
+        index: 0,
+      });
+      expect(choiceBody(response, noContentConfig)).toEqual({
+        content: USER_CONTENT_ELIDED,
+        finish_reason: FinishReason.STOP,
+        index: 0,
+      });
+      expect(
+        choiceBody({finishReason: FinishReason.OTHER}, withContentConfig),
+      ).toEqual({
+        content: null,
+        finish_reason: FinishReason.OTHER,
+        index: 0,
+      });
+    });
+  });
+
+  describe('buildCompletionLogAttributes and buildCompletionSpanAttributes', () => {
+    it('builds structured log attributes and pre-serialized span attributes', () => {
+      const req: LlmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [{role: 'user', parts: [{text: 'hi'}]}],
+        config: {systemInstruction: 'be helpful'},
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+      const res: LlmResponse = {
+        content: {role: 'model', parts: [{text: 'hello'}]},
+        finishReason: FinishReason.STOP,
+      };
+
+      const operationDetailsAttrs: Record<string, AnyValue> = {};
+      const operationDetailsCommonAttrs: Record<string, AnyValue> = {
+        'gen_ai.agent.name': 'test-agent',
+      };
+      setOperationDetailsRequestAttributes(operationDetailsAttrs, req, true);
+      setOperationDetailsResponseAttributes(
+        res,
+        operationDetailsAttrs,
+        operationDetailsCommonAttrs,
+      );
+
+      const fullConfig = {
+        schemaVersion: 2,
+        shouldUseExperimentalGenAiSemconv: true,
+        captureMessageContent: ContentCapturingMode.SPAN_AND_EVENT,
+        shouldAddContentToLogs: true,
+        shouldAddContentToExperimentalSpans: true,
+      };
+
+      const logAttrs = buildCompletionLogAttributes(
+        fullConfig,
+        operationDetailsAttrs,
+        operationDetailsCommonAttrs,
+      );
+      expect(logAttrs['gen_ai.system_instructions']).toEqual([
+        {type: 'text', content: 'be helpful'},
+      ]);
+      expect(logAttrs['gen_ai.input.messages']).toEqual([
+        {role: 'user', parts: [{type: 'text', content: 'hi'}]},
+      ]);
+      expect(logAttrs['gen_ai.output.messages']).toEqual([
+        {
+          role: 'assistant',
+          parts: [{type: 'text', content: 'hello'}],
+          finish_reason: 'stop',
+        },
+      ]);
+
+      const spanAttrs = buildCompletionSpanAttributes(
+        fullConfig,
+        operationDetailsAttrs,
+      );
+      expect(spanAttrs['gen_ai.system_instructions']).toEqual([
+        {type: 'text', content: 'be helpful'},
+      ]);
+      expect(spanAttrs['gen_ai.input.messages']).toEqual([
+        {role: 'user', parts: [{type: 'text', content: 'hi'}]},
+      ]);
+      expect(spanAttrs['gen_ai.output.messages']).toEqual([
+        {
+          role: 'assistant',
+          parts: [{type: 'text', content: 'hello'}],
+          finish_reason: 'stop',
+        },
+      ]);
     });
   });
 });

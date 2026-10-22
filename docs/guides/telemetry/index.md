@@ -68,16 +68,17 @@ call produces `invocation`, `invoke_agent <name>`, `call_llm`,
 `execute_tool <name>` and a second `call_llm`: the first model call returns the
 tool call, and the second turns the tool response into the answer.
 
-| Span                     | Opened for                                                         |
-| :----------------------- | :----------------------------------------------------------------- |
-| `invocation`             | One turn, opened by the `Runner`.                                  |
-| `invoke_agent <name>`    | One agent's part of the turn.                                      |
-| `call_llm`               | One request to the model.                                          |
-| `execute_tool <name>`    | One tool call and its response.                                    |
-| `execute_tool (merged)`  | Parallel tool calls whose responses are merged into one event.     |
-| `send_data`              | Replaying session history to a live model connection in `runLive`. |
-| `invoke_workflow <name>` | One `Workflow` run.                                                |
-| `execute_node <name>`    | One node in a workflow.                                            |
+| Span                       | Opened for                                                         |
+| :------------------------- | :----------------------------------------------------------------- |
+| `invocation`               | One turn, opened by the `Runner`.                                  |
+| `invoke_agent <name>`      | One agent's part of the turn.                                      |
+| `call_llm`                 | One request to the model.                                          |
+| `generate_content <model>` | One model inference inside `call_llm` (OpenTelemetry GenAI span).  |
+| `execute_tool <name>`      | One tool call and its response.                                    |
+| `execute_tool (merged)`    | Parallel tool calls whose responses are merged into one event.     |
+| `send_data`                | Replaying session history to a live model connection in `runLive`. |
+| `invoke_workflow <name>`   | One `Workflow` run.                                                |
+| `execute_node <name>`      | One node in a workflow.                                            |
 
 ### Identifying attributes
 
@@ -149,6 +150,92 @@ removed, so that it stays small and holds no credentials:
 - `config.httpOptions.headers` and `config.httpOptions.extraBody`, because the
   first commonly carries an `Authorization` token and the second is a free-form
   request body.
+
+### Logs
+
+Each model inference emits OpenTelemetry GenAI log records through the
+`@opentelemetry/api-logs` logger named `gcp.vertex.agent` (with schema URL
+`https://opentelemetry.io/schemas/1.36.0`), parented to the active
+`generate_content <model>` span.
+
+The application owns the `LoggerProvider`. ADK neither creates nor requires a
+provider unless you call `maybeSetOtelProviders` with log processors or an OTLP
+logs endpoint; when no `LoggerProvider` is registered, log emission is a no-op.
+
+Two semantic-convention schemas are supported through
+`ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN`:
+
+| Schema version                       | Event name                                  | When emitted                                                        | Body and attributes                                                                                                                                                                                                                                          |
+| :----------------------------------- | :------------------------------------------ | :------------------------------------------------------------------ | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `2` or `otel_semconv_1_44` (default) | `gen_ai.client.inference.operation.details` | Once per inference, before the `generate_content <model>` span ends | Empty `body`; `attributes` carry `gen_ai.provider.name`, `gen_ai.agent.name`, `gen_ai.conversation.id`, `gcp.vertex.agent.invocation_id`, `gcp.vertex.agent.event_id`, finish reasons, token usage, `gen_ai.tool.definitions`, and (when captured) messages. |
+| `1` or `otel_semconv_1_36`           | `gen_ai.system.message`                     | Once per inference, when `generate_content <model>` starts          | `body`: `{content: <system instruction> \| '<elided>'}`; `attributes`: `{'gen_ai.system': <system>}`.                                                                                                                                                        |
+| `1` or `otel_semconv_1_36`           | `gen_ai.user.message`                       | Once per entry in `llmRequest.contents` at span start               | `body`: `{content: <content> \| '<elided>'}`; `attributes`: `{'gen_ai.system': <system>}` plus `'user.id'` when log content capture is enabled.                                                                                                              |
+| `1` or `otel_semconv_1_36`           | `gen_ai.choice`                             | Once per recorded model response up to and including `finishReason` | `body`: `{index: 0, content: <content> \| '<elided>', finish_reason?: <reason>}`; `attributes`: `{'gen_ai.system': <system>}`.                                                                                                                               |
+
+Setting `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental` forces the
+experimental `gen_ai.client.inference.operation.details` record even when
+`ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN=1`.
+
+The schema version selects the log records and the `generate_content <model>`
+span attributes only. The surrounding span tree has not moved to schema v2 yet:
+`invocation` and `call_llm` remain unchanged, and `generate_content <model>` is
+parented under `call_llm`.
+
+You can wire a `LoggerProvider` either through `maybeSetOtelProviders` (or by
+setting `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`) or by registering your own
+`LoggerProvider` directly:
+
+```ts
+import {maybeSetOtelProviders} from '@google/adk';
+import {OTLPLogExporter} from '@opentelemetry/exporter-logs-otlp-http';
+import {BatchLogRecordProcessor} from '@opentelemetry/sdk-logs';
+
+maybeSetOtelProviders([
+  {
+    logRecordProcessors: [
+      new BatchLogRecordProcessor({exporter: new OTLPLogExporter()}),
+    ],
+  },
+]);
+```
+
+An application-owned `LoggerProvider` can be registered with
+`logs.setGlobalLoggerProvider` before or after the agent is constructed, and
+flushed or shut down on exit:
+
+```ts
+import {logs} from '@opentelemetry/api-logs';
+import {OTLPLogExporter} from '@opentelemetry/exporter-logs-otlp-http';
+import {detectResources} from '@opentelemetry/resources';
+import {BatchLogRecordProcessor, LoggerProvider} from '@opentelemetry/sdk-logs';
+
+const provider = new LoggerProvider({
+  resource: detectResources(),
+  processors: [new BatchLogRecordProcessor({exporter: new OTLPLogExporter()})],
+});
+logs.setGlobalLoggerProvider(provider);
+
+// On process exit, flush and shut down the provider:
+await provider.shutdown();
+```
+
+`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` controls whether prompt,
+system instruction, and model output content are included on the
+`generate_content <model>` span and on emitted log records. The default is
+`NO_CONTENT` so user prompts and model outputs are not exported unless you opt
+in:
+
+| Value                       | `generate_content <model>` span content attributes (`gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.system_instructions`) | Log records                                                                                                                                   |
+| :-------------------------- | :----------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------- |
+| `false` or `NO_CONTENT`     | Omitted (default); `gen_ai.tool.definitions` redacts `parameters` to `null`                                                          | `operation.details` omits message attributes and redacts tool `parameters` to `null`; v1 records set `body.content` to `'<elided>'` (default) |
+| `true`, `1` or `EVENT_ONLY` | Omitted; `gen_ai.tool.definitions` redacts `parameters` to `null`                                                                    | Emitted with full message content, tool `parameters`, and `user.id`                                                                           |
+| `SPAN_ONLY`                 | JSON-serialized on the span (schema v2)                                                                                              | `operation.details` omits message attributes and `user.id`; v1 records set `body.content` to `'<elided>'`                                     |
+| `SPAN_AND_EVENT`            | JSON-serialized on the span (schema v2)                                                                                              | Emitted with full message content, tool `parameters`, and `user.id`                                                                           |
+
+`user.id` (from `session.userId`) is attached only to `gen_ai.user.message` and
+`gen_ai.client.inference.operation.details` log records, and only when log
+content capture is enabled (`EVENT_ONLY` or `SPAN_AND_EVENT`). It is never
+written onto spans.
 
 ## Configuration options
 
@@ -227,6 +314,11 @@ maybeSetOtelProviders([gcpHooks], getGcpResource());
 | `enableTracing`             | `false` | Adds a batched Cloud Trace span processor.             |
 | `enableMetrics`             | `false` | Adds a Cloud Monitoring reader that exports every 5 s. |
 | `enableLogging`             | `false` | Ignored. No Cloud Logging exporter is created.         |
+
+`getGcpExporters({enableLogging: true})` still creates no Cloud Logging
+exporter; to export ADK's GenAI log records, use the OTLP log exporter path via
+`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` or pass `logRecordProcessors` to
+`maybeSetOtelProviders` as shown in [Logs](#logs).
 
 `getGcpExporters` resolves the project through the ambient Google credentials.
 When no project resolves, it logs a warning and returns empty hooks, so a

@@ -11,6 +11,7 @@ import {
   isGemini3xLive,
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
+import {extractModelName, isGeminiModel} from '../../src/utils/model_name.js';
 
 describe('isGemini2OrAbove', () => {
   describe('valid models', () => {
@@ -147,5 +148,85 @@ describe('isGemini35LiveTranslate', () => {
     expect(isGemini35LiveTranslate('gemini-3.5-flash-live')).toBe(false);
     expect(isGemini35LiveTranslate(undefined)).toBe(false);
     expect(isGemini35LiveTranslate('')).toBe(false);
+  });
+});
+
+describe('extractModelName', () => {
+  it('should extract model name from Vertex path', () => {
+    expect(
+      extractModelName(
+        'projects/my-project/locations/us-central1/publishers/google/models/gemini-2.5-flash',
+      ),
+    ).toBe('gemini-2.5-flash');
+  });
+
+  it('should extract model name from Apigee path with /models/', () => {
+    expect(extractModelName('apigee/v1/models/gemini-2.5-flash')).toBe(
+      'gemini-2.5-flash',
+    );
+    expect(extractModelName('apigee/vertex_ai/v1beta/models/gemini-2.0')).toBe(
+      'gemini-2.0',
+    );
+  });
+
+  it('should extract model name from Apigee path without /models/', () => {
+    expect(extractModelName('apigee/gemini-2.5-flash')).toBe(
+      'gemini-2.5-flash',
+    );
+    expect(extractModelName('apigee/v1/gemini-2.5-flash')).toBe(
+      'gemini-2.5-flash',
+    );
+    expect(extractModelName('apigee/gemini/v1beta/gemini-2.5-pro')).toBe(
+      'gemini-2.5-pro',
+    );
+  });
+
+  it('should return simple model name unchanged', () => {
+    expect(extractModelName('gemini-2.5-flash')).toBe('gemini-2.5-flash');
+    expect(extractModelName('gpt-4o')).toBe('gpt-4o');
+  });
+
+  it('should extract Gemini model name from provider-prefixed or models/ paths', () => {
+    expect(extractModelName('gemini/gemini-2.0-flash')).toBe(
+      'gemini-2.0-flash',
+    );
+    expect(extractModelName('models/gemini-2.0-flash')).toBe(
+      'gemini-2.0-flash',
+    );
+  });
+
+  it('should return non-matching projects/ resource paths unchanged', () => {
+    expect(
+      extractModelName(
+        'projects/my-project/locations/us-central1/endpoints/123456',
+      ),
+    ).toBe('projects/my-project/locations/us-central1/endpoints/123456');
+  });
+});
+
+describe('isGeminiModel', () => {
+  it('should return true for Gemini models across formats', () => {
+    expect(isGeminiModel('gemini-2.5-flash')).toBe(true);
+    expect(isGeminiModel('gemini-1.5-pro')).toBe(true);
+    expect(isGeminiModel('gemini/gemini-2.0-flash')).toBe(true);
+    expect(isGeminiModel('models/gemini-2.0-flash')).toBe(true);
+    expect(
+      isGeminiModel(
+        'projects/my-project/locations/us-central1/publishers/google/models/gemini-2.5-flash',
+      ),
+    ).toBe(true);
+    expect(isGeminiModel('apigee/v1/gemini-2.5-flash')).toBe(true);
+  });
+
+  it('should return false for non-Gemini models or empty values', () => {
+    expect(isGeminiModel('gpt-4o')).toBe(false);
+    expect(isGeminiModel('claude-sonnet-4-5')).toBe(false);
+    expect(
+      isGeminiModel(
+        'projects/my-project/locations/us-central1/endpoints/123456',
+      ),
+    ).toBe(false);
+    expect(isGeminiModel('')).toBe(false);
+    expect(isGeminiModel(undefined)).toBe(false);
   });
 });
