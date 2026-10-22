@@ -5,10 +5,18 @@
  */
 
 import {FunctionDeclaration, Schema} from '@google/genai';
+import {AuthCredential} from '../../auth/auth_credential.js';
+import {AuthScheme} from '../../auth/auth_schemes.js';
 import {experimental} from '../../utils/experimental.js';
 import {logger} from '../../utils/logger.js';
 import {BaseTool, BaseToolParams, RunAsyncToolRequest} from '../base_tool.js';
+import {ToolAuthHandler} from '../openapi_tool/openapi_spec_parser/tool_auth_handler.js';
 import {RestApiTool} from '../openapi_tool/rest_api_tool.js';
+
+const DYNAMIC_AUTH_EXCLUDE_FIELDS: readonly string[] = Object.freeze([
+  'dynamic_auth_config',
+  'dynamicAuthConfig',
+]);
 
 /** Options for {@link IntegrationConnectorTool}. */
 export interface IntegrationConnectorToolOptions extends BaseToolParams {
@@ -26,6 +34,10 @@ export interface IntegrationConnectorToolOptions extends BaseToolParams {
   action?: string;
   /** The underlying {@link RestApiTool} that executes the HTTP request. */
   restApiTool: RestApiTool;
+  /** The authentication scheme for dynamic end-user credentials, if any. */
+  authScheme?: AuthScheme;
+  /** The authentication credential for dynamic end-user credentials, if any. */
+  authCredential?: AuthCredential;
 }
 
 /**
@@ -71,6 +83,8 @@ export class IntegrationConnectorTool extends BaseTool {
   readonly operation: string;
   readonly action: string;
   readonly restApiTool: RestApiTool;
+  readonly authScheme?: AuthScheme;
+  readonly authCredential?: AuthCredential;
 
   constructor(options: IntegrationConnectorToolOptions) {
     super(options);
@@ -81,6 +95,8 @@ export class IntegrationConnectorTool extends BaseTool {
     this.operation = options.operation ?? '';
     this.action = options.action ?? '';
     this.restApiTool = options.restApiTool;
+    this.authScheme = options.authScheme;
+    this.authCredential = options.authCredential;
   }
 
   /**
@@ -97,7 +113,10 @@ export class IntegrationConnectorTool extends BaseTool {
       parameters = {...rawParameters};
       if (rawParameters.properties) {
         const properties = {...rawParameters.properties};
-        for (const field of IntegrationConnectorTool.EXCLUDE_FIELDS) {
+        for (const field of [
+          ...IntegrationConnectorTool.EXCLUDE_FIELDS,
+          ...DYNAMIC_AUTH_EXCLUDE_FIELDS,
+        ]) {
           delete properties[field];
         }
         parameters.properties = properties;
@@ -106,6 +125,7 @@ export class IntegrationConnectorTool extends BaseTool {
         parameters.required = rawParameters.required.filter(
           (field) =>
             !IntegrationConnectorTool.EXCLUDE_FIELDS.includes(field) &&
+            !DYNAMIC_AUTH_EXCLUDE_FIELDS.includes(field) &&
             !IntegrationConnectorTool.OPTIONAL_FIELDS.includes(field),
         );
       }
@@ -123,7 +143,20 @@ export class IntegrationConnectorTool extends BaseTool {
    * {@link RestApiTool}.
    */
   @experimental
-  override runAsync(request: RunAsyncToolRequest): Promise<unknown> {
+  override async runAsync(request: RunAsyncToolRequest): Promise<unknown> {
+    const toolAuthHandler = ToolAuthHandler.fromToolContext(
+      request.toolContext,
+      this.authScheme,
+      this.authCredential,
+    );
+    const authResult = await toolAuthHandler.prepareAuthCredentials();
+    if (authResult.state === 'pending') {
+      return {
+        pending: true,
+        message: 'Needs your authorization to access your data.',
+      };
+    }
+
     const updatedArgs: Record<string, unknown> = {
       ...request.args,
       connection_name: this.connectionName,
@@ -141,10 +174,22 @@ export class IntegrationConnectorTool extends BaseTool {
     if (this.action) {
       updatedArgs['action'] = this.action;
     }
+    if (authResult.authCredential) {
+      const token = prepareDynamicEuc(authResult.authCredential);
+      const dynamicAuthPayload = {
+        'oauth2_auth_code_flow.access_token': token ?? {},
+      };
+      updatedArgs['dynamic_auth_config'] = dynamicAuthPayload;
+      updatedArgs['dynamicAuthConfig'] = dynamicAuthPayload;
+    }
     logger.debug(`Running tool: ${this.name}`);
     return this.restApiTool.runAsync({
       args: updatedArgs,
       toolContext: request.toolContext,
     });
   }
+}
+
+function prepareDynamicEuc(authCredential: AuthCredential): string | undefined {
+  return authCredential.http?.credentials?.token || undefined;
 }

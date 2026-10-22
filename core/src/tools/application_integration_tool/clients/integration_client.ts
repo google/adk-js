@@ -52,6 +52,8 @@ export interface IntegrationClientOptions {
   integration?: string;
   /** The API trigger ID of the integration. */
   trigger?: string;
+  /** The API trigger IDs of the integration. */
+  triggers?: string[];
   /** The connection name. */
   connection?: string;
   /**
@@ -81,6 +83,7 @@ export class IntegrationClient {
   private readonly location: string;
   private readonly integration?: string;
   private readonly trigger?: string;
+  private readonly triggers?: string[];
   private readonly connection?: string;
   private readonly entityOperations: Record<string, string[]>;
   private readonly actions: string[];
@@ -92,6 +95,7 @@ export class IntegrationClient {
     this.location = options.location;
     this.integration = options.integration;
     this.trigger = options.trigger;
+    this.triggers = options.triggers;
     this.connection = options.connection;
     this.entityOperations = options.entityOperations ?? {};
     this.actions = options.actions ?? [];
@@ -108,6 +112,16 @@ export class IntegrationClient {
    */
   async getOpenApiSpecForIntegration(): Promise<JsonObject> {
     const url = `https://${this.location}-integrations.googleapis.com/v1/projects/${this.project}/locations/${this.location}:generateOpenApiSpec`;
+    const triggerId =
+      this.triggers !== undefined
+        ? this.triggers
+        : this.trigger !== undefined
+          ? [this.trigger]
+          : null;
+    const invalidRequestMessage =
+      this.trigger !== undefined && this.triggers === undefined
+        ? `Invalid request. Please check the provided values of project(${this.project}), location(${this.location}), integration(${this.integration}) and trigger(${this.trigger}).`
+        : `Invalid request. Please check the provided values of project(${this.project}), location(${this.location}), integration(${this.integration}).`;
     const body = await sendCloudRequest({
       url,
       method: 'POST',
@@ -115,13 +129,13 @@ export class IntegrationClient {
         apiTriggerResources: [
           {
             integrationResource: this.integration,
-            triggerId: [this.trigger],
+            triggerId,
           },
         ],
         fileFormat: 'JSON',
       },
       tokenSource: this.tokenSource,
-      invalidRequestMessage: `Invalid request. Please check the provided values of project(${this.project}), location(${this.location}), integration(${this.integration}) and trigger(${this.trigger}).`,
+      invalidRequestMessage,
     });
 
     try {

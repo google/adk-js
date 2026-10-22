@@ -491,7 +491,21 @@ export function deleteOperation(options: EntityOperationOptions): JsonObject {
 }
 
 /** Builds the request schema of the create operation of an entity. */
-export function createOperationRequest(entity: string): JsonObject {
+export function createOperationRequest(
+  entity: string,
+  options?: {includeDynamicAuthConfig?: boolean},
+): JsonObject {
+  const properties: JsonObject = {
+    connectorInputPayload: schemaRef(`connectorInputPayload_${entity}`),
+    operation: schemaRef('operation'),
+    connectionName: schemaRef('connectionName'),
+    serviceName: schemaRef('serviceName'),
+    host: schemaRef('host'),
+    entity: schemaRef('entity'),
+  };
+  if (options?.includeDynamicAuthConfig) {
+    properties['dynamicAuthConfig'] = schemaRef('dynamicAuthConfig');
+  }
   return {
     type: 'object',
     required: [
@@ -502,19 +516,28 @@ export function createOperationRequest(entity: string): JsonObject {
       'host',
       'entity',
     ],
-    properties: {
-      connectorInputPayload: schemaRef(`connectorInputPayload_${entity}`),
-      operation: schemaRef('operation'),
-      connectionName: schemaRef('connectionName'),
-      serviceName: schemaRef('serviceName'),
-      host: schemaRef('host'),
-      entity: schemaRef('entity'),
-    },
+    properties,
   };
 }
 
 /** Builds the request schema of the update operation of an entity. */
-export function updateOperationRequest(entity: string): JsonObject {
+export function updateOperationRequest(
+  entity: string,
+  options?: {includeDynamicAuthConfig?: boolean},
+): JsonObject {
+  const properties: JsonObject = {
+    connectorInputPayload: schemaRef(`connectorInputPayload_${entity}`),
+    entityId: schemaRef('entityId'),
+    operation: schemaRef('operation'),
+    connectionName: schemaRef('connectionName'),
+    serviceName: schemaRef('serviceName'),
+    host: schemaRef('host'),
+    entity: schemaRef('entity'),
+    filterClause: schemaRef('filterClause'),
+  };
+  if (options?.includeDynamicAuthConfig) {
+    properties['dynamicAuthConfig'] = schemaRef('dynamicAuthConfig');
+  }
   return {
     type: 'object',
     required: [
@@ -526,21 +549,25 @@ export function updateOperationRequest(entity: string): JsonObject {
       'host',
       'entity',
     ],
-    properties: {
-      connectorInputPayload: schemaRef(`connectorInputPayload_${entity}`),
-      entityId: schemaRef('entityId'),
-      operation: schemaRef('operation'),
-      connectionName: schemaRef('connectionName'),
-      serviceName: schemaRef('serviceName'),
-      host: schemaRef('host'),
-      entity: schemaRef('entity'),
-      filterClause: schemaRef('filterClause'),
-    },
+    properties,
   };
 }
 
 /** Builds the request schema of the get operation. */
-export function getOperationRequest(): JsonObject {
+export function getOperationRequest(options?: {
+  includeDynamicAuthConfig?: boolean;
+}): JsonObject {
+  const properties: JsonObject = {
+    entityId: schemaRef('entityId'),
+    operation: schemaRef('operation'),
+    connectionName: schemaRef('connectionName'),
+    serviceName: schemaRef('serviceName'),
+    host: schemaRef('host'),
+    entity: schemaRef('entity'),
+  };
+  if (options?.includeDynamicAuthConfig) {
+    properties['dynamicAuthConfig'] = schemaRef('dynamicAuthConfig');
+  }
   return {
     type: 'object',
     required: [
@@ -551,19 +578,26 @@ export function getOperationRequest(): JsonObject {
       'host',
       'entity',
     ],
-    properties: {
-      entityId: schemaRef('entityId'),
-      operation: schemaRef('operation'),
-      connectionName: schemaRef('connectionName'),
-      serviceName: schemaRef('serviceName'),
-      host: schemaRef('host'),
-      entity: schemaRef('entity'),
-    },
+    properties,
   };
 }
 
 /** Builds the request schema of the delete operation. */
-export function deleteOperationRequest(): JsonObject {
+export function deleteOperationRequest(options?: {
+  includeDynamicAuthConfig?: boolean;
+}): JsonObject {
+  const properties: JsonObject = {
+    entityId: schemaRef('entityId'),
+    operation: schemaRef('operation'),
+    connectionName: schemaRef('connectionName'),
+    serviceName: schemaRef('serviceName'),
+    host: schemaRef('host'),
+    entity: schemaRef('entity'),
+    filterClause: schemaRef('filterClause'),
+  };
+  if (options?.includeDynamicAuthConfig) {
+    properties['dynamicAuthConfig'] = schemaRef('dynamicAuthConfig');
+  }
   return {
     type: 'object',
     required: [
@@ -574,38 +608,50 @@ export function deleteOperationRequest(): JsonObject {
       'host',
       'entity',
     ],
-    properties: {
-      entityId: schemaRef('entityId'),
-      operation: schemaRef('operation'),
-      connectionName: schemaRef('connectionName'),
-      serviceName: schemaRef('serviceName'),
-      host: schemaRef('host'),
-      entity: schemaRef('entity'),
-      filterClause: schemaRef('filterClause'),
-    },
+    properties,
   };
 }
 
 /** Builds the request schema of the list operation. */
-export function listOperationRequest(): JsonObject {
+export function listOperationRequest(options?: {
+  includeDynamicAuthConfig?: boolean;
+}): JsonObject {
+  const properties: JsonObject = {
+    filterClause: schemaRef('filterClause'),
+    pageSize: schemaRef('pageSize'),
+    pageToken: schemaRef('pageToken'),
+    operation: schemaRef('operation'),
+    connectionName: schemaRef('connectionName'),
+    serviceName: schemaRef('serviceName'),
+    host: schemaRef('host'),
+    entity: schemaRef('entity'),
+  };
+  if (options?.includeDynamicAuthConfig) {
+    properties['dynamicAuthConfig'] = schemaRef('dynamicAuthConfig');
+  }
   return {
     type: 'object',
     required: ['operation', 'connectionName', 'serviceName', 'host', 'entity'],
-    properties: {
-      filterClause: schemaRef('filterClause'),
-      pageSize: schemaRef('pageSize'),
-      pageToken: schemaRef('pageToken'),
-      operation: schemaRef('operation'),
-      connectionName: schemaRef('connectionName'),
-      serviceName: schemaRef('serviceName'),
-      host: schemaRef('host'),
-      entity: schemaRef('entity'),
-    },
+    properties,
   };
 }
 
 /** Builds the request schema of an action. */
-export function actionRequest(action: string): JsonObject {
+export function actionRequest(
+  action: string,
+  options?: {includeDynamicAuthConfig?: boolean},
+): JsonObject {
+  const properties: JsonObject = {
+    operation: schemaRef('operation'),
+    connectionName: schemaRef('connectionName'),
+    serviceName: schemaRef('serviceName'),
+    host: schemaRef('host'),
+    action: schemaRef('action'),
+    connectorInputPayload: schemaRef(`connectorInputPayload_${action}`),
+  };
+  if (options?.includeDynamicAuthConfig) {
+    properties['dynamicAuthConfig'] = schemaRef('dynamicAuthConfig');
+  }
   return {
     type: 'object',
     required: [
@@ -616,14 +662,7 @@ export function actionRequest(action: string): JsonObject {
       'action',
       'connectorInputPayload',
     ],
-    properties: {
-      operation: schemaRef('operation'),
-      connectionName: schemaRef('connectionName'),
-      serviceName: schemaRef('serviceName'),
-      host: schemaRef('host'),
-      action: schemaRef('action'),
-      connectorInputPayload: schemaRef(`connectorInputPayload_${action}`),
-    },
+    properties,
   };
 }
 
