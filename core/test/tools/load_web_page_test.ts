@@ -4,25 +4,33 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {lookup} from 'node:dns/promises';
+import type {LookupAddress, LookupAllOptions} from 'node:dns';
 
 import {FunctionTool, LOAD_WEB_PAGE, loadWebPage} from '@google/adk';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 
-vi.mock('node:dns/promises', () => ({
-  lookup: vi.fn(),
+/**
+ * `lookup` is overloaded and its last overload resolves to a single
+ * `LookupAddress`, so the mock is declared with the `{all: true}` signature the
+ * implementation actually calls; `mockResolvedValue` then accepts the array.
+ */
+const {lookupMock} = vi.hoisted(() => ({
+  lookupMock:
+    vi.fn<
+      (hostname: string, options: LookupAllOptions) => Promise<LookupAddress[]>
+    >(),
 }));
 
-// `lookup` is overloaded; treat the mock as a plain Mock so `mockResolvedValue`
-// accepts the `{all: true}` array-return shape used by the implementation.
-const lookupMock = lookup as unknown as Mock;
+vi.mock('node:dns/promises', () => ({
+  lookup: lookupMock,
+}));
 
-/** Builds a minimal `Response`-like object for the stubbed global `fetch`. */
+/**
+ * Builds a response for the stubbed global `fetch`. The body is single-use, so
+ * a test that fetches more than once must build a fresh one per call.
+ */
 function htmlResponse(body: string, status = 200): Response {
-  return {
-    status,
-    text: async () => body,
-  } as unknown as Response;
+  return new Response(body, {status});
 }
 
 /** Resolves any hostname to the given IP list for the DNS `lookup` mock. */
@@ -332,7 +340,8 @@ describe('loadWebPage', () => {
   describe('timeout configuration', () => {
     it('uses the 30s default and honors an override', async () => {
       resolveTo('93.184.216.34');
-      fetchMock.mockResolvedValue(
+      // This test fetches twice, so each call needs its own unread body.
+      fetchMock.mockImplementation(async () =>
         htmlResponse('<p>enough words to be kept here</p>'),
       );
 
