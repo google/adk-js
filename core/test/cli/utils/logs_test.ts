@@ -11,6 +11,7 @@ import {
   logToStderr,
   logToTmpFolder,
   setLogger,
+  setupAdkLogger,
 } from '@google/adk';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -93,6 +94,40 @@ describe('cli/utils/logs', () => {
       expect(fs.readFileSync(latestLink, 'utf-8')).toContain(
         'second-file-info-entry',
       );
+    });
+  });
+
+  describe('setupAdkLogger', () => {
+    it('configures the global logger to write to stderr at the requested level', () => {
+      const writes: string[] = [];
+      vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+        writes.push(String(chunk));
+        return true;
+      });
+
+      setupAdkLogger(LogLevel.DEBUG);
+      logger.debug('debug-visible');
+      logger.info('info-visible');
+
+      expect(writes.some((w) => w.includes('DEBUG - debug-visible'))).toBe(
+        true,
+      );
+      expect(writes.some((w) => w.includes('INFO - info-visible'))).toBe(true);
+    });
+
+    it('defaults to LogLevel.INFO when no level is provided', () => {
+      const writes: string[] = [];
+      vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+        writes.push(String(chunk));
+        return true;
+      });
+
+      setupAdkLogger();
+      logger.debug('debug-filtered');
+      logger.info('info-emitted');
+
+      expect(writes.some((w) => w.includes('debug-filtered'))).toBe(false);
+      expect(writes.some((w) => w.includes('INFO - info-emitted'))).toBe(true);
     });
   });
 });

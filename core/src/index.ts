@@ -217,6 +217,11 @@ export type {
   RunEvalsOptions,
 } from './cli/cli_eval.js';
 export {loadDotenvForAgent, walkToRootUntilFound} from './cli/utils/envs.js';
-export {LOGGING_FORMAT, logToStderr, logToTmpFolder} from './cli/utils/logs.js';
+export {
+  LOGGING_FORMAT,
+  logToStderr,
+  logToTmpFolder,
+  setupAdkLogger,
+} from './cli/utils/logs.js';
 export type {LogToTmpFolderOptions} from './cli/utils/logs.js';
 export * from './tools/mcp/index.js';
