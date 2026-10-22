@@ -13,6 +13,14 @@ import {RestApiTool} from '../openapi_tool/rest_api_tool.js';
 const GOOGLE_API_TOOL_SIGNATURE_SYMBOL = Symbol.for('google.adk.googleApiTool');
 
 /**
+ * Options for constructing a {@link GoogleApiTool}.
+ */
+export interface GoogleApiToolOptions {
+  clientId?: string;
+  clientSecret?: string;
+}
+
+/**
  * Type guard to check if an object is an instance of {@link GoogleApiTool}.
  */
 export function isGoogleApiTool(obj: unknown): obj is GoogleApiTool {
@@ -33,13 +41,16 @@ export class GoogleApiTool extends BaseTool {
   readonly [GOOGLE_API_TOOL_SIGNATURE_SYMBOL] = true;
   readonly restApiTool: RestApiTool;
 
-  constructor(restApiTool: RestApiTool) {
+  constructor(restApiTool: RestApiTool, options: GoogleApiToolOptions = {}) {
     super({
       name: restApiTool.name,
       description: restApiTool.description,
       isLongRunning: restApiTool.isLongRunning,
     });
     this.restApiTool = restApiTool;
+    if (options.clientId !== undefined || options.clientSecret !== undefined) {
+      this.configureAuth(options.clientId, options.clientSecret);
+    }
   }
 
   @experimental
@@ -57,7 +68,7 @@ export class GoogleApiTool extends BaseTool {
    * {@link RestApiTool}.
    */
   @experimental
-  configureAuth(clientId: string, clientSecret: string): void {
+  configureAuth(clientId?: string, clientSecret?: string): void {
     this.restApiTool.configureAuthCredential({
       authType: AuthCredentialTypes.OPEN_ID_CONNECT,
       oauth2: {

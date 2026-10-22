@@ -8,11 +8,15 @@ import {
   AuthCredentialTypes,
   createSession,
   GoogleApiSpec,
+  GoogleApiTool,
   GoogleApiToolSet,
+  GoogleApiToolset,
   InvocationContext,
   isGoogleApiTool,
   isGoogleApiToolSet,
+  isGoogleApiToolset,
   LlmAgent,
+  OpenAPIToolset,
   PluginManager,
   ReadonlyContext,
   RestApiTool,
@@ -263,5 +267,92 @@ describe('GoogleApiToolSet', () => {
         clientSecret: 'updated-secret',
       },
     });
+  });
+});
+
+describe('GoogleApiToolset', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('constructs with options-first overload and applies clientId, clientSecret, and toolFilter', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => MOCK_DISCOVERY_SPEC,
+    } as Response);
+    const configureAuthSpy = vi.spyOn(GoogleApiTool.prototype, 'configureAuth');
+
+    const toolset = new GoogleApiToolset({
+      apiName: 'calendar',
+      apiVersion: 'v3',
+      clientId: 'options-client-id',
+      clientSecret: 'options-client-secret',
+      toolFilter: ['calendar_calendars_get'],
+    });
+
+    expect(isGoogleApiToolset(toolset)).toBe(true);
+    expect(isGoogleApiToolSet(toolset)).toBe(true);
+    expect(toolset.apiName).toBe('calendar');
+    expect(toolset.apiVersion).toBe('v3');
+
+    const tools = await toolset.getTools();
+    expect(tools.map((t) => t.name)).toEqual(['calendar_calendars_get']);
+    expect(configureAuthSpy).toHaveBeenCalledWith(
+      'options-client-id',
+      'options-client-secret',
+    );
+  });
+
+  it('updates the active filter when setToolFilter is called', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => MOCK_DISCOVERY_SPEC,
+    } as Response);
+
+    const toolset = new GoogleApiToolset({
+      apiName: 'calendar',
+      apiVersion: 'v3',
+    });
+
+    const allTools = await toolset.getTools();
+    expect(allTools.map((t) => t.name)).toEqual([
+      'calendar_calendars_get',
+      'calendar_calendars_insert',
+    ]);
+
+    toolset.setToolFilter(['calendar_calendars_insert']);
+    const listFiltered = await toolset.getTools();
+    expect(listFiltered.map((t) => t.name)).toEqual([
+      'calendar_calendars_insert',
+    ]);
+
+    toolset.setToolFilter((tool) => tool.name === 'calendar_calendars_get');
+    const predicateFiltered = await toolset.getTools();
+    expect(predicateFiltered.map((t) => t.name)).toEqual([
+      'calendar_calendars_get',
+    ]);
+  });
+
+  it('delegates close() to the underlying OpenAPIToolset when loaded', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => MOCK_DISCOVERY_SPEC,
+    } as Response);
+    const closeSpy = vi.spyOn(OpenAPIToolset.prototype, 'close');
+
+    const toolset = new GoogleApiToolset({
+      apiName: 'calendar',
+      apiVersion: 'v3',
+    });
+
+    await toolset.close();
+    expect(closeSpy).not.toHaveBeenCalled();
+
+    await toolset.getTools();
+    await toolset.close();
+    expect(closeSpy).toHaveBeenCalledTimes(1);
   });
 });
