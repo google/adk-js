@@ -5,16 +5,26 @@
  */
 
 import {
+  BigQueryToolset,
   bigqueryToolSet,
+  CalendarToolset,
   calendarToolSet,
+  DocsToolset,
   docsToolSet,
+  GmailToolset,
   gmailToolSet,
   GoogleApiSpec,
+  GoogleApiTool,
   GoogleApiToolSet,
+  GoogleApiToolsetOptions,
   isGoogleApiToolSet,
+  isGoogleApiToolset,
   logger,
+  SheetsToolset,
   sheetsToolSet,
+  SlidesToolset,
   slidesToolSet,
+  YoutubeToolset,
   youtubeToolSet,
 } from '@google/adk';
 import {afterEach, describe, expect, it, vi} from 'vitest';
@@ -103,5 +113,68 @@ describe('google_api_tool_sets', () => {
     );
     expect(tools.length).toBe(1);
     expect(tools[0].name).toBe('calendar_items_list');
+  });
+});
+
+describe('GoogleApiToolset service classes', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('constructs isolated instances for all seven Google API toolset classes with auth and toolFilter options', async () => {
+    const cases: Array<{
+      ToolsetClass: new (options?: GoogleApiToolsetOptions) => GoogleApiToolSet;
+      apiName: string;
+      apiVersion: string;
+    }> = [
+      {ToolsetClass: BigQueryToolset, apiName: 'bigquery', apiVersion: 'v2'},
+      {ToolsetClass: CalendarToolset, apiName: 'calendar', apiVersion: 'v3'},
+      {ToolsetClass: GmailToolset, apiName: 'gmail', apiVersion: 'v1'},
+      {ToolsetClass: YoutubeToolset, apiName: 'youtube', apiVersion: 'v3'},
+      {ToolsetClass: SlidesToolset, apiName: 'slides', apiVersion: 'v1'},
+      {ToolsetClass: SheetsToolset, apiName: 'sheets', apiVersion: 'v4'},
+      {ToolsetClass: DocsToolset, apiName: 'docs', apiVersion: 'v1'},
+    ];
+
+    for (const {ToolsetClass, apiName, apiVersion} of cases) {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => createDiscoverySpecFor(apiName, apiVersion),
+      } as Response);
+      const configureAuthSpy = vi.spyOn(
+        GoogleApiTool.prototype,
+        'configureAuth',
+      );
+
+      const filteredToolset = new ToolsetClass({
+        clientId: `${apiName}-client-id`,
+        clientSecret: `${apiName}-client-secret`,
+        toolFilter: [`${apiName}_items_list`],
+      });
+      const excludedToolset = new ToolsetClass({
+        toolFilter: ['other_tool'],
+      });
+
+      expect(isGoogleApiToolset(filteredToolset)).toBe(true);
+      expect(filteredToolset.apiName).toBe(apiName);
+      expect(filteredToolset.apiVersion).toBe(apiVersion);
+
+      const tools = await filteredToolset.getTools();
+      expect(fetchSpy).toHaveBeenCalledWith(
+        `https://www.googleapis.com/discovery/v1/apis/${apiName}/${apiVersion}/rest`,
+      );
+      expect(tools.map((t) => t.name)).toEqual([`${apiName}_items_list`]);
+      expect(configureAuthSpy).toHaveBeenCalledWith(
+        `${apiName}-client-id`,
+        `${apiName}-client-secret`,
+      );
+
+      const excludedTools = await excludedToolset.getTools();
+      expect(excludedTools).toEqual([]);
+
+      fetchSpy.mockRestore();
+      configureAuthSpy.mockRestore();
+    }
   });
 });

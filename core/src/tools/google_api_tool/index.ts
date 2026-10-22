@@ -5,12 +5,26 @@
  */
 
 export {GoogleApiTool, isGoogleApiTool} from './google_api_tool.js';
-export {GoogleApiToolSet, isGoogleApiToolSet} from './google_api_tool_set.js';
+export type {GoogleApiToolOptions} from './google_api_tool.js';
+export {
+  GoogleApiToolSet,
+  GoogleApiToolset,
+  isGoogleApiToolSet,
+  isGoogleApiToolset,
+} from './google_api_tool_set.js';
 export type {
   GoogleApiToolSetOptions,
+  GoogleApiToolsetOptions,
   LoadToolSetWithOidcAuthOptions,
 } from './google_api_tool_set.js';
 export {
+  BigQueryToolset,
+  CalendarToolset,
+  DocsToolset,
+  GmailToolset,
+  SheetsToolset,
+  SlidesToolset,
+  YoutubeToolset,
   bigqueryToolSet,
   calendarToolSet,
   docsToolSet,

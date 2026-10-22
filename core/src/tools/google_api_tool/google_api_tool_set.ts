@@ -33,8 +33,15 @@ const GOOGLE_OIDC_REVOCATION_ENDPOINT = 'https://oauth2.googleapis.com/revoke';
 export interface GoogleApiToolSetOptions {
   apiName?: string;
   apiVersion?: string;
+  clientId?: string;
+  clientSecret?: string;
   toolFilter?: ToolPredicate | string[];
 }
+
+/**
+ * Options for constructing a {@link GoogleApiToolset}.
+ */
+export type GoogleApiToolsetOptions = GoogleApiToolSetOptions;
 
 /**
  * Options for loading an {@link OpenAPIToolset} pre-configured with Google
@@ -67,18 +74,32 @@ export function isGoogleApiToolSet(obj: unknown): obj is GoogleApiToolSet {
 @experimental
 export class GoogleApiToolSet extends BaseToolset {
   readonly [GOOGLE_API_TOOL_SET_SIGNATURE_SYMBOL] = true;
+  override toolFilter: ToolPredicate | string[];
   readonly apiName?: string;
   readonly apiVersion?: string;
   private tools: GoogleApiTool[];
   private toolsLoaded: boolean;
   private loadingPromise?: Promise<void>;
-  private pendingAuth?: {clientId: string; clientSecret: string};
+  private pendingAuth?: {clientId?: string; clientSecret?: string};
+  private openapiToolset?: OpenAPIToolset;
 
+  constructor(options?: GoogleApiToolSetOptions);
   constructor(
     tools?: Array<RestApiTool | GoogleApiTool>,
-    options: GoogleApiToolSetOptions = {},
+    options?: GoogleApiToolSetOptions,
+  );
+  constructor(
+    toolsOrOptions?:
+      Array<RestApiTool | GoogleApiTool> | GoogleApiToolSetOptions,
+    maybeOptions: GoogleApiToolSetOptions = {},
   ) {
-    super(options.toolFilter ?? []);
+    const tools = Array.isArray(toolsOrOptions) ? toolsOrOptions : undefined;
+    const options = Array.isArray(toolsOrOptions)
+      ? maybeOptions
+      : (toolsOrOptions ?? maybeOptions);
+    const toolFilter = options.toolFilter ?? [];
+    super(toolFilter);
+    this.toolFilter = toolFilter;
     this.apiName = options.apiName;
     this.apiVersion = options.apiVersion;
 
@@ -90,6 +111,10 @@ export class GoogleApiToolSet extends BaseToolset {
     } else {
       this.tools = [];
       this.toolsLoaded = false;
+    }
+
+    if (options.clientId !== undefined || options.clientSecret !== undefined) {
+      this.configureAuth(options.clientId, options.clientSecret);
     }
   }
 
@@ -106,6 +131,7 @@ export class GoogleApiToolSet extends BaseToolset {
             apiName,
             apiVersion,
           );
+          this.openapiToolset = loaded.openapiToolset;
           this.tools = loaded.tools;
           if (this.pendingAuth) {
             for (const tool of this.tools) {
@@ -145,10 +171,18 @@ export class GoogleApiToolSet extends BaseToolset {
   }
 
   /**
+   * Updates the tool filter used by {@link getTools}.
+   */
+  @experimental
+  setToolFilter(toolFilter: ToolPredicate | string[]): void {
+    this.toolFilter = toolFilter;
+  }
+
+  /**
    * Configures OAuth2 client ID and secret across all tools in the toolset.
    */
   @experimental
-  configureAuth(clientId: string, clientSecret: string): void {
+  configureAuth(clientId?: string, clientSecret?: string): void {
     this.pendingAuth = {clientId, clientSecret};
     for (const tool of this.tools) {
       tool.configureAuth(clientId, clientSecret);
@@ -157,7 +191,9 @@ export class GoogleApiToolSet extends BaseToolset {
 
   @experimental
   override async close(): Promise<void> {
-    return Promise.resolve();
+    if (this.openapiToolset) {
+      await this.openapiToolset.close();
+    }
   }
 
   /**
@@ -224,9 +260,25 @@ export class GoogleApiToolSet extends BaseToolset {
       scopes,
     });
     const tools = (await openapiToolset.getTools()) as RestApiTool[];
-    return new this(tools, {apiName, apiVersion});
+    const toolset = new this(tools, {apiName, apiVersion});
+    toolset.openapiToolset = openapiToolset;
+    return toolset;
   }
 }
+
+/**
+ * Type guard to check if an object is an instance of {@link GoogleApiToolset}.
+ */
+export function isGoogleApiToolset(obj: unknown): obj is GoogleApiToolset {
+  return isGoogleApiToolSet(obj);
+}
+
+/**
+ * Toolset that wraps Google Discovery API operations as {@link GoogleApiTool}
+ * instances configured for Google OpenID Connect authentication.
+ */
+@experimental
+export class GoogleApiToolset extends GoogleApiToolSet {}
 
 /**
  * Creates a lazy-loaded {@link GoogleApiToolSet} singleton without triggering
