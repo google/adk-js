@@ -48,7 +48,9 @@ import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {Session} from '../sessions/session.js';
 import {
+  recordSpanError,
   runAsyncGeneratorWithOtelContext,
+  startInvocationSpans,
   tracer,
 } from '../telemetry/tracing.js';
 import {BaseToolset, isBaseToolset} from '../tools/base_toolset.js';
@@ -61,6 +63,7 @@ import {
   RunnableRoot,
   runNodeAsInvocation,
 } from '../workflow/run_node_as_invocation.js';
+import {isWorkflow} from '../workflow/workflow.js';
 
 /**
  * The configuration parameters for the Runner.
@@ -308,8 +311,11 @@ export class Runner {
     // =========================================================================
     // Setup the session and invocation context
     // =========================================================================
-    const span = tracer.startSpan('invocation');
-    const ctx = trace.setSpan(context.active(), span);
+    const {spans, context: ctx} = startInvocationSpans({
+      rootName: this.agent.name,
+      entrypointWorkflow: isWorkflow(this.agent) ? this.agent : undefined,
+      conversationId: sessionId,
+    });
     try {
       yield* runAsyncGeneratorWithOtelContext<Runner, Event>(
         ctx,
@@ -527,8 +533,15 @@ export class Runner {
           }
         },
       );
+    } catch (error: unknown) {
+      for (const span of spans) {
+        recordSpanError(span, error);
+      }
+      throw error;
     } finally {
-      span.end();
+      for (const span of [...spans].reverse()) {
+        span.end();
+      }
       const toolsets = isBaseAgent(this.agent)
         ? getAllToolsets(this.agent)
         : [];

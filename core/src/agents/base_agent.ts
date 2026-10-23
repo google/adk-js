@@ -5,12 +5,14 @@
  */
 
 import {Content} from '@google/genai';
-import {context, trace} from '@opentelemetry/api';
+import {context} from '@opentelemetry/api';
 
 import {createEvent, Event} from '../events/event.js';
 
 import {
+  recordSpanError,
   runAsyncGeneratorWithOtelContext,
+  setAgentSpan,
   traceAgentInvocation,
   tracer,
 } from '../telemetry/tracing.js';
@@ -254,8 +256,13 @@ export abstract class BaseAgent<
   async *runAsync(
     parentContext: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    const span = tracer.startSpan(`invoke_agent ${this.name}`);
-    const ctx = trace.setSpan(context.active(), span);
+    const parentOtelContext = context.active();
+    const span = tracer.startSpan(
+      `invoke_agent ${this.name}`,
+      undefined,
+      parentOtelContext,
+    );
+    const ctx = setAgentSpan(parentOtelContext, span);
     try {
       yield* runAsyncGeneratorWithOtelContext<BaseAgent, Event>(
         ctx,
@@ -289,6 +296,9 @@ export abstract class BaseAgent<
           }
         },
       );
+    } catch (error: unknown) {
+      recordSpanError(span, error);
+      throw error;
     } finally {
       span.end();
     }
@@ -333,8 +343,13 @@ export abstract class BaseAgent<
   async *runLive(
     parentContext: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    const span = tracer.startSpan(`invoke_agent ${this.name}`);
-    const ctx = trace.setSpan(context.active(), span);
+    const parentOtelContext = context.active();
+    const span = tracer.startSpan(
+      `invoke_agent ${this.name}`,
+      undefined,
+      parentOtelContext,
+    );
+    const ctx = setAgentSpan(parentOtelContext, span);
     try {
       yield* runAsyncGeneratorWithOtelContext<BaseAgent, Event>(
         ctx,
@@ -367,6 +382,9 @@ export abstract class BaseAgent<
           }
         },
       );
+    } catch (error: unknown) {
+      recordSpanError(span, error);
+      throw error;
     } finally {
       span.end();
     }

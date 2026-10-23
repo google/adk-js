@@ -5,9 +5,16 @@
  */
 
 import {context, type Span, SpanStatusCode, trace} from '@opentelemetry/api';
+import {isBaseAgent} from '../agents/base_agent.js';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {createEvent, Event} from '../events/event.js';
-import {traceNodeExecution, tracer} from '../telemetry/tracing.js';
+import {
+  recordSpanError,
+  startNodeSpan,
+  traceNodeEvents,
+  traceNodeExecution,
+  tracer,
+} from '../telemetry/tracing.js';
 import {formatError} from '../utils/error_utils.js';
 import {BaseNode} from './base_node.js';
 import {createSubBranch} from './branch_path.js';
@@ -24,6 +31,7 @@ import {claimNodeErrorReport, isNodeErrorEvent} from './node_error_event.js';
 import {createNodeState, NodeState} from './node_state.js';
 import {NodeStatus} from './node_status.js';
 import {getRetryDelaySeconds, shouldRetryNode} from './utils/retry_utils.js';
+import {isWorkflow} from './workflow.js';
 
 /**
  * Options controlling a single `ctx.runNode(...)` execution.
@@ -113,8 +121,16 @@ export function executeChildNode(
   // its parent must be whatever span was active when the workflow SCHEDULED
   // this node. Nodes are raced concurrently in `Workflow.runLoop`, so a parent
   // captured any later would nest concurrent siblings inside whichever task
-  // happened to resolve first.
-  const span = tracer.startSpan(`execute_node ${nodeName}`);
+  // happened to resolve first. An agent or a workflow opens its own
+  // `invoke_agent` or `invoke_workflow` span instead, so it gets no node span,
+  // but its context is still pinned here for the same reason.
+  const span =
+    isBaseAgent(node) || isWorkflow(node)
+      ? undefined
+      : startNodeSpan({
+          nodeName,
+          conversationId: parent.invocationContext.session.id,
+        });
 
   // Deliberately not `async`, and the callback is deliberately not `async`
   // either: `context.with` hands the inner promise straight back, so the child
@@ -122,8 +138,9 @@ export function executeChildNode(
   // wrappers here would each add promise-adoption ticks, which is enough to
   // change how concurrently scheduled nodes interleave — an observability
   // change must not move execution around.
-  return context.with(trace.setSpan(context.active(), span), () =>
-    runChildNode({params, nodeName, nodePath, span}),
+  return context.with(
+    span ? trace.setSpan(context.active(), span) : context.active(),
+    () => runChildNode({params, nodeName, nodePath, span}),
   );
 }
 
@@ -131,10 +148,11 @@ interface RunChildNodeParams {
   params: ExecuteChildNodeParams;
   nodeName: string;
   nodePath: string;
-  span: Span;
+  /** The `invoke_node` span, absent for an agent or a workflow node. */
+  span?: Span;
 }
 
-/** The body of {@link executeChildNode}, running under its `execute_node` span. */
+/** The body of {@link executeChildNode}, running under its `invoke_node` span. */
 async function runChildNode({
   params: {
     parent,
@@ -224,15 +242,6 @@ async function runChildNode({
       });
       if (skipOutput !== undefined) {
         child.output = skipOutput;
-        // A skipped node still fills its slot in the trace, so record it as
-        // completed rather than leaving an attribute-less span behind.
-        traceNodeExecution({
-          nodePath,
-          runId,
-          attempt: nodeState.attemptCount,
-          status: 'completed',
-          interruptCount: child.interruptIds.length,
-        });
         if (options.useAsOutput) {
           parent.output = child.output;
           parent.route = child.route;
@@ -243,8 +252,10 @@ async function runChildNode({
 
     let succeeded = false;
     let inputRecorded = false;
+    const emittedEventIds: string[] = [];
     while (!succeeded) {
       resetState(child);
+      emittedEventIds.length = 0;
       child.attemptCount = nodeState.attemptCount;
       try {
         inputRecorded = await runAttempt({
@@ -257,6 +268,7 @@ async function runChildNode({
           nodePath,
           runId,
           attempt: nodeState.attemptCount,
+          emittedEventIds,
         });
         failIfNodeReportedError(child, nodeName);
         succeeded = true;
@@ -297,13 +309,9 @@ async function runChildNode({
       recordInputForResume({child, nodeName, branch, isolationScope, input});
     }
 
-    traceNodeExecution({
-      nodePath,
-      runId,
-      attempt: nodeState.attemptCount,
-      status: child.interruptIds.length > 0 ? 'waiting' : 'completed',
-      interruptCount: child.interruptIds.length,
-    });
+    if (span) {
+      traceNodeEvents(span, emittedEventIds);
+    }
 
     if (pluginManager?.hasPlugins) {
       const replacedOutput = await pluginManager.runAfterNodeCallback({
@@ -324,17 +332,12 @@ async function runChildNode({
 
     return child;
   } catch (err) {
-    traceNodeExecution({
-      nodePath,
-      runId,
-      attempt: nodeState.attemptCount,
-      status: 'failed',
-      interruptCount: child.interruptIds.length,
-    });
-    span.setStatus({code: SpanStatusCode.ERROR, message: formatError(err)});
+    if (span) {
+      recordSpanError(span, err);
+    }
     throw err;
   } finally {
-    span.end();
+    span?.end();
   }
 }
 
@@ -445,6 +448,8 @@ interface RunOnceParams {
   nodeName: string;
   branch: string | undefined;
   isolationScope: string | undefined;
+  /** Collects the id of every event the node emits during the attempt. */
+  emittedEventIds: string[];
 }
 
 /**
@@ -475,6 +480,7 @@ async function runOnce({
   nodeName,
   branch,
   isolationScope,
+  emittedEventIds,
 }: RunOnceParams): Promise<boolean> {
   let inputRecorded = false;
   const consume = (event: Event): void => {
@@ -521,6 +527,7 @@ async function runOnce({
       };
       inputRecorded = true;
     }
+    emittedEventIds.push(event.id);
     child.channel.push(event);
   };
 

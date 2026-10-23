@@ -65,62 +65,137 @@ a network exporter wants.
 
 ## How it works
 
-ADK names each span after the step it covers. A prompt that triggers one tool
-call produces `invocation`, `invoke_agent <name>`, `call_llm`,
-`execute_tool <name>` and a second `call_llm`: the first model call returns the
-tool call, and the second turns the tool response into the answer.
+ADK names each span after the step it covers. Under the default schema (v2), a
+prompt that triggers one tool call produces `invoke_workflow <root>`,
+`invoke_agent <name>`, `generate_content <model>`, `execute_tool <name>` and a
+second `generate_content <model>`: the first model call returns the tool call,
+and the second turns the tool response into the answer. [Schema
+selection](#schema-selection) shows the tree under both schemas.
 
-| Span                       | Opened for                                                         |
-| :------------------------- | :----------------------------------------------------------------- |
-| `invocation`               | One turn, opened by the `Runner`.                                  |
-| `invoke_agent <name>`      | One agent's part of the turn.                                      |
-| `call_llm`                 | One request to the model.                                          |
-| `generate_content <model>` | One model inference inside `call_llm` (OpenTelemetry GenAI span).  |
-| `execute_tool <name>`      | One tool call and its response.                                    |
-| `execute_tool (merged)`    | Parallel tool calls whose responses are merged into one event.     |
-| `send_data`                | Replaying session history to a live model connection in `runLive`. |
-| `invoke_workflow <name>`   | One `Workflow` run.                                                |
-| `execute_node <name>`      | One node in a workflow.                                            |
+| Span                          | Opened for                                                                                              |
+| :---------------------------- | :------------------------------------------------------------------------------------------------------ |
+| `invoke_workflow <name>`      | One turn, opened by the `Runner` under schema v2 or for a workflow root; and one nested `Workflow` run. |
+| `invocation`                  | One turn, opened by the `Runner` under schema v1.                                                       |
+| `invoke_agent <name>`         | One agent's part of the turn.                                                                           |
+| `call_llm`                    | One request to the model, under schema v1 only.                                                         |
+| `generate_content <model>`    | One model inference (OpenTelemetry GenAI span).                                                         |
+| `execute_tool <name>`         | One tool call and its response.                                                                         |
+| `execute_tool (merged)`       | Parallel tool calls whose responses are merged into one event.                                          |
+| `send_data`                   | Replaying session history to a live model connection in `runLive`.                                      |
+| `invoke_node <name>`          | One node in a workflow that is not an agent or a workflow.                                              |
+| `execute_node_attempt <name>` | One attempt of a workflow node that has a retry configuration.                                          |
+
+An agent or a workflow that runs as a workflow node gets no `invoke_node` span:
+its own `invoke_agent` or `invoke_workflow` span takes that place. An agent
+reached by `transfer_to_agent` gets an `invoke_agent` span next to the agent
+that transferred, under the same parent span. The inner run of an
+`AgentTool` opens its own root span under the tool's `execute_tool` span.
+
+### Schema selection
+
+`ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN` selects the span tree, the
+`generate_content <model>` attributes and the inference log records. Schema v2
+is the default. `1` or `otel_semconv_1_36` selects schema v1. Both trees follow
+the OpenTelemetry GenAI semantic conventions the way adk-python does.
+
+The tree of one agent turn with one tool call, under schema v2:
+
+```
+invoke_workflow some_root_agent
+└ invoke_agent some_root_agent
+  ├ generate_content gemini-2.5-flash
+  ├ execute_tool some_tool
+  └ generate_content gemini-2.5-flash
+```
+
+The same turn under schema v1:
+
+```
+invocation
+└ invoke_agent some_root_agent
+  ├ call_llm
+  │ └ generate_content gemini-2.5-flash
+  ├ execute_tool some_tool
+  └ call_llm
+    └ generate_content gemini-2.5-flash
+```
+
+Before this release, every schema produced this tree:
+
+```
+invocation
+└ invoke_agent some_root_agent
+  ├ call_llm
+  │ ├ generate_content gemini-2.5-flash
+  │ └ execute_tool some_tool
+  └ call_llm
+    └ generate_content gemini-2.5-flash
+```
+
+What changed in the span tree:
+
+- Schema v2 has no `invocation` and no `call_llm` span. The turn's root is
+  `invoke_workflow <root name>`.
+- Under schema v1, `call_llm` covers the model call only. Tool calls and
+  transfers that follow it are its siblings, and a transferred agent's
+  `invoke_agent` span is a sibling of the transferring agent's span.
+- Workflow nodes open `invoke_node <name>` instead of `execute_node <name>`,
+  with `gen_ai.*` attributes instead of `adk.node.*`. An agent or workflow node
+  no longer gets a node span.
+- `invoke_workflow` carries `gen_ai.workflow.name` instead of
+  `adk.workflow.name` and `adk.node.path`, and a nested workflow carries
+  `gen_ai.workflow.nested`. A workflow given to the `Runner` as its root gets
+  one `invoke_workflow` span, opened by the runner.
+- `execute_tool` no longer carries `gen_ai.system` or
+  `gcp.vertex.agent.invocation_id`. It carries `gen_ai.agent.name`, and its
+  `gcp.vertex.agent.event_id` is the id of the function response event the
+  agent emits. Under schema v2 the `gcp.vertex.agent.*` content placeholders
+  are gone; `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result` replace
+  them when span content capture is on. Credential secrets are removed from
+  tool responses under both schemas.
+- `generate_content <model>` no longer sets `error.type`. A span that an error
+  escapes from (the root span, `invoke_agent`, `call_llm`, `invoke_node` and a
+  nested `invoke_workflow`) records the exception and gets status ERROR, with
+  the error type as the status message.
 
 ### Identifying attributes
 
-Three attributes identify a span rather than describe it, and they are what a
+These attributes identify a span rather than describe it, and they are what a
 backend filters and groups on.
 
-| Attribute                        | Value                | Set on                                                     |
-| :------------------------------- | :------------------- | :--------------------------------------------------------- |
-| `gen_ai.system`                  | `'gcp.vertex.agent'` | `call_llm`, `execute_tool <name>`, `execute_tool (merged)` |
-| `gcp.vertex.agent.invocation_id` | The invocation's id  | `call_llm`, both tool spans, `send_data`                   |
-| `gcp.vertex.agent.event_id`      | An event's id        | `call_llm`, both tool spans, `send_data`                   |
-
-`gen_ai.system` is the OpenTelemetry semantic-convention key that marks a span
-as belonging to a Generative AI system. Because ADK writes the same value on the
-model spans and the tool spans, one filter on that key selects every model call
-and every tool call of a run. `gcp.vertex.agent.invocation_id` carries one value
-across a turn, so grouping by it collects that turn's model and tool calls
-together.
+| Attribute                        | Value                | Set on                                                                       |
+| :------------------------------- | :------------------- | :--------------------------------------------------------------------------- |
+| `gen_ai.operation.name`          | The step's operation | Every span except `invocation`, `call_llm` and `send_data`                   |
+| `gen_ai.conversation.id`         | The session's id     | `invoke_workflow`, `invoke_agent`, `invoke_node`, `generate_content <model>` |
+| `gen_ai.system`                  | `'gcp.vertex.agent'` | `call_llm`                                                                   |
+| `gcp.vertex.agent.invocation_id` | The invocation's id  | `call_llm`, `generate_content <model>`, `send_data`                          |
+| `gcp.vertex.agent.event_id`      | An event's id        | `call_llm`, `generate_content <model>`, both tool spans, `send_data`         |
 
 `gcp.vertex.agent.event_id` is the id of the event the step produced: the model
-response event on `call_llm`, the function response event on
-`execute_tool <name>`, and the merged response event on `execute_tool (merged)`.
-On `send_data` no event is produced, so the value is a freshly generated id.
+response event on `call_llm` and `generate_content <model>`, the function
+response event on `execute_tool <name>`, and the merged response event on
+`execute_tool (merged)`. On `send_data` no event is produced, so the value is a
+freshly generated id. The dev server's `/debug/trace/:eventId` route finds a
+model response event through `generate_content <model>` under schema v2, and
+through `call_llm`, which ends later, under schema v1.
 
 ### Descriptive attributes
 
 The rest of the set describes the step.
 
-| Span                    | Attributes                                                                                                                                                                                                                                                                                                        |
-| :---------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `invoke_agent <name>`   | `gen_ai.operation.name` `'invoke_agent'`, `gen_ai.agent.name`, `gen_ai.agent.description`, `gen_ai.conversation.id` set to the session id.                                                                                                                                                                        |
-| `call_llm`              | `gen_ai.request.model`, `gen_ai.agent.name`, `gcp.vertex.agent.session_id`, `gcp.vertex.agent.llm_request`, `gcp.vertex.agent.llm_response`, and, when present, `gen_ai.request.top_p`, `gen_ai.request.max_tokens`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.response.finish_reasons`. |
-| `execute_tool <name>`   | `gen_ai.operation.name` `'execute_tool'`, `gen_ai.tool.name`, `gen_ai.tool.description`, `gen_ai.tool.type`, `gen_ai.tool.call.id`, `gcp.vertex.agent.tool_call_args`, `gcp.vertex.agent.tool_response`, and `gcp.vertex.agent.llm_request` and `gcp.vertex.agent.llm_response` both set to `'{}'`.               |
-| `execute_tool (merged)` | The same keys, with `gen_ai.tool.name` and `gen_ai.tool.description` set to `'(merged tools)'`, `gen_ai.tool.call.id` set to the merged event id, `tool_call_args` set to `'N/A'`, and `tool_response` holding the whole merged event.                                                                            |
-| `send_data`             | `gcp.vertex.agent.data`, the replayed `Content[]` as JSON.                                                                                                                                                                                                                                                        |
-| `invoke_workflow`       | `gen_ai.operation.name` `'invoke_workflow'`, `gen_ai.conversation.id`, `adk.workflow.name`, `adk.node.path`.                                                                                                                                                                                                      |
-| `execute_node`          | `gen_ai.operation.name` `'execute_node'`, `adk.node.path`, `adk.node.run_id`, `adk.node.attempt`, `adk.node.status`, `adk.node.interrupt_count`.                                                                                                                                                                  |
+| Span                     | Attributes                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| :----------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invoke_workflow <name>` | `gen_ai.operation.name` `'invoke_workflow'`, `gen_ai.conversation.id`, `gen_ai.workflow.name`, and `gen_ai.workflow.nested` `true` when another workflow span encloses it.                                                                                                                                                                                                                                                              |
+| `invoke_agent <name>`    | `gen_ai.operation.name` `'invoke_agent'`, `gen_ai.agent.name`, `gen_ai.agent.description`, `gen_ai.conversation.id` set to the session id.                                                                                                                                                                                                                                                                                              |
+| `call_llm` (v1)          | `gen_ai.request.model`, `gcp.vertex.agent.session_id`, `gcp.vertex.agent.llm_request`, `gcp.vertex.agent.llm_response`, and, when present, `gen_ai.request.top_p`, `gen_ai.request.max_tokens`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.reasoning.output_tokens`, `gen_ai.response.finish_reasons`.                                                            |
+| `execute_tool <name>`    | `gen_ai.operation.name` `'execute_tool'`, `gen_ai.tool.name`, `gen_ai.tool.description`, `gen_ai.tool.type`, `gen_ai.agent.name`, `gen_ai.tool.call.id`. Under v1 also `gcp.vertex.agent.tool_call_args`, `gcp.vertex.agent.tool_response`, and `gcp.vertex.agent.llm_request` and `gcp.vertex.agent.llm_response` both set to `'{}'`. Under v2, with span content capture, `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result`. |
+| `execute_tool (merged)`  | `gen_ai.operation.name`, `gen_ai.tool.name` and `gen_ai.tool.description` set to `'(merged tools)'`, `gen_ai.tool.call.id` set to the merged event id. Under v1 also `tool_call_args` set to `'N/A'`, `tool_response` holding the merged function responses, and the `'{}'` placeholders.                                                                                                                                               |
+| `send_data`              | `gcp.vertex.agent.data`, the replayed `Content[]` as JSON.                                                                                                                                                                                                                                                                                                                                                                              |
+| `invoke_node <name>`     | `gen_ai.operation.name` `'invoke_node'`, `gen_ai.conversation.id`, and `gcp.vertex.agent.associated_event_ids` holding the ids of the events the node emitted, when it emitted any.                                                                                                                                                                                                                                                     |
+| `execute_node_attempt`   | `gen_ai.operation.name` `'execute_node'`, `adk.node.path`, `adk.node.run_id`, `adk.node.attempt`, `adk.node.status`, `adk.node.interrupt_count`.                                                                                                                                                                                                                                                                                        |
 
-The empty `llm_request` and `llm_response` on tool spans exist because the dev
-server's Trace view expects both keys on every span it renders.
+The empty `llm_request` and `llm_response` on schema v1 tool spans exist because
+the dev server's Trace view expects both keys on every span it renders.
 
 Two spans carry only their name. `invoke_agent <name>` gets its attributes on
 the `runAsync` path and none under `runLive`, and a function call naming a tool
@@ -132,11 +207,13 @@ A few values follow rules worth knowing when you query them:
 - `gen_ai.tool.type` is the tool's class name, such as `FunctionTool`.
 - `gen_ai.tool.call.id` is `'<not specified>'` when the function response
   carries no id.
-- `tool_response` is always a JSON object. A tool result that is not an object,
-  such as a bare string, is wrapped as `{"result": ...}`.
-- `gen_ai.usage.input_tokens` is written whenever the response has usage
-  metadata, as `0` if the prompt token count is missing, while
-  `gen_ai.usage.output_tokens` is written only for a non-zero count.
+- `tool_response` and `gen_ai.tool.call.result` are always JSON objects. A tool
+  result that is not an object, such as a bare string, is wrapped as
+  `{"result": ...}`. Credential secrets, such as tokens, client secrets and API
+  keys inside an auth credential or an `adk_request_credential` call, are
+  removed first.
+- The `call_llm` token counts are the ones `generate_content <model>` carries:
+  `gen_ai.usage.output_tokens` includes thought tokens.
 - `gen_ai.response.finish_reasons` is a one-element array holding the finish
   reason in lower case, such as `['stop']`.
 
@@ -178,10 +255,8 @@ Setting `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental` forces the
 experimental `gen_ai.client.inference.operation.details` record even when
 `ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN=1`.
 
-The schema version selects the log records and the `generate_content <model>`
-span attributes only. The surrounding span tree has not moved to schema v2 yet:
-`invocation` and `call_llm` remain unchanged, and `generate_content <model>` is
-parented under `call_llm`.
+The schema version also selects the span tree, as [Schema
+selection](#schema-selection) describes.
 
 You can wire a `LoggerProvider` either through `maybeSetOtelProviders` (or by
 setting `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`) or by registering your own
@@ -274,10 +349,12 @@ for await (const event of runner.runAsync({
 | `experimentalFeaturesOptIn`     | `ADK_EXPERIMENTAL_TELEMETRY_FEATURES`                 | Feature names; an unknown name is warned about once and dropped |
 
 The first two decide the inference log records and the
-`generate_content <model>` span attributes of the run. The schema version, which
-picks the `gen_ai.provider.name` attribute, always comes from
-`ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN`. `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS`,
-which controls the `gcp.vertex.agent.*` span payloads, has no per-run override.
+`generate_content <model>` span attributes of the run. A per-run
+`captureMessageContent` also decides the `gcp.vertex.agent.*` payloads on ADK's
+own spans: they carry content only for `SPAN_ONLY` and `SPAN_AND_EVENT`.
+Without it, `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS` decides. The schema version,
+which picks the span tree and the `gen_ai.provider.name` attribute, always comes
+from `ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN`.
 
 An operator who must keep the environment in charge sets
 `ADK_TELEMETRY_IGNORE_RUN_CONFIG` to `1` or `true`. Every per-run value is then
@@ -378,11 +455,14 @@ without a code change.
 ### Capturing message content
 
 `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS` decides whether ADK writes payloads onto
-spans. Content is captured when the variable is unset, empty, `true` or `1`.
-Any other value, such as `false`, `0` or `no`, replaces
-`gcp.vertex.agent.llm_request`, `gcp.vertex.agent.llm_response`,
-`gcp.vertex.agent.tool_call_args`, `gcp.vertex.agent.tool_response` and
-`gcp.vertex.agent.data` with `'{}'`.
+its own spans when the run sets no `captureMessageContent`. Content is captured
+unless the variable is `false` or `0` (in any case, with surrounding spaces
+ignored), which replaces `gcp.vertex.agent.llm_request`,
+`gcp.vertex.agent.llm_response`, `gcp.vertex.agent.tool_call_args`,
+`gcp.vertex.agent.tool_response` and `gcp.vertex.agent.data` with `'{}'`. The
+schema v2 tool attributes `gen_ai.tool.call.arguments` and
+`gen_ai.tool.call.result` follow `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`
+instead, like the other `gen_ai.*` content attributes.
 
 Those payloads are the user's prompt, the model's answer, and the arguments and
 results of each tool call. A trace backend usually sits behind a different
@@ -395,8 +475,9 @@ loses only the payloads.
 ## Advanced applications
 
 `getGcpExporters` builds hooks that send spans to Cloud Trace, metrics to Cloud
-Monitoring and log records to Cloud Logging, and `getGcpResource` builds the
-resource that says where the process runs.
+Monitoring and log records to Cloud Logging, all over OTLP/HTTP through
+`telemetry.googleapis.com`, and `getGcpResource` builds the resource that says
+where the process runs.
 
 ```ts
 import {
@@ -416,12 +497,22 @@ const gcpHooks = await getGcpExporters({
 maybeSetOtelProviders([gcpHooks], getGcpResource(projectId));
 ```
 
-| `OtelExportersConfig` field | Default                  | Effect in `getGcpExporters`                                        |
-| :-------------------------- | :----------------------- | :----------------------------------------------------------------- |
-| `enableTracing`             | `false`                  | Adds a batched Cloud Trace span processor.                         |
-| `enableMetrics`             | `false`                  | Adds a Cloud Monitoring reader that exports every 5 s.             |
-| `enableLogging`             | `false`                  | Adds a batched log record processor that exports to Cloud Logging. |
-| `projectId`                 | resolved via credentials | Skips looking up the project a second time when already resolved.  |
+| `OtelExportersConfig` field | Default                  | Effect in `getGcpExporters`                                                                       |
+| :-------------------------- | :----------------------- | :------------------------------------------------------------------------------------------------ |
+| `enableTracing`             | `false`                  | Adds a batched span processor that exports to `https://telemetry.googleapis.com/v1/traces`.       |
+| `enableMetrics`             | `false`                  | Adds a metric reader that exports to `https://telemetry.googleapis.com/v1/metrics` every 5000 ms. |
+| `enableLogging`             | `false`                  | Adds a batched log record processor that exports to Cloud Logging.                                |
+| `projectId`                 | resolved via credentials | Skips looking up the project a second time when already resolved.                                 |
+
+Every request is authenticated with Application Default Credentials and the
+`https://www.googleapis.com/auth/cloud-platform` scope. A failed credential
+lookup logs a warning without the error text, and the request goes out without
+an `Authorization` header. The endpoint takes the project from the
+`gcp.project_id` resource attribute, which `getGcpResource` sets, so pass that
+resource to `maybeSetOtelProviders` as the example does. The mTLS endpoint
+selection described under [Cloud Logging](#cloud-logging) applies to all three
+signals, with `https://telemetry.mtls.googleapis.com/v1/traces` and
+`/v1/metrics` as the mTLS endpoints.
 
 `getGcpExporters` resolves the project through the ambient Google credentials
 when `projectId` is not provided. When no project resolves, it logs a warning
@@ -503,14 +594,6 @@ other trace functions cannot be imported. The framework calls them where it
 opens each span, and the attributes rather than the functions are the contract a
 caller observes. adk-python differs here: `google.adk.telemetry` is importable.
 
-`getGcpExporters` loads each exporter from an optional peer dependency when you
-enable its signal. Install the one you use:
-
-```bash
-npm install @google-cloud/opentelemetry-cloud-trace-exporter
-npm install @google-cloud/opentelemetry-cloud-monitoring-exporter
-```
-
 A trace call never throws. A payload that `JSON.stringify` rejects, such as one
 holding a cycle, is recorded as `'<not serializable>'`, so an unserializable
 tool result costs one attribute rather than the run. A trace call made with no
@@ -519,9 +602,10 @@ active span does nothing.
 `maybeSetOtelProviders` is marked experimental in its documentation, so its
 signature may change.
 
-Cloud Logging export has these gaps:
+Export to `telemetry.googleapis.com` has these gaps, for traces, metrics and
+logs alike:
 
-- The OTLP log exporter in `core` sends JSON, not protobuf.
+- The OTLP exporters in `core` send JSON, not protobuf.
 - No default client certificate source is discovered, so
   `GOOGLE_API_USE_MTLS_ENDPOINT=auto` always picks the plain endpoint, and
   `always` picks the mTLS endpoint without configuring a client certificate.

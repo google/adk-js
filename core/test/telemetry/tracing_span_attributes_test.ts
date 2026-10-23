@@ -26,6 +26,7 @@ import {
   Runner,
   StreamingMode,
   version,
+  Workflow,
 } from '@google/adk';
 import {ApiError, Content, FinishReason} from '@google/genai';
 import {context, SpanStatusCode, trace} from '@opentelemetry/api';
@@ -300,20 +301,11 @@ describe('exported span attributes', () => {
     logs.setGlobalLoggerProvider(loggerProvider);
   });
   describe('traceToolCall', () => {
-    it('sets gen_ai.system', () => {
-      const span = recordSpan('execute_tool test_tool', () =>
-        traceToolCall({
-          tool: createTestTool(),
-          args: {a: 1},
-          functionResponseEvent: createFunctionResponseEvent(),
-          invocationContext: createInvocationContext(),
-        }),
-      );
-
-      expect(span.attributes['gen_ai.system']).toBe('gcp.vertex.agent');
+    beforeEach(() => {
+      vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', '1');
     });
 
-    it('sets gcp.vertex.agent.invocation_id when the invocation context is given', () => {
+    it('sets gen_ai.agent.name and no gen_ai.system', () => {
       const span = recordSpan('execute_tool test_tool', () =>
         traceToolCall({
           tool: createTestTool(),
@@ -323,8 +315,22 @@ describe('exported span attributes', () => {
         }),
       );
 
-      expect(span.attributes['gcp.vertex.agent.invocation_id']).toBe(
-        INVOCATION_ID,
+      expect(span.attributes['gen_ai.agent.name']).toBe('test-agent');
+      expect(span.attributes).not.toHaveProperty('gen_ai.system');
+    });
+
+    it('does not set gcp.vertex.agent.invocation_id', () => {
+      const span = recordSpan('execute_tool test_tool', () =>
+        traceToolCall({
+          tool: createTestTool(),
+          args: {a: 1},
+          functionResponseEvent: createFunctionResponseEvent(),
+          invocationContext: createInvocationContext(),
+        }),
+      );
+
+      expect(span.attributes).not.toHaveProperty(
+        'gcp.vertex.agent.invocation_id',
       );
     });
 
@@ -344,8 +350,7 @@ describe('exported span attributes', () => {
         'gen_ai.tool.name': 'test_tool',
         'gen_ai.tool.type': 'FunctionTool',
         'gen_ai.tool.call.id': 'call-1',
-        'gen_ai.system': 'gcp.vertex.agent',
-        'gcp.vertex.agent.invocation_id': INVOCATION_ID,
+        'gen_ai.agent.name': 'test-agent',
         'gcp.vertex.agent.event_id': EVENT_ID,
         'gcp.vertex.agent.llm_request': '{}',
         'gcp.vertex.agent.llm_response': '{}',
@@ -368,10 +373,9 @@ describe('exported span attributes', () => {
 
       expect(span.attributes['gcp.vertex.agent.tool_call_args']).toBe('{}');
       expect(span.attributes['gcp.vertex.agent.tool_response']).toBe('{}');
-      expect(span.attributes['gen_ai.system']).toBe('gcp.vertex.agent');
-      expect(span.attributes['gcp.vertex.agent.invocation_id']).toBe(
-        INVOCATION_ID,
-      );
+      expect(span.attributes['gen_ai.tool.call.id']).toBe('call-1');
+      expect(span.attributes['gcp.vertex.agent.event_id']).toBe(EVENT_ID);
+      expect(span.attributes['gen_ai.agent.name']).toBe('test-agent');
     });
 
     it('sets the tool call arguments, response and event id', () => {
@@ -397,7 +401,11 @@ describe('exported span attributes', () => {
   });
 
   describe('traceMergedToolCalls', () => {
-    it('sets gen_ai.system and gcp.vertex.agent.invocation_id', () => {
+    beforeEach(() => {
+      vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', '1');
+    });
+
+    it('sets neither gen_ai.system nor gcp.vertex.agent.invocation_id', () => {
       const span = recordSpan('execute_tool (merged)', () =>
         traceMergedToolCalls({
           responseEventId: 'merged-event-id',
@@ -406,9 +414,9 @@ describe('exported span attributes', () => {
         }),
       );
 
-      expect(span.attributes['gen_ai.system']).toBe('gcp.vertex.agent');
-      expect(span.attributes['gcp.vertex.agent.invocation_id']).toBe(
-        INVOCATION_ID,
+      expect(span.attributes).not.toHaveProperty('gen_ai.system');
+      expect(span.attributes).not.toHaveProperty(
+        'gcp.vertex.agent.invocation_id',
       );
     });
 
@@ -432,6 +440,10 @@ describe('exported span attributes', () => {
   });
 
   describe('traceCallLlm', () => {
+    beforeEach(() => {
+      vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', '1');
+    });
+
     it('sets the core llm attributes', () => {
       const llmResponse: LlmResponse = {
         content: {role: 'model', parts: [{text: 'hello'}]},
@@ -923,7 +935,7 @@ describe('exported span attributes', () => {
       );
     });
 
-    it('records error.type on span and still emits v2 log record when inference fails', () => {
+    it('marks the span ERROR without error.type and still emits v2 log record when inference fails', () => {
       const apiError = new ApiError({
         status: 503,
         message: 'service unavailable',
@@ -931,7 +943,7 @@ describe('exported span attributes', () => {
       runInferenceLifecycle({error: apiError});
 
       const gcSpan = getFinishedSpan('generate_content gemini-2.5-flash');
-      expect(gcSpan.attributes['error.type']).toBe('503');
+      expect(gcSpan.attributes).not.toHaveProperty('error.type');
       expect(gcSpan.status.code).toBe(SpanStatusCode.ERROR);
       expect(gcSpan.status.message).toBe('503');
       expect(gcSpan.events.some((e) => e.name === 'exception')).toBe(true);
@@ -1153,7 +1165,8 @@ describe('exported span attributes', () => {
       expect(logExporter.getFinishedLogRecords()).toHaveLength(0);
     });
 
-    it('parents generate_content under call_llm and keeps execute_tool as a sibling under call_llm across a 2-turn tool call', async () => {
+    it('parents generate_content under call_llm and execute_tool under invoke_agent across a 2-turn tool call under v1', async () => {
+      vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', '1');
       const fakeLlm = new FakeTestLlm('gemini-2.5-flash', [
         [
           {
@@ -1228,18 +1241,37 @@ describe('exported span attributes', () => {
           true,
         );
       }
-      expect(
-        callLlmSpanIds.has(toolSpans[0].parentSpanContext?.spanId ?? ''),
-      ).toBe(true);
+      const agentSpan = getFinishedSpan('invoke_agent tool_agent');
+      expect(toolSpans[0].parentSpanContext?.spanId).toBe(
+        agentSpan.spanContext().spanId,
+      );
+      for (const callLlmSpan of callLlmSpans) {
+        expect(callLlmSpan.parentSpanContext?.spanId).toBe(
+          agentSpan.spanContext().spanId,
+        );
+      }
       expect(gcSpanIds.has(toolSpans[0].parentSpanContext?.spanId ?? '')).toBe(
         false,
       );
 
-      const logRecords = logExporter.getFinishedLogRecords();
-      expect(logRecords).toHaveLength(2);
-      expect(logRecords.map((r) => r.spanContext?.spanId)).toEqual(
-        gcSpans.map((s) => s.spanContext().spanId),
-      );
+      const gcSpanOrder = gcSpans.map((s) => s.spanContext().spanId);
+      expect(
+        logExporter
+          .getFinishedLogRecords()
+          .map((r) => [
+            gcSpanOrder.indexOf(r.spanContext?.spanId ?? ''),
+            r.eventName,
+          ]),
+      ).toEqual([
+        [0, 'gen_ai.system.message'],
+        [0, 'gen_ai.user.message'],
+        [0, 'gen_ai.choice'],
+        [1, 'gen_ai.system.message'],
+        [1, 'gen_ai.user.message'],
+        [1, 'gen_ai.user.message'],
+        [1, 'gen_ai.user.message'],
+        [1, 'gen_ai.choice'],
+      ]);
     });
 
     it('records error on generate_content span and emits log record when LlmAgent model throws', async () => {
@@ -1278,8 +1310,12 @@ describe('exported span attributes', () => {
         .getFinishedSpans()
         .filter((s) => s.name === 'generate_content gemini-2.5-flash');
       expect(gcSpans).toHaveLength(1);
-      expect(gcSpans[0].attributes['error.type']).toBe('TypeError');
-      expect(gcSpans[0].status.code).toBe(SpanStatusCode.ERROR);
+      expect(gcSpans[0].attributes).not.toHaveProperty('error.type');
+      expect(gcSpans[0].status).toEqual({
+        code: SpanStatusCode.ERROR,
+        message: 'TypeError',
+      });
+      expect(gcSpans[0].events.some((e) => e.name === 'exception')).toBe(true);
 
       const logRecords = logExporter.getFinishedLogRecords();
       expect(logRecords).toHaveLength(1);
@@ -1479,5 +1515,656 @@ describe('exported span attributes', () => {
         'gcp.gemini',
       );
     });
+  });
+});
+
+const SECRET = 'secret-token-1';
+
+function createToolResponseEvent(response: Record<string, unknown>): Event {
+  return createEvent({
+    id: EVENT_ID,
+    invocationId: INVOCATION_ID,
+    author: 'test-agent',
+    content: {
+      parts: [
+        {
+          functionResponse: {id: 'call-1', name: 'test_tool', response},
+        },
+      ],
+    },
+  });
+}
+
+function createCredentialResponseEvent(): Event {
+  return createToolResponseEvent({
+    status: 'connected',
+    credential: {
+      authType: 'oauth2',
+      oauth2: {clientId: 'client-1', accessToken: SECRET},
+    },
+  });
+}
+
+function createCyclicResponseEvent(): Event {
+  const response: Record<string, unknown> = {status: 'connected'};
+  response['self'] = response;
+  return createToolResponseEvent(response);
+}
+
+class StoredCredential {
+  readonly authType = 'oauth2';
+  readonly oauth2 = {clientId: 'client-1', accessToken: SECRET};
+}
+
+function createClassInstanceResponseEvent(): Event {
+  return createToolResponseEvent({
+    status: 'connected',
+    credential: new StoredCredential(),
+  });
+}
+
+/** Runs one turn of `agent` in a new session and returns its events. */
+async function runTurn(
+  agent: LlmAgent,
+  sessionId: string,
+  options: {stopAfterFirstEvent?: boolean} = {},
+): Promise<Event[]> {
+  const sessionService = new InMemorySessionService();
+  await sessionService.createSession({
+    appName: 'test-app',
+    userId: 'test-user',
+    sessionId,
+  });
+  const runner = new Runner({appName: 'test-app', agent, sessionService});
+  const events: Event[] = [];
+  for await (const event of runner.runAsync({
+    userId: 'test-user',
+    sessionId,
+    newMessage: {role: 'user', parts: [{text: 'run tool'}]},
+  })) {
+    events.push(event);
+    if (options.stopAfterFirstEvent) {
+      break;
+    }
+  }
+  return events;
+}
+
+function createToolCallingLlm(): FakeTestLlm {
+  return new FakeTestLlm('gemini-2.5-flash', [
+    [
+      {
+        content: {
+          role: 'model',
+          parts: [{functionCall: {id: 'call-1', name: 'test_tool', args: {}}}],
+        },
+        finishReason: FinishReason.STOP,
+      },
+    ],
+    [
+      {
+        content: {role: 'model', parts: [{text: 'tool completed'}]},
+        finishReason: FinishReason.STOP,
+      },
+    ],
+  ]);
+}
+
+describe('schema v2 span attributes', () => {
+  describe('traceToolCall', () => {
+    it('records no gcp.vertex.agent placeholders', () => {
+      const span = recordSpan('execute_tool test_tool', () =>
+        traceToolCall({
+          tool: createTestTool(),
+          args: {a: 1},
+          functionResponseEvent: createFunctionResponseEvent(),
+          invocationContext: createInvocationContext(),
+        }),
+      );
+
+      expect(span.attributes).toEqual({
+        'gen_ai.operation.name': 'execute_tool',
+        'gen_ai.tool.description': 'A test tool',
+        'gen_ai.tool.name': 'test_tool',
+        'gen_ai.tool.type': 'FunctionTool',
+        'gen_ai.agent.name': 'test-agent',
+        'gen_ai.tool.call.id': 'call-1',
+        'gcp.vertex.agent.event_id': EVENT_ID,
+      });
+    });
+
+    it.each(['SPAN_ONLY', 'SPAN_AND_EVENT'])(
+      'records the tool call arguments and result with %s capture',
+      (mode) => {
+        vi.stubEnv('OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT', mode);
+
+        const span = recordSpan('execute_tool test_tool', () =>
+          traceToolCall({
+            tool: createTestTool(),
+            args: {a: 1},
+            functionResponseEvent: createFunctionResponseEvent(),
+            invocationContext: createInvocationContext(),
+          }),
+        );
+
+        expect(span.attributes['gen_ai.tool.call.arguments']).toBe('{"a":1}');
+        expect(span.attributes['gen_ai.tool.call.result']).toBe(
+          '{"result":"ok"}',
+        );
+      },
+    );
+
+    it.each(['NO_CONTENT', 'EVENT_ONLY'])(
+      'records no tool call content with %s capture',
+      (mode) => {
+        vi.stubEnv('OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT', mode);
+
+        const span = recordSpan('execute_tool test_tool', () =>
+          traceToolCall({
+            tool: createTestTool(),
+            args: {a: 1},
+            functionResponseEvent: createFunctionResponseEvent(),
+            invocationContext: createInvocationContext(),
+          }),
+        );
+
+        expect(span.attributes).not.toHaveProperty(
+          'gen_ai.tool.call.arguments',
+        );
+        expect(span.attributes).not.toHaveProperty('gen_ai.tool.call.result');
+      },
+    );
+
+    it('records no result when the tool returned no response', () => {
+      vi.stubEnv(
+        'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT',
+        'SPAN_ONLY',
+      );
+
+      const span = recordSpan('execute_tool test_tool', () =>
+        traceToolCall({
+          tool: createTestTool(),
+          args: {a: 1},
+          error: new TypeError('tool failed'),
+          invocationContext: createInvocationContext(),
+        }),
+      );
+
+      expect(span.attributes['gen_ai.tool.call.arguments']).toBe('{"a":1}');
+      expect(span.attributes).not.toHaveProperty('gen_ai.tool.call.result');
+      expect(span.attributes['error.type']).toBe('TypeError');
+      expect(span.status.code).toBe(SpanStatusCode.ERROR);
+    });
+
+    it('removes credential secrets from the tool call result', () => {
+      vi.stubEnv(
+        'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT',
+        'SPAN_ONLY',
+      );
+
+      const span = recordSpan('execute_tool test_tool', () =>
+        traceToolCall({
+          tool: createTestTool(),
+          args: {},
+          functionResponseEvent: createCredentialResponseEvent(),
+          invocationContext: createInvocationContext(),
+        }),
+      );
+
+      const result = span.attributes['gen_ai.tool.call.result'];
+      expect(result).not.toContain(SECRET);
+      expect(JSON.parse(String(result))).toEqual({
+        status: 'connected',
+        credential: {authType: 'oauth2', oauth2: {clientId: 'client-1'}},
+      });
+    });
+  });
+
+  it('removes credential secrets from the schema v1 tool response', () => {
+    vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', '1');
+
+    const span = recordSpan('execute_tool test_tool', () =>
+      traceToolCall({
+        tool: createTestTool(),
+        args: {},
+        functionResponseEvent: createCredentialResponseEvent(),
+        invocationContext: createInvocationContext(),
+      }),
+    );
+
+    const response = span.attributes['gcp.vertex.agent.tool_response'];
+    expect(response).not.toContain(SECRET);
+    expect(response).toContain('client-1');
+  });
+
+  it('records only the function responses, redacted, on the schema v1 merged span', () => {
+    vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', '1');
+
+    const span = recordSpan('execute_tool (merged)', () =>
+      traceMergedToolCalls({
+        responseEventId: 'merged-event-id',
+        functionResponseEvent: createCredentialResponseEvent(),
+        invocationContext: createInvocationContext(),
+      }),
+    );
+
+    expect(
+      JSON.parse(String(span.attributes['gcp.vertex.agent.tool_response'])),
+    ).toEqual([
+      {
+        id: 'call-1',
+        name: 'test_tool',
+        response: {
+          status: 'connected',
+          credential: {authType: 'oauth2', oauth2: {clientId: 'client-1'}},
+        },
+      },
+    ]);
+  });
+
+  describe('tool results that cannot be redacted as plain JSON', () => {
+    it('records a cyclic tool call result as not serializable', () => {
+      vi.stubEnv(
+        'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT',
+        'SPAN_ONLY',
+      );
+
+      const span = recordSpan('execute_tool test_tool', () =>
+        traceToolCall({
+          tool: createTestTool(),
+          args: {},
+          functionResponseEvent: createCyclicResponseEvent(),
+          invocationContext: createInvocationContext(),
+        }),
+      );
+
+      expect(span.attributes['gen_ai.tool.call.result']).toBe(
+        '<not serializable>',
+      );
+      expect(span.status.code).toBe(SpanStatusCode.UNSET);
+    });
+
+    it('records a cyclic schema v1 tool response as not serializable', () => {
+      vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', '1');
+
+      const span = recordSpan('execute_tool test_tool', () =>
+        traceToolCall({
+          tool: createTestTool(),
+          args: {},
+          functionResponseEvent: createCyclicResponseEvent(),
+          invocationContext: createInvocationContext(),
+        }),
+      );
+
+      expect(span.attributes['gcp.vertex.agent.tool_response']).toBe(
+        '<not serializable>',
+      );
+      expect(span.status.code).toBe(SpanStatusCode.UNSET);
+    });
+
+    it('records cyclic merged responses as not serializable', () => {
+      vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', '1');
+
+      const span = recordSpan('execute_tool (merged)', () =>
+        traceMergedToolCalls({
+          responseEventId: 'merged-event-id',
+          functionResponseEvent: createCyclicResponseEvent(),
+          invocationContext: createInvocationContext(),
+        }),
+      );
+
+      expect(span.attributes['gcp.vertex.agent.tool_response']).toBe(
+        '<not serializable>',
+      );
+    });
+
+    it('records cyclic merged responses as {} when span content is off', () => {
+      vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', '1');
+      vi.stubEnv('ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS', 'false');
+
+      const span = recordSpan('execute_tool (merged)', () =>
+        traceMergedToolCalls({
+          responseEventId: 'merged-event-id',
+          functionResponseEvent: createCyclicResponseEvent(),
+          invocationContext: createInvocationContext(),
+        }),
+      );
+
+      expect(span.attributes['gcp.vertex.agent.tool_response']).toBe('{}');
+    });
+
+    it('removes credential secrets held by a class instance from the tool call result', () => {
+      vi.stubEnv(
+        'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT',
+        'SPAN_ONLY',
+      );
+
+      const span = recordSpan('execute_tool test_tool', () =>
+        traceToolCall({
+          tool: createTestTool(),
+          args: {},
+          functionResponseEvent: createClassInstanceResponseEvent(),
+          invocationContext: createInvocationContext(),
+        }),
+      );
+
+      expect(
+        JSON.parse(String(span.attributes['gen_ai.tool.call.result'])),
+      ).toEqual({
+        status: 'connected',
+        credential: {authType: 'oauth2', oauth2: {clientId: 'client-1'}},
+      });
+    });
+
+    it('removes credential secrets held by a class instance from the schema v1 tool response', () => {
+      vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', '1');
+
+      const span = recordSpan('execute_tool test_tool', () =>
+        traceToolCall({
+          tool: createTestTool(),
+          args: {},
+          functionResponseEvent: createClassInstanceResponseEvent(),
+          invocationContext: createInvocationContext(),
+        }),
+      );
+
+      const response = span.attributes['gcp.vertex.agent.tool_response'];
+      expect(response).not.toContain(SECRET);
+      expect(response).toContain('client-1');
+    });
+
+    it('removes credential secrets held by a class instance from merged responses', () => {
+      vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', '1');
+
+      const span = recordSpan('execute_tool (merged)', () =>
+        traceMergedToolCalls({
+          responseEventId: 'merged-event-id',
+          functionResponseEvent: createClassInstanceResponseEvent(),
+          invocationContext: createInvocationContext(),
+        }),
+      );
+
+      const response = span.attributes['gcp.vertex.agent.tool_response'];
+      expect(response).not.toContain(SECRET);
+      expect(response).toContain('client-1');
+    });
+  });
+
+  it('records only the identifiers on the merged span', () => {
+    const span = recordSpan('execute_tool (merged)', () =>
+      traceMergedToolCalls({
+        responseEventId: 'merged-event-id',
+        functionResponseEvent: createFunctionResponseEvent(),
+        invocationContext: createInvocationContext(),
+      }),
+    );
+
+    expect(span.attributes).toEqual({
+      'gen_ai.operation.name': 'execute_tool',
+      'gen_ai.tool.name': '(merged tools)',
+      'gen_ai.tool.description': '(merged tools)',
+      'gen_ai.tool.call.id': 'merged-event-id',
+      'gcp.vertex.agent.event_id': 'merged-event-id',
+    });
+  });
+
+  it('makes traceCallLlm a no-op', () => {
+    const span = recordSpan('some_span', () =>
+      traceCallLlm({
+        invocationContext: createInvocationContext(),
+        eventId: EVENT_ID,
+        llmRequest: createTestLlmRequest(),
+        llmResponse: {finishReason: FinishReason.STOP},
+      }),
+    );
+
+    expect(span.attributes).toEqual({});
+  });
+});
+
+describe('span tree of a runner turn', () => {
+  it('parents generate_content and execute_tool under invoke_agent under v2', async () => {
+    await runTurn(
+      new LlmAgent({
+        name: 'tool_agent',
+        model: createToolCallingLlm(),
+        tools: [createTestTool()],
+      }),
+      'session-v2-tree',
+    );
+
+    const spans = exporter.getFinishedSpans();
+    expect(spans.map((s) => s.name).sort()).toEqual([
+      'execute_tool test_tool',
+      'generate_content gemini-2.5-flash',
+      'generate_content gemini-2.5-flash',
+      'invoke_agent tool_agent',
+      'invoke_workflow tool_agent',
+    ]);
+    const root = getFinishedSpan('invoke_workflow tool_agent');
+    expect(root.parentSpanContext).toBeUndefined();
+    expect(root.attributes).toEqual({
+      'gen_ai.operation.name': 'invoke_workflow',
+      'gen_ai.conversation.id': 'session-v2-tree',
+      'gen_ai.workflow.name': 'tool_agent',
+    });
+    const agentSpan = getFinishedSpan('invoke_agent tool_agent');
+    expect(agentSpan.parentSpanContext?.spanId).toBe(root.spanContext().spanId);
+    for (const span of spans.filter(
+      (s) => s.name !== 'invoke_agent tool_agent' && s !== root,
+    )) {
+      expect(span.parentSpanContext?.spanId).toBe(
+        agentSpan.spanContext().spanId,
+      );
+    }
+
+    const logRecords = logExporter.getFinishedLogRecords();
+    expect(logRecords).toHaveLength(2);
+    expect(logRecords.map((r) => r.spanContext?.spanId)).toEqual(
+      spans
+        .filter((s) => s.name === 'generate_content gemini-2.5-flash')
+        .map((s) => s.spanContext().spanId),
+    );
+  });
+
+  it('records the emitted function response event id on execute_tool', async () => {
+    const events = await runTurn(
+      new LlmAgent({
+        name: 'tool_agent',
+        model: createToolCallingLlm(),
+        tools: [createTestTool()],
+      }),
+      'session-tool-event',
+    );
+
+    const functionResponseEvent = events.find((event) =>
+      event.content?.parts?.some((part) => part.functionResponse),
+    );
+    expect(functionResponseEvent).toBeDefined();
+    expect(
+      getFinishedSpan('execute_tool test_tool').attributes[
+        'gcp.vertex.agent.event_id'
+      ],
+    ).toBe(functionResponseEvent?.id);
+  });
+
+  it.each([
+    {schema: '1', root: 'invocation'},
+    {schema: '2', root: 'invoke_workflow failing_agent'},
+  ])(
+    'marks invoke_agent and the $root root ERROR when an error escapes',
+    async ({schema, root}) => {
+      vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', schema);
+      const agent = new LlmAgent({
+        name: 'failing_agent',
+        model: createToolCallingLlm(),
+        beforeAgentCallback: () => {
+          throw new RangeError(`callback failed with ${SECRET}`);
+        },
+      });
+
+      await expect(runTurn(agent, `session-error-v${schema}`)).rejects.toThrow(
+        RangeError,
+      );
+
+      for (const name of [root, 'invoke_agent failing_agent']) {
+        const span = getFinishedSpan(name);
+        expect(span.status).toEqual({
+          code: SpanStatusCode.ERROR,
+          message: 'RangeError',
+        });
+        expect(span.events.some((e) => e.name === 'exception')).toBe(true);
+      }
+    },
+  );
+
+  it('does not mark the root ERROR when the consumer stops early', async () => {
+    await runTurn(
+      new LlmAgent({
+        name: 'tool_agent',
+        model: createToolCallingLlm(),
+        tools: [createTestTool()],
+      }),
+      'session-early-stop',
+      {stopAfterFirstEvent: true},
+    );
+
+    expect(getFinishedSpan('invoke_workflow tool_agent').status.code).toBe(
+      SpanStatusCode.UNSET,
+    );
+  });
+
+  it('records the call_llm attributes under v1 when a before-model callback answers', async () => {
+    vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', '1');
+    const events = await runTurn(
+      new LlmAgent({
+        name: 'short_circuit_agent',
+        model: createToolCallingLlm(),
+        beforeModelCallback: () => ({
+          content: {role: 'model', parts: [{text: 'short-circuited'}]},
+        }),
+      }),
+      'session-callback-v1',
+    );
+
+    expect(events).toHaveLength(1);
+    expect(getFinishedSpan('call_llm').attributes).toMatchObject({
+      'gen_ai.system': 'gcp.vertex.agent',
+      'gcp.vertex.agent.event_id': events[0].id,
+    });
+  });
+
+  it('runs a transferred agent as a sibling of the transferring agent', async () => {
+    vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', '1');
+    const model = new FakeTestLlm('gemini-2.5-flash', [
+      [
+        {
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  name: 'transfer_to_agent',
+                  args: {agent_name: 'specialist'},
+                },
+              },
+            ],
+          },
+          finishReason: FinishReason.STOP,
+        },
+      ],
+      [
+        {
+          content: {role: 'model', parts: [{text: 'done'}]},
+          finishReason: FinishReason.STOP,
+        },
+      ],
+    ]);
+    await runTurn(
+      new LlmAgent({
+        name: 'coordinator',
+        model,
+        subAgents: [new LlmAgent({name: 'specialist', model})],
+      }),
+      'session-transfer',
+    );
+
+    const root = getFinishedSpan('invocation');
+    for (const name of [
+      'invoke_agent coordinator',
+      'invoke_agent specialist',
+    ]) {
+      expect(getFinishedSpan(name).parentSpanContext?.spanId).toBe(
+        root.spanContext().spanId,
+      );
+    }
+  });
+
+  it('runs an agent transferred to inside a nested workflow under that workflow', async () => {
+    const model = new FakeTestLlm('gemini-2.5-flash', [
+      [
+        {
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  name: 'transfer_to_agent',
+                  args: {agent_name: 'specialist'},
+                },
+              },
+            ],
+          },
+          finishReason: FinishReason.STOP,
+        },
+      ],
+      [
+        {
+          content: {role: 'model', parts: [{text: 'done'}]},
+          finishReason: FinishReason.STOP,
+        },
+      ],
+    ]);
+    const nested = new Workflow({
+      name: 'inner_workflow',
+      edges: [
+        [
+          'START',
+          new LlmAgent({
+            name: 'coordinator',
+            model,
+            subAgents: [new LlmAgent({name: 'specialist', model})],
+          }),
+        ],
+      ],
+    });
+    const sessionService = new InMemorySessionService();
+    await sessionService.createSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'session-nested-transfer',
+    });
+    const runner = new Runner({
+      appName: 'test-app',
+      agent: new Workflow({name: 'outer_workflow', edges: [['START', nested]]}),
+      sessionService,
+    });
+    for await (const _event of runner.runAsync({
+      userId: 'test-user',
+      sessionId: 'session-nested-transfer',
+      newMessage: {role: 'user', parts: [{text: 'run tool'}]},
+    })) {
+      // Consume all events
+    }
+
+    const nestedSpan = getFinishedSpan('invoke_workflow inner_workflow');
+    for (const name of [
+      'invoke_agent coordinator',
+      'invoke_agent specialist',
+    ]) {
+      expect(getFinishedSpan(name).parentSpanContext?.spanId).toBe(
+        nestedSpan.spanContext().spanId,
+      );
+    }
   });
 });

@@ -5,7 +5,7 @@
  */
 
 import {GenerateContentConfig, Modality, Schema} from '@google/genai';
-import {context, trace} from '@opentelemetry/api';
+import {context, trace, type Span} from '@opentelemetry/api';
 import {FinishTaskTool} from '../tools/finish_task_tool.js';
 import {FunctionTool} from '../tools/function_tool.js';
 import {AsyncQueue} from '../utils/async_queue.js';
@@ -52,7 +52,10 @@ import {Context} from './context.js';
 
 import {
   finishInferenceSpan,
+  getAgentParentContext,
   isReportedFinishReason,
+  recordSpanError,
+  resolveSchemaVersion,
   runAsyncGeneratorWithOtelContext,
   startInferenceSpan,
   traceCallLlm,
@@ -1659,69 +1662,86 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // =========================================================================
     // Calls the LLM
     // =========================================================================
-    const span = tracer.startSpan('call_llm');
-    const ctx = trace.setSpan(context.active(), span);
-    try {
-      yield* runAsyncGeneratorWithOtelContext<LlmAgent, Event>(
-        ctx,
-        this,
-        async function* () {
-          const responsesGenerator = async function* (this: LlmAgent) {
-            for await (const llmResponse of this.callLlmAsync(
+    // The model call runs under `call_llm` (schema v1 only), while the
+    // post-processing after it, tool calls and transfers included, runs under
+    // the caller's context so that their spans are siblings of `call_llm`.
+    const callerContext = context.active();
+    const responsesGenerator = async function* (this: LlmAgent) {
+      const callLlmSpan =
+        resolveSchemaVersion() < 2
+          ? tracer.startSpan('call_llm', undefined, callerContext)
+          : undefined;
+      const llmResponses = traceCallLlmSpan(
+        callLlmSpan,
+        runAsyncGeneratorWithOtelContext(
+          callLlmSpan
+            ? trace.setSpan(callerContext, callLlmSpan)
+            : callerContext,
+          this,
+          function () {
+            return this.callLlmAsync(
               invocationContext,
               llmRequest,
               modelResponseEvent,
-            )) {
-              if (invocationContext.abortSignal?.aborted) {
-                return;
-              }
-
-              if (
-                invocationContext.runConfig?.supportCfc &&
-                isEvent(llmResponse)
-              ) {
-                modelResponseEvent.id = createNewEventId();
-                modelResponseEvent.timestamp = new Date().getTime();
-                yield llmResponse;
-                continue;
-              }
-
-              // ======================================================================
-              // Postprocess after calling the LLM
-              // ======================================================================
-              for await (const event of this.postprocess(
-                invocationContext,
-                llmRequest,
-                llmResponse,
-                modelResponseEvent,
-              )) {
-                if (invocationContext.abortSignal?.aborted) {
-                  return;
-                }
-
-                // Partial chunks of one streaming response share the base id;
-                // mint a fresh id only after a complete event so distinct
-                // responses differ.
-                if (!event.partial) {
-                  modelResponseEvent.id = createNewEventId();
-                  modelResponseEvent.timestamp = new Date().getTime();
-                }
-                yield event;
-              }
-            }
-          };
-
-          yield* this.runAndHandleError(
-            responsesGenerator.call(this),
-            invocationContext,
-            llmRequest,
-            modelResponseEvent,
-          );
-        },
+            );
+          },
+        ),
       );
-    } finally {
-      span.end();
-    }
+      for await (const llmResponse of llmResponses) {
+        if (invocationContext.abortSignal?.aborted) {
+          return;
+        }
+
+        if (invocationContext.runConfig?.supportCfc && isEvent(llmResponse)) {
+          modelResponseEvent.id = createNewEventId();
+          modelResponseEvent.timestamp = new Date().getTime();
+          yield llmResponse;
+          continue;
+        }
+
+        // ======================================================================
+        // Postprocess after calling the LLM
+        // ======================================================================
+        for await (const event of runAsyncGeneratorWithOtelContext(
+          callerContext,
+          this,
+          function () {
+            return this.postprocess(
+              invocationContext,
+              llmRequest,
+              llmResponse,
+              modelResponseEvent,
+            );
+          },
+        )) {
+          if (invocationContext.abortSignal?.aborted) {
+            return;
+          }
+
+          // Partial chunks of one streaming response share the base id;
+          // mint a fresh id only after a complete event so distinct
+          // responses differ.
+          if (!event.partial) {
+            modelResponseEvent.id = createNewEventId();
+            modelResponseEvent.timestamp = new Date().getTime();
+          }
+          yield event;
+        }
+      }
+    };
+
+    yield* runAsyncGeneratorWithOtelContext<LlmAgent, Event>(
+      callerContext,
+      this,
+      function () {
+        return this.runAndHandleError(
+          responsesGenerator.call(this),
+          invocationContext,
+          llmRequest,
+          modelResponseEvent,
+        );
+      },
+    );
   }
 
   private async *postprocess(
@@ -1880,10 +1900,17 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     yield functionResponseEvent;
 
     // If model instruct to transfer to an agent, run the transferred agent.
+    // It runs under the span this agent's span opened under, as its sibling.
     const nextAgentName = functionResponseEvent.actions.transferToAgent;
     if (nextAgentName) {
       const nextAgent = this.getAgentByName(invocationContext, nextAgentName);
-      for await (const event of nextAgent.runAsync(invocationContext)) {
+      for await (const event of runAsyncGeneratorWithOtelContext(
+        getAgentParentContext(context.active()),
+        nextAgent,
+        function () {
+          return this.runAsync(invocationContext);
+        },
+      )) {
         if (invocationContext.abortSignal?.aborted) {
           return;
         }
@@ -1934,6 +1961,14 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     }
 
     if (beforeModelResponse) {
+      // The model is not called, but trace consumers key off the event id
+      // that `call_llm` carries.
+      traceCallLlm({
+        invocationContext,
+        eventId: modelResponseEvent.id,
+        llmRequest,
+        llmResponse: beforeModelResponse,
+      });
       yield beforeModelResponse;
       return;
     }
@@ -2019,47 +2054,64 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
             ),
         );
 
-        for await (const llmResponse of traceModelStream({
-          stream: responsesGenerator,
-          gcSpan,
-          invocationContext,
-        })) {
-          traceCallLlm({
+        // Partial responses would overwrite each other on `call_llm`, so only
+        // a complete response is traced there, or the last partial one.
+        let deferredPartial: {
+          eventId: string;
+          llmResponse: LlmResponse;
+        } | null = null;
+        try {
+          for await (const llmResponse of traceModelStream({
+            stream: responsesGenerator,
+            gcSpan,
             invocationContext,
-            eventId: modelResponseEvent.id,
-            llmRequest,
-            llmResponse,
-          });
-          if (!gcSpan.ended) {
-            traceInferenceResult({
-              invocationContext,
-              generateContentSpan: gcSpan,
-              llmResponse,
-            });
-            if (isReportedFinishReason(llmResponse.finishReason)) {
-              finishInferenceSpan({
-                generateContentSpan: gcSpan,
+          })) {
+            if (llmResponse.partial) {
+              deferredPartial = {eventId: modelResponseEvent.id, llmResponse};
+            } else {
+              deferredPartial = null;
+              traceCallLlm({
                 invocationContext,
+                eventId: modelResponseEvent.id,
+                llmRequest,
+                llmResponse,
               });
             }
+            if (!gcSpan.ended) {
+              traceInferenceResult({
+                invocationContext,
+                generateContentSpan: gcSpan,
+                llmResponse,
+              });
+              if (isReportedFinishReason(llmResponse.finishReason)) {
+                finishInferenceSpan({
+                  generateContentSpan: gcSpan,
+                  invocationContext,
+                });
+              }
+            }
+
+            if (invocationContext.abortSignal?.aborted) {
+              return;
+            }
+
+            // Runs after_model_callback if it exists.
+            const alteredLlmResponse = await this.handleAfterModelCallback(
+              invocationContext,
+              llmResponse,
+              modelResponseEvent,
+            );
+
+            if (invocationContext.abortSignal?.aborted) {
+              return;
+            }
+
+            yield alteredLlmResponse ?? llmResponse;
           }
-
-          if (invocationContext.abortSignal?.aborted) {
-            return;
+        } finally {
+          if (deferredPartial) {
+            traceCallLlm({invocationContext, llmRequest, ...deferredPartial});
           }
-
-          // Runs after_model_callback if it exists.
-          const alteredLlmResponse = await this.handleAfterModelCallback(
-            invocationContext,
-            llmResponse,
-            modelResponseEvent,
-          );
-
-          if (invocationContext.abortSignal?.aborted) {
-            return;
-          }
-
-          yield alteredLlmResponse ?? llmResponse;
         }
       }
     } finally {
@@ -2232,6 +2284,26 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
   // TODO - b/425992518: LlmAgent features not implemented yet.
   // - codeExecutor
   // - configuring agents from a YAML file
+}
+
+/**
+ * Ends the `call_llm` span when the model call finishes or is closed, and
+ * marks it ERROR when an error escapes the model call.
+ */
+async function* traceCallLlmSpan<T>(
+  span: Span | undefined,
+  stream: AsyncGenerator<T, void, void>,
+): AsyncGenerator<T, void, void> {
+  try {
+    yield* stream;
+  } catch (error: unknown) {
+    if (span) {
+      recordSpanError(span, error);
+    }
+    throw error;
+  } finally {
+    span?.end();
+  }
 }
 
 async function* traceModelStream({
