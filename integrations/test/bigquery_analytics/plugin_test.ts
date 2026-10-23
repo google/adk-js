@@ -305,6 +305,7 @@ describe('BigQueryAgentAnalyticsPlugin', () => {
     expect(eventTypes()).toEqual([
       'USER_MESSAGE_RECEIVED',
       'INVOCATION_STARTING',
+      'AGENT_STARTING',
       'LLM_REQUEST',
       'LLM_RESPONSE',
       'TOOL_STARTING',
@@ -312,6 +313,7 @@ describe('BigQueryAgentAnalyticsPlugin', () => {
       'LLM_REQUEST',
       'LLM_RESPONSE',
       'AGENT_RESPONSE',
+      'AGENT_COMPLETED',
       'INVOCATION_COMPLETED',
     ]);
     for (const row of appended) {

@@ -485,29 +485,47 @@ export abstract class BaseAgent<
   protected async handleBeforeAgentCallback(
     invocationContext: InvocationContext,
   ): Promise<Event | undefined> {
-    if (this.canonicalBeforeAgentCallbacks.length === 0) {
+    const hasPlugins = Boolean(invocationContext.pluginManager?.hasPlugins);
+    if (!hasPlugins && this.canonicalBeforeAgentCallbacks.length === 0) {
       return undefined;
     }
 
     const callbackContext = new Context({invocationContext});
-    for (const callback of this.canonicalBeforeAgentCallbacks) {
-      const content = await callback(callbackContext);
+    let content = hasPlugins
+      ? await invocationContext.pluginManager.runBeforeAgentCallback({
+          agent: this,
+          callbackContext,
+        })
+      : undefined;
 
-      if (invocationContext.abortSignal?.aborted) {
-        return;
+    if (invocationContext.abortSignal?.aborted) {
+      return;
+    }
+
+    if (!content) {
+      for (const callback of this.canonicalBeforeAgentCallbacks) {
+        content = await callback(callbackContext);
+
+        if (invocationContext.abortSignal?.aborted) {
+          return;
+        }
+
+        if (content) {
+          break;
+        }
       }
+    }
 
-      if (content) {
-        invocationContext.endInvocation = true;
+    if (content) {
+      invocationContext.endInvocation = true;
 
-        return createEvent({
-          invocationId: invocationContext.invocationId,
-          author: this.name,
-          branch: invocationContext.branch,
-          content,
-          actions: callbackContext.eventActions,
-        });
-      }
+      return createEvent({
+        invocationId: invocationContext.invocationId,
+        author: this.name,
+        branch: invocationContext.branch,
+        content,
+        actions: callbackContext.eventActions,
+      });
     }
 
     if (callbackContext.state.hasDelta()) {
@@ -532,27 +550,45 @@ export abstract class BaseAgent<
   protected async handleAfterAgentCallback(
     invocationContext: InvocationContext,
   ): Promise<Event | undefined> {
-    if (this.canonicalAfterAgentCallbacks.length === 0) {
+    const hasPlugins = Boolean(invocationContext.pluginManager?.hasPlugins);
+    if (!hasPlugins && this.canonicalAfterAgentCallbacks.length === 0) {
       return undefined;
     }
 
     const callbackContext = new Context({invocationContext});
-    for (const callback of this.canonicalAfterAgentCallbacks) {
-      const content = await callback(callbackContext);
+    let content = hasPlugins
+      ? await invocationContext.pluginManager.runAfterAgentCallback({
+          agent: this,
+          callbackContext,
+        })
+      : undefined;
 
-      if (invocationContext.abortSignal?.aborted) {
-        return;
-      }
+    if (invocationContext.abortSignal?.aborted) {
+      return;
+    }
 
-      if (content) {
-        return createEvent({
-          invocationId: invocationContext.invocationId,
-          author: this.name,
-          branch: invocationContext.branch,
-          content,
-          actions: callbackContext.eventActions,
-        });
+    if (!content) {
+      for (const callback of this.canonicalAfterAgentCallbacks) {
+        content = await callback(callbackContext);
+
+        if (invocationContext.abortSignal?.aborted) {
+          return;
+        }
+
+        if (content) {
+          break;
+        }
       }
+    }
+
+    if (content) {
+      return createEvent({
+        invocationId: invocationContext.invocationId,
+        author: this.name,
+        branch: invocationContext.branch,
+        content,
+        actions: callbackContext.eventActions,
+      });
     }
 
     if (callbackContext.state.hasDelta()) {

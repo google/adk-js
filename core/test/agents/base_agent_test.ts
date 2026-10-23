@@ -8,6 +8,7 @@ import {
   AgentTransferLlmRequestProcessor,
   BaseAgent,
   BaseAgentConfig,
+  BasePlugin,
   Context,
   Event,
   FunctionTool,
@@ -41,9 +42,17 @@ class MockAgent extends BaseAgent {
   }
 
   protected async *runLiveImpl(
-    _context: InvocationContext,
+    context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    // Not needed for this test
+    yield createEvent({
+      invocationId: context.invocationId,
+      author: this.name,
+      branch: context.branch,
+      content: {
+        role: 'model',
+        parts: [{text: `Live response from ${this.name}`}],
+      },
+    });
   }
 }
 
@@ -699,6 +708,555 @@ describe('BaseAgent', () => {
         expect(events).toHaveLength(1);
         expect(events[0].content?.parts?.[0]?.text).toBe(
           'Response from test_agent',
+        );
+      });
+    });
+
+    describe('plugin beforeAgentCallback and afterAgentCallback', () => {
+      class TestPlugin extends BasePlugin {
+        beforeAgentCallbackSpy = vi.fn();
+        afterAgentCallbackSpy = vi.fn();
+        beforeAgentReturnContent?: Content;
+        afterAgentReturnContent?: Content;
+
+        constructor(name = 'test_plugin') {
+          super(name);
+        }
+
+        override async beforeAgentCallback(params: {
+          agent: BaseAgent;
+          callbackContext: Context;
+        }): Promise<Content | undefined> {
+          this.beforeAgentCallbackSpy(params);
+          return this.beforeAgentReturnContent;
+        }
+
+        override async afterAgentCallback(params: {
+          agent: BaseAgent;
+          callbackContext: Context;
+        }): Promise<Content | undefined> {
+          this.afterAgentCallbackSpy(params);
+          return this.afterAgentReturnContent;
+        }
+      }
+
+      it.each([
+        {
+          caseName: 'empty PluginManager',
+          pluginManager: new PluginManager(),
+        },
+        {
+          caseName: 'undefined pluginManager',
+          pluginManager: undefined as unknown as PluginManager,
+        },
+      ])(
+        'does not construct Context when neither plugins nor canonical callbacks are present on a session-less InvocationContext ($caseName)',
+        async ({pluginManager}) => {
+          const agent = new MockAgent({name: 'test_agent'});
+          const sessionLessContext = new InvocationContext({
+            invocationId: 'test_invocation',
+            agent,
+            session: undefined as unknown as Session,
+            pluginManager,
+          });
+
+          const events = await collectEvents(agent, sessionLessContext);
+
+          expect(events).toHaveLength(1);
+          expect(events[0].content?.parts?.[0]?.text).toBe(
+            'Response from test_agent',
+          );
+        },
+      );
+
+      it('invokes plugin beforeAgentCallback and afterAgentCallback when agent has no callbacks', async () => {
+        const plugin = new TestPlugin();
+        const agent = new MockAgent({name: 'test_agent'});
+        const parentContext = new InvocationContext({
+          invocationId: 'test_invocation',
+          agent,
+          session: createSession({
+            id: 'test-session',
+            appName: 'test-app',
+            userId: 'test-user',
+          }),
+          pluginManager: new PluginManager([plugin]),
+        });
+
+        const events = await collectEvents(agent, parentContext);
+
+        expect(plugin.beforeAgentCallbackSpy).toHaveBeenCalledOnce();
+        expect(plugin.beforeAgentCallbackSpy).toHaveBeenCalledWith({
+          agent,
+          callbackContext: expect.any(Context),
+        });
+        expect(plugin.afterAgentCallbackSpy).toHaveBeenCalledOnce();
+        expect(plugin.afterAgentCallbackSpy).toHaveBeenCalledWith({
+          agent,
+          callbackContext: expect.any(Context),
+        });
+        expect(events).toHaveLength(1);
+        expect(events[0].content?.parts?.[0]?.text).toBe(
+          'Response from test_agent',
+        );
+      });
+
+      it('invokes plugin beforeAgentCallback and afterAgentCallback in runLive', async () => {
+        const plugin = new TestPlugin();
+        const agent = new MockAgent({name: 'test_agent'});
+        const parentContext = new InvocationContext({
+          invocationId: 'test_invocation',
+          agent,
+          session: createSession({
+            id: 'test-session',
+            appName: 'test-app',
+            userId: 'test-user',
+          }),
+          pluginManager: new PluginManager([plugin]),
+        });
+
+        const events: Event[] = [];
+        for await (const event of agent.runLive(parentContext)) {
+          events.push(event);
+        }
+
+        expect(plugin.beforeAgentCallbackSpy).toHaveBeenCalledOnce();
+        expect(plugin.afterAgentCallbackSpy).toHaveBeenCalledOnce();
+        expect(events).toHaveLength(1);
+        expect(events[0].content?.parts?.[0]?.text).toBe(
+          'Live response from test_agent',
+        );
+      });
+
+      it('short-circuits subsequent plugins, canonical callbacks, and agent execution when a plugin beforeAgentCallback returns content', async () => {
+        class FirstShortCircuitPlugin extends BasePlugin {
+          constructor() {
+            super('first_plugin');
+          }
+          override async beforeAgentCallback({
+            callbackContext,
+          }: {
+            agent: BaseAgent;
+            callbackContext: Context;
+          }): Promise<Content | undefined> {
+            callbackContext.state.set('short_circuit_key', 'from_first_plugin');
+            return {
+              role: 'model',
+              parts: [{text: 'Bypassed by plugin beforeAgentCallback'}],
+            };
+          }
+        }
+
+        const secondPlugin = new TestPlugin('second_plugin');
+        const canonicalBeforeCb = vi.fn(() => undefined);
+        const agent = new MockAgent({
+          name: 'test_agent',
+          beforeAgentCallback: canonicalBeforeCb,
+        });
+        const parentContext = new InvocationContext({
+          invocationId: 'test_invocation',
+          agent,
+          session: createSession({
+            id: 'test-session',
+            appName: 'test-app',
+            userId: 'test-user',
+          }),
+          pluginManager: new PluginManager([
+            new FirstShortCircuitPlugin(),
+            secondPlugin,
+          ]),
+        });
+
+        const events = await collectEvents(agent, parentContext);
+
+        expect(secondPlugin.beforeAgentCallbackSpy).not.toHaveBeenCalled();
+        expect(canonicalBeforeCb).not.toHaveBeenCalled();
+        expect(secondPlugin.afterAgentCallbackSpy).not.toHaveBeenCalled();
+        expect(events).toHaveLength(1);
+        expect(events[0].author).toBe('test_agent');
+        expect(events[0].content?.parts?.[0]?.text).toBe(
+          'Bypassed by plugin beforeAgentCallback',
+        );
+        expect(events[0].actions.stateDelta).toEqual({
+          short_circuit_key: 'from_first_plugin',
+        });
+      });
+
+      it('runs canonical beforeAgentCallback after plugin beforeAgentCallback returns undefined and preserves plugin state delta', async () => {
+        class StateBeforePlugin extends BasePlugin {
+          constructor() {
+            super('state_before_plugin');
+          }
+          override async beforeAgentCallback({
+            callbackContext,
+          }: {
+            agent: BaseAgent;
+            callbackContext: Context;
+          }): Promise<Content | undefined> {
+            callbackContext.state.set('plugin_before_key', 'from_plugin');
+            return undefined;
+          }
+        }
+
+        const canonicalBeforeCb = vi.fn((context: Context) => {
+          context.state.set('canonical_before_key', 'from_canonical');
+          return {
+            role: 'model',
+            parts: [{text: 'Short-circuited by canonical beforeAgentCallback'}],
+          };
+        });
+        const agent = new MockAgent({
+          name: 'test_agent',
+          beforeAgentCallback: canonicalBeforeCb,
+        });
+        const parentContext = new InvocationContext({
+          invocationId: 'test_invocation',
+          agent,
+          session: createSession({
+            id: 'test-session',
+            appName: 'test-app',
+            userId: 'test-user',
+          }),
+          pluginManager: new PluginManager([new StateBeforePlugin()]),
+        });
+
+        const events = await collectEvents(agent, parentContext);
+
+        expect(canonicalBeforeCb).toHaveBeenCalledOnce();
+        expect(events).toHaveLength(1);
+        expect(events[0].content?.parts?.[0]?.text).toBe(
+          'Short-circuited by canonical beforeAgentCallback',
+        );
+        expect(events[0].actions.stateDelta).toEqual({
+          plugin_before_key: 'from_plugin',
+          canonical_before_key: 'from_canonical',
+        });
+      });
+
+      it('yields afterAgentCallback event when plugin afterAgentCallback returns content', async () => {
+        const plugin = new TestPlugin();
+        plugin.afterAgentReturnContent = {
+          role: 'model',
+          parts: [{text: 'Overridden by plugin afterAgentCallback'}],
+        };
+        const canonicalAfterCb = vi.fn(() => undefined);
+        const agent = new MockAgent({
+          name: 'test_agent',
+          afterAgentCallback: canonicalAfterCb,
+        });
+        const parentContext = new InvocationContext({
+          invocationId: 'test_invocation',
+          agent,
+          session: createSession({
+            id: 'test-session',
+            appName: 'test-app',
+            userId: 'test-user',
+          }),
+          pluginManager: new PluginManager([plugin]),
+        });
+
+        const events = await collectEvents(agent, parentContext);
+
+        expect(plugin.beforeAgentCallbackSpy).toHaveBeenCalledOnce();
+        expect(canonicalAfterCb).not.toHaveBeenCalled();
+        expect(plugin.afterAgentCallbackSpy).toHaveBeenCalledOnce();
+        expect(events).toHaveLength(2);
+        expect(events[0].content?.parts?.[0]?.text).toBe(
+          'Response from test_agent',
+        );
+        expect(events[1].content?.parts?.[0]?.text).toBe(
+          'Overridden by plugin afterAgentCallback',
+        );
+      });
+
+      it('runs canonical afterAgentCallback after plugin afterAgentCallback returns undefined and preserves plugin state delta', async () => {
+        class StateAfterPlugin extends BasePlugin {
+          constructor() {
+            super('state_after_plugin');
+          }
+          override async afterAgentCallback({
+            callbackContext,
+          }: {
+            agent: BaseAgent;
+            callbackContext: Context;
+          }): Promise<Content | undefined> {
+            callbackContext.state.set('plugin_after_key', 'from_plugin');
+            return undefined;
+          }
+        }
+
+        const canonicalAfterCb = vi.fn((context: Context) => {
+          context.state.set('canonical_after_key', 'from_canonical');
+          return {
+            role: 'model',
+            parts: [{text: 'Appended by canonical afterAgentCallback'}],
+          };
+        });
+        const agent = new MockAgent({
+          name: 'test_agent',
+          afterAgentCallback: canonicalAfterCb,
+        });
+        const parentContext = new InvocationContext({
+          invocationId: 'test_invocation',
+          agent,
+          session: createSession({
+            id: 'test-session',
+            appName: 'test-app',
+            userId: 'test-user',
+          }),
+          pluginManager: new PluginManager([new StateAfterPlugin()]),
+        });
+
+        const events = await collectEvents(agent, parentContext);
+
+        expect(canonicalAfterCb).toHaveBeenCalledOnce();
+        expect(events).toHaveLength(2);
+        expect(events[0].content?.parts?.[0]?.text).toBe(
+          'Response from test_agent',
+        );
+        expect(events[1].content?.parts?.[0]?.text).toBe(
+          'Appended by canonical afterAgentCallback',
+        );
+        expect(events[1].actions.stateDelta).toEqual({
+          plugin_after_key: 'from_plugin',
+          canonical_after_key: 'from_canonical',
+        });
+      });
+
+      it('emits state delta event when plugin beforeAgentCallback mutates state', async () => {
+        class StatePlugin extends BasePlugin {
+          constructor() {
+            super('state_plugin');
+          }
+          override async beforeAgentCallback({
+            callbackContext,
+          }: {
+            agent: BaseAgent;
+            callbackContext: Context;
+          }): Promise<Content | undefined> {
+            callbackContext.state.set('plugin_before_key', 'val_before');
+            return undefined;
+          }
+        }
+
+        const plugin = new StatePlugin();
+        const agent = new MockAgent({name: 'test_agent'});
+        const parentContext = new InvocationContext({
+          invocationId: 'test_invocation',
+          agent,
+          session: createSession({
+            id: 'test-session',
+            appName: 'test-app',
+            userId: 'test-user',
+          }),
+          pluginManager: new PluginManager([plugin]),
+        });
+
+        const events = await collectEvents(agent, parentContext);
+
+        expect(events).toHaveLength(2);
+        expect(events[0].author).toBe('test_agent');
+        expect(events[0].content).toBeUndefined();
+        expect(events[0].actions.stateDelta).toEqual({
+          plugin_before_key: 'val_before',
+        });
+        expect(events[1].content?.parts?.[0]?.text).toBe(
+          'Response from test_agent',
+        );
+      });
+
+      it('emits state delta event when plugin afterAgentCallback mutates state', async () => {
+        class StatePlugin extends BasePlugin {
+          constructor() {
+            super('state_plugin');
+          }
+          override async afterAgentCallback({
+            callbackContext,
+          }: {
+            agent: BaseAgent;
+            callbackContext: Context;
+          }): Promise<Content | undefined> {
+            callbackContext.state.set('plugin_after_key', 'val_after');
+            return undefined;
+          }
+        }
+
+        const plugin = new StatePlugin();
+        const agent = new MockAgent({name: 'test_agent'});
+        const parentContext = new InvocationContext({
+          invocationId: 'test_invocation',
+          agent,
+          session: createSession({
+            id: 'test-session',
+            appName: 'test-app',
+            userId: 'test-user',
+          }),
+          pluginManager: new PluginManager([plugin]),
+        });
+
+        const events = await collectEvents(agent, parentContext);
+
+        expect(events).toHaveLength(2);
+        expect(events[0].content?.parts?.[0]?.text).toBe(
+          'Response from test_agent',
+        );
+        expect(events[1].author).toBe('test_agent');
+        expect(events[1].content).toBeUndefined();
+        expect(events[1].actions.stateDelta).toEqual({
+          plugin_after_key: 'val_after',
+        });
+      });
+
+      it('stops processing when abortSignal is triggered during plugin beforeAgentCallback', async () => {
+        const beforeController = new AbortController();
+        class AbortBeforePlugin extends BasePlugin {
+          constructor() {
+            super('abort_before_plugin');
+          }
+          override async beforeAgentCallback(): Promise<Content | undefined> {
+            beforeController.abort();
+            return {role: 'model', parts: [{text: 'Should not be emitted'}]};
+          }
+        }
+
+        const canonicalBeforeCb = vi.fn(() => undefined);
+        const agentBefore = new MockAgent({
+          name: 'test_agent',
+          beforeAgentCallback: canonicalBeforeCb,
+        });
+        const beforeContext = new InvocationContext({
+          invocationId: 'test_invocation',
+          agent: agentBefore,
+          session: createSession({
+            id: 'test-session',
+            appName: 'test-app',
+            userId: 'test-user',
+          }),
+          pluginManager: new PluginManager([new AbortBeforePlugin()]),
+          abortSignal: beforeController.signal,
+        });
+
+        const beforeEvents = await collectEvents(agentBefore, beforeContext);
+        expect(beforeEvents).toHaveLength(0);
+        expect(canonicalBeforeCb).not.toHaveBeenCalled();
+      });
+
+      it('stops processing when abortSignal is triggered during plugin afterAgentCallback', async () => {
+        const afterController = new AbortController();
+        class AbortAfterPlugin extends BasePlugin {
+          constructor() {
+            super('abort_after_plugin');
+          }
+          override async afterAgentCallback(): Promise<Content | undefined> {
+            afterController.abort();
+            return {role: 'model', parts: [{text: 'Should not be emitted'}]};
+          }
+        }
+
+        const canonicalAfterCb = vi.fn(() => undefined);
+        const agentAfter = new MockAgent({
+          name: 'test_agent',
+          afterAgentCallback: canonicalAfterCb,
+        });
+        const afterContext = new InvocationContext({
+          invocationId: 'test_invocation',
+          agent: agentAfter,
+          session: createSession({
+            id: 'test-session',
+            appName: 'test-app',
+            userId: 'test-user',
+          }),
+          pluginManager: new PluginManager([new AbortAfterPlugin()]),
+          abortSignal: afterController.signal,
+        });
+
+        const afterEvents = await collectEvents(agentAfter, afterContext);
+        expect(afterEvents).toHaveLength(1);
+        expect(afterEvents[0].content?.parts?.[0]?.text).toBe(
+          'Response from test_agent',
+        );
+        expect(canonicalAfterCb).not.toHaveBeenCalled();
+      });
+
+      it('stops processing without emitting state delta when canonical callback aborts after plugin mutated state', async () => {
+        const controller = new AbortController();
+        class StatePlugin extends BasePlugin {
+          constructor() {
+            super('state_plugin');
+          }
+          override async beforeAgentCallback({
+            callbackContext,
+          }: {
+            agent: BaseAgent;
+            callbackContext: Context;
+          }): Promise<Content | undefined> {
+            callbackContext.state.set('aborted_key', 'should_not_emit');
+            return undefined;
+          }
+        }
+
+        const agent = new MockAgent({
+          name: 'test_agent',
+          beforeAgentCallback: () => {
+            controller.abort();
+            return undefined;
+          },
+        });
+        const parentContext = new InvocationContext({
+          invocationId: 'test_invocation',
+          agent,
+          session: createSession({
+            id: 'test-session',
+            appName: 'test-app',
+            userId: 'test-user',
+          }),
+          pluginManager: new PluginManager([new StatePlugin()]),
+          abortSignal: controller.signal,
+        });
+
+        const events = await collectEvents(agent, parentContext);
+        expect(events).toHaveLength(0);
+      });
+
+      it('notifies onAgentErrorCallback when plugin beforeAgentCallback throws', async () => {
+        const originalError = new Error('plugin before failure');
+        const onAgentErrorSpy = vi.fn();
+
+        class ThrowingPlugin extends BasePlugin {
+          constructor() {
+            super('throwing_plugin');
+          }
+          override async beforeAgentCallback(): Promise<Content | undefined> {
+            throw originalError;
+          }
+          override async onAgentErrorCallback(params: {
+            agent: BaseAgent;
+            callbackContext: Context;
+            error: Error;
+          }): Promise<void> {
+            onAgentErrorSpy(params);
+          }
+        }
+
+        const agent = new MockAgent({name: 'test_agent'});
+        const parentContext = new InvocationContext({
+          invocationId: 'test_invocation',
+          agent,
+          session: createSession({
+            id: 'test-session',
+            appName: 'test-app',
+            userId: 'test-user',
+          }),
+          pluginManager: new PluginManager([new ThrowingPlugin()]),
+        });
+
+        await expect(collectEvents(agent, parentContext)).rejects.toThrow(
+          "Error in plugin 'throwing_plugin' during 'beforeAgentCallback' callback",
+        );
+        expect(onAgentErrorSpy).toHaveBeenCalledOnce();
+        expect(onAgentErrorSpy.mock.calls[0][0].agent).toBe(agent);
+        expect(onAgentErrorSpy.mock.calls[0][0].error.cause).toBe(
+          originalError,
         );
       });
     });
