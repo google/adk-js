@@ -45,6 +45,11 @@ export interface SerializedNodeRef {
  * An agent or node in the form the dev UI consumes. Keys are snake_case to
  * match adk-python's `serialize_agent`, which is the contract the shared
  * adk-web bundle was built against.
+ *
+ * Runtime Contract "Ask 1" additions (`instruction`, `tools` schema): these
+ * are additive fields the dev UI ignores today but that rubric-based eval
+ * metrics need to score correctly over HTTP. adk-web is unaffected because
+ * new fields are optional.
  */
 export interface SerializedAgent {
   name: string;
@@ -52,10 +57,32 @@ export interface SerializedAgent {
   description?: string;
   model?: string;
   rerun_on_resume?: boolean;
+  /**
+   * The agent's system instruction, as delivered to the LLM at definition
+   * time. When it's an `InstructionProvider` function (resolved dynamically
+   * per turn), emitted as the marker string `"<dynamic>"` — the actual
+   * per-call text is available via v1.1 LlmRequest capture instead.
+   */
+  instruction?: string;
   agent?: SerializedAgent;
   sub_agents?: SerializedAgent[];
-  tools?: SerializedNodeRef[];
+  tools?: SerializedTool[];
   graph?: {nodes: SerializedAgent[]; edges: SerializedEdge[]};
+}
+
+/**
+ * One function tool with its full JSON Schema, as the LLM sees it. Replaces
+ * the pre-v1 `SerializedNodeRef` (name-only) shape. Consumers that only need
+ * the name continue to work — every SerializedTool is a superset.
+ */
+export interface SerializedTool {
+  /** Tool name — mandatory. Matches `SerializedNodeRef.name` for compat. */
+  name: string;
+  /** Backward-compat marker so tools sit in the same UI position as before. */
+  type?: string;
+  description?: string;
+  /** JSON Schema of the tool's parameters, if the tool declares one. */
+  parameters?: Record<string, unknown>;
 }
 
 /** The `build_graph` payload — adk-python's `serialize_app_info`. */
@@ -211,14 +238,58 @@ export function serializeAgent(target: GraphTarget): SerializedAgent {
       serialized.model = target.model;
     }
 
+    // Instruction: emit the string form directly; for the `InstructionProvider`
+    // function form (resolved dynamically per turn) emit a `"<dynamic>"`
+    // marker — the actual per-call text is available via v1.1 LlmRequest
+    // capture. Empty string is treated the same as no instruction.
+    const instruction = (target as {instruction?: unknown}).instruction;
+    if (typeof instruction === 'string' && instruction) {
+      serialized.instruction = instruction;
+    } else if (typeof instruction === 'function') {
+      serialized.instruction = '<dynamic>';
+    }
+
     // `tools`, not `canonicalTools()`: the async form resolves toolsets by
     // calling out to their providers, which a structure request should not do.
     // A toolset therefore contributes nothing here — it has no name until it is
     // resolved into the tools it holds.
-    const tools = target.tools
-      .map((tool) => (tool as {name?: unknown})?.name)
-      .filter((name): name is string => typeof name === 'string' && !!name)
-      .map((name) => ({name, type: 'tool'}));
+    const tools: SerializedTool[] = [];
+    for (const tool of target.tools) {
+      const name = (tool as {name?: unknown})?.name;
+      if (typeof name !== 'string' || !name) {
+        continue;
+      }
+
+      const serializedTool: SerializedTool = {name, type: 'tool'};
+
+      const description = (tool as {description?: unknown}).description;
+      if (typeof description === 'string' && description) {
+        serializedTool.description = description;
+      }
+
+      // `_getDeclaration()` is the same call the LLM request processor makes
+      // to hand tools to the model, so what we serialize here is exactly what
+      // the LLM sees — the point of Ask 1. A tool that declines to declare
+      // (returns undefined) shows up as name-only, matching pre-Ask-1
+      // behaviour for that tool.
+      const getDeclaration = (
+        tool as {_getDeclaration?: () => {parameters?: unknown} | undefined}
+      )._getDeclaration;
+      if (typeof getDeclaration === 'function') {
+        try {
+          const declaration = getDeclaration.call(tool);
+          const parameters = declaration?.parameters;
+          if (parameters && typeof parameters === 'object') {
+            serializedTool.parameters = parameters as Record<string, unknown>;
+          }
+        } catch {
+          // A misbehaving tool should not break structure serialization —
+          // fall back to name/description only.
+        }
+      }
+
+      tools.push(serializedTool);
+    }
     if (tools.length) {
       serialized.tools = tools;
     }
