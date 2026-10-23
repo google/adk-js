@@ -1,5 +1,31 @@
 # Changelog
 
+## [2.4.0](https://github.com/google/adk-js/compare/devtools-v2.3.0...devtools-v2.4.0) (2026-10-23)
+
+
+### Features
+
+* **dev:** serve a sample's README.md to the web UI ([#853](https://github.com/google/adk-js/issues/853)) ([a10c58e](https://github.com/google/adk-js/commit/a10c58e7bfd443487d37180883736cc488a5c3ee))
+* **devtools:** export version from the @google/adk-devtools entry point ([#1098](https://github.com/google/adk-js/issues/1098)) ([adc9b61](https://github.com/google/adk-js/commit/adc9b6174d07f32d1291d13901aeec06dbe136de))
+* port adk-python v0.3.0 changes to agents, auth, cli (+6 more) ([#1091](https://github.com/google/adk-js/issues/1091)) ([0eb3ac5](https://github.com/google/adk-js/commit/0eb3ac5df65daacd9e217cf9fa014ee601f1813b))
+
+
+### Bug Fixes
+
+* **cli:** pin the generated Dockerfile to Node 24 ([#1075](https://github.com/google/adk-js/issues/1075)) ([ccaee44](https://github.com/google/adk-js/commit/ccaee44150f241cbf9db1dfcf53ac6b3992a8c31))
+* **deploy:** stop double-bundling the deployed agent in agent_engine/cloud_run images ([#909](https://github.com/google/adk-js/issues/909)) ([0713105](https://github.com/google/adk-js/commit/07131057c1154011d32bc2ff931aa0d1e773a375))
+* **deploy:** stop echoing the rejected value in the Dockerfile newline error ([#1096](https://github.com/google/adk-js/issues/1096)) ([be51de9](https://github.com/google/adk-js/commit/be51de92cb075c386c5584da0697a735b51b4e3e))
+* **dev:** import Client from the @google-cloud/vertexai root in the Agent Engine deploy CLI ([#1056](https://github.com/google/adk-js/issues/1056)) ([afb7aca](https://github.com/google/adk-js/commit/afb7aca7942dd32151edc1786d7e9e0a20d451e5))
+* resolve the exit_loop built-in tool in YAML agent configs ([#572](https://github.com/google/adk-js/issues/572)) ([fa62265](https://github.com/google/adk-js/commit/fa622652b46bc7bab4eed3eaccf16be4595fd303))
+* resolve Windows CI port-exclusion EACCES and temp-dir EBUSY failures ([#1071](https://github.com/google/adk-js/issues/1071)) ([ecfe257](https://github.com/google/adk-js/commit/ecfe257fcd046af401d28b3f3378b5eae10ffea2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^2.3.0 to ^2.4.0
+
 ## [2.3.0](https://github.com/google/adk-js/compare/devtools-v2.2.0...devtools-v2.3.0) (2026-10-13)
 
 
