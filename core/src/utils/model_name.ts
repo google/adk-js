@@ -7,7 +7,9 @@
 import {getBooleanEnvVar} from './env_aware_utils.js';
 
 const MODEL_NAME_PATTERN =
-  '^projects/[^/]+/locations/[^/]+/publishers/[^/]+/models/(.+)$';
+  /^projects\/[^/]+\/locations\/[^/]+\/publishers\/[^/]+\/models\/(.+)$/;
+const APIGEE_MODEL_NAME_PATTERN =
+  /^apigee\/(?:(?:gemini|vertex_ai)\/)?(?:v1(?:beta\d*)?\/)?(?:models\/)?(.+)$/;
 
 /**
  * Extract the actual model name from either simple or path-based format.
@@ -17,9 +19,30 @@ const MODEL_NAME_PATTERN =
  * @return The extracted model name (e.g., "gemini-2.5-pro")
  */
 export function extractModelName(modelString: string): string {
-  const match = modelString.match(MODEL_NAME_PATTERN);
-  if (match) {
-    return match[1];
+  if (!modelString) {
+    return '';
+  }
+
+  for (const pattern of [MODEL_NAME_PATTERN, APIGEE_MODEL_NAME_PATTERN]) {
+    const match = modelString.match(pattern);
+    if (match) {
+      return match[1];
+    }
+  }
+
+  if (modelString.startsWith('projects/')) {
+    return modelString;
+  }
+
+  if (modelString.startsWith('models/')) {
+    return modelString.slice('models/'.length);
+  }
+
+  if (modelString.includes('/')) {
+    const candidate = modelString.slice(modelString.lastIndexOf('/') + 1);
+    if (candidate.startsWith('gemini-')) {
+      return candidate;
+    }
   }
 
   // If it's not a path-based model, return as-is (simple model name)
@@ -32,7 +55,11 @@ export function extractModelName(modelString: string): string {
  * @param modelString Either a simple model name or path - based model name
  * @return true if it's a Gemini model, false otherwise.
  */
-export function isGeminiModel(modelString: string): boolean {
+export function isGeminiModel(modelString?: string): boolean {
+  if (!modelString) {
+    return false;
+  }
+
   const modelName = extractModelName(modelString);
 
   return modelName.startsWith('gemini-');

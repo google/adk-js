@@ -5,19 +5,31 @@
  */
 
 /**
- * Span attributes on a traced tool call
+ * Span attributes and GenAI log records on a traced tool call
  * ../../docs/guides/telemetry/index.md
  *
  * One prompt produces one `execute_tool get_order_status` span between two
- * `call_llm` spans. The tool span carries `gen_ai.system = "gcp.vertex.agent"`,
- * so a trace backend filtering on that key keeps the tool call as well as the
- * model calls, and `gcp.vertex.agent.invocation_id`, so every span of one turn
- * groups together.
+ * `call_llm` spans, each wrapping a `generate_content gemini-flash-latest`
+ * child span and emitting one `gen_ai.client.inference.operation.details`
+ * OpenTelemetry log record. The tool span carries
+ * `gen_ai.system = "gcp.vertex.agent"`, so a trace backend filtering on that
+ * key keeps the tool call as well as the model calls, and
+ * `gcp.vertex.agent.invocation_id`, so every span of one turn groups together.
  *
- * `maybeSetOtelProviders` does not replace a tracer provider that is already
- * registered globally. The `adk web` dev server registers one before it loads
- * this file, so the console exporter below prints nothing there; read the
- * Trace view instead. Running the sample from the CLI prints the spans.
+ * By default, inference log records omit prompt and response content
+ * (`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=NO_CONTENT`). Set
+ * `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=EVENT_ONLY` to include
+ * `gen_ai.input.messages`, `gen_ai.output.messages`, and
+ * `gen_ai.system_instructions` on the log records, and set
+ * `ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN=1` to emit the stable
+ * `gen_ai.system.message`, `gen_ai.user.message`, and `gen_ai.choice` records
+ * instead.
+ *
+ * `maybeSetOtelProviders` does not replace a tracer or logger provider that is
+ * already registered globally. The `adk web` dev server registers a tracer
+ * provider before it loads this file, so the console span exporter below
+ * prints nothing there; read the Trace view instead. Running the sample from
+ * the CLI prints both the spans and the log records.
  *
  * REQUIRES an API key. Set GEMINI_API_KEY, then:
  *   npm run sample -- samples/telemetry/agent.ts
@@ -25,13 +37,24 @@
 
 import {FunctionTool, LlmAgent, maybeSetOtelProviders} from '@google/adk';
 import {
+  ConsoleLogRecordExporter,
+  SimpleLogRecordProcessor,
+} from '@opentelemetry/sdk-logs';
+import {
   ConsoleSpanExporter,
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
 import {z} from 'zod';
 
 maybeSetOtelProviders([
-  {spanProcessors: [new SimpleSpanProcessor(new ConsoleSpanExporter())]},
+  {
+    spanProcessors: [new SimpleSpanProcessor(new ConsoleSpanExporter())],
+    logRecordProcessors: [
+      new SimpleLogRecordProcessor({
+        exporter: new ConsoleLogRecordExporter(),
+      }),
+    ],
+  },
 ]);
 
 const ORDER_STATUS: Record<string, string> = {

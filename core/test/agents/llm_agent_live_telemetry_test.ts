@@ -223,6 +223,11 @@ describe('call_llm span lifecycle', () => {
       .getFinishedSpans()
       .map((s) => s.name)
       .sort();
-    expect(spanNames).toEqual(['call_llm', 'invocation', 'invoke_agent root']);
+    expect(spanNames).toEqual([
+      'call_llm',
+      'generate_content fake-text-llm',
+      'invocation',
+      'invoke_agent root',
+    ]);
   });
 });
