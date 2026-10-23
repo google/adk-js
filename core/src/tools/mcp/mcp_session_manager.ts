@@ -14,6 +14,12 @@ import {formatError} from '../../utils/error_utils.js';
 import {logger} from '../../utils/logger.js';
 import {loadOptionalPeer, OptionalPeer} from '../../utils/optional_peer.js';
 
+import {
+  createObservedEventSourceFetch,
+  createObservedFetch,
+  shouldReportMcpHttpExchanges,
+} from './mcp_http_telemetry.js';
+
 /**
  * The optional peer backing every MCP connection.
  *
@@ -113,7 +119,9 @@ export type MCPConnectionParams =
  *
  * The deprecated `header` field is used only when
  * `transportOptions.requestInit` is undefined. The result is a new object, so
- * the caller's `transportOptions` is never modified.
+ * the caller's `transportOptions` is never modified. When MCP HTTP exchange
+ * reporting is on, the caller's `fetch` (or the global one) is wrapped to
+ * observe each exchange; otherwise no `fetch` is added.
  */
 function buildTransportOptions(
   params: StreamableHTTPConnectionParams,
@@ -123,18 +131,26 @@ function buildTransportOptions(
     transportOptions?.requestInit === undefined
       ? (header as Record<string, string> | undefined)
       : transportOptions.requestInit.headers;
-  return {
+  const options: StreamableHTTPClientTransportOptions = {
     ...transportOptions,
     requestInit: {
       ...transportOptions?.requestInit,
       headers: mergeTrackingHeaders(callerHeaders),
     },
   };
+  if (shouldReportMcpHttpExchanges()) {
+    options.fetch = createObservedFetch(transportOptions?.fetch);
+  }
+  return options;
 }
 
 /**
  * Builds the options for an SSE transport, with the ADK tracking headers
  * merged into `requestInit.headers`.
+ *
+ * When MCP HTTP exchange reporting is on, the caller's `fetch` (or the global
+ * one) is wrapped to observe each exchange, and so is a caller-supplied
+ * `eventSourceInit.fetch`, which the transport prefers for the SSE stream.
  */
 function buildSseTransportOptions(
   params: SseConnectionParams,
@@ -144,13 +160,24 @@ function buildSseTransportOptions(
     transportOptions?.requestInit === undefined
       ? ((header ?? headers) as Record<string, string> | undefined)
       : transportOptions.requestInit.headers;
-  return {
+  const options: SSEClientTransportOptions = {
     ...transportOptions,
     requestInit: {
       ...transportOptions?.requestInit,
       headers: mergeTrackingHeaders(callerHeaders),
     },
   };
+  if (shouldReportMcpHttpExchanges()) {
+    options.fetch = createObservedFetch(transportOptions?.fetch);
+    const eventSourceFetch = transportOptions?.eventSourceInit?.fetch;
+    if (eventSourceFetch) {
+      options.eventSourceInit = {
+        ...transportOptions.eventSourceInit,
+        fetch: createObservedEventSourceFetch(eventSourceFetch),
+      };
+    }
+  }
+  return options;
 }
 
 /**

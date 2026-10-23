@@ -39,6 +39,8 @@ import {
   StreamingMode,
   toA2a,
   tryGetResetFunc,
+  WebUiLog,
+  WebUiLogProcessor,
 } from '@google/adk';
 import {Content} from '@google/genai';
 import {trace, TracerProvider} from '@opentelemetry/api';
@@ -175,6 +177,7 @@ export class AdkApiServer {
   private readonly sessionTraceDict: Record<string, string[]> =
     Object.create(null);
   private memoryExporter: InMemoryExporter;
+  private readonly webUiLogProcessor = new WebUiLogProcessor();
   private readonly logger: Logger;
   private readonly a2a: boolean;
   private readonly a2aAuthToken?: string;
@@ -235,12 +238,13 @@ export class AdkApiServer {
   }
 
   private async setupTelemetry(): Promise<void> {
-    const internalExporters = [
-      new SimpleSpanProcessor(new ApiServerSpanExporter(this.traceDict)),
-      new SimpleSpanProcessor(this.memoryExporter),
-    ];
-
-    await setupTelemetry(this.otelToCloud, internalExporters);
+    await setupTelemetry(this.otelToCloud, {
+      spanProcessors: [
+        new SimpleSpanProcessor(new ApiServerSpanExporter(this.traceDict)),
+        new SimpleSpanProcessor(this.memoryExporter),
+      ],
+      logRecordProcessors: [this.webUiLogProcessor],
+    });
 
     if (this.registerProcessors) {
       const tracerProvider = trace.getTracerProvider();
@@ -422,6 +426,12 @@ export class AdkApiServer {
           if (spans.length === 0) {
             return res.json([]);
           }
+          const logsBySpanId = new Map<string, WebUiLog[]>();
+          for (const log of this.webUiLogProcessor.getFinishedLogs()) {
+            const spanLogs = logsBySpanId.get(log.spanId) ?? [];
+            spanLogs.push(log);
+            logsBySpanId.set(log.spanId, spanLogs);
+          }
           const spanData = spans.map((span) => ({
             name: span.name,
             span_id: span.spanContext().spanId,
@@ -430,6 +440,15 @@ export class AdkApiServer {
             end_time: hrTimeToNanoseconds(span.endTime),
             attributes: {...span.attributes},
             parent_span_id: span.parentSpanContext?.spanId || null,
+            // The dev UI rejects a null here, so a span without records gets
+            // an empty list.
+            logs: (logsBySpanId.get(span.spanContext().spanId) ?? []).map(
+              ({eventName, body, attributes}) => ({
+                event_name: eventName,
+                body,
+                attributes,
+              }),
+            ),
           }));
 
           return res.json(spanData);

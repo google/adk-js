@@ -27,6 +27,7 @@ import {
 import {
   context,
   Context,
+  createContextKey,
   Span,
   SpanStatusCode,
   trace,
@@ -49,6 +50,12 @@ import type {BaseTool} from '../tools/base_tool.js';
 import {isEnterpriseModeEnabled} from '../utils/env_aware_utils.js';
 import {extractModelName, isGeminiModel} from '../utils/model_name.js';
 import {version} from '../version.js';
+
+import {readEnvVar} from './env.js';
+import {
+  effectiveRunTelemetryConfig,
+  type RunTelemetryConfig,
+} from './telemetry_context.js';
 
 /** OpenTelemetry GenAI semantic-convention span and log attribute keys. */
 enum GenAiAttr {
@@ -666,13 +673,6 @@ export function runAsyncGeneratorWithOtelContext<TThis, T>(
   return bindOtelContextToAsyncGenerator(otelContext, generator);
 }
 
-function readEnvVar(name: string): string | undefined {
-  if (typeof process === 'undefined' || !process.env) {
-    return undefined;
-  }
-  return process.env[name];
-}
-
 /**
  * Determines whether to add request/response content to spans.
  *
@@ -776,11 +776,28 @@ export interface TelemetryConfig {
   readonly shouldAddContentToExperimentalSpans: boolean;
 }
 
-/** Builds a `TelemetryConfig` snapshot from the current environment. */
-export function getTelemetryConfig(): TelemetryConfig {
+/**
+ * Builds a `TelemetryConfig` snapshot from the current environment and the
+ * optional per-run overrides.
+ *
+ * For the semantic-convention and content-capture decisions the admin lock
+ * `ADK_TELEMETRY_IGNORE_RUN_CONFIG` wins first, then the per-run value, then
+ * the environment. The schema version always comes from the environment.
+ *
+ * @param overrides The per-run overrides, usually `RunConfig.telemetry`.
+ */
+export function getTelemetryConfig(
+  overrides?: RunTelemetryConfig,
+): TelemetryConfig {
+  const runOverrides = effectiveRunTelemetryConfig(overrides);
   const schemaVersion = resolveSchemaVersion();
-  const experimental = shouldUseExperimentalGenAiSemconv();
-  const captureMessageContent = getContentCapturingMode();
+  const semconvOptIn = runOverrides?.genaiSemconvStabilityOptIn;
+  const experimental =
+    semconvOptIn === undefined
+      ? shouldUseExperimentalGenAiSemconv()
+      : semconvOptIn === 'experimental';
+  const captureMessageContent =
+    runOverrides?.captureMessageContent ?? getContentCapturingMode();
   return {
     schemaVersion,
     shouldUseExperimentalGenAiSemconv: experimental,
@@ -1533,6 +1550,54 @@ function emitLogRecord(record: LogRecord): void {
 }
 
 /**
+ * Context key under which the completion-details log record carries its
+ * {@link InferenceScope}. Keys are `Symbol.for` based, so two copies of the
+ * package share it.
+ */
+export const INFERENCE_SCOPE_KEY = createContextKey('adk_inference_scope');
+
+/**
+ * What one model call collected, published on the context the
+ * completion-details record is emitted under.
+ *
+ * It holds the message content whether or not content capture is on for
+ * export, so a local consumer such as the dev server trace view can show it
+ * without the exported record carrying it.
+ */
+export interface InferenceScope {
+  /** Operation-details attributes with full content, keyed by attribute. */
+  readonly contentAttributes: Readonly<Record<string, AnyValue>>;
+  /** The user the model call ran for, if known. */
+  readonly userId?: string;
+}
+
+/** Returns true when `value` has the shape of an {@link InferenceScope}. */
+export function isInferenceScope(value: unknown): value is InferenceScope {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  if (
+    !('contentAttributes' in value) ||
+    !isPlainObject(value.contentAttributes)
+  ) {
+    return false;
+  }
+  return (
+    !('userId' in value) ||
+    value.userId === undefined ||
+    typeof value.userId === 'string'
+  );
+}
+
+/** Returns the {@link InferenceScope} published on `otelContext`, if any. */
+export function getInferenceScope(
+  otelContext: Context | undefined,
+): InferenceScope | undefined {
+  const value = otelContext?.getValue(INFERENCE_SCOPE_KEY);
+  return isInferenceScope(value) ? value : undefined;
+}
+
+/**
  * Holds state for an open `generate_content {model}` span and its accumulated
  * experimental semantic-convention attributes.
  */
@@ -1572,7 +1637,9 @@ export function startInferenceSpan({
       return gcSpan;
     }
 
-    const telemetryConfig = getTelemetryConfig();
+    const telemetryConfig = getTelemetryConfig(
+      invocationContext.runConfig?.telemetry,
+    );
     const commonAttributes: Record<string, string> = {};
     if (invocationContext.agent?.name) {
       commonAttributes[GenAiAttr.AGENT_NAME] = invocationContext.agent.name;
@@ -1697,7 +1764,9 @@ export function traceInferenceResult({
       return;
     }
 
-    const telemetryConfig = getTelemetryConfig();
+    const telemetryConfig = getTelemetryConfig(
+      invocationContext?.runConfig?.telemetry,
+    );
     if (isSpanRecording) {
       if (isReportedFinishReason(llmResponse.finishReason)) {
         span.setAttribute(GenAiAttr.RESPONSE_FINISH_REASONS, [
@@ -1764,7 +1833,9 @@ export function finishInferenceSpan(params: FinishInferenceSpanParams): void {
       return;
     }
 
-    const telemetryConfig = getTelemetryConfig();
+    const telemetryConfig = getTelemetryConfig(
+      invocationContext?.runConfig?.telemetry,
+    );
     const hasError = Object.hasOwn(params, 'error') && error !== undefined;
     if (hasError && isSpanRecording) {
       const failureType = resolveErrorType(error);
@@ -1807,10 +1878,16 @@ export function finishInferenceSpan(params: FinishInferenceSpanParams): void {
           generateContentSpan.operationDetailsAttributes,
           generateContentSpan.operationDetailsCommonAttributes,
         );
+        const scope: InferenceScope = {
+          contentAttributes: {
+            ...generateContentSpan.operationDetailsAttributes,
+          },
+          userId,
+        };
         emitLogRecord({
           eventName: COMPLETION_DETAILS_EVENT_NAME,
           attributes: logAttributes,
-          context: spanContext,
+          context: spanContext.setValue(INFERENCE_SCOPE_KEY, scope),
         });
       }
     }

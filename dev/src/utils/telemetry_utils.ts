@@ -6,6 +6,7 @@
 
 import {
   getGcpExporters,
+  getGcpProjectId,
   getGcpResource,
   maybeSetOtelProviders,
   OTelHooks,
@@ -135,55 +136,49 @@ function otelEnvVarsEnabled(): boolean {
   return endpointVars.some((varName) => process.env[varName]);
 }
 
+/**
+ * Sets up the OTel providers for the dev server.
+ *
+ * `internalProcessors` are the server's own processors, which see every span
+ * and log record whatever else is configured. A plain array is taken as span
+ * processors.
+ *
+ * @param otelToCloud Export traces, metrics and logs to Google Cloud.
+ * @param internalProcessors The server's own span and log record processors.
+ */
 export async function setupTelemetry(
   otelToCloud: boolean = false,
-  internalExporters: SpanProcessor[] = [],
+  internalProcessors: SpanProcessor[] | OTelHooks = [],
 ): Promise<void> {
+  const internalHooks: OTelHooks = Array.isArray(internalProcessors)
+    ? {spanProcessors: internalProcessors}
+    : internalProcessors;
   if (otelToCloud) {
-    await setupGcpTelemetryExperimental(internalExporters);
+    await setupGcpTelemetryExperimental(internalHooks);
   } else if (otelEnvVarsEnabled()) {
-    await setupTelemetryFromEnvExperimental(internalExporters);
+    await setupTelemetryFromEnvExperimental(internalHooks);
   } else {
-    const otelHooks: OTelHooks = {
-      spanProcessors: internalExporters,
-    };
-    maybeSetOtelProviders([otelHooks]);
+    maybeSetOtelProviders([internalHooks]);
   }
 }
 
 async function setupGcpTelemetryExperimental(
-  internalExporters: SpanProcessor[] = [],
+  internalHooks: OTelHooks,
 ): Promise<void> {
-  const otelHooksToAdd: OTelHooks[] = [];
-
-  if (internalExporters.length > 0) {
-    otelHooksToAdd.push({
-      spanProcessors: internalExporters,
-    });
-  }
-
+  const projectId = await getGcpProjectId();
   const gcpExporters = await getGcpExporters({
     enableTracing: true,
-    enableLogging: false,
+    enableLogging: true,
     enableMetrics: true,
+    projectId,
   });
-  otelHooksToAdd.push(gcpExporters);
+  const otelResource = getGcpResource(projectId);
 
-  const otelResource = getGcpResource();
-
-  maybeSetOtelProviders(otelHooksToAdd, otelResource);
+  maybeSetOtelProviders([internalHooks, gcpExporters], otelResource);
 }
 
 async function setupTelemetryFromEnvExperimental(
-  internalExporters: SpanProcessor[] = [],
+  internalHooks: OTelHooks,
 ): Promise<void> {
-  const otelHooksToAdd: OTelHooks[] = [];
-
-  if (internalExporters.length > 0) {
-    otelHooksToAdd.push({
-      spanProcessors: internalExporters,
-    });
-  }
-
-  maybeSetOtelProviders(otelHooksToAdd);
+  maybeSetOtelProviders([internalHooks]);
 }
