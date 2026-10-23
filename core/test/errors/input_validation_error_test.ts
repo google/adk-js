@@ -20,6 +20,11 @@ describe('InputValidationError', () => {
     expect(new InputValidationError('').message).toBe('');
   });
 
+  it('keeps the cause', () => {
+    const cause = new Error('inner');
+    expect(new InputValidationError('outer', {cause}).cause).toBe(cause);
+  });
+
   it('sets name', () => {
     expect(new InputValidationError().name).toBe('InputValidationError');
   });
