@@ -8,7 +8,8 @@ import {writeFile} from 'node:fs/promises';
 
 const platformBuildTargets = {
   'node': ['node10.4'],
-  'browser': ['chrome58', 'firefox57', 'safari11'],
+  // Matches core: esbuild cannot lower destructuring for older Safari.
+  'browser': ['chrome63', 'firefox57', 'safari14.1'],
 };
 
 const licenseHeaderText = `/**
@@ -57,13 +58,16 @@ function build({
 
   if (bundle) {
     buildOptions.entryPoints = [`./src/${entry}`];
-    buildOptions.outfile = `./dist/${targetDir}/index.js`;
+    // Keep the emitted filename aligned with the entry so package.json's
+    // "browser" field keeps resolving to dist/web/index_web.js.
+    buildOptions.outfile = `./dist/${targetDir}/${entry.replace(/\.ts$/, '.js')}`;
   } else {
     buildOptions.entryPoints = ['./src/**/*.ts'];
     buildOptions.outdir = `./dist/${targetDir}`;
   }
 
-  if (format === 'esm') {
+  // Node ESM only: `module` does not resolve in a browser.
+  if (format === 'esm' && platform !== 'browser') {
     buildOptions.banner = {
       js:
         (buildOptions.banner?.js || '') +
@@ -100,7 +104,8 @@ async function main() {
         platform: 'browser',
         format: 'esm',
         entry: 'index_web.ts',
-        bundle,
+        // Bundling the web entry keeps Node-only integrations out of dist/web.
+        bundle: true,
       }),
     ]);
 
