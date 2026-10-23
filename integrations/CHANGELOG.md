@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.4.0](https://github.com/google/adk-js/compare/integrations-v2.3.0...integrations-v2.4.0) (2026-10-23)
+
+
+### Features
+
+* **integrations:** add the Claude model on Vertex AI ([#1125](https://github.com/google/adk-js/issues/1125)) ([f882b34](https://github.com/google/adk-js/commit/f882b34ad57d24e911324dcda124499cfb726381))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^2.3.0 to ^2.4.0
+
 ## [2.3.0](https://github.com/google/adk-js/compare/integrations-v2.2.0...integrations-v2.3.0) (2026-10-13)
 
 

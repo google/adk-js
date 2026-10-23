@@ -1,5 +1,49 @@
 # Changelog
 
+## [2.4.0](https://github.com/google/adk-js/compare/adk-v2.3.0...adk-v2.4.0) (2026-10-23)
+
+
+### Features
+
+* **agents:** port adk-python v0.5.0 changes to agents ([#1104](https://github.com/google/adk-js/issues/1104)) ([0b905df](https://github.com/google/adk-js/commit/0b905df63d0f4a00da81110036e62f0448d05916))
+* **agents:** port adk-python v1.0.0 changes to agents ([#1109](https://github.com/google/adk-js/issues/1109)) ([c33d2de](https://github.com/google/adk-js/commit/c33d2de61a19f7d30ac50e328161cb5a8f9b2530))
+* **cli:** port adk-python v1.0.0 changes to cli ([#1123](https://github.com/google/adk-js/issues/1123)) ([bb9a49a](https://github.com/google/adk-js/commit/bb9a49a52cda7e6d3c1d1f03cedcf46c34f99e2d))
+* Ergonomic TypeScript client for remote Vertex AI Agent Engine ([#522](https://github.com/google/adk-js/issues/522)) ([0f28dc9](https://github.com/google/adk-js/commit/0f28dc95cc87062a990efd56c774cf20cc3eb853))
+* port adk-python v0.2.0 changes to agents, auth, events (+7 more) ([#1080](https://github.com/google/adk-js/issues/1080)) ([c5578bb](https://github.com/google/adk-js/commit/c5578bb2fb1c06c5be4a94bdfd70ae16badf712d))
+* port adk-python v0.3.0 changes to agents, auth, cli (+6 more) ([#1091](https://github.com/google/adk-js/issues/1091)) ([0eb3ac5](https://github.com/google/adk-js/commit/0eb3ac5df65daacd9e217cf9fa014ee601f1813b))
+* port adk-python v0.4.0 changes to agents, events, tools/openapi_tool ([#1100](https://github.com/google/adk-js/issues/1100)) ([218b77f](https://github.com/google/adk-js/commit/218b77f6f2c08a44d6c648daae4bbe971970d8fd))
+* port adk-python v0.5.0 changes to artifacts, auth, events (+7 more) ([#1102](https://github.com/google/adk-js/issues/1102)) ([593c451](https://github.com/google/adk-js/commit/593c4516634a8e68f9da68cb06a1e80991572f48))
+* port adk-python v1.0.0 changes to examples, runners, tools/apihub_tool (+1 more) ([#1112](https://github.com/google/adk-js/issues/1112)) ([687a201](https://github.com/google/adk-js/commit/687a2012a57857b0c1e2af3fdf89d4b110d796dd))
+* **skills:** throw typed errors from the skill loader ([#1129](https://github.com/google/adk-js/issues/1129)) ([d3bf84d](https://github.com/google/adk-js/commit/d3bf84d037557357174e4771493ae347a80ec9e6))
+* **tools:** port adk-python v0.2.0 changes to tools/google_api_tool ([#1079](https://github.com/google/adk-js/issues/1079)) ([3cab273](https://github.com/google/adk-js/commit/3cab2732208dd888027a7da9f0c4f43588e1dcf3))
+* **tools:** port adk-python v0.3.0 changes to tools/application_integration_tool ([#1099](https://github.com/google/adk-js/issues/1099)) ([7e8880a](https://github.com/google/adk-js/commit/7e8880a8cac0dc4469569bb1d1212c2d8c55c3e2))
+* **tools:** port adk-python v0.3.0 changes to tools/openapi_tool ([#1093](https://github.com/google/adk-js/issues/1093)) ([a0a04cc](https://github.com/google/adk-js/commit/a0a04cc9021d0774ed907f53f6eea7f08613c73f))
+* **tools:** port adk-python v1.0.0 changes to tools ([#1108](https://github.com/google/adk-js/issues/1108)) ([f9ffb18](https://github.com/google/adk-js/commit/f9ffb18eed7974a6a476b9dd6312b03dca206b09))
+* **tools:** port adk-python v1.0.0 changes to tools/application_integration_tool ([#1122](https://github.com/google/adk-js/issues/1122)) ([70944fe](https://github.com/google/adk-js/commit/70944fe4bd20d723d91d9bb9985f6f88ee236503))
+* **tools:** port adk-python v1.0.0 changes to tools/google_api_tool ([#1113](https://github.com/google/adk-js/issues/1113)) ([53d885e](https://github.com/google/adk-js/commit/53d885e164ce00887679a4d3d86a94f34b619002))
+
+
+### Bug Fixes
+
+* **agents:** exclude foreign agent thought parts in convertForeignEvent ([#1045](https://github.com/google/adk-js/issues/1045)) ([17fc8e1](https://github.com/google/adk-js/commit/17fc8e1e7615f8574068a5a475cbb6c8547f7aa1))
+* **code-executors:** define crop in the data-file helper ([#994](https://github.com/google/adk-js/issues/994)) ([934d6bf](https://github.com/google/adk-js/commit/934d6bf981cc8391dcae37632bbf18fd857233f5))
+* **code-executors:** isolate ContainerCodeExecutor state per session ([#887](https://github.com/google/adk-js/issues/887)) ([7303749](https://github.com/google/adk-js/commit/73037495f08055fd3c4473c84898605997193f39))
+* **core:** call BaseToolset.processLlmRequest in LlmAgent ([#1033](https://github.com/google/adk-js/issues/1033)) ([#1083](https://github.com/google/adk-js/issues/1083)) ([54dde37](https://github.com/google/adk-js/commit/54dde37a26ebe020fb27346fcdaf91aa53e8a0ca))
+* **core:** honor Gemini instance vertexai config in canUseOutputSchemaWithTools ([#1103](https://github.com/google/adk-js/issues/1103)) ([#1106](https://github.com/google/adk-js/issues/1106)) ([36b6f91](https://github.com/google/adk-js/commit/36b6f91c429a5930b1d730b8f6abf6df31d6bb93))
+* **core:** inject the text of inlineData artifacts into instructions ([#1116](https://github.com/google/adk-js/issues/1116)) ([dc02f45](https://github.com/google/adk-js/commit/dc02f453518db7078396e4121d568a179619935c))
+* **core:** mark rejected tasks done before await resumes ([#995](https://github.com/google/adk-js/issues/995)) ([e667745](https://github.com/google/adk-js/commit/e66774524470f19c43c56ca77d6fc379919793f4))
+* **core:** preserve repeated HTTP header values ([#970](https://github.com/google/adk-js/issues/970)) ([910ad9f](https://github.com/google/adk-js/commit/910ad9f9ba73f9644cda01c24910090d179afc03))
+* **core:** remove orphaned fragment from onToolErrorCallback JSDoc ([#1019](https://github.com/google/adk-js/issues/1019)) ([48e5423](https://github.com/google/adk-js/commit/48e5423b7c7a0daca84df420f996e498087218f5))
+* resolve Windows CI port-exclusion EACCES and temp-dir EBUSY failures ([#1071](https://github.com/google/adk-js/issues/1071)) ([ecfe257](https://github.com/google/adk-js/commit/ecfe257fcd046af401d28b3f3378b5eae10ffea2))
+* **skills:** report a missing or non-directory path in validateSkillDir ([#1086](https://github.com/google/adk-js/issues/1086)) ([9da07da](https://github.com/google/adk-js/commit/9da07da369665125c7545a1500b3bb3cc53bce72))
+* **telemetry:** avoid duplicate tracer registration ([#1082](https://github.com/google/adk-js/issues/1082)) ([120c282](https://github.com/google/adk-js/commit/120c28252e57d0bc1ba32c2daabbc0964a4dd50e))
+* **telemetry:** report tool error types on spans ([#956](https://github.com/google/adk-js/issues/956)) ([b255d60](https://github.com/google/adk-js/commit/b255d60e51df0f86dc9ebd99d6f48dc8f088301a))
+
+
+### Performance Improvements
+
+* **sessions:** move stale-session event reload out of appendEvent's row lock ([#831](https://github.com/google/adk-js/issues/831)) ([fb6907b](https://github.com/google/adk-js/commit/fb6907bc08e39bd2a04f88e2c9ad716e4f554398))
+
 ## [2.3.0](https://github.com/google/adk-js/compare/adk-v2.2.0...adk-v2.3.0) (2026-10-13)
 
 
