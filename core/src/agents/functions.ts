@@ -10,6 +10,7 @@ import {isEmpty} from 'lodash-es';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {
   createEvent,
+  createNewEventId,
   Event,
   generateClientFunctionCallId,
   getFunctionCalls,
@@ -199,12 +200,25 @@ export function generateRequestConfirmationEvent({
   });
 }
 
-async function callToolAsync(
-  tool: BaseTool,
-  args: Record<string, any>, // eslint-disable-line @typescript-eslint/no-explicit-any
-  toolContext: Context,
+interface CallToolAsyncParams {
+  tool: BaseTool;
+  args: Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  toolContext: Context;
+  /**
+   * The id of the function response event the caller emits for this call,
+   * recorded on the `execute_tool` span so the two match.
+   */
+  responseEventId: string;
+}
+
+/** Runs a tool under its `execute_tool` span. */
+async function callToolAsync({
+  tool,
+  args,
+  toolContext,
+  responseEventId,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): Promise<any> {
+}: CallToolAsyncParams): Promise<any> {
   return tracer.startActiveSpan(`execute_tool ${tool.name}`, async (span) => {
     try {
       logger.debug(`callToolAsync ${tool.name}`);
@@ -213,12 +227,15 @@ async function callToolAsync(
         tool,
         args,
         span,
-        functionResponseEvent: buildResponseEvent(
-          tool,
-          result,
-          toolContext,
-          toolContext.invocationContext,
-        ),
+        functionResponseEvent: {
+          ...buildResponseEvent(
+            tool,
+            result,
+            toolContext,
+            toolContext.invocationContext,
+          ),
+          id: responseEventId,
+        },
         errorType: getToolResponseErrorType(result),
         invocationContext: toolContext.invocationContext,
       });
@@ -637,6 +654,10 @@ export async function handleFunctionCallList({
     // after-tool callbacks as-is, so normalize it before they see it.
     functionResponse = normalizeCallbackResponse(functionResponse);
 
+    // Generated before the tool runs so the `execute_tool` span records the
+    // id of the function response event emitted below.
+    const functionResponseEventId = createNewEventId();
+
     // Step 3: Otherwise, proceed calling the tool normally.
     if (functionResponse == null) {
       // Cover both null and undefined
@@ -648,8 +669,14 @@ export async function handleFunctionCallList({
               functionCall,
               functionArgs,
               invocationContext,
+              responseEventId: functionResponseEventId,
             })
-          : await callToolAsync(tool, functionArgs, toolContext);
+          : await callToolAsync({
+              tool,
+              args: functionArgs,
+              toolContext,
+              responseEventId: functionResponseEventId,
+            });
         // Keep a long-running nullish return as undefined so the deferral below fires;
         // wrap a normal nullish return as {result: null}.
         if (rawFunctionResponse == null && !tool.isLongRunning) {
@@ -741,6 +768,7 @@ export async function handleFunctionCallList({
     }
 
     const functionResponseEvent = createEvent({
+      id: functionResponseEventId,
       invocationId: invocationContext.invocationId,
       author: toolEventAuthor(invocationContext),
       content: createUserContent({
@@ -907,12 +935,15 @@ async function processFunctionLiveHelper({
   functionCall,
   functionArgs,
   invocationContext,
+  responseEventId = createNewEventId(),
 }: {
   tool: BaseTool;
   toolContext: Context;
   functionCall: FunctionCall;
   functionArgs: Record<string, unknown>;
   invocationContext: InvocationContext;
+  /** The id of the function response event emitted for this call. */
+  responseEventId?: string;
 }): Promise<unknown> {
   let functionResponse: unknown = undefined;
   const targetFunctionName =
@@ -1008,7 +1039,12 @@ async function processFunctionLiveHelper({
     };
   } else {
     // Case 3: the function is a regular sync or async function tool.
-    functionResponse = await callToolAsync(tool, functionArgs, toolContext);
+    functionResponse = await callToolAsync({
+      tool,
+      args: functionArgs,
+      toolContext,
+      responseEventId,
+    });
   }
   return functionResponse;
 }

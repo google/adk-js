@@ -15,6 +15,7 @@ import {getTelemetryConfig} from '../../src/telemetry/tracing.js';
 import {logger} from '../../src/utils/logger.js';
 
 const TELEMETRY_ENV_VARS = [
+  'ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS',
   'ADK_TELEMETRY_IGNORE_RUN_CONFIG',
   'ADK_EXPERIMENTAL_TELEMETRY',
   'ADK_EXPERIMENTAL_TELEMETRY_FEATURES',
@@ -206,6 +207,62 @@ describe('telemetry_context', () => {
       captureMessageContent: ContentCapturingMode.SPAN_ONLY,
       shouldAddContentToLogs: false,
       shouldAddContentToExperimentalSpans: true,
+      shouldAddContentToLegacySpans: true,
+    });
+  });
+
+  describe('shouldAddContentToLegacySpans', () => {
+    it.each([undefined, '', 'true', '1', 'yes', ' no '])(
+      'is on for ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=%s',
+      (value) => {
+        vi.stubEnv('ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS', value);
+
+        expect(getTelemetryConfig().shouldAddContentToLegacySpans).toBe(true);
+      },
+    );
+
+    it.each(['false', '0', ' FALSE '])(
+      'is off for ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=%s',
+      (value) => {
+        vi.stubEnv('ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS', value);
+
+        expect(getTelemetryConfig().shouldAddContentToLegacySpans).toBe(false);
+      },
+    );
+
+    it.each([
+      ContentCapturingMode.SPAN_ONLY,
+      ContentCapturingMode.SPAN_AND_EVENT,
+    ])('follows a per-run %s over the environment', (captureMessageContent) => {
+      vi.stubEnv('ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS', 'false');
+
+      expect(
+        getTelemetryConfig({captureMessageContent})
+          .shouldAddContentToLegacySpans,
+      ).toBe(true);
+    });
+
+    it.each([ContentCapturingMode.EVENT_ONLY, ContentCapturingMode.NO_CONTENT])(
+      'is off for a per-run %s whatever the environment says',
+      (captureMessageContent) => {
+        vi.stubEnv('ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS', 'true');
+
+        expect(
+          getTelemetryConfig({captureMessageContent})
+            .shouldAddContentToLegacySpans,
+        ).toBe(false);
+      },
+    );
+
+    it('ignores the per-run mode while the admin lock is set', () => {
+      vi.stubEnv('ADK_TELEMETRY_IGNORE_RUN_CONFIG', 'true');
+      vi.stubEnv('ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS', 'false');
+
+      expect(
+        getTelemetryConfig({
+          captureMessageContent: ContentCapturingMode.SPAN_AND_EVENT,
+        }).shouldAddContentToLegacySpans,
+      ).toBe(false);
     });
   });
 });

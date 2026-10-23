@@ -34,6 +34,14 @@ export function hrTimeToNanoseconds(hrTime: HrTime): number {
   return seconds * 1e9 + nanoseconds;
 }
 
+/**
+ * Keeps, per event id, the attributes of the span that traced that event, for
+ * the per-event trace route.
+ *
+ * Schema v2 has no `call_llm` span, so a model response event is found
+ * through its `generate_content` span. Under schema v1 both spans carry the
+ * event id; `call_llm` ends later and replaces the `generate_content` entry.
+ */
 export class ApiServerSpanExporter implements SpanExporter {
   private traceDict: Record<string, Record<string, unknown>>;
 
@@ -49,7 +57,8 @@ export class ApiServerSpanExporter implements SpanExporter {
       if (
         span.name === 'call_llm' ||
         span.name === 'send_data' ||
-        span.name.startsWith('execute_tool')
+        span.name.startsWith('execute_tool') ||
+        span.name.startsWith('generate_content')
       ) {
         const attributes = {...span.attributes};
         attributes['trace_id'] = span.spanContext().traceId;
@@ -93,7 +102,7 @@ export class InMemoryExporter implements SpanExporter {
       if (sessionId) {
         if (!this.traceDict[sessionId]) {
           this.traceDict[sessionId] = [traceId];
-        } else {
+        } else if (!this.traceDict[sessionId].includes(traceId)) {
           this.traceDict[sessionId].push(traceId);
         }
       }

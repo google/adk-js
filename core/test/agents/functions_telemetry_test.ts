@@ -19,7 +19,7 @@ import {
   PluginManager,
 } from '@google/adk';
 import {FunctionCall} from '@google/genai';
-import {context, trace} from '@opentelemetry/api';
+import {context, SpanStatusCode, trace} from '@opentelemetry/api';
 import {AsyncLocalStorageContextManager} from '@opentelemetry/context-async-hooks';
 import {
   BasicTracerProvider,
@@ -27,7 +27,16 @@ import {
   SimpleSpanProcessor,
   type ReadableSpan,
 } from '@opentelemetry/sdk-trace-base';
-import {afterAll, beforeAll, beforeEach, describe, expect, it} from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import {z} from 'zod';
 
 const {handleFunctionCallList} = functionsExportedForTestingOnly;
@@ -63,6 +72,10 @@ beforeEach(() => {
   exporter.reset();
 });
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 function createInvocationContext(): InvocationContext {
   return new InvocationContext({
     invocationId: INVOCATION_ID,
@@ -87,7 +100,7 @@ function onlySpan(name: string): ReadableSpan {
 }
 
 describe('tool span attributes from the function call path', () => {
-  it('records gen_ai.system and the invocation id on a single tool span', async () => {
+  it('records gen_ai.agent.name and no gen_ai.system or invocation id on a single tool span', async () => {
     const event = await handleFunctionCallList({
       invocationContext: createInvocationContext(),
       functionCalls: [createCall('call-1')],
@@ -98,13 +111,14 @@ describe('tool span attributes from the function call path', () => {
 
     expect(event).not.toBeNull();
     const span = onlySpan('execute_tool echoTool');
-    expect(span.attributes['gen_ai.system']).toBe('gcp.vertex.agent');
-    expect(span.attributes['gcp.vertex.agent.invocation_id']).toBe(
-      INVOCATION_ID,
+    expect(span.attributes['gen_ai.agent.name']).toBe('test_agent');
+    expect(span.attributes).not.toHaveProperty('gen_ai.system');
+    expect(span.attributes).not.toHaveProperty(
+      'gcp.vertex.agent.invocation_id',
     );
   });
 
-  it('records gen_ai.system and the invocation id on a merged tool span', async () => {
+  it('records no gen_ai.system or invocation id on a merged tool span', async () => {
     const event = await handleFunctionCallList({
       invocationContext: createInvocationContext(),
       functionCalls: [createCall('call-1'), createCall('call-2')],
@@ -115,9 +129,103 @@ describe('tool span attributes from the function call path', () => {
 
     expect(event).not.toBeNull();
     const span = onlySpan('execute_tool (merged)');
-    expect(span.attributes['gen_ai.system']).toBe('gcp.vertex.agent');
-    expect(span.attributes['gcp.vertex.agent.invocation_id']).toBe(
-      INVOCATION_ID,
+    expect(span.attributes).not.toHaveProperty('gen_ai.system');
+    expect(span.attributes).not.toHaveProperty(
+      'gcp.vertex.agent.invocation_id',
     );
+    expect(span.attributes['gcp.vertex.agent.event_id']).toBe(event?.id);
+  });
+
+  it('records the id of the emitted function response event on the tool span', async () => {
+    const event = await handleFunctionCallList({
+      invocationContext: createInvocationContext(),
+      functionCalls: [createCall('call-1')],
+      toolsDict: {echoTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(event).not.toBeNull();
+    expect(
+      onlySpan('execute_tool echoTool').attributes['gcp.vertex.agent.event_id'],
+    ).toBe(event?.id);
+  });
+});
+
+describe('cyclic tool results', () => {
+  function createCyclicTool() {
+    return new FunctionTool({
+      name: 'echoTool',
+      description: 'returns a cyclic value',
+      parameters: z.object({}),
+      execute: async () => {
+        const result: Record<string, unknown> = {status: 'kept'};
+        result['self'] = result;
+        return result;
+      },
+    });
+  }
+
+  it.each([
+    {
+      schema: 'v1',
+      env: {ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN: '1'},
+      attribute: 'gcp.vertex.agent.tool_response',
+    },
+    {
+      schema: 'v2',
+      env: {
+        ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN: '2',
+        OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: 'SPAN_ONLY',
+      },
+      attribute: 'gen_ai.tool.call.result',
+    },
+  ])(
+    'passes the tool result to the function response event under $schema',
+    async ({env, attribute}) => {
+      for (const [name, value] of Object.entries(env)) {
+        vi.stubEnv(name, value);
+      }
+
+      const event = await handleFunctionCallList({
+        invocationContext: createInvocationContext(),
+        functionCalls: [createCall('call-1')],
+        toolsDict: {echoTool: createCyclicTool()},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+
+      const response = event?.content?.parts?.[0]?.functionResponse?.response;
+      expect(response?.['status']).toBe('kept');
+      expect(response?.['self']).toBe(response);
+      const span = onlySpan('execute_tool echoTool');
+      expect(span.attributes[attribute]).toBe('<not serializable>');
+      expect(span.status.code).toBe(SpanStatusCode.UNSET);
+    },
+  );
+
+  it('passes the tool results to the function response event of merged calls', async () => {
+    vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', '1');
+
+    const event = await handleFunctionCallList({
+      invocationContext: createInvocationContext(),
+      functionCalls: [createCall('call-1'), createCall('call-2')],
+      toolsDict: {echoTool: createCyclicTool()},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const responses = (event?.content?.parts ?? []).map(
+      (part) => part.functionResponse?.response,
+    );
+    expect(responses.map((response) => response?.['status'])).toEqual([
+      'kept',
+      'kept',
+    ]);
+    expect(
+      onlySpan('execute_tool (merged)').attributes[
+        'gcp.vertex.agent.tool_response'
+      ],
+    ).toBe('<not serializable>');
   });
 });

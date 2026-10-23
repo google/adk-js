@@ -28,7 +28,16 @@ import {
   InMemorySpanExporter,
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
-import {afterAll, beforeAll, beforeEach, describe, expect, it} from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 
 const APP_NAME = 'test_app';
 const USER_ID = 'test_user';
@@ -198,7 +207,7 @@ class FakeTextLlm extends BaseLlm {
 }
 
 describe('call_llm span lifecycle', () => {
-  it('ends and exports the call_llm span when the consumer breaks early from runAsync', async () => {
+  async function runAndBreakEarly(): Promise<string[]> {
     const sessionService = new InMemorySessionService();
     await sessionService.createSession({
       appName: APP_NAME,
@@ -219,15 +228,34 @@ describe('call_llm span lifecycle', () => {
       break;
     }
 
-    const spanNames = exporter
+    return exporter
       .getFinishedSpans()
       .map((s) => s.name)
       .sort();
-    expect(spanNames).toEqual([
+  }
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('ends and exports the call_llm span when the consumer breaks early from runAsync', async () => {
+    vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', '1');
+
+    expect(await runAndBreakEarly()).toEqual([
       'call_llm',
       'generate_content fake-text-llm',
       'invocation',
       'invoke_agent root',
+    ]);
+  });
+
+  it('ends and exports every schema v2 span when the consumer breaks early from runAsync', async () => {
+    vi.stubEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', '2');
+
+    expect(await runAndBreakEarly()).toEqual([
+      'generate_content fake-text-llm',
+      'invoke_agent root',
+      'invoke_workflow root',
     ]);
   });
 });

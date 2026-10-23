@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {context, trace} from '@opentelemetry/api';
+import {context} from '@opentelemetry/api';
 import {Event} from '../events/event.js';
-import {tracer, traceWorkflowInvocation} from '../telemetry/tracing.js';
+import {enterWorkflow, recordSpanError} from '../telemetry/tracing.js';
 import {experimental} from '../utils/experimental.js';
 import {BaseNode, BaseNodeConfig} from './base_node.js';
 import {commonPrefixOf} from './branch_path.js';
@@ -191,22 +191,27 @@ export class Workflow extends BaseNode {
       abort.controller.signal,
     );
 
-    const span = tracer.startSpan(`invoke_workflow ${this.name}`);
+    // The workflow the runner was given as its root runs inside the span the
+    // runner already opened for it.
+    const {span, context: workflowContext} = enterWorkflow({
+      workflow: this,
+      conversationId: ctx.invocationContext.session.id,
+    });
     try {
       // Sync callback returning the promise, not `async () => await …`: the
       // wrapper must not insert microtask hops around the orchestration loop
       // (see the note in `executeChildNode`).
-      await context.with(trace.setSpan(context.active(), span), () => {
-        traceWorkflowInvocation({
-          workflowName: this.name,
-          nodePath: ctx.nodePath,
-          sessionId: ctx.invocationContext.session.id,
-        });
-        return this.orchestrate(ctx, nodeInput, dynamicState, abort.controller);
-      });
+      await context.with(workflowContext, () =>
+        this.orchestrate(ctx, nodeInput, dynamicState, abort.controller),
+      );
+    } catch (error: unknown) {
+      if (span) {
+        recordSpanError(span, error);
+      }
+      throw error;
     } finally {
       abort.dispose();
-      span.end();
+      span?.end();
     }
   }
 

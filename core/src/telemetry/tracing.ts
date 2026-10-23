@@ -51,6 +51,7 @@ import {isEnterpriseModeEnabled} from '../utils/env_aware_utils.js';
 import {extractModelName, isGeminiModel} from '../utils/model_name.js';
 import {version} from '../version.js';
 
+import {redactCredentialSecrets} from './credential_redaction.js';
 import {readEnvVar} from './env.js';
 import {
   effectiveRunTelemetryConfig,
@@ -65,7 +66,9 @@ enum GenAiAttr {
   OPERATION_NAME = 'gen_ai.operation.name',
   PROVIDER_NAME = 'gen_ai.provider.name',
   SYSTEM = 'gen_ai.system',
+  TOOL_CALL_ARGUMENTS = 'gen_ai.tool.call.arguments',
   TOOL_CALL_ID = 'gen_ai.tool.call.id',
+  TOOL_CALL_RESULT = 'gen_ai.tool.call.result',
   TOOL_DESCRIPTION = 'gen_ai.tool.description',
   TOOL_NAME = 'gen_ai.tool.name',
   TOOL_TYPE = 'gen_ai.tool.type',
@@ -81,12 +84,13 @@ enum GenAiAttr {
   OUTPUT_MESSAGES = 'gen_ai.output.messages',
   SYSTEM_INSTRUCTIONS = 'gen_ai.system_instructions',
   TOOL_DEFINITIONS = 'gen_ai.tool.definitions',
+  WORKFLOW_NAME = 'gen_ai.workflow.name',
+  WORKFLOW_NESTED = 'gen_ai.workflow.nested',
   USER_ID = 'user.id',
 }
 
-/** ADK-specific workflow and node span attribute keys. */
+/** ADK-specific node attempt span attribute keys. */
 enum AdkAttr {
-  WORKFLOW_NAME = 'adk.workflow.name',
   NODE_PATH = 'adk.node.path',
   NODE_RUN_ID = 'adk.node.run_id',
   NODE_ATTEMPT = 'adk.node.attempt',
@@ -99,6 +103,7 @@ enum GcpAttr {
   INVOCATION_ID = 'gcp.vertex.agent.invocation_id',
   SESSION_ID = 'gcp.vertex.agent.session_id',
   EVENT_ID = 'gcp.vertex.agent.event_id',
+  ASSOCIATED_EVENT_IDS = 'gcp.vertex.agent.associated_event_ids',
   LLM_REQUEST = 'gcp.vertex.agent.llm_request',
   LLM_RESPONSE = 'gcp.vertex.agent.llm_response',
   TOOL_CALL_ARGS = 'gcp.vertex.agent.tool_call_args',
@@ -149,6 +154,25 @@ function uint8ArrayToBase64(bytes: Uint8Array): string {
 function safeJsonSerialize(obj: unknown): string {
   try {
     return JSON.stringify(obj);
+  } catch (_e: unknown) {
+    return '<not serializable>';
+  }
+}
+
+/**
+ * Serializes a tool result to JSON without its credential secrets.
+ *
+ * The value goes through a JSON round trip before redaction, so redaction sees
+ * every field that `JSON.stringify` writes, class instances included, and a
+ * cyclic value fails before redaction walks it.
+ *
+ * @param obj The tool result to serialize.
+ * @returns The redacted JSON string or '<not serializable>' if the value cannot be serialized.
+ */
+function safeJsonSerializeRedacted(obj: unknown): string {
+  try {
+    const plain: unknown = JSON.parse(JSON.stringify(obj));
+    return JSON.stringify(redactCredentialSecrets(plain));
   } catch (_e: unknown) {
     return '<not serializable>';
   }
@@ -213,26 +237,231 @@ export function traceAgentInvocation({
   });
 }
 
-export interface TraceWorkflowInvocationParams {
-  workflowName: string;
-  nodePath: string;
-  sessionId: string;
+/**
+ * Context key present while an `invoke_workflow` span encloses the active
+ * context, so a workflow opened beneath it is marked as nested.
+ */
+const WORKFLOW_SCOPE_KEY = createContextKey('adk_workflow_scope');
+
+/**
+ * Context key holding the workflow the runner already opened the root
+ * `invoke_workflow` span for, so that workflow does not open a second one.
+ */
+const ENTRYPOINT_WORKFLOW_KEY = createContextKey('adk_entrypoint_workflow');
+
+/**
+ * Context key holding the context an `invoke_agent` span opened under. An
+ * agent reached by transfer runs under it, so its `invoke_agent` span is a
+ * sibling of the transferring agent's span.
+ */
+const AGENT_PARENT_CONTEXT_KEY = createContextKey('adk_agent_parent_context');
+
+function isOtelContext(value: unknown): value is Context {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'getValue' in value &&
+    typeof value.getValue === 'function'
+  );
 }
 
-export function traceWorkflowInvocation({
-  workflowName,
-  nodePath,
-  sessionId,
-}: TraceWorkflowInvocationParams): void {
-  const span = trace.getActiveSpan();
-  if (!span) return;
+export interface StartWorkflowSpanParams {
+  /** The workflow name; the span is named `invoke_workflow` when empty. */
+  workflowName: string;
+  /** The session id, recorded as `gen_ai.conversation.id`. */
+  conversationId: string;
+  /** The context the span opens under. */
+  parentContext: Context;
+}
 
-  span.setAttributes({
+/** An open `invoke_workflow` span and the context to run the workflow under. */
+export interface WorkflowSpan {
+  readonly span: Span;
+  readonly context: Context;
+}
+
+/**
+ * Opens an `invoke_workflow {name}` span under `parentContext`.
+ *
+ * The span carries `gen_ai.workflow.nested=true` only when another workflow
+ * span already encloses `parentContext`. The returned context marks the
+ * workflow scope for the spans opened beneath it.
+ */
+export function startWorkflowSpan({
+  workflowName,
+  conversationId,
+  parentContext,
+}: StartWorkflowSpanParams): WorkflowSpan {
+  const attributes: Record<string, string | boolean> = {
     [GenAiAttr.OPERATION_NAME]: 'invoke_workflow',
-    [GenAiAttr.CONVERSATION_ID]: sessionId,
-    [AdkAttr.WORKFLOW_NAME]: workflowName,
-    [AdkAttr.NODE_PATH]: nodePath,
+    [GenAiAttr.CONVERSATION_ID]: conversationId,
+  };
+  if (parentContext.getValue(WORKFLOW_SCOPE_KEY) !== undefined) {
+    attributes[GenAiAttr.WORKFLOW_NESTED] = true;
+  }
+  if (workflowName) {
+    attributes[GenAiAttr.WORKFLOW_NAME] = workflowName;
+  }
+  const span = tracer.startSpan(
+    workflowName ? `invoke_workflow ${workflowName}` : 'invoke_workflow',
+    {attributes},
+    parentContext,
+  );
+  return {
+    span,
+    context: trace
+      .setSpan(parentContext, span)
+      .setValue(WORKFLOW_SCOPE_KEY, true),
+  };
+}
+
+export interface StartInvocationSpansParams {
+  /** The name of the runner's root agent or workflow. */
+  rootName: string;
+  /** The root workflow, when the runner's root is a workflow. */
+  entrypointWorkflow?: object;
+  /** The session id, recorded as `gen_ai.conversation.id`. */
+  conversationId: string;
+}
+
+/** The spans the runner opened for one invocation, outermost first. */
+export interface InvocationSpans {
+  readonly spans: readonly Span[];
+  readonly context: Context;
+}
+
+/**
+ * Opens the root spans of one runner invocation under the active context.
+ *
+ * Schema v1 opens `invocation`. Schema v2, and a workflow root under either
+ * schema, opens `invoke_workflow {rootName}` (beneath `invocation` in v1). A
+ * workflow root runs inside that span instead of opening its own.
+ */
+export function startInvocationSpans({
+  rootName,
+  entrypointWorkflow,
+  conversationId,
+}: StartInvocationSpansParams): InvocationSpans {
+  const spans: Span[] = [];
+  let ctx = context.active();
+  const legacy = resolveSchemaVersion() < 2;
+  if (legacy) {
+    const span = tracer.startSpan('invocation', undefined, ctx);
+    spans.push(span);
+    ctx = trace.setSpan(ctx, span);
+  }
+  if (!legacy || entrypointWorkflow !== undefined) {
+    const workflowSpan = startWorkflowSpan({
+      workflowName: rootName,
+      conversationId,
+      parentContext: ctx,
+    });
+    spans.push(workflowSpan.span);
+    ctx = workflowSpan.context;
+  }
+  if (entrypointWorkflow !== undefined) {
+    ctx = ctx.setValue(ENTRYPOINT_WORKFLOW_KEY, entrypointWorkflow);
+  }
+  return {spans, context: ctx};
+}
+
+/**
+ * Returns the context to run an agent under: `parentContext` with the agent's
+ * `invoke_agent` span active.
+ */
+export function setAgentSpan(parentContext: Context, span: Span): Context {
+  return trace
+    .setSpan(parentContext, span)
+    .setValue(AGENT_PARENT_CONTEXT_KEY, parentContext);
+}
+
+/**
+ * Returns the context the active agent's `invoke_agent` span opened under, or
+ * `active` when no agent span is active.
+ */
+export function getAgentParentContext(active: Context): Context {
+  const parent = active.getValue(AGENT_PARENT_CONTEXT_KEY);
+  return isOtelContext(parent) ? parent : active;
+}
+
+export interface EnterWorkflowParams {
+  /** The workflow about to run. */
+  workflow: object & {readonly name: string};
+  /** The session id, recorded as `gen_ai.conversation.id`. */
+  conversationId: string;
+}
+
+/** The context a workflow runs under, and the span it opened, if any. */
+export interface EnteredWorkflow {
+  readonly span?: Span;
+  readonly context: Context;
+}
+
+/**
+ * Opens the `invoke_workflow` span of a workflow under the active context,
+ * unless the runner already opened it for this workflow as its root.
+ */
+export function enterWorkflow({
+  workflow,
+  conversationId,
+}: EnterWorkflowParams): EnteredWorkflow {
+  const active = context.active();
+  const parentContext = active.deleteValue(ENTRYPOINT_WORKFLOW_KEY);
+  if (active.getValue(ENTRYPOINT_WORKFLOW_KEY) === workflow) {
+    return {context: parentContext};
+  }
+  return startWorkflowSpan({
+    workflowName: workflow.name,
+    conversationId,
+    parentContext,
   });
+}
+
+export interface StartNodeSpanParams {
+  /** The node name. */
+  nodeName: string;
+  /** The session id, recorded as `gen_ai.conversation.id`. */
+  conversationId: string;
+}
+
+/** Opens an `invoke_node {name}` span under the active context. */
+export function startNodeSpan({
+  nodeName,
+  conversationId,
+}: StartNodeSpanParams): Span {
+  return tracer.startSpan(`invoke_node ${nodeName}`, {
+    attributes: {
+      [GenAiAttr.OPERATION_NAME]: 'invoke_node',
+      [GenAiAttr.CONVERSATION_ID]: conversationId,
+    },
+  });
+}
+
+/** Records the ids of the events a node emitted on its `invoke_node` span. */
+export function traceNodeEvents(span: Span, eventIds: readonly string[]): void {
+  if (eventIds.length > 0) {
+    span.setAttribute(GcpAttr.ASSOCIATED_EVENT_IDS, [...eventIds]);
+  }
+}
+
+/**
+ * Records an error that escapes `span` and marks the span ERROR.
+ *
+ * The status message carries only the error type, while `recordException`
+ * still records the exception event on the span.
+ */
+export function recordSpanError(span: Span, error: unknown): void {
+  const errorType = resolveErrorType(error);
+  // Preserve useful stacks for Error instances without copying arbitrary
+  // thrown strings or objects (which can contain user data) into telemetry.
+  let exception: Error | string;
+  try {
+    exception = error instanceof Error ? error : errorType;
+  } catch {
+    exception = errorType;
+  }
+  span.recordException(exception);
+  span.setStatus({code: SpanStatusCode.ERROR, message: errorType});
 }
 
 export type NodeExecutionStatus = 'completed' | 'waiting' | 'failed';
@@ -359,24 +588,35 @@ export function traceToolCall(params: TraceToolCallParams): void {
 
   span.setAttributes({
     [GenAiAttr.OPERATION_NAME]: 'execute_tool',
-    [GenAiAttr.SYSTEM]: GEN_AI_SYSTEM_VALUE,
     [GenAiAttr.TOOL_DESCRIPTION]: tool.description || '',
     [GenAiAttr.TOOL_NAME]: tool.name,
     // e.g. FunctionTool
     [GenAiAttr.TOOL_TYPE]: tool.constructor.name,
-    [GcpAttr.INVOCATION_ID]: invocationContext.invocationId,
-    // Setting empty llm request and response (as UI expect these) while not
-    // applicable for tool_response.
-    [GcpAttr.LLM_REQUEST]: '{}',
-    [GcpAttr.LLM_RESPONSE]: '{}',
-    [GcpAttr.TOOL_CALL_ARGS]: shouldAddRequestResponseToSpans()
-      ? safeJsonSerialize(args)
-      : '{}',
+    ...(invocationContext.agent
+      ? {[GenAiAttr.AGENT_NAME]: invocationContext.agent.name}
+      : {}),
   });
+
+  const telemetryConfig = getTelemetryConfig(
+    invocationContext.runConfig?.telemetry,
+  );
+  const legacy = resolveSchemaVersion() < 2;
+  if (legacy) {
+    span.setAttributes({
+      // Setting empty llm request and response (as UI expect these) while not
+      // applicable for tool_response.
+      [GcpAttr.LLM_REQUEST]: '{}',
+      [GcpAttr.LLM_RESPONSE]: '{}',
+      [GcpAttr.TOOL_CALL_ARGS]: telemetryConfig.shouldAddContentToLegacySpans
+        ? safeJsonSerialize(args)
+        : '{}',
+    });
+  }
 
   // Tracing tool response
   let toolCallId = '<not specified>';
   let toolResponse: unknown = '<not specified>';
+  let hasResponse = false;
 
   if (functionResponseEvent?.content?.parts) {
     const responseParts = functionResponseEvent.content.parts;
@@ -386,6 +626,7 @@ export function traceToolCall(params: TraceToolCallParams): void {
     }
     if (functionResponse?.response) {
       toolResponse = functionResponse.response;
+      hasResponse = true;
     }
   }
   if (typeof toolResponse !== 'object' || toolResponse === null) {
@@ -397,10 +638,23 @@ export function traceToolCall(params: TraceToolCallParams): void {
     ...(functionResponseEvent
       ? {[GcpAttr.EVENT_ID]: functionResponseEvent.id}
       : {}),
-    [GcpAttr.TOOL_RESPONSE]: shouldAddRequestResponseToSpans()
-      ? safeJsonSerialize(toolResponse)
-      : '{}',
   });
+  if (legacy) {
+    span.setAttribute(
+      GcpAttr.TOOL_RESPONSE,
+      telemetryConfig.shouldAddContentToLegacySpans
+        ? safeJsonSerializeRedacted(toolResponse)
+        : '{}',
+    );
+  } else if (telemetryConfig.shouldAddContentToExperimentalSpans) {
+    span.setAttribute(GenAiAttr.TOOL_CALL_ARGUMENTS, safeJsonSerialize(args));
+    if (hasResponse) {
+      span.setAttribute(
+        GenAiAttr.TOOL_CALL_RESULT,
+        safeJsonSerializeRedacted(toolResponse),
+      );
+    }
+  }
 }
 
 export interface TraceMergedToolCallsParams {
@@ -427,25 +681,37 @@ export function traceMergedToolCalls({
 
   span.setAttributes({
     [GenAiAttr.OPERATION_NAME]: 'execute_tool',
-    [GenAiAttr.SYSTEM]: GEN_AI_SYSTEM_VALUE,
     [GenAiAttr.TOOL_NAME]: '(merged tools)',
     [GenAiAttr.TOOL_DESCRIPTION]: '(merged tools)',
     [GenAiAttr.TOOL_CALL_ID]: responseEventId,
-    [GcpAttr.INVOCATION_ID]: invocationContext.invocationId,
+  });
+
+  if (resolveSchemaVersion() >= 2) {
+    // Each merged call has its own `execute_tool` span carrying its content.
+    span.setAttribute(GcpAttr.EVENT_ID, responseEventId);
+    return;
+  }
+
+  const telemetryConfig = getTelemetryConfig(
+    invocationContext.runConfig?.telemetry,
+  );
+  span.setAttributes({
     [GcpAttr.TOOL_CALL_ARGS]: 'N/A',
     [GcpAttr.EVENT_ID]: responseEventId,
+    // Only the function responses: the event actions carry session state,
+    // credentials included.
+    [GcpAttr.TOOL_RESPONSE]: telemetryConfig.shouldAddContentToLegacySpans
+      ? safeJsonSerializeRedacted(
+          (functionResponseEvent.content?.parts ?? [])
+            .map((part) => part.functionResponse)
+            .filter((response) => response !== undefined),
+        )
+      : '{}',
     // Setting empty llm request and response (as UI expect these) while not
     // applicable for tool_response.
     [GcpAttr.LLM_REQUEST]: '{}',
     [GcpAttr.LLM_RESPONSE]: '{}',
   });
-
-  span.setAttribute(
-    GcpAttr.TOOL_RESPONSE,
-    shouldAddRequestResponseToSpans()
-      ? safeJsonSerialize(functionResponseEvent)
-      : '{}',
-  );
 }
 
 export interface TraceCallLlmParams {
@@ -456,10 +722,8 @@ export interface TraceCallLlmParams {
 }
 
 /**
- * Traces a call to the LLM.
- *
- * This function records details about the LLM request and response as
- * attributes on the current OpenTelemetry span.
+ * Records the `call_llm` attributes on the active span. A no-op under schema
+ * v2, which has no `call_llm` span.
  *
  * @param params The parameters object containing invocationContext, eventId, llmRequest, and llmResponse.
  */
@@ -469,22 +733,25 @@ export function traceCallLlm({
   llmRequest,
   llmResponse,
 }: TraceCallLlmParams): void {
+  if (resolveSchemaVersion() >= 2) {
+    return;
+  }
   // Special standard Open Telemetry GenAI attributes that indicate
   // that this is a span related to a Generative AI system.
   const span = trace.getActiveSpan();
   if (!span) return;
 
+  const telemetryConfig = getTelemetryConfig(
+    invocationContext.runConfig?.telemetry,
+  );
   span.setAttributes({
     [GenAiAttr.SYSTEM]: GEN_AI_SYSTEM_VALUE,
-    [GenAiAttr.REQUEST_MODEL]: llmRequest.model,
-    ...(invocationContext.agent?.name
-      ? {[GenAiAttr.AGENT_NAME]: invocationContext.agent.name}
-      : {}),
+    ...(llmRequest.model ? {[GenAiAttr.REQUEST_MODEL]: llmRequest.model} : {}),
     [GcpAttr.INVOCATION_ID]: invocationContext.invocationId,
     [GcpAttr.SESSION_ID]: invocationContext.session.id,
     [GcpAttr.EVENT_ID]: eventId,
     // Consider removing once GenAI SDK provides a way to record this info.
-    [GcpAttr.LLM_REQUEST]: shouldAddRequestResponseToSpans()
+    [GcpAttr.LLM_REQUEST]: telemetryConfig.shouldAddContentToLegacySpans
       ? safeJsonSerialize(buildLlmRequestForTrace(llmRequest))
       : '{}',
   });
@@ -494,7 +761,7 @@ export function traceCallLlm({
     span.setAttribute(GenAiAttr.REQUEST_TOP_P, llmRequest.config.topP);
   }
 
-  if (llmRequest.config?.maxOutputTokens !== undefined) {
+  if (llmRequest.config?.maxOutputTokens) {
     span.setAttribute(
       GenAiAttr.REQUEST_MAX_TOKENS,
       llmRequest.config.maxOutputTokens,
@@ -503,30 +770,17 @@ export function traceCallLlm({
 
   span.setAttribute(
     GcpAttr.LLM_RESPONSE,
-    shouldAddRequestResponseToSpans() ? safeJsonSerialize(llmResponse) : '{}',
+    telemetryConfig.shouldAddContentToLegacySpans
+      ? safeJsonSerialize(llmResponse)
+      : '{}',
   );
 
-  if (llmResponse.usageMetadata) {
-    span.setAttribute(
-      GenAiAttr.USAGE_INPUT_TOKENS,
-      llmResponse.usageMetadata.promptTokenCount || 0,
-    );
-  }
+  span.setAttributes(computeUsageAttributes(llmResponse.usageMetadata));
 
-  if (llmResponse.usageMetadata?.candidatesTokenCount) {
-    span.setAttribute(
-      GenAiAttr.USAGE_OUTPUT_TOKENS,
-      llmResponse.usageMetadata.candidatesTokenCount,
-    );
-  }
-
-  if (llmResponse.finishReason) {
-    // Convert enum to lowercase string array
-    const finishReasonValue =
-      typeof llmResponse.finishReason === 'string'
-        ? llmResponse.finishReason.toLowerCase()
-        : String(llmResponse.finishReason).toLowerCase();
-    span.setAttribute(GenAiAttr.RESPONSE_FINISH_REASONS, [finishReasonValue]);
+  if (isReportedFinishReason(llmResponse.finishReason)) {
+    span.setAttribute(GenAiAttr.RESPONSE_FINISH_REASONS, [
+      String(llmResponse.finishReason).toLowerCase(),
+    ]);
   }
 }
 
@@ -565,7 +819,10 @@ export function traceSendData({
 
   span.setAttribute(
     GcpAttr.DATA,
-    shouldAddRequestResponseToSpans() ? safeJsonSerialize(data) : '{}',
+    getTelemetryConfig(invocationContext.runConfig?.telemetry)
+      .shouldAddContentToLegacySpans
+      ? safeJsonSerialize(data)
+      : '{}',
   );
 }
 
@@ -673,19 +930,18 @@ export function runAsyncGeneratorWithOtelContext<TThis, T>(
   return bindOtelContextToAsyncGenerator(otelContext, generator);
 }
 
+/** Lowercased `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS` values that turn it off. */
+const FALSY_ENV_VALUES: ReadonlySet<string> = new Set(['0', 'false']);
+
 /**
- * Determines whether to add request/response content to spans.
- *
- * Defaults to true for now to preserve backward compatibility.
- * Once prompt and response logging is well established in ADK, we might start
- * a deprecation of request/response content in spans by switching the default
- * to false.
- *
- * @returns false only when ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS is explicitly set to 'false' or '0'
+ * Reads `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS`, which is on unless it is `0`
+ * or `false`.
  */
-function shouldAddRequestResponseToSpans(): boolean {
-  const envValue = readEnvVar('ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS') || 'true';
-  return envValue === 'true' || envValue === '1';
+function readAddContentToLegacySpans(): boolean {
+  const value =
+    readEnvVar('ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS')?.trim().toLowerCase() ??
+    'true';
+  return !FALSY_ENV_VALUES.has(value);
 }
 
 const ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN =
@@ -767,6 +1023,13 @@ export function getContentCapturingMode(): ContentCapturingMode {
   }
 }
 
+function isSpanBearingMode(mode: ContentCapturingMode): boolean {
+  return (
+    mode === ContentCapturingMode.SPAN_ONLY ||
+    mode === ContentCapturingMode.SPAN_AND_EVENT
+  );
+}
+
 /** Resolved per-call telemetry configuration. */
 export interface TelemetryConfig {
   readonly schemaVersion: number;
@@ -774,6 +1037,11 @@ export interface TelemetryConfig {
   readonly captureMessageContent: ContentCapturingMode;
   readonly shouldAddContentToLogs: boolean;
   readonly shouldAddContentToExperimentalSpans: boolean;
+  /**
+   * Whether content goes on ADK's own spans (`call_llm`, `execute_tool`,
+   * `send_data`).
+   */
+  readonly shouldAddContentToLegacySpans: boolean;
 }
 
 /**
@@ -782,7 +1050,10 @@ export interface TelemetryConfig {
  *
  * For the semantic-convention and content-capture decisions the admin lock
  * `ADK_TELEMETRY_IGNORE_RUN_CONFIG` wins first, then the per-run value, then
- * the environment. The schema version always comes from the environment.
+ * the environment. Content on ADK's own spans follows a per-run
+ * `captureMessageContent` when one applies, and otherwise
+ * `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS`. The schema version always comes from
+ * the environment.
  *
  * @param overrides The per-run overrides, usually `RunConfig.telemetry`.
  */
@@ -796,8 +1067,9 @@ export function getTelemetryConfig(
     semconvOptIn === undefined
       ? shouldUseExperimentalGenAiSemconv()
       : semconvOptIn === 'experimental';
+  const runCaptureMessageContent = runOverrides?.captureMessageContent;
   const captureMessageContent =
-    runOverrides?.captureMessageContent ?? getContentCapturingMode();
+    runCaptureMessageContent ?? getContentCapturingMode();
   return {
     schemaVersion,
     shouldUseExperimentalGenAiSemconv: experimental,
@@ -805,9 +1077,13 @@ export function getTelemetryConfig(
     shouldAddContentToLogs:
       captureMessageContent === ContentCapturingMode.EVENT_ONLY ||
       captureMessageContent === ContentCapturingMode.SPAN_AND_EVENT,
-    shouldAddContentToExperimentalSpans:
-      captureMessageContent === ContentCapturingMode.SPAN_ONLY ||
-      captureMessageContent === ContentCapturingMode.SPAN_AND_EVENT,
+    shouldAddContentToExperimentalSpans: isSpanBearingMode(
+      captureMessageContent,
+    ),
+    shouldAddContentToLegacySpans:
+      runCaptureMessageContent === undefined
+        ? readAddContentToLegacySpans()
+        : isSpanBearingMode(runCaptureMessageContent),
   };
 }
 
@@ -1838,16 +2114,7 @@ export function finishInferenceSpan(params: FinishInferenceSpanParams): void {
     );
     const hasError = Object.hasOwn(params, 'error') && error !== undefined;
     if (hasError && isSpanRecording) {
-      const failureType = resolveErrorType(error);
-      let exception: Error | string;
-      try {
-        exception = error instanceof Error ? error : failureType;
-      } catch {
-        exception = failureType;
-      }
-      span.recordException(exception);
-      span.setAttribute('error.type', failureType);
-      span.setStatus({code: SpanStatusCode.ERROR, message: failureType});
+      recordSpanError(span, error);
     }
 
     if (telemetryConfig.shouldUseExperimentalGenAiSemconv) {

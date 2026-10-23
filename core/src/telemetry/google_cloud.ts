@@ -4,17 +4,24 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {OTLPMetricExporter} from '@opentelemetry/exporter-metrics-otlp-http';
+import {OTLPTraceExporter} from '@opentelemetry/exporter-trace-otlp-http';
 import {Resource} from '@opentelemetry/resources';
 import {PeriodicExportingMetricReader} from '@opentelemetry/sdk-metrics';
 import {BatchSpanProcessor} from '@opentelemetry/sdk-trace-base';
 import {GoogleAuth} from 'google-auth-library';
 
 import {logger} from '../utils/logger.js';
-import {loadOptionalPeer} from '../utils/optional_peer.js';
 
 import {
   CLOUD_PLATFORM_SCOPE,
+  createAuthorizationHeadersFactory,
   createGcpLogRecordProcessor,
+  DEFAULT_MTLS_TELEMETRY_METRICS_ENDPOINT,
+  DEFAULT_MTLS_TELEMETRY_TRACES_ENDPOINT,
+  DEFAULT_TELEMETRY_METRICS_ENDPOINT,
+  DEFAULT_TELEMETRY_TRACES_ENDPOINT,
+  selectTelemetryEndpoint,
 } from './gcp_logging.js';
 import {buildGcpResource, fetchProject} from './gcp_resource.js';
 import {OtelExportersConfig, OTelHooks} from './setup.js';
@@ -53,40 +60,54 @@ export async function getGcpProjectId(): Promise<string | undefined> {
   return resolveProjectId(new GoogleAuth({scopes: [CLOUD_PLATFORM_SCOPE]}));
 }
 
-/** Builds the Cloud Trace span processor, loading its exporter on demand. */
-async function createCloudTraceProcessor(
-  projectId: string,
-): Promise<BatchSpanProcessor> {
-  const {TraceExporter} = await loadOptionalPeer(
-    {
-      packageName: '@google-cloud/opentelemetry-cloud-trace-exporter',
-      feature: 'getGcpExporters({enableTracing: true})',
-    },
-    () => import('@google-cloud/opentelemetry-cloud-trace-exporter'),
+/** How often the metric reader exports, in milliseconds. */
+const METRIC_EXPORT_INTERVAL_MS = 5000;
+
+/**
+ * Builds the span processor that exports traces to Cloud Trace over OTLP/HTTP
+ * at `telemetry.googleapis.com`, authenticating each request with `auth`.
+ */
+function createCloudTraceProcessor(
+  auth: Pick<GoogleAuth, 'getRequestHeaders'>,
+): BatchSpanProcessor {
+  return new BatchSpanProcessor(
+    new OTLPTraceExporter({
+      url: selectTelemetryEndpoint({
+        defaultEndpoint: DEFAULT_TELEMETRY_TRACES_ENDPOINT,
+        mtlsEndpoint: DEFAULT_MTLS_TELEMETRY_TRACES_ENDPOINT,
+      }),
+      headers: createAuthorizationHeadersFactory(auth),
+    }),
   );
-  return new BatchSpanProcessor(new TraceExporter({projectId}));
 }
 
-/** Builds the Cloud Monitoring metric reader, loading its exporter on demand. */
-async function createCloudMetricReader(
-  projectId: string,
-): Promise<PeriodicExportingMetricReader> {
-  const {MetricExporter} = await loadOptionalPeer(
-    {
-      packageName: '@google-cloud/opentelemetry-cloud-monitoring-exporter',
-      feature: 'getGcpExporters({enableMetrics: true})',
-    },
-    () => import('@google-cloud/opentelemetry-cloud-monitoring-exporter'),
-  );
+/**
+ * Builds the metric reader that exports metrics to Cloud Monitoring over
+ * OTLP/HTTP at `telemetry.googleapis.com`, authenticating each request with
+ * `auth`.
+ */
+function createCloudMetricReader(
+  auth: Pick<GoogleAuth, 'getRequestHeaders'>,
+): PeriodicExportingMetricReader {
   return new PeriodicExportingMetricReader({
-    exporter: new MetricExporter({projectId}),
-    exportIntervalMillis: 5000,
+    exporter: new OTLPMetricExporter({
+      url: selectTelemetryEndpoint({
+        defaultEndpoint: DEFAULT_TELEMETRY_METRICS_ENDPOINT,
+        mtlsEndpoint: DEFAULT_MTLS_TELEMETRY_METRICS_ENDPOINT,
+      }),
+      headers: createAuthorizationHeadersFactory(auth),
+    }),
+    exportIntervalMillis: METRIC_EXPORT_INTERVAL_MS,
   });
 }
 
 /**
  * Returns the OTel hooks that export to Google Cloud: Cloud Trace for spans,
  * Cloud Monitoring for metrics and Cloud Logging for log records.
+ *
+ * All three export over OTLP/HTTP to `telemetry.googleapis.com` (or its mTLS
+ * endpoint, as `GOOGLE_API_USE_MTLS_ENDPOINT` selects), with Application
+ * Default Credentials on each request. Metrics are exported every 5 seconds.
  *
  * Returns no hooks when no project can be determined.
  */
@@ -108,12 +129,8 @@ export async function getGcpExporters(
   }
 
   return {
-    spanProcessors: enableTracing
-      ? [await createCloudTraceProcessor(projectId)]
-      : [],
-    metricReaders: enableMetrics
-      ? [await createCloudMetricReader(projectId)]
-      : [],
+    spanProcessors: enableTracing ? [createCloudTraceProcessor(auth)] : [],
+    metricReaders: enableMetrics ? [createCloudMetricReader(auth)] : [],
     logRecordProcessors: enableLogging
       ? [createGcpLogRecordProcessor({projectId, auth})]
       : [],
