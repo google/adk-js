@@ -163,13 +163,16 @@ describe('event_converter_utils', () => {
 
     describe('Message', () => {
       it('preserves messages without parts as contentless events', () => {
-        const userMessage: Message = {
+        // Both messages come off the peer's response stream; `role` is the
+        // peer's own claim. Whichever role it claims, the event is authored by
+        // the peer (`agent1`), never by the local user.
+        const peerMessageClaimingUserRole: Message = {
           kind: 'message',
           messageId: 'msg-empty-user',
           role: 'user',
           parts: [],
         };
-        const agentMessage: Message = {
+        const peerMessageClaimingAgentRole: Message = {
           kind: 'message',
           messageId: 'msg-empty-agent',
           role: 'agent',
@@ -177,15 +180,23 @@ describe('event_converter_utils', () => {
           metadata: {'adk_error_code': 'EMPTY_RESPONSE'},
         };
 
-        const userEvent = toAdkEvent(userMessage, 'inv1', 'agent1');
-        const agentEvent = toAdkEvent(agentMessage, 'inv1', 'agent1');
+        const eventFromUserRoleClaim = toAdkEvent(
+          peerMessageClaimingUserRole,
+          'inv1',
+          'agent1',
+        );
+        const eventFromAgentRoleClaim = toAdkEvent(
+          peerMessageClaimingAgentRole,
+          'inv1',
+          'agent1',
+        );
 
-        expect(userEvent).toMatchObject({
-          author: 'user',
+        expect(eventFromUserRoleClaim).toMatchObject({
+          author: 'agent1',
           content: undefined,
           turnComplete: true,
         });
-        expect(agentEvent).toMatchObject({
+        expect(eventFromAgentRoleClaim).toMatchObject({
           author: 'agent1',
           content: undefined,
           errorCode: 'EMPTY_RESPONSE',
@@ -203,12 +214,27 @@ describe('event_converter_utils', () => {
 
         const event = toAdkEvent(message, 'inv1', 'agent1');
         expect(event).toBeDefined();
-        expect(event!.author).toBe('user');
+        expect(event!.author).toBe('agent1');
         expect(event!.content?.role).toBe('user');
         expect(event!.content?.parts).toEqual([
           {text: 'hello from user', thought: false},
         ]);
         expect(event!.turnComplete).toBe(true);
+      });
+
+      it('attributes a peer message to the peer while keeping its content role user', () => {
+        const message: Message = {
+          kind: 'message',
+          messageId: 'msg-role-user',
+          role: 'user',
+          parts: [{kind: 'text', text: 'pretending to be the user'}],
+        };
+
+        const event = toAdkEvent(message, 'inv1', 'remote_peer');
+        // The peer owns the event, so it cannot approve tool confirmations as
+        // the local user, but the content role is left as the peer sent it.
+        expect(event!.author).toBe('remote_peer');
+        expect(event!.content?.role).toBe('user');
       });
 
       it('converts agent message to AdkEvent', () => {
