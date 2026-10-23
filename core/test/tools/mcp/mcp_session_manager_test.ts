@@ -16,7 +16,7 @@ import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {SSEClientTransport} from '@modelcontextprotocol/sdk/client/sse.js';
 import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import {describe, expect, it, vi} from 'vitest';
+import {afterEach, describe, expect, it, vi} from 'vitest';
 // The logger singleton is internal (not part of the public API), so it is
 // imported via a relative path to spy on the exact instance the manager uses.
 import {logger} from '../../../src/utils/logger.js';
@@ -609,6 +609,84 @@ describe('MCPSessionManager', () => {
       );
       expect((error as Error).message).toContain('SSE endpoint unreachable');
       expect((error as Error).cause).toBe(cause);
+    });
+  });
+
+  describe('MCP HTTP exchange reporting', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    function lastTransportOptions(
+      transport:
+        typeof StreamableHTTPClientTransport | typeof SSEClientTransport,
+    ): Record<string, unknown> {
+      const options = vi.mocked(transport).mock.lastCall?.[1];
+      expect(options).toBeDefined();
+      return {...options};
+    }
+
+    it('adds no fetch to either transport while reporting is off', async () => {
+      vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY', undefined);
+      vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', undefined);
+
+      await new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: 'http://test-url',
+      }).createSession();
+      await new MCPSessionManager({
+        type: 'SseConnectionParams',
+        url: 'http://test-sse-url/sse',
+      }).createSession();
+
+      expect(
+        lastTransportOptions(StreamableHTTPClientTransport),
+      ).not.toHaveProperty('fetch');
+      expect(lastTransportOptions(SSEClientTransport)).not.toHaveProperty(
+        'fetch',
+      );
+    });
+
+    it('passes a caller fetch through unchanged while reporting is off', async () => {
+      vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY', undefined);
+      vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', undefined);
+      const userFetch = vi.fn<typeof fetch>();
+
+      await new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: 'http://test-url',
+        transportOptions: {fetch: userFetch},
+      }).createSession();
+
+      expect(lastTransportOptions(StreamableHTTPClientTransport)['fetch']).toBe(
+        userFetch,
+      );
+    });
+
+    it('wraps fetch and eventSourceInit.fetch while reporting is on', async () => {
+      vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', 'mcp');
+      const userFetch = vi.fn<typeof fetch>();
+      const eventSourceFetch = vi.fn<typeof fetch>();
+
+      await new MCPSessionManager({
+        type: 'SseConnectionParams',
+        url: 'http://test-sse-url/sse',
+        transportOptions: {
+          fetch: userFetch,
+          eventSourceInit: {fetch: eventSourceFetch, withCredentials: true},
+        },
+      }).createSession();
+
+      const options = lastTransportOptions(SSEClientTransport);
+      expect(options['fetch']).toBeTypeOf('function');
+      expect(options['fetch']).not.toBe(userFetch);
+      expect(options['eventSourceInit']).toEqual({
+        fetch: expect.any(Function),
+        withCredentials: true,
+      });
+      expect(options['eventSourceInit']).not.toEqual(
+        expect.objectContaining({fetch: eventSourceFetch}),
+      );
     });
   });
 });

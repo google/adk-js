@@ -9,7 +9,12 @@ import {
   getGcpResource,
   OtelExportersConfig,
 } from '@google/adk';
-import {detectResources, Resource} from '@opentelemetry/resources';
+import {gcpDetector} from '@opentelemetry/resource-detector-gcp';
+import {
+  detectResources,
+  Resource,
+  resourceFromAttributes,
+} from '@opentelemetry/resources';
 import {GoogleAuth} from 'google-auth-library';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
@@ -79,8 +84,8 @@ describe('getGcpExporters', () => {
       },
       expectedSpanProcessors: 0,
       expectedMetricReaders: 0,
-      expectedLogRecordProcessors: 0, // Cloud Logging is not supported in Node.js
-      description: 'should not set up Cloud Logging (unsupported in Node.js)',
+      expectedLogRecordProcessors: 1,
+      description: 'should set up Cloud Logging when enableLogging is true',
     },
     {
       config: {
@@ -151,17 +156,24 @@ describe('getGcpExporters', () => {
 });
 
 describe('getGcpResource', () => {
-  it('should detect GCP resources using gcpDetector', async () => {
-    const mockDetectedResource = {attributes: {'cloud.provider': 'gcp'}};
-    vi.mocked(detectResources).mockResolvedValue(
-      mockDetectedResource as unknown as Resource,
+  it('should detect GCP resources using gcpDetector and merge them in', () => {
+    const fakeResource = {
+      merge: vi.fn(() => fakeResource),
+    } as unknown as Resource;
+    const gcpDetectedResource = {
+      attributes: {'cloud.provider': 'gcp'},
+    } as unknown as Resource;
+    vi.mocked(resourceFromAttributes).mockReturnValue(fakeResource);
+    vi.mocked(detectResources).mockImplementation((config) =>
+      config?.detectors?.[0] === gcpDetector
+        ? gcpDetectedResource
+        : fakeResource,
     );
 
-    const result = await getGcpResource();
+    const result = getGcpResource('test-project');
 
-    expect(detectResources).toHaveBeenCalledWith({
-      detectors: [expect.any(Object)],
-    });
-    expect(result).toEqual(mockDetectedResource);
+    expect(detectResources).toHaveBeenCalledWith({detectors: [gcpDetector]});
+    expect(fakeResource.merge).toHaveBeenCalledWith(gcpDetectedResource);
+    expect(result).toBe(fakeResource);
   });
 });

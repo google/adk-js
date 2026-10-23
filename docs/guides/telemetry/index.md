@@ -20,9 +20,11 @@ dev server reads the same attributes to render its Trace view, and its
 `gcp.vertex.agent.event_id`.
 
 Everything a caller imports is in `@google/adk`: `maybeSetOtelProviders`, the
-`OTelHooks` and `OtelExportersConfig` types, `getGcpExporters` and
-`getGcpResource`. The functions that write the attributes are called by the
-framework, and [Limitations](#limitations) explains why they are not exported.
+`OTelHooks` and `OtelExportersConfig` types, `getGcpExporters`,
+`getGcpResource`, `getGcpProjectId`, the `RunTelemetryConfig` type with
+`ContentCapturingMode`, and `WebUiLogProcessor`. The functions that write the
+attributes are called by the framework, and [Limitations](#limitations) explains
+why they are not exported.
 
 ## Get started
 
@@ -237,6 +239,103 @@ in:
 content capture is enabled (`EVENT_ONLY` or `SPAN_AND_EVENT`). It is never
 written onto spans.
 
+`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` controls what is written to
+exported spans and log records. When `WebUiLogProcessor` is registered (as in
+`adk web` and `adk api_server`), it reads the unredacted request and response
+from the OpenTelemetry emit `Context` for the local `/debug/trace/*` routes
+without mutating the record that other processors export.
+
+### Per-run overrides
+
+`RunConfig.telemetry` overrides the telemetry environment variables for one run.
+Each field left out falls back to its variable, so two runs in one process can
+record differently:
+
+```ts
+import {ContentCapturingMode} from '@google/adk';
+
+for await (const event of runner.runAsync({
+  userId,
+  sessionId,
+  newMessage,
+  runConfig: {
+    telemetry: {captureMessageContent: ContentCapturingMode.EVENT_ONLY},
+  },
+})) {
+  // ...
+}
+```
+
+| `RunTelemetryConfig` field      | Overrides                                            | Values                                                         |
+| :------------------------------ | :--------------------------------------------------- | :------------------------------------------------------------- |
+| `genaiSemconvStabilityOptIn`    | `OTEL_SEMCONV_STABILITY_OPT_IN` and the schema default | `'experimental'` or `'stable'`                                 |
+| `captureMessageContent`         | `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`  | A `ContentCapturingMode` member                                |
+| `adkExperimentalTelemetryOptIn` | `ADK_EXPERIMENTAL_TELEMETRY`                          | `true` or `false`                                              |
+| `experimentalFeaturesOptIn`     | `ADK_EXPERIMENTAL_TELEMETRY_FEATURES`                 | Feature names; an unknown name is warned about once and dropped |
+
+The first two decide the inference log records and the
+`generate_content <model>` span attributes of the run. The schema version, which
+picks the `gen_ai.provider.name` attribute, always comes from
+`ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN`. `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS`,
+which controls the `gcp.vertex.agent.*` span payloads, has no per-run override.
+
+An operator who must keep the environment in charge sets
+`ADK_TELEMETRY_IGNORE_RUN_CONFIG` to `1` or `true`. Every per-run value is then
+ignored.
+
+### Log records in the dev server trace view
+
+`AdkApiServer` (used by both `adk web` and `adk api_server`) registers a
+`WebUiLogProcessor` alongside its in-memory span processors, whichever way it
+exports. It keeps the latest 1000 `gen_ai.client.inference.operation.details`
+records. The session trace routes, `/debug/trace/session/:sessionId` and
+`/dev/apps/:appName/debug/trace/session/:sessionId`, return each span with its
+usual fields and a `logs` list of `{event_name, body, attributes}` for the
+records emitted under it. A span without records has an empty list.
+
+The trace view is local, so its copy carries the message content and `user.id`
+even when content capture is off for export. The record that other processors
+export is not changed. Bytes are base64-encoded with the standard alphabet.
+
+### MCP HTTP exchange records
+
+Each HTTP request and response between an MCP toolset and its server can emit a
+DEBUG log record named `adk.experimental.mcp.http.client.response.end`. It
+covers the Streamable HTTP and SSE transports, is experimental, and is off by
+default.
+
+| Variable                                                    | Effect                                                                                                         |
+| :---------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------- |
+| `ADK_EXPERIMENTAL_TELEMETRY=true` (or `1`)                  | Turns the record on, with every other experimental feature.                                                    |
+| `ADK_EXPERIMENTAL_TELEMETRY_FEATURES=mcp`                   | Turns the record on alone.                                                                                     |
+| `ADK_CAPTURE_MCP_HTTP_BODIES=true` (or `1`)                 | Records the request and response bodies, cut at 1000 characters. Otherwise both are `'<elided>'`.              |
+| `OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_REQUEST`  | Comma-separated header names or regular expressions, matched whole and case-insensitively, to record.         |
+| `OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_RESPONSE` | The same, for response headers.                                                                                |
+
+The record's attributes are `http.request.method`, `url.full`,
+`http.response.status_code`, `server.address`, `server.port` (when the URL names
+a port), `mcp.session.id`, `mcp.protocol.version`, `error.type` (the status
+code, when it is 400 or more), and one `http.request.header.<name>` or
+`http.response.header.<name>` string array per allowlisted header. Its body is
+`{'http.request.body.content', 'http.response.body.content'}`. The record is
+parented to the context the request was made in, usually the `execute_tool`
+span.
+
+> [!WARNING]
+> MCP bodies and headers routinely carry user data and credentials. `url.full`
+> drops userinfo and replaces every query value with `REDACTED`, and the values
+> of `api-key`, `authorization`, `cookie`, `proxy-authorization`, `set-cookie`,
+> `x-api-key` and `x-goog-api-key` are recorded as `<redacted>`. Nothing else is
+> redacted: a body, or an allowlisted header with any other name, is exported as
+> it is. Only allowlist headers you have checked.
+
+An SSE response body is never read. Any other response body is cloned
+synchronously and read in the background when body capture is on, so the
+transport receives the response without waiting for the body to buffer. The
+record is controlled by the environment only, because the transport has no run
+to read a `RunConfig.telemetry` override from, and the switch is read when a
+session is created.
+
 ## Configuration options
 
 `maybeSetOtelProviders(otelHooksToSetup, otelResource)` takes a list of hooks
@@ -245,10 +344,14 @@ and an optional resource.
 | Option                          | Type                   | Default                    | Description                          |
 | :------------------------------ | :--------------------- | :------------------------- | :----------------------------------- |
 | `otelHooksToSetup`              | `OTelHooks[]`          | `[]`                       | Processors and readers to install.   |
-| `otelResource`                  | `Resource`             | an empty detected resource | Resource attributes on every signal. |
+| `otelResource`                  | `Resource`             | detected from the environment | Resource attributes on every signal. |
 | `OTelHooks.spanProcessors`      | `SpanProcessor[]`      | none                       | Where spans go.                      |
 | `OTelHooks.metricReaders`       | `MetricReader[]`       | none                       | Where metrics go.                    |
 | `OTelHooks.logRecordProcessors` | `LogRecordProcessor[]` | none                       | Where log records go.                |
+
+Without an `otelResource`, the resource holds `OTEL_SERVICE_NAME` as
+`service.name` and each `key=value` pair of `OTEL_RESOURCE_ATTRIBUTES`, and
+nothing else.
 
 A provider is created only for a signal that ends up with at least one
 processor or reader, so passing span processors alone leaves metrics and logs
@@ -291,46 +394,114 @@ loses only the payloads.
 
 ## Advanced applications
 
-`getGcpExporters` builds hooks that send spans to Cloud Trace and metrics to
-Cloud Monitoring, and `getGcpResource` detects the Google Cloud resource labels
-that say where the process runs.
+`getGcpExporters` builds hooks that send spans to Cloud Trace, metrics to Cloud
+Monitoring and log records to Cloud Logging, and `getGcpResource` builds the
+resource that says where the process runs.
 
 ```ts
 import {
   getGcpExporters,
+  getGcpProjectId,
   getGcpResource,
   maybeSetOtelProviders,
 } from '@google/adk';
 
+const projectId = await getGcpProjectId();
 const gcpHooks = await getGcpExporters({
   enableTracing: true,
   enableMetrics: true,
+  enableLogging: true,
+  projectId: projectId ?? undefined,
 });
-maybeSetOtelProviders([gcpHooks], getGcpResource());
+maybeSetOtelProviders([gcpHooks], getGcpResource(projectId));
 ```
 
-| `OtelExportersConfig` field | Default | Effect in `getGcpExporters`                            |
-| :-------------------------- | :------ | :----------------------------------------------------- |
-| `enableTracing`             | `false` | Adds a batched Cloud Trace span processor.             |
-| `enableMetrics`             | `false` | Adds a Cloud Monitoring reader that exports every 5 s. |
-| `enableLogging`             | `false` | Ignored. No Cloud Logging exporter is created.         |
+| `OtelExportersConfig` field | Default                  | Effect in `getGcpExporters`                                        |
+| :-------------------------- | :----------------------- | :----------------------------------------------------------------- |
+| `enableTracing`             | `false`                  | Adds a batched Cloud Trace span processor.                         |
+| `enableMetrics`             | `false`                  | Adds a Cloud Monitoring reader that exports every 5 s.             |
+| `enableLogging`             | `false`                  | Adds a batched log record processor that exports to Cloud Logging. |
+| `projectId`                 | resolved via credentials | Skips looking up the project a second time when already resolved.  |
 
-`getGcpExporters({enableLogging: true})` still creates no Cloud Logging
-exporter; to export ADK's GenAI log records, use the OTLP log exporter path via
-`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` or pass `logRecordProcessors` to
-`maybeSetOtelProviders` as shown in [Logs](#logs).
+`getGcpExporters` resolves the project through the ambient Google credentials
+when `projectId` is not provided. When no project resolves, it logs a warning
+and returns empty hooks, so a process without credentials starts and runs
+untraced rather than failing.
 
-`getGcpExporters` resolves the project through the ambient Google credentials.
-When no project resolves, it logs a warning and returns empty hooks, so a
-process without credentials starts and runs untraced rather than failing.
+`adk web --otel_to_cloud` and `adk api_server --otel_to_cloud` turn on all three
+signals and use `getGcpResource` with the credentials' project.
+
+### Cloud Logging
+
+With `enableLogging`, every log record that reaches the provider is exported
+over OTLP/HTTP to `https://telemetry.googleapis.com/v1/logs`. Each request is
+authenticated with Application Default Credentials and the
+`https://www.googleapis.com/auth/cloud-platform` scope, with a token refreshed
+as needed. The exporter works on its own copy of each record, so other
+processors see the record unchanged. On that copy:
+
+- `event.name` is set from the record's event name, unless the record sets it.
+- `gcp.log_name` defaults to `GCP_DEFAULT_LOG_NAME`, or failing that to
+  `adk-otel`, or on Agent Engine to
+  `aiplatform.googleapis.com/reasoning_engine_stdout`. Cloud Logging files a
+  record in the log its event name names, and uses `gcp.log_name` for a record
+  without one.
+- `service.version` is copied from the resource into an attribute, because
+  Cloud Logging drops resource attributes it maps to a monitored resource.
+
+On Agent Engine, which `GOOGLE_CLOUD_AGENT_ENGINE_ID` marks, the copy also:
+
+- loses its event name, which Cloud Logging would otherwise use as the log name,
+  splitting the records over one log per event type;
+- gains the resource attributes `gcp.resource_type`
+  (`aiplatform.googleapis.com/ReasoningEngine`), `location`
+  (`GOOGLE_CLOUD_AGENT_ENGINE_LOCATION`, else `GOOGLE_CLOUD_LOCATION`),
+  `reasoning_engine_id` and `resource_container` (`projects/<project ID>`).
+  These go on exported log records only, never on the resource that traces and
+  metrics share.
+
+On Agent Engine the credentials may name the project by number. Both
+`getGcpProjectId` and `getGcpExporters` look up the project ID in Cloud Resource
+Manager (`resourcemanager.projects.get`, included in roles such as
+`roles/viewer` and `roles/browser`), and a failed lookup keeps the number.
+
+`GOOGLE_API_USE_CLIENT_CERTIFICATE=true` turns on the mTLS endpoint selection,
+`https://telemetry.mtls.googleapis.com/v1/logs`. `GOOGLE_API_USE_MTLS_ENDPOINT`
+then picks the endpoint: `always` the mTLS one, `never` the plain one, and
+`auto` (the default, and the fallback for an unknown value, which is warned
+about) the plain one, because no client certificate source is discovered yet.
+
+### The resource
+
+`getGcpResource(projectId?)` layers these sources, later ones winning:
+
+1. `service.instance.id`, unique per process, and `gcp.project_id` and
+   `cloud.account.id` from `projectId`, or `GOOGLE_CLOUD_PROJECT` when
+   `projectId` is omitted (warned about when neither is set).
+2. On Agent Engine: `cloud.provider`, `cloud.platform` (`gcp.agent_engine`),
+   `service.name` (the engine id), `service.version`
+   (`GOOGLE_CLOUD_AGENT_ENGINE_RUNTIME_REVISION_ID`), `cloud.region`,
+   `cloud.resource_id` and the `telemetry.sdk.*` attributes.
+3. `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES`.
+4. The GCP resource detector (GKE, Cloud Run, Cloud Functions, App Engine, GCE),
+   skipped on Agent Engine.
+5. `gen_ai.main_agent.id`, the Agent Registry URN of the agent on Agent Engine,
+   GKE and Cloud Run, unless a source above already set it. It needs the
+   project number from Cloud Resource Manager (`resourcemanager.projects.get`)
+   and a zone or region. On GKE the namespace and Deployment come from
+   `k8s.namespace.name` and `k8s.deployment.name`, or else from the pod's
+   service account and `HOSTNAME`.
+
+The detector and the URN settle asynchronously; the SDK's processors wait for
+them before they export.
 
 ## Limitations
 
-`core/src/telemetry/tracing.ts` is not exported from `@google/adk`, so `tracer`,
-`traceCallLlm`, `traceToolCall` and the other trace functions cannot be
-imported. The framework calls them where it opens each span, and the attributes
-rather than the functions are the contract a caller observes. adk-python differs
-here: `google.adk.telemetry` is importable.
+`core/src/telemetry/tracing.ts` is not exported from `@google/adk`, apart from
+`ContentCapturingMode`, so `tracer`, `traceCallLlm`, `traceToolCall` and the
+other trace functions cannot be imported. The framework calls them where it
+opens each span, and the attributes rather than the functions are the contract a
+caller observes. adk-python differs here: `google.adk.telemetry` is importable.
 
 `getGcpExporters` loads each exporter from an optional peer dependency when you
 enable its signal. Install the one you use:
@@ -347,6 +518,22 @@ active span does nothing.
 
 `maybeSetOtelProviders` is marked experimental in its documentation, so its
 signature may change.
+
+Cloud Logging export has these gaps:
+
+- The OTLP log exporter in `core` sends JSON, not protobuf.
+- No default client certificate source is discovered, so
+  `GOOGLE_API_USE_MTLS_ENDPOINT=auto` always picks the plain endpoint, and
+  `always` picks the mTLS endpoint without configuring a client certificate.
+- The OTLP exporter sends its own `User-Agent`,
+  `OTel-OTLP-Exporter-JavaScript/<version>`, on every request. No Agent Engine
+  SDK version is available in JavaScript, so
+  `GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY` adds no `Vertex-Agent-Engine`
+  token.
+
+The MCP HTTP exchange record lists only the request headers the transport passes
+to `fetch`, not ones the HTTP client adds on the wire. Its switch is read when a
+session is created, so a change takes effect with the next session.
 
 ## Related samples
 

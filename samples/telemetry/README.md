@@ -124,7 +124,39 @@ const getOrderStatus = new FunctionTool({
 before it loads this file, and `maybeSetOtelProviders` does not replace one, so
 the console span exporter prints nothing there. Select the
 `execute_tool get_order_status` or `generate_content gemini-flash-latest` span
-in the Trace view to see the same attributes.
+in the Trace view to see the same attributes. The `generate_content` span also
+lists its `gen_ai.client.inference.operation.details` record, with the message
+content shown even when content capture is off for export.
+
+**Send the records to Cloud Logging.** Replace the console processors with the
+Google Cloud hooks. With Application Default Credentials for a project,
+`getGcpExporters({enableLogging: true})` adds a log record processor that
+exports to `telemetry.googleapis.com`, and `getGcpResource` names the project
+and the platform on every record:
+
+```ts
+import {
+  getGcpExporters,
+  getGcpProjectId,
+  getGcpResource,
+  maybeSetOtelProviders,
+} from '@google/adk';
+
+const projectId = await getGcpProjectId();
+maybeSetOtelProviders(
+  [await getGcpExporters({enableLogging: true, projectId: projectId ?? undefined})],
+  getGcpResource(projectId),
+);
+```
+
+Cloud Logging files a record that has an event name, such as
+`gen_ai.client.inference.operation.details`, in a log named after it, and any
+other record in the `adk-otel` log, or the log `GCP_DEFAULT_LOG_NAME` names. On
+Agent Engine, GKE, and Cloud Run, resolving the project ID and project number
+for `resource_container` and `gen_ai.main_agent.id` queries Cloud Resource
+Manager (`resourcemanager.projects.get`). Add `enableTracing: true` to put the
+spans in Cloud Trace beside them; that needs the optional
+`@google-cloud/opentelemetry-cloud-trace-exporter` package.
 
 **Control message content capture.** Inference log records default to
 `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=NO_CONTENT`, which omits
