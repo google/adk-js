@@ -7,6 +7,7 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
+  id-token: write
 
 name: release-please
 
@@ -14,9 +15,61 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         id: release
         with:
           token: ${{ secrets.MY_RELEASE_PLEASE_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      - name: Checkout repository
+        if: ${{ steps.release.outputs.releases_created == 'true' }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        if: ${{ steps.release.outputs.releases_created == 'true' }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies and build
+        if: ${{ steps.release.outputs.releases_created == 'true' }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: Authenticate to Google Cloud for OSS Exit Gate
+        if: ${{ steps.release.outputs.releases_created == 'true' }}
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          token_format: 'access_token'
+          workload_identity_provider: 'projects/305452601764/locations/global/workloadIdentityPools/builders/providers/github'
+
+      - name: Set up Cloud SDK
+        if: ${{ steps.release.outputs.releases_created == 'true' }}
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+
+      - name: Stage packages to Artifact Registry and trigger OSS Exit Gate
+        if: ${{ steps.release.outputs.releases_created == 'true' }}
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          cat << 'NPMRC' > "$HOME/.npmrc"
+          registry=https://us-npm.pkg.dev/oss-exit-gate-prod/adk-js--npm/
+          //us-npm.pkg.dev/oss-exit-gate-prod/adk-js--npm/:always-auth=true
+          //us-npm.pkg.dev/oss-exit-gate-prod/adk-js--npm/:_authToken=${ACCESS_TOKEN}
+          NPMRC
+          trap 'rm -f "$HOME/.npmrc"' EXIT
+          npm publish --workspace=core --access public --registry="https://us-npm.pkg.dev/oss-exit-gate-prod/adk-js--npm/"
+          npm publish --workspace=dev --access public --registry="https://us-npm.pkg.dev/oss-exit-gate-prod/adk-js--npm/"
+          npm publish --workspace=integrations --access public --registry="https://us-npm.pkg.dev/oss-exit-gate-prod/adk-js--npm/"
+          cat << 'MANIFEST' > manifest.json
+          {
+            "publish_all": true
+          }
+          MANIFEST
+          gcloud storage cp manifest.json "gs://oss-exit-gate-prod-projects-bucket/adk-js/npm/manifests/manifest-${RUN_ID}-${RUN_ATTEMPT}.json"
