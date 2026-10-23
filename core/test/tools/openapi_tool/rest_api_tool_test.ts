@@ -1182,6 +1182,86 @@ describe('RestApiTool Utilities', () => {
     });
   });
 
+  describe('query parameter serialization', () => {
+    const itemsEndpoint = {
+      baseUrl: 'https://example.com',
+      path: '/items',
+      method: 'GET',
+    };
+    const queryParam = (name: string, paramSchema: object) => ({
+      name,
+      originalName: name,
+      paramLocation: 'query',
+      paramSchema,
+      required: false,
+    });
+    const parameters = [
+      queryParam('id', {type: 'array', items: {type: 'integer'}}),
+      queryParam('filter', {type: 'object'}),
+      queryParam('tag', {type: 'array', items: {type: 'string'}}),
+    ];
+    const queryOf = (args: Record<string, unknown>) =>
+      new URL(prepareRequestParams(itemsEndpoint, parameters, args).url)
+        .searchParams;
+
+    it('repeats the key once per array element (form, explode: true)', () => {
+      const result = prepareRequestParams(itemsEndpoint, parameters, {
+        id: [1, 2, 3],
+      });
+
+      expect(result.url).toBe('https://example.com/items?id=1&id=2&id=3');
+    });
+
+    it('keeps array elements that contain reserved characters intact', () => {
+      const query = queryOf({tag: ['a,b', 'c&d', 'e f']});
+
+      expect(query.getAll('tag')).toEqual(['a,b', 'c&d', 'e f']);
+    });
+
+    it('sends falsy array elements but skips null and undefined ones', () => {
+      const query = queryOf({id: [0, null, undefined, 2]});
+
+      expect(query.getAll('id')).toEqual(['0', '2']);
+    });
+
+    it('sends nothing for an empty array', () => {
+      const result = prepareRequestParams(itemsEndpoint, parameters, {id: []});
+
+      expect(result.url).toBe('https://example.com/items');
+    });
+
+    it('JSON-encodes an object instead of "[object Object]"', () => {
+      const query = queryOf({filter: {a: 1, b: ['x']}});
+
+      expect(query.getAll('filter')).toEqual(['{"a":1,"b":["x"]}']);
+    });
+
+    it('JSON-encodes object elements of an array', () => {
+      const query = queryOf({filter: [{a: 1}, {a: 2}]});
+
+      expect(query.getAll('filter')).toEqual(['{"a":1}', '{"a":2}']);
+    });
+
+    it('still sends scalar values as before', () => {
+      const result = prepareRequestParams(itemsEndpoint, parameters, {
+        id: 7,
+        tag: 'x',
+      });
+
+      expect(result.url).toBe('https://example.com/items?id=7&tag=x');
+    });
+
+    it('merges array parameters with query parameters from the path', () => {
+      const result = prepareRequestParams(
+        {...itemsEndpoint, path: '/items?v=2'},
+        parameters,
+        {id: [1, 2]},
+      );
+
+      expect(result.url).toBe('https://example.com/items?id=1&id=2&v=2');
+    });
+  });
+
   describe('prepareRequestBody', () => {
     it('should format JSON body correctly', () => {
       const requestBody: OpenAPIV3.RequestBodyObject = {
