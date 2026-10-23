@@ -120,6 +120,15 @@ export {
   IntegrationConnectorTool,
   type IntegrationConnectorToolOptions,
 } from './tools/application_integration_tool/integration_connector_tool.js';
+export {
+  DiscoveryEngineSearchResultMode,
+  DiscoveryEngineSearchTool,
+  type DiscoveryEngineDataStoreSpec,
+  type DiscoveryEngineSearchClient,
+  type DiscoveryEngineSearchResponse,
+  type DiscoveryEngineSearchResultItem,
+  type DiscoveryEngineSearchToolParams,
+} from './tools/discovery_engine_search_tool.js';
 export {LOAD_WEB_PAGE, loadWebPage} from './tools/load_web_page.js';
 export type {LoadWebPageOptions} from './tools/load_web_page.js';
 export {
