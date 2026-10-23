@@ -592,7 +592,11 @@ export type {
   LoadMemoryToolOptions,
 } from './tools/load_memory_tool.js';
 export {isBaseRetrievalTool} from './tools/retrieval/base_retrieval_tool.js';
-export {ToolboxToolset, isToolboxToolset} from './tools/toolbox_toolset.js';
+export {
+  ToolboxToolset,
+  isToolboxTool,
+  isToolboxToolset,
+} from './tools/toolbox_toolset.js';
 export type {
   ToolboxLoadOptions,
   ToolboxToolLike,

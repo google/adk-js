@@ -5,10 +5,12 @@
  */
 
 import {
+  BaseTool,
   Context,
   FunctionTool,
   isBaseToolset,
   isFunctionTool,
+  isToolboxTool,
   isToolboxToolset,
   ReadonlyContext,
   ToolboxLoadOptions,
@@ -245,6 +247,87 @@ describe('ToolboxToolset', () => {
     await expect(invalidToolset.getTools()).rejects.toThrow(
       /Unsupported Toolbox tool shape/,
     );
+  });
+
+  it('marks every loaded tool for isToolboxTool without changing client tools', async () => {
+    const clientTool = new FunctionTool({
+      name: 'pre_wrapped',
+      description: 'Already wrapped tool',
+      execute: () => 'wrapped_ok',
+    });
+    function rawFunctionTool() {
+      return 'raw_fn_ok';
+    }
+    const client = {
+      loadToolset: async () => [clientTool, rawFunctionTool],
+      loadTool: async (name: string) => ({
+        name,
+        description: 'Single tool',
+        execute: () => 'single_ok',
+      }),
+    };
+
+    for (const prefix of [undefined, 'tbx']) {
+      const tools = await new ToolboxToolset({
+        serverUrl: 'http://127.0.0.1:5000',
+        toolsetName: 'travel',
+        toolNames: ['single_op'],
+        prefix,
+        client,
+      }).getTools(readonlyContext);
+
+      expect(tools).toHaveLength(3);
+      expect(tools.map((tool) => isToolboxTool(tool))).toEqual([
+        true,
+        true,
+        true,
+      ]);
+      if (prefix) {
+        expect(tools[0]).not.toBe(clientTool);
+      } else {
+        expect(tools[0]).toBe(clientTool);
+      }
+      expect(
+        await tools[0].runAsync({args: {}, toolContext: emptyContext}),
+      ).toBe('wrapped_ok');
+    }
+
+    expect(clientTool.name).toBe('pre_wrapped');
+    expect(isToolboxTool(null)).toBe(false);
+    expect(isToolboxTool(undefined)).toBe(false);
+    expect(isToolboxTool({})).toBe(false);
+  });
+
+  it('returns an unprefixed client BaseTool as is, keeping private and accumulated state', async () => {
+    class StatefulTool extends BaseTool {
+      #calls = 0;
+      constructor() {
+        super({name: 'stateful', description: 'Counts its calls.'});
+      }
+      override async runAsync(): Promise<unknown> {
+        this.#calls += 1;
+        return this.#calls;
+      }
+    }
+    const clientTool = new StatefulTool();
+    const toolset = new ToolboxToolset({
+      serverUrl: 'http://127.0.0.1:5000',
+      toolNames: ['stateful'],
+      client: {
+        loadToolset: async () => [],
+        loadTool: async () => clientTool,
+      },
+    });
+
+    const run = async () => {
+      const [tool] = await toolset.getTools(readonlyContext);
+      expect(tool).toBe(clientTool);
+      expect(isToolboxTool(tool)).toBe(true);
+      return tool.runAsync({args: {}, toolContext: emptyContext});
+    };
+
+    expect(await run()).toBe(1);
+    expect(await run()).toBe(2);
   });
 
   it('test_toolbox_toolset_delegates_typed_lifecycle', async () => {
