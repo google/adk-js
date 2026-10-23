@@ -21,13 +21,19 @@ import {
   extractSystemInstructionText,
   functionDeclarationToToolParam,
   messageToGenerateContentResponse,
+  ToolUseIdSanitizer,
 } from './anthropic_utils.js';
 
 /**
- * Default maximum number of output tokens requested from Claude on each call.
+ * Legacy default maximum number of output tokens requested from Claude.
+ *
+ * @deprecated Configure {@link ClaudeParams.maxTokens} or
+ *     `llmRequest.config.maxOutputTokens` instead. `Claude` defaults to `8192`
+ *     output tokens.
  */
 export const MAX_TOKEN = 1024;
 
+const DEFAULT_MAX_TOKENS = 8192;
 const DEFAULT_CLAUDE_MODEL = 'claude-sonnet-4-6@default';
 
 /**
@@ -39,6 +45,11 @@ export interface ClaudeParams {
    * `'claude-sonnet-4-6@default'`.
    */
   model?: string;
+  /**
+   * The default maximum number of tokens to generate per request when
+   * `llmRequest.config?.maxOutputTokens` is not set. Defaults to `8192`.
+   */
+  maxTokens?: number;
 }
 
 const CLAUDE_MODEL_SYMBOL = Symbol.for('google.adk.claudeModel');
@@ -68,6 +79,7 @@ export class Claude extends BaseLlm {
     /claude-.*/,
   ];
 
+  readonly maxTokens: number;
   private anthropicClientPromise?: Promise<AnthropicVertex>;
 
   /**
@@ -76,6 +88,7 @@ export class Claude extends BaseLlm {
    */
   constructor(params: ClaudeParams = {}) {
     super({model: params.model ?? DEFAULT_CLAUDE_MODEL});
+    this.maxTokens = params.maxTokens ?? DEFAULT_MAX_TOKENS;
   }
 
   /**
@@ -86,7 +99,10 @@ export class Claude extends BaseLlm {
     _stream = false,
     abortSignal?: AbortSignal,
   ): AsyncGenerator<LlmResponse, void> {
-    const messages = (llmRequest.contents ?? []).map(contentToMessageParam);
+    const sanitizer = new ToolUseIdSanitizer();
+    const messages = (llmRequest.contents ?? []).map((content) =>
+      contentToMessageParam(content, sanitizer),
+    );
     const functionDeclarations = collectFunctionDeclarations(llmRequest);
     const tools: Anthropic.Tool[] | undefined =
       functionDeclarations.length > 0
@@ -109,7 +125,7 @@ export class Claude extends BaseLlm {
         messages,
         tools,
         tool_choice: toolChoice,
-        max_tokens: MAX_TOKEN,
+        max_tokens: llmRequest.config?.maxOutputTokens ?? this.maxTokens,
       },
       abortSignal ? {signal: abortSignal} : undefined,
     );

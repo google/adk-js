@@ -161,23 +161,112 @@ export function toClaudeRole(role?: string): ClaudeRole {
   return ClaudeRole.USER;
 }
 
+const STOP_REASON_TO_FINISH_REASON = {
+  end_turn: FinishReason.STOP,
+  stop_sequence: FinishReason.STOP,
+  tool_use: FinishReason.STOP,
+  pause_turn: FinishReason.STOP,
+  max_tokens: FinishReason.MAX_TOKENS,
+  model_context_window_exceeded: FinishReason.MAX_TOKENS,
+  refusal: FinishReason.SAFETY,
+} satisfies Record<Anthropic.StopReason, FinishReason>;
+
+function isAnthropicStopReason(value: string): value is Anthropic.StopReason {
+  return Object.prototype.hasOwnProperty.call(
+    STOP_REASON_TO_FINISH_REASON,
+    value,
+  );
+}
+
 /**
  * Maps an Anthropic stop reason to a `FinishReason` value.
  */
 export function toGoogleGenaiFinishReason(
-  anthropicStopReason?: string | null,
+  anthropicStopReason?: Anthropic.StopReason | string | null,
 ): FinishReason {
-  if (
-    anthropicStopReason === 'end_turn' ||
-    anthropicStopReason === 'stop_sequence' ||
-    anthropicStopReason === 'tool_use'
-  ) {
-    return FinishReason.STOP;
-  }
-  if (anthropicStopReason === 'max_tokens') {
-    return FinishReason.MAX_TOKENS;
+  if (anthropicStopReason && isAnthropicStopReason(anthropicStopReason)) {
+    return STOP_REASON_TO_FINISH_REASON[anthropicStopReason];
   }
   return FinishReason.FINISH_REASON_UNSPECIFIED;
+}
+
+const VALID_TOOL_USE_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+/**
+ * Ensures `tool_use` and `tool_result` IDs match Anthropic's pattern
+ * (`^[a-zA-Z0-9_-]+$`), consistently mapping invalid or missing IDs within a
+ * request.
+ */
+export class ToolUseIdSanitizer {
+  private nextFallback = 0;
+  private readonly mapping = new Map<string, string>();
+  private readonly unpairedCallsByName = new Map<string, string[]>();
+  private readonly unpairedCallsList: string[] = [];
+
+  private getNextFallback(): string {
+    return `toolu_fallback_${this.nextFallback++}`;
+  }
+
+  sanitize(
+    toolId: string | null | undefined,
+    toolName: string | null | undefined,
+    isCall: boolean,
+  ): string {
+    if (toolId && VALID_TOOL_USE_ID_PATTERN.test(toolId)) {
+      return toolId;
+    }
+
+    if (toolId) {
+      const existing = this.mapping.get(toolId);
+      if (existing !== undefined) {
+        return existing;
+      }
+    }
+
+    if (isCall || toolId) {
+      const assignedId = this.getNextFallback();
+      if (toolId) {
+        this.mapping.set(toolId, assignedId);
+      } else {
+        if (toolName) {
+          let queue = this.unpairedCallsByName.get(toolName);
+          if (!queue) {
+            queue = [];
+            this.unpairedCallsByName.set(toolName, queue);
+          }
+          queue.push(assignedId);
+        }
+        this.unpairedCallsList.push(assignedId);
+      }
+      return assignedId;
+    }
+
+    if (toolName) {
+      const queue = this.unpairedCallsByName.get(toolName);
+      const assignedId = queue?.shift();
+      if (assignedId !== undefined) {
+        const listIndex = this.unpairedCallsList.indexOf(assignedId);
+        if (listIndex !== -1) {
+          this.unpairedCallsList.splice(listIndex, 1);
+        }
+        return assignedId;
+      }
+    }
+
+    const assignedId = this.unpairedCallsList.shift();
+    if (assignedId !== undefined) {
+      for (const queue of this.unpairedCallsByName.values()) {
+        const queueIndex = queue.indexOf(assignedId);
+        if (queueIndex !== -1) {
+          queue.splice(queueIndex, 1);
+          break;
+        }
+      }
+      return assignedId;
+    }
+
+    return this.getNextFallback();
+  }
 }
 
 /**
@@ -187,7 +276,10 @@ export function toGoogleGenaiFinishReason(
  * dropped, because other models (such as Gemini) attach signatures to those
  * parts and Claude cannot verify them.
  */
-export function partToMessageBlock(part: Part): ClaudeMessageBlockParam {
+export function partToMessageBlock(
+  part: Part,
+  sanitizer: ToolUseIdSanitizer = new ToolUseIdSanitizer(),
+): ClaudeMessageBlockParam {
   if (part.thought) {
     throw new Error('Part kind "thought" is not supported by Claude.');
   }
@@ -203,7 +295,11 @@ export function partToMessageBlock(part: Part): ClaudeMessageBlockParam {
     }
     return {
       type: 'tool_use',
-      id: part.functionCall.id ?? '',
+      id: sanitizer.sanitize(
+        part.functionCall.id,
+        part.functionCall.name,
+        true,
+      ),
       name: part.functionCall.name,
       input: part.functionCall.args ?? {},
     };
@@ -211,7 +307,11 @@ export function partToMessageBlock(part: Part): ClaudeMessageBlockParam {
   if (part.functionResponse) {
     return {
       type: 'tool_result',
-      tool_use_id: part.functionResponse.id ?? '',
+      tool_use_id: sanitizer.sanitize(
+        part.functionResponse.id,
+        part.functionResponse.name,
+        false,
+      ),
       content: formatFunctionResponseContent(part.functionResponse.response),
       is_error: false,
     };
@@ -226,10 +326,13 @@ export function partToMessageBlock(part: Part): ClaudeMessageBlockParam {
  */
 export function contentToMessageParam(
   content: Content,
+  sanitizer: ToolUseIdSanitizer = new ToolUseIdSanitizer(),
 ): Anthropic.MessageParam {
   return {
     role: toClaudeRole(content.role),
-    content: (content.parts ?? []).map(partToMessageBlock),
+    content: (content.parts ?? []).map((part) =>
+      partToMessageBlock(part, sanitizer),
+    ),
   };
 }
 
@@ -270,6 +373,7 @@ export function messageToGenerateContentResponse(
       role: 'model',
       parts: message.content.map(contentBlockToPart),
     },
+    finishReason: toGoogleGenaiFinishReason(message.stop_reason),
     usageMetadata: {
       promptTokenCount: message.usage.input_tokens,
       candidatesTokenCount: message.usage.output_tokens,

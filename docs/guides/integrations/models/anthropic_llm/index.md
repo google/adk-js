@@ -73,11 +73,23 @@ export const rootAgent = new LlmAgent({
 
 ## Configuration options
 
-| Option  | Type     | Default                       | Description                                                               |
-| :------ | :------- | :---------------------------- | :------------------------------------------------------------------------ |
-| `model` | `string` | `'claude-sonnet-4-6@default'` | The Vertex AI Claude model identifier passed to `client.messages.create`. |
+| Option      | Type     | Default                       | Description                                                                                             |
+| :---------- | :------- | :---------------------------- | :------------------------------------------------------------------------------------------------------ |
+| `model`     | `string` | `'claude-sonnet-4-6@default'` | The Vertex AI Claude model identifier passed to `client.messages.create`.                               |
+| `maxTokens` | `number` | `8192`                        | Default `max_tokens` passed to `client.messages.create` when `llmRequest.config?.maxOutputTokens` is unset. |
 
-Each call requests up to `1024` output tokens (`max_tokens`). Claude stops a longer answer at that limit, so ask for concise answers or split long tasks into steps. When `generateContentAsync` receives an `AbortSignal`, it forwards `{signal: abortSignal}` to `client.messages.create`.
+Each call requests `llmRequest.config?.maxOutputTokens ?? maxTokens` output tokens (`max_tokens`, defaulting to `8192`). When `generateContentAsync` receives an `AbortSignal`, it forwards `{signal: abortSignal}` to `client.messages.create`.
+
+## Finish reason mapping
+
+`Claude` populates `LlmResponse.finishReason` from the Anthropic response's `message.stop_reason` via `toGoogleGenaiFinishReason`:
+
+| Anthropic `stop_reason`                                       | `LlmResponse.finishReason`               |
+| :------------------------------------------------------------ | :--------------------------------------- |
+| `'end_turn'`, `'stop_sequence'`, `'tool_use'`, `'pause_turn'` | `FinishReason.STOP`                      |
+| `'max_tokens'`, `'model_context_window_exceeded'`             | `FinishReason.MAX_TOKENS`                |
+| `'refusal'`                                                   | `FinishReason.SAFETY`                    |
+| `null`, `undefined`, or unrecognized values                   | `FinishReason.FINISH_REASON_UNSPECIFIED` |
 
 ## Function calling
 
@@ -86,7 +98,8 @@ When an `LlmAgent` is configured with tools, `Claude` translates ADK tool declar
 1. **Tool collection**: `Claude` collects `functionDeclarations` across every `Tool` entry in `llmRequest.config?.tools`.
 2. **Schema conversion**: `Claude` converts `FunctionDeclaration.parameters` (`@google/genai` `Schema` with uppercase `Type` enums) into lowercase JSON Schema via `genaiSchemaToJsonSchema` with `input_schema.type` set to `'object'`, or passes `FunctionDeclaration.parametersJsonSchema` through directly.
 3. **Sequential tool choice**: When `llmRequest.toolsDict` is non-empty, `Claude` sets `tool_choice` to `{type: 'auto', disable_parallel_tool_use: true}` so the model invokes at most one tool per turn.
-4. **Tool result serialization**: `Claude` converts each `functionResponse` part into a `tool_result` block:
+4. **Tool-use ID preservation and sanitization**: Client-generated `adk-*` function call and response IDs are preserved in `LlmRequest.contents` for Claude requests, and any missing or invalid `tool_use` / `tool_result` IDs (not matching `^[a-zA-Z0-9_-]+$`) are mapped consistently within each request to `toolu_fallback_<N>`.
+5. **Tool result serialization**: `Claude` converts each `functionResponse` part into a `tool_result` block:
    - When `'result' in response`, string values of `response.result` are sent unchanged, non-null structured values (`object`, `array`, `number`, `boolean`) are serialized with `JSON.stringify(response.result)`, and `null` or `undefined` becomes `''`.
    - When `'result'` is not a key in `response`, a non-empty `response` object is serialized with `JSON.stringify(response)`.
 
@@ -97,8 +110,7 @@ When an `LlmAgent` is configured with tools, `Claude` translates ADK tool declar
 - **Extended thinking**: `ThinkingBlock` and `RedactedThinkingBlock` response blocks, `thinking` request configuration, and parts with `thought: true` are not supported. A `thoughtSignature` on a text, function call, or function response part (for example, from Gemini earlier in the session) is dropped.
 - **Images, PDFs, and inline data**: `Claude` only converts `text`, `functionCall`, and `functionResponse` parts. `inlineData` and `fileData` parts throw an unsupported part error.
 - **Prompt caching**: `cache_control` markers and `cache_creation_input_tokens` / `cache_read_input_tokens` usage fields are not mapped.
-- **Finish reason on responses**: `Claude` does not populate `finishReason` on the returned `LlmResponse`.
-- **Generation parameters**: `maxOutputTokens`, `temperature`, `topP`, `topK`, and `stopSequences` from `llmRequest.config` are not forwarded to `client.messages.create`; `max_tokens` is fixed at `1024`.
+- **Generation parameters**: `temperature`, `topP`, `topK`, and `stopSequences` from `llmRequest.config` are not forwarded to `client.messages.create` (`maxOutputTokens` is forwarded as `max_tokens`).
 - **Direct Anthropic API client**: `Claude` only instantiates `AnthropicVertex` for Vertex AI and does not connect directly to `api.anthropic.com`.
 - **Tracking headers**: `BaseLlm.trackingHeaders` is not passed to `AnthropicVertex`.
 - **Structured output without tools**: `LlmAgent.outputSchema` is not enforced unless combined with tool use.
