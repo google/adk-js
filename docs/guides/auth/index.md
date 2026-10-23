@@ -92,11 +92,11 @@ The copy matters because the client fills in the request. When the user finishes
 
 `AutoAuthCredentialExchanger` looks up an exchanger by the credential's `authType`. The default map is:
 
-| `authType`        | Default behavior                                                                |
-| :---------------- | :------------------------------------------------------------------------------ |
-| `OAUTH2`          | `OAuth2CredentialExchanger` followed by `generateAuthToken`                     |
-| `OPEN_ID_CONNECT` | `OAuth2CredentialExchanger` followed by `generateAuthToken`                     |
-| `SERVICE_ACCOUNT` | `ServiceAccountCredentialExchanger`                                             |
+| `authType`        | Default behavior                                            |
+| :---------------- | :---------------------------------------------------------- |
+| `OAUTH2`          | `OAuth2CredentialExchanger` followed by `generateAuthToken` |
+| `OPEN_ID_CONNECT` | `OAuth2CredentialExchanger` followed by `generateAuthToken` |
+| `SERVICE_ACCOUNT` | `ServiceAccountCredentialExchanger`                         |
 
 A type with no entry, such as `API_KEY` or `HTTP`, comes back unchanged as `{credential, wasExchanged: false}`.
 
