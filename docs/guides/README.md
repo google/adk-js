@@ -49,6 +49,12 @@ The `LlmAgent` request/response processor pipeline, live streaming function-call
 
 - [Flows](flows/index.md) - `BaseLlmRequestProcessor`, `BaseLlmResponseProcessor`, `CONTENT_REQUEST_PROCESSOR`, `AgentTransferLlmRequestProcessor`, `CodeExecutionResponseProcessor`, `handleFunctionCallsLive`, and `supportCfc`.
 
+### Integrations
+
+Third-party model and ecosystem integrations packaged in `@google/adk-integrations`.
+
+- [Claude on Vertex AI](integrations/models/anthropic_llm/index.md) - `Claude`, `LLMRegistry` registration for `claude-*` models on Vertex AI, and Anthropic message and tool conversion helpers.
+
 ### Memory
 
 Cross-session memory ingestion (`addSessionToMemory`) and retrieval (`searchMemory`) across in-memory keyword stores, Vertex AI RAG Engine corpora, and Vertex AI Agent Engine Memory Bank.
