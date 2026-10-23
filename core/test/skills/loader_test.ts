@@ -9,6 +9,8 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {describe, expect, it} from 'vitest';
+import {InputValidationError} from '../../src/errors/input_validation_error.js';
+import {NotFoundError} from '../../src/errors/not_found_error.js';
 import {
   loadAllSkillsInDir,
   loadSkillFromDir,
@@ -769,6 +771,32 @@ Instruction body`;
       expect(() => loadSkillFromZipBuffer(zip.toBuffer())).toThrow(
         'SKILL.md not found in zipped filesystem.',
       );
+    });
+
+    it('throws typed errors', () => {
+      expect(() =>
+        loadSkillFromZipBuffer(createZipWithRawEntryName('../evil.txt')),
+      ).toThrow(InputValidationError);
+      expect(() =>
+        loadSkillFromZipBuffer(createZipWithSkillMd('no frontmatter')),
+      ).toThrow(InputValidationError);
+      expect(() => loadSkillFromZipBuffer(new AdmZip().toBuffer())).toThrow(
+        NotFoundError,
+      );
+    });
+
+    it('keeps the YAML parse error as the cause', () => {
+      const zipBuffer = createZipWithSkillMd(
+        '---\nname: x\ninvalid: [\n---\nBody',
+      );
+      let error: unknown;
+      try {
+        loadSkillFromZipBuffer(zipBuffer);
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(InputValidationError);
+      expect((error as Error).cause).toBeInstanceOf(Error);
     });
   });
 });
