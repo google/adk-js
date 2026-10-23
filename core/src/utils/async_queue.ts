@@ -19,15 +19,19 @@
  *    queue, so a later `close()` can't discard the error.
  *  - {@link push} after close/fail is ignored (the producer has already
  *    signalled completion).
+ *  - {@link pushAndWait} resolves once the consumer has finished with the item:
+ *    when it asks for the next one, or when the queue closes or fails.
  */
 export class AsyncQueue<T> implements AsyncIterable<T> {
-  private queue: T[] = [];
+  private queue: Array<{value: T; ack?: () => void}> = [];
   private resolvers: Array<{
     resolve: (value: IteratorResult<T>) => void;
     reject: (reason?: unknown) => void;
   }> = [];
   private closed = false;
   private failure?: {error: unknown};
+  /** Releases the producer of the item the consumer currently holds. */
+  private deliveredAck?: () => void;
 
   /** Whether the queue has been closed or failed. */
   get isClosed(): boolean {
@@ -44,13 +48,45 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
    * immediately; otherwise the value is buffered. No-op once closed/failed.
    */
   push(value: T) {
-    if (this.closed) return;
+    this.enqueue(value);
+  }
+
+  /**
+   * Enqueues a value like {@link push}, and resolves once the consumer has
+   * finished with it: when it asks for the next item, or when the queue closes
+   * or fails. Resolves at once if the queue is already closed.
+   */
+  pushAndWait(value: T): Promise<void> {
+    return new Promise<void>((resolve) => this.enqueue(value, resolve));
+  }
+
+  private enqueue(value: T, ack?: () => void) {
+    if (this.closed) {
+      ack?.();
+      return;
+    }
     const resolver = this.resolvers.shift();
     if (resolver) {
+      this.deliveredAck = ack;
       resolver.resolve({value, done: false});
     } else {
-      this.queue.push(value);
+      this.queue.push({value, ack});
     }
+  }
+
+  /** Releases every producer still waiting in {@link pushAndWait}. */
+  private releaseAll() {
+    this.releaseDelivered();
+    for (const item of this.queue) {
+      item.ack?.();
+      item.ack = undefined;
+    }
+  }
+
+  private releaseDelivered() {
+    const ack = this.deliveredAck;
+    this.deliveredAck = undefined;
+    ack?.();
   }
 
   /**
@@ -62,6 +98,7 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
     if (this.failure) return;
     this.failure = {error};
     this.closed = true;
+    this.releaseAll();
     while (this.resolvers.length > 0) {
       this.resolvers.shift()!.reject(error);
     }
@@ -79,6 +116,7 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
   close() {
     if (this.closed) return;
     this.closed = true;
+    this.releaseAll();
     while (this.resolvers.length > 0) {
       this.resolvers.shift()!.resolve({value: undefined as never, done: true});
     }
@@ -87,8 +125,12 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
   [Symbol.asyncIterator](): AsyncIterator<T> {
     return {
       next: (): Promise<IteratorResult<T>> => {
+        // Asking for the next item means the consumer is done with the last.
+        this.releaseDelivered();
         if (this.queue.length > 0) {
-          return Promise.resolve({value: this.queue.shift()!, done: false});
+          const item = this.queue.shift()!;
+          this.deliveredAck = item.ack;
+          return Promise.resolve({value: item.value, done: false});
         }
         if (this.failure) {
           return Promise.reject(this.failure.error);
