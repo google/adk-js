@@ -20,6 +20,12 @@ import {
   RawGenerateContentResponse,
 } from '../test_case_utils.js';
 
+const TEST_PROJECT_ID = 'test-project';
+const TEST_LOCATION = 'us-west1';
+// VertexAiSessionService.getReasoningEngineId requires a digits-only engine id.
+const TEST_AGENT_ENGINE_ID = '123456789';
+const TEST_APP_NAME = `projects/${TEST_PROJECT_ID}/locations/${TEST_LOCATION}/reasoningEngines/${TEST_AGENT_ENGINE_ID}`;
+
 describe('AgentTool (Vertex AI)', () => {
   it('propagates state changes from sub-agent to parent session (VertexAI)', async () => {
     const mockSubAgentResponses: RawGenerateContentResponse[] = [
@@ -107,7 +113,7 @@ describe('AgentTool (Vertex AI)', () => {
         return {
           done: true,
           response: {
-            name: `projects/1055446556895/locations/us-west1/reasoningEngines/9208858483368132608/sessions/${id}`,
+            name: `${TEST_APP_NAME}/sessions/${id}`,
             sessionState: sessionStateStore[id],
             updateTime: new Date().toISOString(),
           },
@@ -155,25 +161,23 @@ describe('AgentTool (Vertex AI)', () => {
     };
 
     const sessionService = new VertexAiSessionService({
-      projectId: 'amaad-martin-vertex-api',
-      location: 'us-west1',
+      projectId: TEST_PROJECT_ID,
+      location: TEST_LOCATION,
       sessions: mockClient as unknown as Sessions,
     });
     const memoryService = new VertexAiMemoryBankService({
-      agentEngineId: '9208858483368132608',
+      agentEngineId: TEST_AGENT_ENGINE_ID,
       client: mockClient as unknown as Client,
     });
 
     const createdSession = await sessionService.createSession({
-      appName:
-        'projects/1055446556895/locations/us-west1/reasoningEngines/9208858483368132608',
+      appName: TEST_APP_NAME,
       userId: 'TestUser',
       state: {initialStateKey: 'contexto inicial'},
     });
 
     const runner = new Runner({
-      appName:
-        'projects/1055446556895/locations/us-west1/reasoningEngines/9208858483368132608',
+      appName: TEST_APP_NAME,
       agent: mainAgent,
       sessionService,
       memoryService,
@@ -193,8 +197,7 @@ describe('AgentTool (Vertex AI)', () => {
     }
 
     const session = await sessionService.getSession({
-      appName:
-        'projects/1055446556895/locations/us-west1/reasoningEngines/9208858483368132608',
+      appName: TEST_APP_NAME,
       userId: 'TestUser',
       sessionId: createdSession.id,
     });
