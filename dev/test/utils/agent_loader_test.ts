@@ -518,6 +518,12 @@ describe('AgentLoader', () => {
       await agentFile.load();
       expect(agentFile.getFilePath()).toEqual(agentPath);
       await agentFile.dispose();
+      expect(() => agentFile.getFilePath()).toThrow(
+        'Agent is disposed and can not be used',
+      );
+      expect(() => agentFile.retain()).toThrow(
+        'Agent is disposed and can not be used',
+      );
     });
 
     it('reads the README.md sitting beside the agent source', async () => {
@@ -1127,6 +1133,40 @@ describe('AgentLoader', () => {
       ).toBe(false);
 
       await loader.disposeAll();
+    });
+
+    it('defers bundle disposal during invalidateAll while an active retain lease is held, and reloads a new bundle for subsequent requests', async () => {
+      const loader = new AgentLoader(tempAgentsDir);
+      const firstAgentFile = await loader.getAgentFile('agent2');
+      const firstCompiledPath = firstAgentFile.getFilePath();
+
+      const lease1 = firstAgentFile.retain();
+      const lease2 = firstAgentFile.retain();
+
+      // Trigger watch-mode invalidation while leases are active
+      (loader as unknown as {invalidateAll: () => void}).invalidateAll();
+
+      // Bundle must still exist while active leases hold it
+      await expect(fs.access(firstCompiledPath)).resolves.toBeUndefined();
+
+      // Releasing only the first lease must keep the bundle for the second
+      await lease1[Symbol.asyncDispose]();
+      await expect(fs.access(firstCompiledPath)).resolves.toBeUndefined();
+
+      // A new request loads a fresh bundle into a different temp directory
+      const reloadedAgentFile = await loader.getAgentFile('agent2');
+      const reloadedCompiledPath = reloadedAgentFile.getFilePath();
+      expect(reloadedCompiledPath).not.toBe(firstCompiledPath);
+      await expect(fs.access(reloadedCompiledPath)).resolves.toBeUndefined();
+
+      // Releasing the last active lease disposes the retired bundle while
+      // leaving the newly reloaded bundle intact
+      await lease2[Symbol.asyncDispose]();
+      await expect(fs.access(firstCompiledPath)).rejects.toThrow();
+      await expect(fs.access(reloadedCompiledPath)).resolves.toBeUndefined();
+
+      await loader.disposeAll();
+      await expect(fs.access(reloadedCompiledPath)).rejects.toThrow();
     });
 
     it('ignores node_modules and hidden dot directories during discovery', async () => {

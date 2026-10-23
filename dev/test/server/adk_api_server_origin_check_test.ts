@@ -17,6 +17,11 @@ const AGENT_LOADER = {
   listAgents: () => Promise.resolve(['testApp']),
   getAgentFile: () =>
     Promise.resolve({
+      retain: () => ({
+        async [Symbol.asyncDispose](): Promise<void> {
+          return;
+        },
+      }),
       load: () => Promise.resolve(TEST_AGENT),
       async [Symbol.asyncDispose](): Promise<void> {
         return;
