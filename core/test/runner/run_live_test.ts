@@ -800,6 +800,56 @@ describe('Runner.runLive', () => {
     expect(session!.events[0].id).toBe(events[0].id);
   });
 
+  it('stops when onEventCallback aborts the beforeRunCallback early exit', async () => {
+    const controller = new AbortController();
+    class BlockingPlugin extends BasePlugin {
+      constructor() {
+        super('blocking_plugin');
+      }
+      override async beforeRunCallback(): Promise<Content | undefined> {
+        return {role: 'model', parts: [{text: 'blocked'}]};
+      }
+      override async onEventCallback(): Promise<Event | undefined> {
+        controller.abort();
+        return undefined;
+      }
+    }
+    const llm = new FakeLiveLlm([]);
+    const agent = new LlmAgent({name: 'agent', model: llm});
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+      plugins: [new BlockingPlugin()],
+    });
+
+    const queue = new LiveRequestQueue();
+    queue.close();
+    const events: Event[] = [];
+    for await (const event of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+      abortSignal: controller.signal,
+    })) {
+      events.push(event);
+    }
+
+    expect(controller.signal.aborted).toBe(true);
+    expect(events).toEqual([]);
+    expect(llm.connection).toBeUndefined();
+
+    const session = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    expect(session!.events.map((e) => e.content?.parts?.[0]?.text)).toEqual([
+      'blocked',
+    ]);
+  });
+
   it('stops during execution when the abort signal is aborted', async () => {
     const textContent: Content = {
       role: 'model',

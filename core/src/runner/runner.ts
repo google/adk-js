@@ -839,10 +839,14 @@ export class Runner {
               author: 'model',
               content: beforeRunCallbackResponse,
             });
-            yield await this.processAndAppendEvent(
+            const outputEvent = await this.processAndAppendEvent(
               invocationContext,
               earlyExitEvent,
             );
+            if (params.abortSignal?.aborted) {
+              return;
+            }
+            yield outputEvent;
             return;
           }
 
