@@ -8,10 +8,13 @@ import {
   AsyncQueue,
   BaseLlm,
   BaseLlmConnection,
+  BasePlugin,
   BaseTool,
+  createEvent,
   Event,
   InMemoryArtifactService,
   InMemorySessionService,
+  InvocationContext,
   LiveRequestQueue,
   LlmAgent,
   LlmRequest,
@@ -733,6 +736,68 @@ describe('Runner.runLive', () => {
     }
 
     expect(events).toEqual([]);
+  });
+
+  it('runs onEventCallback on the beforeRunCallback early exit', async () => {
+    class BlockingPlugin extends BasePlugin {
+      constructor() {
+        super('blocking_plugin');
+      }
+      override async beforeRunCallback(): Promise<Content | undefined> {
+        return {role: 'model', parts: [{text: 'blocked'}]};
+      }
+      override async onEventCallback({
+        event,
+      }: {
+        invocationContext: InvocationContext;
+        event: Event;
+      }): Promise<Event | undefined> {
+        return createEvent({
+          invocationId: '',
+          author: '',
+          content: {
+            role: 'model',
+            parts: [{text: `redacted: ${event.content?.parts?.[0]?.text}`}],
+          },
+        });
+      }
+    }
+    const llm = new FakeLiveLlm([]);
+    const agent = new LlmAgent({name: 'agent', model: llm});
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+      plugins: [new BlockingPlugin()],
+    });
+
+    const queue = new LiveRequestQueue();
+    queue.close();
+    const events: Event[] = [];
+    for await (const event of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+    })) {
+      events.push(event);
+    }
+
+    expect(llm.connection).toBeUndefined();
+    expect(events.map((e) => e.content?.parts?.[0]?.text)).toEqual([
+      'redacted: blocked',
+    ]);
+    expect(events[0].author).toBe('model');
+
+    const session = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    expect(session!.events.map((e) => e.content?.parts?.[0]?.text)).toEqual([
+      'redacted: blocked',
+    ]);
+    expect(session!.events[0].id).toBe(events[0].id);
   });
 
   it('stops during execution when the abort signal is aborted', async () => {
