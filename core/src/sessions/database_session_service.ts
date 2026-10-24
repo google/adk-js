@@ -529,7 +529,18 @@ export class DatabaseSessionService extends BaseSessionService {
         userStateModel.state,
         storageSession.state,
       );
-      session.state = newMergedState;
+      // Active node and tool contexts hold State views over this object.
+      // Refresh it in place so writes after this commit remain visible to
+      // the session and to contexts created later. Define own properties so
+      // a state key of `__proto__` cannot invoke an inherited setter.
+      for (const [key, value] of Object.entries(newMergedState)) {
+        Object.defineProperty(session.state, key, {
+          value,
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
+      }
 
       upsertSessionEvent(session, event);
       session.lastUpdateTime = storageSession.updateTime.getTime();

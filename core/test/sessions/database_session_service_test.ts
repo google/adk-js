@@ -9,6 +9,8 @@ import {
   createEventActions,
   DatabaseSessionService,
   Event,
+  FunctionNode,
+  Runner,
   State,
 } from '@google/adk';
 import {MikroORM} from '@mikro-orm/core';
@@ -973,6 +975,67 @@ describe('DatabaseSessionService stale-session reload', () => {
 
   afterEach(async () => {
     await (service as unknown as {orm?: MikroORM}).orm?.close();
+  });
+
+  it('keeps a running node and its children on the same state after an event is stored', async () => {
+    let release!: () => void;
+    const committed = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const reads: unknown[] = [];
+    const primer = new FunctionNode('primer', () => 'first');
+    const reader = new FunctionNode('reader', (ctx) => {
+      reads.push(ctx.state.get('second'));
+      return 'read';
+    });
+    const writer = new FunctionNode('writer', async (ctx) => {
+      await ctx.runNode(primer);
+      // The runner releases this only after it has stored the primer's event.
+      await committed;
+      ctx.state.set('second', 2);
+      reads.push(ctx.invocationContext.session.state['second']);
+      await ctx.runNode(reader);
+      return 'second';
+    });
+    const runner = new Runner({
+      appName: key.appName,
+      agent: writer,
+      sessionService: service,
+    });
+
+    for await (const event of runner.runAsync({
+      userId: key.userId,
+      sessionId: key.sessionId,
+      newMessage: {role: 'user', parts: [{text: 'run'}]},
+    })) {
+      if (event.output === 'first') release();
+    }
+
+    expect(reads).toEqual([2, 2]);
+    expect((await service.getSession(key))?.state['second']).toBe(2);
+  });
+
+  it('keeps temporary state available to the invocation without persisting it', async () => {
+    const session = (await service.getSession(key))!;
+    const delta = {};
+    const state = new State(session.state, delta);
+    state.set('temp:buffer', 'invocation value');
+    state.set('stored', 'persisted value');
+
+    await service.appendEvent({
+      session,
+      event: createEvent({actions: {stateDelta: delta}}),
+    });
+
+    expect(session.state['temp:buffer']).toBe('invocation value');
+    const stored = await service.getSession(key);
+    expect(stored?.state).toEqual({
+      count: 0,
+      stored: 'persisted value',
+    });
+    expect(session.events[0].actions.stateDelta).toEqual({
+      stored: 'persisted value',
+    });
   });
 
   it('reloads stored events and state into a stale copy before appending', async () => {
