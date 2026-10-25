@@ -43,6 +43,7 @@ class ProgressiveStrategy implements StreamingStrategy {
   // For streaming function call arguments
   private currentFcName?: string;
   private currentFcArgs: Record<string, unknown> = {};
+  private readonly arrayCandidates = new WeakSet<object>();
   private currentFcId?: string;
   private currentThoughtSignature?: string | Uint8Array;
 
@@ -66,6 +67,37 @@ class ProgressiveStrategy implements StreamingStrategy {
     this.currentTextIsThought = undefined;
   }
 
+  private getArgumentPath(jsonPath: string): Array<string | number> {
+    // toPathArray strips quotes, so mark array indices before parsing to
+    // distinguish [0] from the object member ['0']. Leave quoted text alone.
+    let prefix = '_adkArrayIndex';
+    while (jsonPath.includes(prefix)) prefix += '_';
+    const indices = new Map<string, number>();
+    const markedPath = jsonPath.replace(
+      /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\[\s*(0|[1-9]\d*)\s*\]/g,
+      (match, index: string | undefined) => {
+        if (index === undefined) return match;
+        const value = Number(index);
+        // Other numeric properties cannot be represented as JS array elements.
+        if (!Number.isSafeInteger(value) || value > 2 ** 32 - 2) return match;
+        const marker = `${prefix}${indices.size}`;
+        indices.set(marker, value);
+        return `['${marker}']`;
+      },
+    );
+    const parse = (path: string) =>
+      JSONPath.toPathArray(path).filter(
+        (part) => part !== '$' && part !== '$[',
+      );
+    const parts = parse(markedPath);
+    // Preserve existing parsing for expressions where an index was not a
+    // standalone path segment, rather than leaking an internal marker.
+    if (parts.filter((part) => indices.has(part)).length !== indices.size) {
+      return parse(jsonPath);
+    }
+    return parts.map((part) => indices.get(part) ?? part);
+  }
+
   private getValueFromPartialArg(
     partialArg: PartialArg,
     jsonPath: string,
@@ -82,9 +114,7 @@ class ProgressiveStrategy implements StreamingStrategy {
       const stringChunk = stringValue;
       hasValue = true;
 
-      const pathParts = JSONPath.toPathArray(jsonPath).filter(
-        (p) => p !== '$' && p !== '$[',
-      );
+      const pathParts = this.getArgumentPath(jsonPath);
 
       let existingValue: unknown = this.currentFcArgs;
       for (const part of pathParts) {
@@ -120,9 +150,7 @@ class ProgressiveStrategy implements StreamingStrategy {
   }
 
   private setValueByJsonPath(jsonPath: string, value: unknown): void {
-    const pathParts = JSONPath.toPathArray(jsonPath).filter(
-      (p) => p !== '$' && p !== '$[',
-    );
+    const pathParts = this.getArgumentPath(jsonPath);
 
     // Reject model-controlled paths that target prototype-chain properties,
     // which would otherwise pollute `Object.prototype` (e.g.
@@ -136,6 +164,9 @@ class ProgressiveStrategy implements StreamingStrategy {
       const part = pathParts[i];
       if (!Object.prototype.hasOwnProperty.call(current, part)) {
         current[part] = {};
+        if (typeof pathParts[i + 1] === 'number') {
+          this.arrayCandidates.add(current[part] as object);
+        }
       }
       current = current[part] as Record<string, unknown>;
     }
@@ -150,7 +181,25 @@ class ProgressiveStrategy implements StreamingStrategy {
       const fcPart: Part = {
         functionCall: {
           name: this.currentFcName,
-          args: JSON.parse(JSON.stringify(this.currentFcArgs)),
+          args: JSON.parse(
+            JSON.stringify(this.currentFcArgs, (_key, value: unknown) => {
+              if (
+                value !== null &&
+                typeof value === 'object' &&
+                this.arrayCandidates.has(value)
+              ) {
+                const keys = Object.keys(value);
+                // Only complete index sequences become arrays. Accumulating
+                // as objects preserves sparse and named members like length.
+                if (keys.every((key, index) => key === String(index))) {
+                  return keys.map(
+                    (key) => (value as Record<string, unknown>)[key],
+                  );
+                }
+              }
+              return value;
+            }),
+          ),
           id: this.currentFcId ?? generateClientFunctionCallId(),
         } as FunctionCall,
       };
