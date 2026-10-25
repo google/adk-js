@@ -256,6 +256,9 @@ export class AgentFile {
         format: moduleType,
         bundle: this.options.bundle,
         minify,
+        // Workflow nodes use Function.prototype.name when no name is supplied.
+        // Keep those names stable even in the smaller deployment bundles.
+        keepNames: true,
         sourcemap: debugBuild ? 'inline' : false,
         // The original sources are still on disk, so leaving them out of the
         // map halves the size of a debug bundle.
