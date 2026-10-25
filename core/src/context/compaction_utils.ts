@@ -83,5 +83,38 @@ export function calculateRetainStartIndex(
     }
   }
 
+  // State-only events can separate a call from its response. Record each
+  // response's nearest preceding call within the same branch and scope.
+  const latestCalls = new Map<string, number>();
+  const callDependencies = rawEvents.map((event, index) => {
+    let earliestCall = index;
+    for (const response of getFunctionResponses(event)) {
+      if (response.id === undefined) continue;
+      const key = JSON.stringify([
+        event.isolationScope,
+        event.branch,
+        response.id,
+      ]);
+      const callIndex = latestCalls.get(key);
+      if (callIndex !== undefined) {
+        earliestCall = Math.min(earliestCall, callIndex);
+      }
+    }
+    // Register calls after responses so a later reuse of an ID cannot match
+    // a response that came before it.
+    for (const call of getFunctionCalls(event)) {
+      if (call.id === undefined) continue;
+      const key = JSON.stringify([event.isolationScope, event.branch, call.id]);
+      latestCalls.set(key, index);
+    }
+    return earliestCall;
+  });
+
+  // Extending the retained tail may expose more responses whose calls also
+  // need to be retained, including when the original split was a state event.
+  for (let index = rawEvents.length - 1; index >= retainStartIndex; index--) {
+    retainStartIndex = Math.min(retainStartIndex, callDependencies[index]);
+  }
+
   return retainStartIndex;
 }
