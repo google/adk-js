@@ -238,6 +238,23 @@ describe('BasePlugin', () => {
     ).toBeUndefined();
   });
 
+  it('provides no-op lifecycle error hooks for existing plugins', async () => {
+    const plugin = new TestablePlugin();
+    await expect(
+      plugin.onAgentErrorCallback({
+        agent: mockAgent,
+        callbackContext: mockCallbackContext,
+        error: mockError,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      plugin.onRunErrorCallback({
+        invocationContext: mockInvocationContext,
+        error: mockError,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it('all callbacks can be overridden', async () => {
     const plugin = new FullOverridePlugin();
 

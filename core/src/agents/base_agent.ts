@@ -14,6 +14,7 @@ import {
   traceAgentInvocation,
   tracer,
 } from '../telemetry/tracing.js';
+import {logger} from '../utils/logger.js';
 import {BaseNode, BaseNodeConfig} from '../workflow/base_node.js';
 import type {NodeContext} from '../workflow/node_context.js';
 import {Context} from './context.js';
@@ -263,29 +264,34 @@ export abstract class BaseAgent<
         async function* () {
           const context = this.createInvocationContext(parentContext);
 
-          const beforeAgentCallbackEvent =
-            await this.handleBeforeAgentCallback(context);
-          if (beforeAgentCallbackEvent) {
-            yield beforeAgentCallbackEvent;
-          }
+          try {
+            const beforeAgentCallbackEvent =
+              await this.handleBeforeAgentCallback(context);
+            if (beforeAgentCallbackEvent) {
+              yield beforeAgentCallbackEvent;
+            }
 
-          if (context.endInvocation || parentContext.abortSignal?.aborted) {
-            return;
-          }
+            if (context.endInvocation || parentContext.abortSignal?.aborted) {
+              return;
+            }
 
-          traceAgentInvocation({agent: this, invocationContext: context});
-          for await (const event of this.runAsyncImpl(context)) {
-            yield event;
-          }
+            traceAgentInvocation({agent: this, invocationContext: context});
+            for await (const event of this.runAsyncImpl(context)) {
+              yield event;
+            }
 
-          if (context.endInvocation || parentContext.abortSignal?.aborted) {
-            return;
-          }
+            if (context.endInvocation || parentContext.abortSignal?.aborted) {
+              return;
+            }
 
-          const afterAgentCallbackEvent =
-            await this.handleAfterAgentCallback(context);
-          if (afterAgentCallbackEvent) {
-            yield afterAgentCallbackEvent;
+            const afterAgentCallbackEvent =
+              await this.handleAfterAgentCallback(context);
+            if (afterAgentCallbackEvent) {
+              yield afterAgentCallbackEvent;
+            }
+          } catch (error) {
+            await this.handleAgentErrorCallback(context, error);
+            throw error;
           }
         },
       );
@@ -342,33 +348,62 @@ export abstract class BaseAgent<
         async function* () {
           const context = this.createInvocationContext(parentContext);
 
-          const beforeAgentCallbackEvent =
-            await this.handleBeforeAgentCallback(context);
-          if (beforeAgentCallbackEvent) {
-            yield beforeAgentCallbackEvent;
-          }
+          try {
+            const beforeAgentCallbackEvent =
+              await this.handleBeforeAgentCallback(context);
+            if (beforeAgentCallbackEvent) {
+              yield beforeAgentCallbackEvent;
+            }
 
-          if (context.endInvocation || parentContext.abortSignal?.aborted) {
-            return;
-          }
+            if (context.endInvocation || parentContext.abortSignal?.aborted) {
+              return;
+            }
 
-          for await (const event of this.runLiveImpl(context)) {
-            yield event;
-          }
+            for await (const event of this.runLiveImpl(context)) {
+              yield event;
+            }
 
-          if (context.endInvocation || parentContext.abortSignal?.aborted) {
-            return;
-          }
+            if (context.endInvocation || parentContext.abortSignal?.aborted) {
+              return;
+            }
 
-          const afterAgentCallbackEvent =
-            await this.handleAfterAgentCallback(context);
-          if (afterAgentCallbackEvent) {
-            yield afterAgentCallbackEvent;
+            const afterAgentCallbackEvent =
+              await this.handleAfterAgentCallback(context);
+            if (afterAgentCallbackEvent) {
+              yield afterAgentCallbackEvent;
+            }
+          } catch (error) {
+            await this.handleAgentErrorCallback(context, error);
+            throw error;
           }
         },
       );
     } finally {
       span.end();
+    }
+  }
+
+  /** Reports execution failures without replacing the original thrown value. */
+  private async handleAgentErrorCallback(
+    invocationContext: InvocationContext,
+    error: unknown,
+  ): Promise<void> {
+    try {
+      await invocationContext.pluginManager.runOnAgentErrorCallback({
+        agent: this,
+        callbackContext: new Context({invocationContext}),
+        error:
+          error instanceof Error
+            ? error
+            : new Error('Agent execution threw a non-Error value.', {
+                cause: error,
+              }),
+      });
+    } catch (callbackError) {
+      logger.error(
+        'Agent error notification failed; preserving the original error.',
+        callbackError,
+      );
     }
   }
 

@@ -446,84 +446,84 @@ export class Runner {
             // =========================================================================
             // Run the agent with the plugins (aka hooks to apply in the lifecycle)
             // =========================================================================
-            // Step 1: Run the before_run callbacks to see if we should early exit.
-            const beforeRunCallbackResponse =
-              await this.pluginManager.runBeforeRunCallback({
-                invocationContext,
-              });
-            if (params.abortSignal?.aborted) {
-              return;
-            }
-
-            if (beforeRunCallbackResponse) {
-              const earlyExitEvent = createEvent({
-                invocationId: invocationContext.invocationId,
-                author: 'model',
-                content: beforeRunCallbackResponse,
-              });
-              // TODO: b/447446338 - In the future, do *not* save live call
-              // audio content to the session.
-              await this.sessionService.appendEvent({
-                session,
-                event: earlyExitEvent,
-              });
-              if (params.abortSignal?.aborted) {
-                return;
-              }
-
-              yield earlyExitEvent;
-            } else {
-              // Step 2: Otherwise continue with normal execution
-              let abortSealed = false;
-              const sealAbortedInvocation = () => {
-                abortSealed = true;
-                return this.synthesizeAbortEvents(invocationContext);
-              };
-              try {
-                for await (const event of this.runRoot(invocationContext)) {
-                  if (params.abortSignal?.aborted) {
-                    break;
-                  }
-
-                  // Step 3: Run the on_event callbacks before persisting so
-                  // callback changes are stored in the session and match the
-                  // streamed event.
-                  const outputEvent = await this.processAndAppendEvent(
+            yield* this.runWithPluginLifecycle(
+              invocationContext,
+              async function* () {
+                // Step 1: Run the before_run callbacks to see if we should early exit.
+                const beforeRunCallbackResponse =
+                  await this.pluginManager.runBeforeRunCallback({
                     invocationContext,
-                    event,
-                  );
-                  if (params.abortSignal?.aborted) {
-                    break;
-                  }
-
-                  yield outputEvent;
-                }
+                  });
                 if (params.abortSignal?.aborted) {
-                  for (const abortEvent of await sealAbortedInvocation()) {
-                    yield abortEvent;
-                  }
                   return;
                 }
-              } finally {
-                if (params.abortSignal?.aborted && !abortSealed) {
-                  // Best-effort: only reached on early close or error, where
-                  // throwing would mask the in-flight exception.
+
+                if (beforeRunCallbackResponse) {
+                  const earlyExitEvent = createEvent({
+                    invocationId: invocationContext.invocationId,
+                    author: 'model',
+                    content: beforeRunCallbackResponse,
+                  });
+                  // TODO: b/447446338 - In the future, do *not* save live call
+                  // audio content to the session.
+                  await this.sessionService.appendEvent({
+                    session,
+                    event: earlyExitEvent,
+                  });
+                  if (params.abortSignal?.aborted) {
+                    return;
+                  }
+
+                  yield earlyExitEvent;
+                } else {
+                  // Step 2: Otherwise continue with normal execution
+                  let abortSealed = false;
+                  const sealAbortedInvocation = () => {
+                    abortSealed = true;
+                    return this.synthesizeAbortEvents(invocationContext);
+                  };
                   try {
-                    await sealAbortedInvocation();
-                  } catch (e) {
-                    logger.error(
-                      `Failed to seal aborted invocation ${invocationContext.invocationId}.`,
-                      e,
-                    );
+                    for await (const event of this.runRoot(invocationContext)) {
+                      if (params.abortSignal?.aborted) {
+                        break;
+                      }
+
+                      // Step 3: Run the on_event callbacks before persisting so
+                      // callback changes are stored in the session and match the
+                      // streamed event.
+                      const outputEvent = await this.processAndAppendEvent(
+                        invocationContext,
+                        event,
+                      );
+                      if (params.abortSignal?.aborted) {
+                        break;
+                      }
+
+                      yield outputEvent;
+                    }
+                    if (params.abortSignal?.aborted) {
+                      for (const abortEvent of await sealAbortedInvocation()) {
+                        yield abortEvent;
+                      }
+                      return;
+                    }
+                  } finally {
+                    if (params.abortSignal?.aborted && !abortSealed) {
+                      // Best-effort: only reached on early close or error, where
+                      // throwing would mask the in-flight exception.
+                      try {
+                        await sealAbortedInvocation();
+                      } catch (e) {
+                        logger.error(
+                          `Failed to seal aborted invocation ${invocationContext.invocationId}.`,
+                          e,
+                        );
+                      }
+                    }
                   }
                 }
-              }
-              // Step 4: Run the after_run callbacks to optionally modify the context.
-              await this.pluginManager.runAfterRunCallback({invocationContext});
-              if (params.abortSignal?.aborted) {
-                return;
-              }
-            }
+              },
+            );
           }
         },
       );
@@ -533,6 +533,67 @@ export class Runner {
         ? getAllToolsets(this.agent)
         : [];
       await Promise.allSettled(toolsets.map((t) => t.close()));
+    }
+  }
+
+  /** Finalizes a started run, including when its consumer closes the iterator. */
+  private async *runWithPluginLifecycle(
+    invocationContext: InvocationContext,
+    execute: (this: Runner) => AsyncGenerator<Event, void, void>,
+  ): AsyncGenerator<Event, void, void> {
+    let failed = false;
+    let completed = false;
+    try {
+      yield* execute.call(this);
+      completed = true;
+    } catch (error) {
+      failed = true;
+      await this.notifyRunError(invocationContext, error);
+      throw error;
+    } finally {
+      if (!failed) {
+        await this.finishRun(invocationContext, !completed);
+      }
+    }
+  }
+
+  private async finishRun(
+    invocationContext: InvocationContext,
+    closingEarly: boolean,
+  ): Promise<void> {
+    try {
+      await this.pluginManager.runAfterRunCallback({invocationContext});
+    } catch (error) {
+      await this.notifyRunError(invocationContext, error);
+      // A consumer's return() skips the assignment after yield*. Preserve
+      // that close even if a completion callback fails, as in adk-python.
+      if (!closingEarly) throw error;
+      logger.error(
+        `afterRunCallback failed while closing invocation ${invocationContext.invocationId}.`,
+        error,
+      );
+    }
+  }
+
+  private async notifyRunError(
+    invocationContext: InvocationContext,
+    error: unknown,
+  ): Promise<void> {
+    try {
+      await this.pluginManager.runOnRunErrorCallback({
+        invocationContext,
+        error:
+          error instanceof Error
+            ? error
+            : new Error('Run execution threw a non-Error value.', {
+                cause: error,
+              }),
+      });
+    } catch (callbackError) {
+      logger.error(
+        'Run error notification failed; preserving the original error.',
+        callbackError,
+      );
     }
   }
 
@@ -824,63 +885,66 @@ export class Runner {
             agent,
           );
 
-          // Step 1: before-run plugin hook (early exit if it returns content).
-          const beforeRunCallbackResponse =
-            await this.pluginManager.runBeforeRunCallback({
-              invocationContext,
-            });
-          if (params.abortSignal?.aborted) {
-            return;
-          }
-          if (beforeRunCallbackResponse) {
-            const earlyExitEvent = createEvent({
-              invocationId: invocationContext.invocationId,
-              author: 'model',
-              content: beforeRunCallbackResponse,
-            });
-            await this.sessionService.appendEvent({
-              session,
-              event: earlyExitEvent,
-            });
-            yield earlyExitEvent;
-            return;
-          }
-
-          // Step 2: drive the agent's runLive and propagate events.
-          for await (const event of requireAgent(invocationContext).runLive(
+          yield* this.runWithPluginLifecycle(
             invocationContext,
-          )) {
-            if (params.abortSignal?.aborted) {
-              return;
-            }
+            async function* () {
+              // Step 1: before-run plugin hook (early exit if it returns content).
+              const beforeRunCallbackResponse =
+                await this.pluginManager.runBeforeRunCallback({
+                  invocationContext,
+                });
+              if (params.abortSignal?.aborted) {
+                return;
+              }
+              if (beforeRunCallbackResponse) {
+                const earlyExitEvent = createEvent({
+                  invocationId: invocationContext.invocationId,
+                  author: 'model',
+                  content: beforeRunCallbackResponse,
+                });
+                await this.sessionService.appendEvent({
+                  session,
+                  event: earlyExitEvent,
+                });
+                yield earlyExitEvent;
+                return;
+              }
 
-            const modifiedEvent = await this.pluginManager.runOnEventCallback({
-              invocationContext,
-              event,
-            });
-            if (params.abortSignal?.aborted) {
-              return;
-            }
+              // Step 2: drive the agent's runLive and propagate events.
+              for await (const event of requireAgent(invocationContext).runLive(
+                invocationContext,
+              )) {
+                if (params.abortSignal?.aborted) {
+                  return;
+                }
 
-            const eventToProcess = modifiedEvent
-              ? withInternalMetadataOf(event, modifiedEvent)
-              : event;
+                const modifiedEvent =
+                  await this.pluginManager.runOnEventCallback({
+                    invocationContext,
+                    event,
+                  });
+                if (params.abortSignal?.aborted) {
+                  return;
+                }
 
-            if (
-              !eventToProcess.partial &&
-              !isLiveModelMediaEventWithInlineData(eventToProcess)
-            ) {
-              await this.sessionService.appendEvent({
-                session,
-                event: eventToProcess,
-              });
-            }
+                const eventToProcess = modifiedEvent
+                  ? withInternalMetadataOf(event, modifiedEvent)
+                  : event;
 
-            yield eventToProcess;
-          }
+                if (
+                  !eventToProcess.partial &&
+                  !isLiveModelMediaEventWithInlineData(eventToProcess)
+                ) {
+                  await this.sessionService.appendEvent({
+                    session,
+                    event: eventToProcess,
+                  });
+                }
 
-          // Step 3: after-run plugin hook for cleanup/metrics.
-          await this.pluginManager.runAfterRunCallback({invocationContext});
+                yield eventToProcess;
+              }
+            },
+          );
         },
       );
     } finally {
