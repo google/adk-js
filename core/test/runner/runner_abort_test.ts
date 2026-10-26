@@ -258,6 +258,9 @@ describe('Runner abort sealing', () => {
   it('passes abort events through onEventCallback', async () => {
     const log: string[] = [];
     class LifecyclePlugin extends BasePlugin {
+      override async afterRunCallback() {
+        log.push('after_run');
+      }
       override async onEventCallback({event}: {event: Event}) {
         log.push(
           event.errorCode === 'INVOCATION_ABORTED'
@@ -273,7 +276,7 @@ describe('Runner abort sealing', () => {
 
     await runTurn(runner, 's', 'Go', {abortWhen: hasFunctionCall});
 
-    expect(log).toEqual(['on_event:normal', 'on_event:abort']);
+    expect(log).toEqual(['on_event:normal', 'on_event:abort', 'after_run']);
   });
 
   it('propagates a failure appending the abort event', async () => {
