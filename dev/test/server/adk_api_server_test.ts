@@ -42,6 +42,7 @@ import {
   AdkApiServer,
 } from '../../src/server/adk_api_server.js';
 import {AgentLoader} from '../../src/utils/agent_loader.js';
+import {AdkLogger} from '../../src/utils/logger.js';
 import {version} from '../../src/version.js';
 
 interface JsonRpcResponse {
@@ -1996,6 +1997,69 @@ describe('AdkWebServer', () => {
         agentLoader.getAgentFile = originalGetAgentFile;
       }
     });
+
+    it.each([
+      {name: 'already-parsed JSON body', contentType: 'application/json'},
+      {
+        name: 'raw request stream body',
+        contentType: 'application/json,application/json',
+      },
+    ])(
+      'does not log request headers or body for $name',
+      async ({contentType}) => {
+        const authSentinel = 'secret-bearer-token-sentinel';
+        const cookieSentinel = 'secret-cookie-value-sentinel';
+        const bodySentinel = 'secret-user-message-sentinel';
+        const loggedMessages: string[] = [];
+        const recordArgs = (...args: unknown[]) => {
+          loggedMessages.push(args.map(String).join(' '));
+        };
+        const spies = [
+          vi.spyOn(AdkLogger.prototype, 'debug').mockImplementation(recordArgs),
+          vi.spyOn(AdkLogger.prototype, 'info').mockImplementation(recordArgs),
+          vi.spyOn(AdkLogger.prototype, 'warn').mockImplementation(recordArgs),
+          vi.spyOn(AdkLogger.prototype, 'error').mockImplementation(recordArgs),
+          vi
+            .spyOn(AdkLogger.prototype, 'log')
+            .mockImplementation((_level, ...args) => {
+              recordArgs(...args);
+            }),
+        ];
+
+        try {
+          const res = await fetch(`${server.url}/api/reasoning_engine`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': contentType,
+              Authorization: `Bearer ${authSentinel}`,
+              Cookie: `session=${cookieSentinel}`,
+            },
+            body: JSON.stringify({
+              input: {
+                appName: 'testApp',
+                userId: 'testUser',
+                sessionId: 'sentinelSession',
+                newMessage: {
+                  parts: [{text: bodySentinel}],
+                  role: 'user',
+                },
+              },
+            }),
+          });
+
+          expect(res.status).toBe(200);
+          expect(loggedMessages).toContain('POST /api/reasoning_engine');
+          const allLogs = loggedMessages.join('\n');
+          expect(allLogs).not.toContain(authSentinel);
+          expect(allLogs).not.toContain(cookieSentinel);
+          expect(allLogs).not.toContain(bodySentinel);
+        } finally {
+          for (const spy of spies) {
+            spy.mockRestore();
+          }
+        }
+      },
+    );
   });
 
   describe('Startup', () => {
