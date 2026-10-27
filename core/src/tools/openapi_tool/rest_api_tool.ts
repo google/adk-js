@@ -277,6 +277,42 @@ function encodePathParamValue(name: string, value: string): string {
   return encodeURIComponent(value);
 }
 
+/**
+ * Serializes one element of a query parameter value.
+ *
+ * Plain objects have no string form, so they are JSON-encoded rather than
+ * rendered as `[object Object]`.
+ */
+function serializeQueryValue(value: unknown): string {
+  return typeof value === 'object' && value !== null
+    ? JSON.stringify(value)
+    : String(value);
+}
+
+/**
+ * Appends a model-supplied query parameter value to `queryParams`.
+ *
+ * OpenAPI query parameters default to `style: form` and `explode: true`, so an
+ * array is sent as one `name=value` pair per element (`id=1&id=2&id=3`), the
+ * same as adk-python, which hands the list to httpx. `null` and `undefined`
+ * elements are skipped and an empty array sends nothing.
+ */
+function appendQueryParam(
+  queryParams: URLSearchParams,
+  name: string,
+  value: unknown,
+): void {
+  if (!Array.isArray(value)) {
+    queryParams.append(name, serializeQueryValue(value));
+    return;
+  }
+  for (const item of value) {
+    if (item !== undefined && item !== null) {
+      queryParams.append(name, serializeQueryValue(item));
+    }
+  }
+}
+
 export function prepareRequestParams(
   endpoint: OperationEndpoint,
   parameters: ApiParameter[],
@@ -308,7 +344,7 @@ export function prepareRequestParams(
       // the reference implementation, which drops every falsy value and so
       // loses `?count=0` and `?flag=false`.
       if (argValue !== undefined && argValue !== null && argValue !== '') {
-        queryParams.append(originalName, String(argValue));
+        appendQueryParam(queryParams, originalName, argValue);
       }
     } else if (location === 'header') {
       headers[originalName] = String(argValue);
