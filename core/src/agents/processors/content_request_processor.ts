@@ -6,14 +6,50 @@
 
 import {getActiveEvents} from '../../context/compaction_utils.js';
 import {Event} from '../../events/event.js';
+import {BaseLlm, isBaseLlm} from '../../models/base_llm.js';
 import {LlmRequest} from '../../models/llm_request.js';
+import {BaseAgent} from '../base_agent.js';
 import {InvocationContext} from '../invocation_context.js';
-import {isLlmAgent} from '../llm_agent.js';
+import {isLlmAgent, LlmAgent} from '../llm_agent.js';
 import {BaseLlmRequestProcessor} from './base_llm_processor.js';
 import {
   getContents,
   getCurrentTurnContents,
 } from './content_processor_utils.js';
+
+const CLAUDE_MODEL_SYMBOL = Symbol.for('google.adk.claudeModel');
+const CLAUDE_MODEL_NAME_PATTERN = /^claude-/i;
+
+function isClaudeModelInstance(model: BaseLlm): boolean {
+  return (
+    (CLAUDE_MODEL_SYMBOL in model && model[CLAUDE_MODEL_SYMBOL] === true) ||
+    CLAUDE_MODEL_NAME_PATTERN.test(model.model)
+  );
+}
+
+function shouldPreserveFunctionCallIds(
+  agent: LlmAgent,
+  llmRequest: LlmRequest,
+): boolean {
+  if (llmRequest.model && CLAUDE_MODEL_NAME_PATTERN.test(llmRequest.model)) {
+    return true;
+  }
+
+  let current: BaseAgent | undefined = agent;
+  while (current) {
+    if (isLlmAgent(current)) {
+      if (isBaseLlm(current.model)) {
+        return isClaudeModelInstance(current.model);
+      }
+      if (typeof current.model === 'string' && current.model.length > 0) {
+        return CLAUDE_MODEL_NAME_PATTERN.test(current.model);
+      }
+    }
+    current = current.parentAgent;
+  }
+
+  return false;
+}
 
 /**
  * Populates {@link LlmRequest.contents} from the session event history.
@@ -46,6 +82,10 @@ export class ContentRequestProcessor implements BaseLlmRequestProcessor {
       invocationContext.session.events,
       invocationContext.isolationScope,
     );
+    const preserveFunctionCallIds = shouldPreserveFunctionCallIds(
+      agent,
+      llmRequest,
+    );
 
     if (agent.includeContents === 'default') {
       // Include full conversation history
@@ -54,6 +94,7 @@ export class ContentRequestProcessor implements BaseLlmRequestProcessor {
         agent.name,
         invocationContext.branch,
         invocationContext.isolationScope,
+        preserveFunctionCallIds,
       );
     } else {
       // Include current turn context only (no conversation history).
@@ -62,6 +103,7 @@ export class ContentRequestProcessor implements BaseLlmRequestProcessor {
         agent.name,
         invocationContext.branch,
         invocationContext.isolationScope,
+        preserveFunctionCallIds,
       );
     }
 
