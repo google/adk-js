@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Context, CrewaiTool, FunctionTool, isCrewaiTool} from '@google/adk';
+import {Context, FunctionTool} from '@google/adk';
+import {CrewaiTool, isCrewaiTool} from '@google/adk-integrations';
 import {Type} from '@google/genai';
 import {describe, expect, it, vi} from 'vitest';
 import {z} from 'zod/v4';

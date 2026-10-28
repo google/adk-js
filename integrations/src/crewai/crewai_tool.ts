@@ -4,17 +4,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {FunctionDeclaration} from '@google/genai';
-
-import {Context} from '../agents/context.js';
-import {SchemaLike, toJsonSchema} from '../utils/schema.js';
-import {isZodObject, isZodSchema} from '../utils/simple_zod_to_json.js';
-import {GoogleLLMVariant} from '../utils/variant_utils.js';
 import {
   buildFunctionDeclarationForParamsForCrewai,
+  Context,
   FunctionTool,
-  ToolInputParameters,
-} from './function_tool.js';
+  GoogleLLMVariant,
+  isZodObject,
+  isZodSchema,
+  type SchemaLike,
+  toJsonSchema,
+  type ToolInputParameters,
+} from '@google/adk';
+import type {FunctionDeclaration} from '@google/genai';
 
 /**
  * Schema formats accepted on a wrapped CrewAI tool.
@@ -129,7 +130,9 @@ function normalizeCrewaiSchemaJson(
     const properties = raw['properties'] as
       Record<string, Record<string, unknown>> | undefined;
     if (properties && typeof properties === 'object') {
-      for (const [key, prop] of Object.entries(properties)) {
+      for (const entry of Object.entries(properties)) {
+        const key = entry[0];
+        const prop = entry[1];
         if (!prop || typeof prop !== 'object') {
           continue;
         }

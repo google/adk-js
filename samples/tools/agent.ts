@@ -39,7 +39,6 @@ import {
   Context,
   createEvent,
   createEventActions,
-  CrewaiTool,
   Event,
   EXIT_LOOP,
   FunctionTool,
@@ -48,7 +47,6 @@ import {
   InMemoryRunner,
   InvocationContext,
   isFinalResponse,
-  LangchainTool,
   LiveRequestQueue,
   LlmAgent,
   LlmRequest,
@@ -58,6 +56,7 @@ import {
   ToolboxToolset,
   ToolContext,
 } from '@google/adk';
+import {CrewaiTool, LangchainTool} from '@google/adk-integrations';
 import {Type} from '@google/genai';
 import {fileURLToPath} from 'node:url';
 import {z} from 'zod';

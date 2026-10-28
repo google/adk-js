@@ -4,13 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {Context, FunctionTool} from '@google/adk';
 import {
-  Context,
-  FunctionTool,
   isLangchainTool,
   LangchainTool,
-  LangchainToolLike,
-} from '@google/adk';
+  type LangchainToolLike,
+} from '@google/adk-integrations';
 import {Type} from '@google/genai';
 import {describe, expect, it, vi} from 'vitest';
 import {z} from 'zod/v4';

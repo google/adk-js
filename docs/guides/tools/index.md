@@ -8,7 +8,7 @@ The `tools` subsystem provides core abstractions, ecosystem adapters, built-in m
 - `FunctionTool` and `LongRunningFunctionTool` - Wrap synchronous, asynchronous, or async-generator TypeScript functions with Zod or `@google/genai` `Schema` declarations, optional `response` schemas, human-in-the-loop `requireConfirmation`, and live streaming via `_callLive`.
 - `AgentTool` - Wraps any `BaseAgent` as a callable tool, validating arguments and outputs against `inputSchema` and `outputSchema` when wrapping an `LlmAgent` and forwarding session state and artifacts.
 - `ToolContext` and `Context` - Provide tool callbacks with access to session `state`, `EventActions` mutations, `saveArtifact` and `loadArtifact`, `searchMemory`, credential exchange, and tool confirmation.
-- `CrewaiTool`, `LangchainTool`, and `ToolboxToolset` - Adapt CrewAI tools, LangChain tools, and Google GenAI Toolbox toolsets into ADK tools.
+- `ToolboxToolset` - Adapt Google GenAI Toolbox toolsets into ADK tools.
 - `GoogleSearchTool`, `VertexAiSearchTool`, `ExitLoopTool`, `ExampleTool`, `LoadArtifactsTool`, `LoadMemoryTool`, `PreloadMemoryTool`, `loadWebPage`, and `getUserChoiceTool` - Built-in and utility tools for grounding, loop control, few-shot prompting, artifact and memory injection, web page text extraction, and interactive user choice.
 - [BaseRetrievalTool](retrieval/base_retrieval_tool/index.md) - Abstract base for client-side retrieval tools that return a single highest-scoring text chunk.
 - [LlamaIndexRetrieval](retrieval/llama_index_retrieval/index.md) - Client-side retrieval tool backed by any object implementing `retrieve(query)`.
@@ -70,7 +70,7 @@ export const currencyAgent = new LlmAgent({
 2. **Function execution and confirmation**: When `FunctionTool.runAsync({args, toolContext})` runs, it validates `args` with `parameters.parse(args)` when `parameters` is a Zod object schema and evaluates `requireConfirmation`. If confirmation is required and not yet granted on `toolContext.toolConfirmation`, the tool requests confirmation through `toolContext.requestConfirmation` and sets `toolContext.actions.skipSummarization = true`. For asynchronous operations whose result arrives out of band, `LongRunningFunctionTool` sets `isLongRunning: true` and appends a warning note to the declaration description instructing the model not to re-invoke the tool while a call is already pending.
 3. **Live streaming tool execution**: During bidirectional live runs, `FunctionTool._callLive({args, toolContext, invocationContext})` validates `args`, checks `invocationContext.activeStreamingTools[this.name]` for an active `stream`, and injects that stream as `inputStream` into a shallow copy of the arguments object when present. The tool `execute` callback yields incremental updates as an `AsyncGenerator` or `AsyncIterable`, or resolves a single value that `_callLive` yields once.
 4. **Child agent delegation**: `AgentTool` exposes a child `BaseAgent` as a tool. Its declaration uses `agent.inputSchema` when the child is an `LlmAgent` with an explicit `inputSchema`, or defaults to `{type: Type.OBJECT, properties: {request: {type: Type.STRING}}, required: ['request']}`, and populates `declaration.response` on non-Gemini API variants. On `runAsync`, when the child `LlmAgent` has an `inputSchema`, `AgentTool` validates `args` with `parseWithSchema` and strips `null` and `undefined` fields before serializing the user message. It runs a child `Runner` with `ForwardingArtifactService` and `sessionService.getOrCreateSession` seeded with `toolContext.state.toRecord()`, forwards non-`temp:` `stateDelta` entries back to `toolContext.state`, and merges non-thought text parts from the last event. When the child `LlmAgent` defines an `outputSchema`, `AgentTool` parses the merged JSON text, validates it against `outputSchema`, and strips `null` and `undefined` values before returning the structured object.
-5. **Ecosystem adapters**: `CrewaiTool` wraps a `CrewaiToolLike` object with a `run` method and optional `argsSchema`, normalizing spaces in `tool.name` to lowercase underscores when no custom `name` override is given and delegating `_getDeclaration()` to `buildFunctionDeclarationForParamsForCrewai`. `LangchainTool` wraps a `LangchainToolLike` object exposing `_run`, `_call`, `invoke`, or `run` and optional `argsSchema`, `schema`, or `args`, delegating structured tools to `buildFunctionDeclarationForLangchain` and simple `run`-only tools to `buildFunctionDeclarationUtil`.
+5. **Ecosystem adapters**: `ToolboxToolset` adapts Google GenAI Toolbox toolsets into ADK tools. To adapt tools from external ecosystems such as CrewAI and LangChain, see the [CrewAI guide](../integrations/crewai/index.md) and [LangChain guide](../integrations/langchain/index.md) in `@google/adk-integrations`.
 6. **Built-in model and control-flow tools**:
    - `GoogleSearchTool` and `GOOGLE_SEARCH` together with `VertexAiSearchTool` extend `BuiltInTool` and attach model-native grounding configurations to `llmRequest.config.tools`.
    - `ExitLoopTool` and `EXIT_LOOP` set `toolContext.actions.escalate = true` and `toolContext.actions.skipSummarization = true` so a surrounding `LoopAgent` stops iterating.
@@ -120,30 +120,6 @@ The `AgentToolConfig` interface configures `new AgentTool(config)`.
 | `skipSummarization` | `boolean`   | `false`  | Configures whether summarization of the child agent output is skipped.                         |
 
 When `agent` is an `LlmAgent` with `inputSchema`, `AgentTool` uses that schema as its parameter declaration, validates tool arguments with `parseWithSchema`, and strips `null` and `undefined` fields before running the child agent. When `agent` also defines `outputSchema`, `AgentTool` parses the final text response as JSON, validates it against `outputSchema`, and strips `null` and `undefined` fields.
-
-### `CrewaiToolConfig`
-
-The `CrewaiToolConfig` interface configures `new CrewaiTool(config)` or `new CrewaiTool(tool, options?)`.
-
-| Option        | Type             | Default                | Description                                                                                    |
-| :------------ | :--------------- | :--------------------- | :--------------------------------------------------------------------------------------------- |
-| `tool`        | `CrewaiToolLike` | Required               | CrewAI tool object exposing `run` and optional `name`, `description`, and `argsSchema`.        |
-| `name`        | `string`         | Normalized `tool.name` | Optional non-empty override for the wrapped tool name; empty strings fall back to `tool.name`. |
-| `description` | `string`         | `tool.description`     | Optional non-empty override for the wrapped tool description.                                  |
-
-When `name` is omitted or empty, `CrewaiTool` normalizes `tool.name` by replacing spaces with underscores and lowercasing the string, falling back to `tool.run.name` or `'crewai_tool'`. `CrewaiTool._getDeclaration()` converts `tool.argsSchema` and delegates to `buildFunctionDeclarationForParamsForCrewai`.
-
-### `LangchainToolConfig`
-
-The `LangchainToolConfig` interface configures `new LangchainTool(config)` or `new LangchainTool(tool, options?)`.
-
-| Option        | Type                | Default            | Description                                                                                                     |
-| :------------ | :------------------ | :----------------- | :-------------------------------------------------------------------------------------------------------------- |
-| `tool`        | `LangchainToolLike` | Required           | LangChain tool object exposing `_run`, `_call`, `invoke`, or `run` and optional `argsSchema`, `schema`, `args`. |
-| `name`        | `string`            | `tool.name`        | Optional non-empty override for the wrapped tool name.                                                          |
-| `description` | `string`            | `tool.description` | Optional non-empty override for the wrapped tool description.                                                   |
-
-`LangchainTool` binds the first available runner method from `_run`, `_call`, `invoke`, or `run`, throwing a `TypeError` at construction time if none is present. Structured tools with `_run`, `_call`, `invoke`, `argsSchema`, `schema`, or `args` build their declaration via `buildFunctionDeclarationForLangchain`, whereas simple `run`-only tools delegate to `buildFunctionDeclarationUtil`.
 
 ### `ToolboxToolsetOptions`
 
@@ -240,38 +216,13 @@ export const liveSensorMonitor = new FunctionTool({
 });
 ```
 
-### Adapting CrewAI, LangChain, and GenAI Toolbox tools
+### Adapting GenAI Toolbox tools
 
-Wrap existing CrewAI tools, LangChain structured tools, and GenAI Toolbox clients so they run inside an ADK `LlmAgent` without rewriting their tool handlers.
+Wrap GenAI Toolbox clients so they run inside an ADK `LlmAgent` without rewriting their tool handlers. To adapt CrewAI or LangChain tools, see the [CrewAI guide](../integrations/crewai/index.md) and [LangChain guide](../integrations/langchain/index.md) in `@google/adk-integrations`.
 
 ```ts
-import {CrewaiTool, LangchainTool, ToolboxToolset} from '@google/adk';
+import {ToolboxToolset} from '@google/adk';
 import {z} from 'zod';
-
-export const crewSearchTool = new CrewaiTool(
-  {
-    name: 'Repo Lookup',
-    description: 'Searches repository metadata by owner and name.',
-    argsSchema: z.object({owner: z.string(), repo: z.string()}),
-    run: async (args: Record<string, unknown>) => ({
-      fullName: `${String(args.owner)}/${String(args.repo)}`,
-    }),
-  },
-  {
-    name: 'custom_repo_lookup',
-    description: 'Looks up repository details by owner and name.',
-  },
-);
-
-export const langchainCalculatorTool = new LangchainTool({
-  tool: {
-    name: 'multiply_numbers',
-    description: 'Multiplies two numbers.',
-    argsSchema: z.object({a: z.number(), b: z.number()}),
-    invoke: async (args: Record<string, unknown>) =>
-      Number(args.a) * Number(args.b),
-  },
-});
 
 export const asyncToolboxToolset = new ToolboxToolset({
   serverUrl: 'http://127.0.0.1:5000',
@@ -309,7 +260,7 @@ export const asyncToolboxToolset = new ToolboxToolset({
 
 ## Related samples
 
-- [`samples/tools/`](../../../samples/tools/README.md) - Runnable tool samples covering `FunctionTool` with `response` schema and `_callLive` streaming, `LongRunningFunctionTool`, `AgentTool` with `inputSchema` and `outputSchema`, `ExitLoopTool`, `CrewaiTool`, `LangchainTool`, `ToolboxToolset`, `ToolContext` state and artifact operations, retrieval tools, OpenAPI toolsets, and API Hub toolsets.
+- [`samples/tools/`](../../../samples/tools/README.md) - Runnable tool samples covering `FunctionTool` with `response` schema and `_callLive` streaming, `LongRunningFunctionTool`, `AgentTool` with `inputSchema` and `outputSchema`, `ExitLoopTool`, `ToolboxToolset`, `ToolContext` state and artifact operations, retrieval tools, OpenAPI toolsets, and API Hub toolsets.
 
 ## Related guides
 
@@ -320,3 +271,5 @@ export const asyncToolboxToolset = new ToolboxToolset({
 - [API Hub tool](apihub_tool/index.md) - Fetching OpenAPI specs from Google Cloud API Hub with `APIHubToolset`.
 - [Artifacts](../artifacts/index.md) - Versioned binary and text artifact storage accessed through `toolContext.saveArtifact` and `LOAD_ARTIFACTS`.
 - [Memory](../memory/index.md) - Cross-session memory services accessed through `toolContext.searchMemory`, `LOAD_MEMORY`, and `PRELOAD_MEMORY`.
+- [CrewAI tool](../integrations/crewai/index.md) - Adapting CrewAI tools in `@google/adk-integrations`.
+- [LangChain tool](../integrations/langchain/index.md) - Adapting LangChain tools in `@google/adk-integrations`.
