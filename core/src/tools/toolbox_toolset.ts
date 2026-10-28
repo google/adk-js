@@ -13,7 +13,31 @@ import {
   ToolInputParameters,
   ToolOptions,
 } from './function_tool.js';
-import {LangchainTool, LangchainToolLike} from './langchain_tool.js';
+
+/**
+ * Structural interface for a tool loaded from a Toolbox client.
+ */
+export interface ToolboxToolLike {
+  /**
+   * The name of the tool.
+   */
+  name?: string;
+
+  /**
+   * The description of the tool.
+   */
+  description?: string;
+
+  /**
+   * Optional parameter schema for the tool.
+   */
+  parameters?: ToolInputParameters;
+
+  /**
+   * Executes the tool with the given arguments.
+   */
+  execute?(...args: never[]): unknown | Promise<unknown>;
+}
 
 /**
  * Options forwarded to a Toolbox client when loading a tool or toolset.
@@ -45,15 +69,9 @@ export interface ToolboxToolsetClientLike {
     options?: ToolboxLoadOptions,
   ) =>
     | BaseTool
-    | ToolOptions<ToolInputParameters>
-    | LangchainToolLike
-    | ToolExecuteFunction<ToolInputParameters>
-    | Promise<
-        | BaseTool
-        | ToolOptions<ToolInputParameters>
-        | LangchainToolLike
-        | ToolExecuteFunction<ToolInputParameters>
-      >;
+    | ToolboxToolLike
+    | ((...args: never[]) => unknown)
+    | Promise<BaseTool | ToolboxToolLike | ((...args: never[]) => unknown)>;
 
   /**
    * Loads a single tool by name (snake_case convention).
@@ -63,15 +81,9 @@ export interface ToolboxToolsetClientLike {
     options?: ToolboxLoadOptions,
   ) =>
     | BaseTool
-    | ToolOptions<ToolInputParameters>
-    | LangchainToolLike
-    | ToolExecuteFunction<ToolInputParameters>
-    | Promise<
-        | BaseTool
-        | ToolOptions<ToolInputParameters>
-        | LangchainToolLike
-        | ToolExecuteFunction<ToolInputParameters>
-      >;
+    | ToolboxToolLike
+    | ((...args: never[]) => unknown)
+    | Promise<BaseTool | ToolboxToolLike | ((...args: never[]) => unknown)>;
 
   /**
    * Loads a toolset by name (camelCase convention).
@@ -80,19 +92,9 @@ export interface ToolboxToolsetClientLike {
     toolsetName: string,
     options?: ToolboxLoadOptions,
   ) =>
-    | Array<
-        | BaseTool
-        | ToolOptions<ToolInputParameters>
-        | LangchainToolLike
-        | ToolExecuteFunction<ToolInputParameters>
-      >
+    | Array<BaseTool | ToolboxToolLike | ((...args: never[]) => unknown)>
     | Promise<
-        Array<
-          | BaseTool
-          | ToolOptions<ToolInputParameters>
-          | LangchainToolLike
-          | ToolExecuteFunction<ToolInputParameters>
-        >
+        Array<BaseTool | ToolboxToolLike | ((...args: never[]) => unknown)>
       >;
 
   /**
@@ -102,19 +104,9 @@ export interface ToolboxToolsetClientLike {
     toolsetName: string,
     options?: ToolboxLoadOptions,
   ) =>
-    | Array<
-        | BaseTool
-        | ToolOptions<ToolInputParameters>
-        | LangchainToolLike
-        | ToolExecuteFunction<ToolInputParameters>
-      >
+    | Array<BaseTool | ToolboxToolLike | ((...args: never[]) => unknown)>
     | Promise<
-        Array<
-          | BaseTool
-          | ToolOptions<ToolInputParameters>
-          | LangchainToolLike
-          | ToolExecuteFunction<ToolInputParameters>
-        >
+        Array<BaseTool | ToolboxToolLike | ((...args: never[]) => unknown)>
       >;
 
   /**
@@ -212,14 +204,7 @@ function isToolOptionsObject(
   );
 }
 
-function wrapLoadedTool(
-  rawTool:
-    | BaseTool
-    | ToolOptions<ToolInputParameters>
-    | LangchainToolLike
-    | ToolExecuteFunction<ToolInputParameters>,
-  prefix?: string,
-): BaseTool {
+function wrapLoadedTool(rawTool: unknown, prefix?: string): BaseTool {
   if (isBaseTool(rawTool)) {
     if (!prefix) {
       return rawTool;
@@ -232,13 +217,16 @@ function wrapLoadedTool(
   }
 
   if (typeof rawTool === 'function') {
-    const baseName = rawTool.name || 'toolbox_tool';
+    const fn = rawTool as ToolExecuteFunction<ToolInputParameters> & {
+      description?: string;
+    };
+    const baseName = fn.name || 'toolbox_tool';
     const name = prefix ? `${prefix}_${baseName}` : baseName;
-    const description = (rawTool as {description?: string}).description ?? '';
+    const description = fn.description ?? '';
     return new FunctionTool({
       name,
       description,
-      execute: rawTool,
+      execute: fn,
     });
   }
 
@@ -253,14 +241,9 @@ function wrapLoadedTool(
     });
   }
 
-  const lcTool = new LangchainTool(rawTool);
-  if (!prefix) {
-    return lcTool;
-  }
-  return new LangchainTool(rawTool, {
-    name: `${prefix}_${lcTool.name}`,
-    description: lcTool.description,
-  });
+  throw new TypeError(
+    'Unsupported Toolbox tool shape: expected a BaseTool, ToolOptions object, or function.',
+  );
 }
 
 /**

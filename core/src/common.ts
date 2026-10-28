@@ -601,14 +601,10 @@ export type {
 } from './tools/langchain_tool.js';
 export type {LoadMemoryResponse} from './tools/load_memory_tool.js';
 export {isBaseRetrievalTool} from './tools/retrieval/base_retrieval_tool.js';
-export {ToolboxTool, isToolboxTool} from './tools/toolbox_tool.js';
-export type {
-  ToolboxClientLike,
-  ToolboxToolOptions,
-} from './tools/toolbox_tool.js';
 export {ToolboxToolset, isToolboxToolset} from './tools/toolbox_toolset.js';
 export type {
   ToolboxLoadOptions,
+  ToolboxToolLike,
   ToolboxToolsetClientLike,
   ToolboxToolsetOptions,
 } from './tools/toolbox_toolset.js';
