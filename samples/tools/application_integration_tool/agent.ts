@@ -64,13 +64,14 @@ const entityOperations = Object.fromEntries(
   listFromEnv('CONNECTION_ENTITIES').map((entity) => [entity, []]),
 );
 
-// The constructor throws unless the variables name either an integration and
-// a trigger, or a connection with at least one entity or action.
+// The constructor throws unless the variables name either an integration,
+// or a connection with at least one entity or action.
+const trigger = process.env.INTEGRATION_TRIGGER;
 const applicationIntegrationToolset = new ApplicationIntegrationToolset({
   project,
   location: process.env.GOOGLE_CLOUD_LOCATION ?? 'us-central1',
   integration: process.env.INTEGRATION_NAME,
-  trigger: process.env.INTEGRATION_TRIGGER,
+  triggers: trigger ? [trigger] : undefined,
   connection: process.env.CONNECTION_NAME,
   entityOperations,
   actions: listFromEnv('CONNECTION_ACTIONS'),
