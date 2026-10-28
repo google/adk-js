@@ -5,7 +5,6 @@
  */
 
 import {Content, createPartFromText, Modality, Part} from '@google/genai';
-import {context, trace} from '@opentelemetry/api';
 
 import {BaseAgent, isBaseAgent} from '../agents/base_agent.js';
 import {reservedFunctionCallName} from '../agents/framework_function_calls.js';
@@ -47,10 +46,7 @@ import {BasePlugin} from '../plugins/base_plugin.js';
 import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {Session} from '../sessions/session.js';
-import {
-  runAsyncGeneratorWithOtelContext,
-  tracer,
-} from '../telemetry/tracing.js';
+import {recordInvocation} from '../telemetry/api/instrumentation.js';
 import {BaseToolset, isBaseToolset} from '../tools/base_toolset.js';
 import {logger} from '../utils/logger.js';
 import {isGemini2OrAbove} from '../utils/model_name.js';
@@ -308,13 +304,9 @@ export class Runner {
     // =========================================================================
     // Setup the session and invocation context
     // =========================================================================
-    const span = tracer.startSpan('invocation');
-    const ctx = trace.setSpan(context.active(), span);
     try {
-      yield* runAsyncGeneratorWithOtelContext<Runner, Event>(
-        ctx,
-        this,
-        async function* () {
+      yield* recordInvocation(() =>
+        async function* (this: Runner) {
           const session = await this.resolveSession(userId, sessionId);
 
           if (params.abortSignal?.aborted) {
@@ -525,10 +517,9 @@ export class Runner {
               }
             }
           }
-        },
+        }.call(this),
       );
     } finally {
-      span.end();
       const toolsets = isBaseAgent(this.agent)
         ? getAllToolsets(this.agent)
         : [];
@@ -777,115 +768,107 @@ export class Runner {
       runConfig.inputAudioTranscription ??= {};
     }
 
-    const span = tracer.startSpan('invocation');
-    const ctx = trace.setSpan(context.active(), span);
-    try {
-      yield* runAsyncGeneratorWithOtelContext<Runner, Event>(
-        ctx,
-        this,
-        async function* () {
-          const session = await this.sessionService.getOrCreateSession({
-            appName: this.appName,
-            userId: params.userId,
-            sessionId: params.sessionId,
-          });
+    yield* recordInvocation(() =>
+      async function* (this: Runner) {
+        const session = await this.sessionService.getOrCreateSession({
+          appName: this.appName,
+          userId: params.userId,
+          sessionId: params.sessionId,
+        });
 
+        if (params.abortSignal?.aborted) {
+          return;
+        }
+
+        const invocationContext = new InvocationContext({
+          artifactService: this.artifactService
+            ? isSessionArtifactService(this.artifactService)
+              ? this.artifactService
+              : new ScopedArtifactService(
+                  this.artifactService,
+                  this.appName,
+                  params.userId,
+                  params.sessionId,
+                )
+            : undefined,
+          sessionService: this.sessionService,
+          memoryService: this.memoryService,
+          credentialService: this.credentialService,
+          invocationId: newInvocationContextId(),
+          agent,
+          session,
+          runConfig,
+          a2aMetadata: runConfig.a2aMetadata,
+          pluginManager: this.pluginManager,
+          liveRequestQueue: params.liveRequestQueue,
+          abortSignal: params.abortSignal,
+          liveSessionResumptionHandle: params.liveSessionResumptionHandle,
+        });
+
+        invocationContext.agent = this.determineAgentForResumption(
+          session,
+          agent,
+        );
+
+        // Step 1: before-run plugin hook (early exit if it returns content).
+        const beforeRunCallbackResponse =
+          await this.pluginManager.runBeforeRunCallback({
+            invocationContext,
+          });
+        if (params.abortSignal?.aborted) {
+          return;
+        }
+        if (beforeRunCallbackResponse) {
+          const earlyExitEvent = createEvent({
+            invocationId: invocationContext.invocationId,
+            author: 'model',
+            content: beforeRunCallbackResponse,
+          });
+          await this.sessionService.appendEvent({
+            session,
+            event: earlyExitEvent,
+          });
+          yield earlyExitEvent;
+          return;
+        }
+
+        // Step 2: drive the agent's runLive and propagate events.
+        for await (const event of requireAgent(invocationContext).runLive(
+          invocationContext,
+        )) {
           if (params.abortSignal?.aborted) {
             return;
           }
 
-          const invocationContext = new InvocationContext({
-            artifactService: this.artifactService
-              ? isSessionArtifactService(this.artifactService)
-                ? this.artifactService
-                : new ScopedArtifactService(
-                    this.artifactService,
-                    this.appName,
-                    params.userId,
-                    params.sessionId,
-                  )
-              : undefined,
-            sessionService: this.sessionService,
-            memoryService: this.memoryService,
-            credentialService: this.credentialService,
-            invocationId: newInvocationContextId(),
-            agent,
-            session,
-            runConfig,
-            a2aMetadata: runConfig.a2aMetadata,
-            pluginManager: this.pluginManager,
-            liveRequestQueue: params.liveRequestQueue,
-            abortSignal: params.abortSignal,
-            liveSessionResumptionHandle: params.liveSessionResumptionHandle,
+          const modifiedEvent = await this.pluginManager.runOnEventCallback({
+            invocationContext,
+            event,
           });
-
-          invocationContext.agent = this.determineAgentForResumption(
-            session,
-            agent,
-          );
-
-          // Step 1: before-run plugin hook (early exit if it returns content).
-          const beforeRunCallbackResponse =
-            await this.pluginManager.runBeforeRunCallback({
-              invocationContext,
-            });
           if (params.abortSignal?.aborted) {
             return;
           }
-          if (beforeRunCallbackResponse) {
-            const earlyExitEvent = createEvent({
-              invocationId: invocationContext.invocationId,
-              author: 'model',
-              content: beforeRunCallbackResponse,
-            });
+
+          const eventToProcess = modifiedEvent
+            ? withInternalMetadataOf(event, modifiedEvent)
+            : event;
+
+          if (
+            !eventToProcess.partial &&
+            !isLiveModelMediaEventWithInlineData(eventToProcess)
+          ) {
             await this.sessionService.appendEvent({
               session,
-              event: earlyExitEvent,
+              event: eventToProcess,
             });
-            yield earlyExitEvent;
-            return;
           }
 
-          // Step 2: drive the agent's runLive and propagate events.
-          for await (const event of requireAgent(invocationContext).runLive(
-            invocationContext,
-          )) {
-            if (params.abortSignal?.aborted) {
-              return;
-            }
+          yield eventToProcess;
+        }
 
-            const modifiedEvent = await this.pluginManager.runOnEventCallback({
-              invocationContext,
-              event,
-            });
-            if (params.abortSignal?.aborted) {
-              return;
-            }
-
-            const eventToProcess = modifiedEvent
-              ? withInternalMetadataOf(event, modifiedEvent)
-              : event;
-
-            if (
-              !eventToProcess.partial &&
-              !isLiveModelMediaEventWithInlineData(eventToProcess)
-            ) {
-              await this.sessionService.appendEvent({
-                session,
-                event: eventToProcess,
-              });
-            }
-
-            yield eventToProcess;
-          }
-
-          // Step 3: after-run plugin hook for cleanup/metrics.
-          await this.pluginManager.runAfterRunCallback({invocationContext});
-        },
-      );
-    } finally {
-      span.end();
-    }
+        // Step 3: after-run plugin hook for cleanup/metrics.
+        await this.pluginManager.runAfterRunCallback({invocationContext});
+      }.call(this),
+    );
   }
 }
 

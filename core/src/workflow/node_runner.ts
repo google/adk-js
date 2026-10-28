@@ -4,11 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {context, type Span, SpanStatusCode, trace} from '@opentelemetry/api';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {createEvent, Event} from '../events/event.js';
-import {traceNodeExecution, tracer} from '../telemetry/tracing.js';
-import {formatError} from '../utils/error_utils.js';
+import {
+  type NodeInvocationScope,
+  recordNodeAttempt,
+  recordNodeInvocation,
+} from '../telemetry/api/instrumentation.js';
 import {BaseNode} from './base_node.js';
 import {createSubBranch} from './branch_path.js';
 import {
@@ -114,24 +116,22 @@ export function executeChildNode(
   // this node. Nodes are raced concurrently in `Workflow.runLoop`, so a parent
   // captured any later would nest concurrent siblings inside whichever task
   // happened to resolve first.
-  const span = tracer.startSpan(`execute_node ${nodeName}`);
+  const scope = recordNodeInvocation({nodeName});
 
   // Deliberately not `async`, and the callback is deliberately not `async`
-  // either: `context.with` hands the inner promise straight back, so the child
+  // either: `scope.run` hands the inner promise straight back, so the child
   // settles on exactly the same microtask it did before tracing existed. Async
   // wrappers here would each add promise-adoption ticks, which is enough to
   // change how concurrently scheduled nodes interleave — an observability
   // change must not move execution around.
-  return context.with(trace.setSpan(context.active(), span), () =>
-    runChildNode({params, nodeName, nodePath, span}),
-  );
+  return scope.run(() => runChildNode({params, nodeName, nodePath, scope}));
 }
 
 interface RunChildNodeParams {
   params: ExecuteChildNodeParams;
   nodeName: string;
   nodePath: string;
-  span: Span;
+  scope: NodeInvocationScope;
 }
 
 /** The body of {@link executeChildNode}, running under its `execute_node` span. */
@@ -147,7 +147,7 @@ async function runChildNode({
   },
   nodeName,
   nodePath,
-  span,
+  scope,
 }: RunChildNodeParams): Promise<NodeContext> {
   const runId = options.runId ?? nodeName;
 
@@ -226,7 +226,7 @@ async function runChildNode({
         child.output = skipOutput;
         // A skipped node still fills its slot in the trace, so record it as
         // completed rather than leaving an attribute-less span behind.
-        traceNodeExecution({
+        scope.recordCompletion({
           nodePath,
           runId,
           attempt: nodeState.attemptCount,
@@ -297,7 +297,7 @@ async function runChildNode({
       recordInputForResume({child, nodeName, branch, isolationScope, input});
     }
 
-    traceNodeExecution({
+    scope.recordCompletion({
       nodePath,
       runId,
       attempt: nodeState.attemptCount,
@@ -324,17 +324,16 @@ async function runChildNode({
 
     return child;
   } catch (err) {
-    traceNodeExecution({
+    scope.recordFailure({
       nodePath,
       runId,
       attempt: nodeState.attemptCount,
-      status: 'failed',
       interruptCount: child.interruptIds.length,
+      error: err,
     });
-    span.setStatus({code: SpanStatusCode.ERROR, message: formatError(err)});
     throw err;
   } finally {
-    span.end();
+    scope.end();
   }
 }
 
@@ -352,41 +351,19 @@ interface RunAttemptParams extends RunOnceParams {
  * {@link runOnce}).
  */
 function runAttempt(params: RunAttemptParams): Promise<boolean> {
-  const {node, nodePath, runId, attempt} = params;
-  if (!node.preparedRetryConfig) {
-    return runOnce(params);
-  }
-  return tracer.startActiveSpan(
-    `execute_node_attempt ${params.nodeName}`,
-    async (span) => {
-      try {
-        const inputRecorded = await runOnce(params);
-        traceNodeExecution({
-          nodePath,
-          runId,
-          attempt,
-          status:
-            params.child.interruptIds.length > 0 ? 'waiting' : 'completed',
-          interruptCount: params.child.interruptIds.length,
-        });
-        return inputRecorded;
-      } catch (err) {
-        traceNodeExecution({
-          nodePath,
-          runId,
-          attempt,
-          status: 'failed',
-          interruptCount: params.child.interruptIds.length,
-        });
-        span.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: formatError(err),
-        });
-        throw err;
-      } finally {
-        span.end();
-      }
+  const {node, nodeName, nodePath, runId, attempt, child} = params;
+  return recordNodeAttempt(
+    {
+      enabled: Boolean(node.preparedRetryConfig),
+      nodeName,
+      nodePath,
+      runId,
+      attempt,
+      getStatus: () =>
+        child.interruptIds.length > 0 ? 'waiting' : 'completed',
+      getInterruptCount: () => child.interruptIds.length,
     },
+    () => runOnce(params),
   );
 }
 

@@ -5,15 +5,10 @@
  */
 
 import {Content} from '@google/genai';
-import {context, trace} from '@opentelemetry/api';
 
 import {createEvent, Event} from '../events/event.js';
 
-import {
-  runAsyncGeneratorWithOtelContext,
-  traceAgentInvocation,
-  tracer,
-} from '../telemetry/tracing.js';
+import {recordAgentInvocation} from '../telemetry/api/instrumentation.js';
 import {BaseNode, BaseNodeConfig} from '../workflow/base_node.js';
 import type {NodeContext} from '../workflow/node_context.js';
 import {Context} from './context.js';
@@ -254,44 +249,36 @@ export abstract class BaseAgent<
   async *runAsync(
     parentContext: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    const span = tracer.startSpan(`invoke_agent ${this.name}`);
-    const ctx = trace.setSpan(context.active(), span);
-    try {
-      yield* runAsyncGeneratorWithOtelContext<BaseAgent, Event>(
-        ctx,
-        this,
-        async function* () {
-          const context = this.createInvocationContext(parentContext);
+    yield* recordAgentInvocation({agent: this}, (scope) =>
+      async function* (this: BaseAgent) {
+        const context = this.createInvocationContext(parentContext);
 
-          const beforeAgentCallbackEvent =
-            await this.handleBeforeAgentCallback(context);
-          if (beforeAgentCallbackEvent) {
-            yield beforeAgentCallbackEvent;
-          }
+        const beforeAgentCallbackEvent =
+          await this.handleBeforeAgentCallback(context);
+        if (beforeAgentCallbackEvent) {
+          yield beforeAgentCallbackEvent;
+        }
 
-          if (context.endInvocation || parentContext.abortSignal?.aborted) {
-            return;
-          }
+        if (context.endInvocation || parentContext.abortSignal?.aborted) {
+          return;
+        }
 
-          traceAgentInvocation({agent: this, invocationContext: context});
-          for await (const event of this.runAsyncImpl(context)) {
-            yield event;
-          }
+        scope.recordInvocation(context);
+        for await (const event of this.runAsyncImpl(context)) {
+          yield event;
+        }
 
-          if (context.endInvocation || parentContext.abortSignal?.aborted) {
-            return;
-          }
+        if (context.endInvocation || parentContext.abortSignal?.aborted) {
+          return;
+        }
 
-          const afterAgentCallbackEvent =
-            await this.handleAfterAgentCallback(context);
-          if (afterAgentCallbackEvent) {
-            yield afterAgentCallbackEvent;
-          }
-        },
-      );
-    } finally {
-      span.end();
-    }
+        const afterAgentCallbackEvent =
+          await this.handleAfterAgentCallback(context);
+        if (afterAgentCallbackEvent) {
+          yield afterAgentCallbackEvent;
+        }
+      }.call(this),
+    );
   }
 
   /**
@@ -333,43 +320,35 @@ export abstract class BaseAgent<
   async *runLive(
     parentContext: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    const span = tracer.startSpan(`invoke_agent ${this.name}`);
-    const ctx = trace.setSpan(context.active(), span);
-    try {
-      yield* runAsyncGeneratorWithOtelContext<BaseAgent, Event>(
-        ctx,
-        this,
-        async function* () {
-          const context = this.createInvocationContext(parentContext);
+    yield* recordAgentInvocation({agent: this}, () =>
+      async function* (this: BaseAgent) {
+        const context = this.createInvocationContext(parentContext);
 
-          const beforeAgentCallbackEvent =
-            await this.handleBeforeAgentCallback(context);
-          if (beforeAgentCallbackEvent) {
-            yield beforeAgentCallbackEvent;
-          }
+        const beforeAgentCallbackEvent =
+          await this.handleBeforeAgentCallback(context);
+        if (beforeAgentCallbackEvent) {
+          yield beforeAgentCallbackEvent;
+        }
 
-          if (context.endInvocation || parentContext.abortSignal?.aborted) {
-            return;
-          }
+        if (context.endInvocation || parentContext.abortSignal?.aborted) {
+          return;
+        }
 
-          for await (const event of this.runLiveImpl(context)) {
-            yield event;
-          }
+        for await (const event of this.runLiveImpl(context)) {
+          yield event;
+        }
 
-          if (context.endInvocation || parentContext.abortSignal?.aborted) {
-            return;
-          }
+        if (context.endInvocation || parentContext.abortSignal?.aborted) {
+          return;
+        }
 
-          const afterAgentCallbackEvent =
-            await this.handleAfterAgentCallback(context);
-          if (afterAgentCallbackEvent) {
-            yield afterAgentCallbackEvent;
-          }
-        },
-      );
-    } finally {
-      span.end();
-    }
+        const afterAgentCallbackEvent =
+          await this.handleAfterAgentCallback(context);
+        if (afterAgentCallbackEvent) {
+          yield afterAgentCallbackEvent;
+        }
+      }.call(this),
+    );
   }
 
   /**

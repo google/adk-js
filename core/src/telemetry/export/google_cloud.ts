@@ -10,8 +10,8 @@ import {PeriodicExportingMetricReader} from '@opentelemetry/sdk-metrics';
 import {BatchSpanProcessor} from '@opentelemetry/sdk-trace-base';
 import {GoogleAuth} from 'google-auth-library';
 
-import {logger} from '../utils/logger.js';
-import {loadOptionalPeer} from '../utils/optional_peer.js';
+import {logger} from '../../utils/logger.js';
+import {loadOptionalPeer} from '../../utils/optional_peer.js';
 
 import {OtelExportersConfig, OTelHooks} from './setup.js';
 

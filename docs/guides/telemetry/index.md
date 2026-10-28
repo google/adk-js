@@ -234,10 +234,10 @@ process without credentials starts and runs untraced rather than failing.
 
 ## Limitations
 
-`core/src/telemetry/tracing.ts` is not exported from `@google/adk`, so `tracer`,
-`traceCallLlm`, `traceToolCall` and the other trace functions cannot be
-imported. The framework calls them where it opens each span, and the attributes
-rather than the functions are the contract a caller observes. adk-python differs
+`core/src/telemetry/api/instrumentation.ts` is not exported from `@google/adk`,
+so `recordCallLlm`, `recordToolExecution` and the other scope functions cannot
+be imported. The framework calls them where it opens each span, and the
+attributes rather than the functions are the contract a caller observes. adk-python differs
 here: `google.adk.telemetry` is importable.
 
 `getGcpExporters` loads each exporter from an optional peer dependency when you
