@@ -18,7 +18,6 @@ import {
   InvocationContext,
   LlmAgent,
   LlmRequest,
-  LlmResponse,
   PluginManager,
 } from '@google/adk';
 import {Content} from '@google/genai';
@@ -151,81 +150,7 @@ function createTestLlmRequest(contents: Content[] = []): LlmRequest {
 
 describe('exported span attributes', () => {
   describe('traceToolCall', () => {
-    it('sets gen_ai.system', () => {
-      const span = recordSpan('execute_tool test_tool', () =>
-        traceToolCall({
-          tool: createTestTool(),
-          args: {a: 1},
-          functionResponseEvent: createFunctionResponseEvent(),
-          invocationContext: createInvocationContext(),
-        }),
-      );
-
-      expect(span.attributes['gen_ai.system']).toBe('gcp.vertex.agent');
-    });
-
-    it('sets gcp.vertex.agent.invocation_id when the invocation context is given', () => {
-      const span = recordSpan('execute_tool test_tool', () =>
-        traceToolCall({
-          tool: createTestTool(),
-          args: {a: 1},
-          functionResponseEvent: createFunctionResponseEvent(),
-          invocationContext: createInvocationContext(),
-        }),
-      );
-
-      expect(span.attributes['gcp.vertex.agent.invocation_id']).toBe(
-        INVOCATION_ID,
-      );
-    });
-
-    it('records exactly the documented tool attribute set', () => {
-      const span = recordSpan('execute_tool test_tool', () =>
-        traceToolCall({
-          tool: createTestTool(),
-          args: {a: 1},
-          functionResponseEvent: createFunctionResponseEvent(),
-          invocationContext: createInvocationContext(),
-        }),
-      );
-
-      expect(span.attributes).toEqual({
-        'gen_ai.operation.name': 'execute_tool',
-        'gen_ai.tool.description': 'A test tool',
-        'gen_ai.tool.name': 'test_tool',
-        'gen_ai.tool.type': 'FunctionTool',
-        'gen_ai.tool.call.id': 'call-1',
-        'gen_ai.system': 'gcp.vertex.agent',
-        'gcp.vertex.agent.invocation_id': INVOCATION_ID,
-        'gcp.vertex.agent.event_id': EVENT_ID,
-        'gcp.vertex.agent.llm_request': '{}',
-        'gcp.vertex.agent.llm_response': '{}',
-        'gcp.vertex.agent.tool_call_args': '{"a":1}',
-        'gcp.vertex.agent.tool_response': '{"result":"ok"}',
-      });
-    });
-
-    it('keeps the identifying attributes when message content capture is off', () => {
-      process.env[CAPTURE_ENV] = 'false';
-
-      const span = recordSpan('execute_tool test_tool', () =>
-        traceToolCall({
-          tool: createTestTool(),
-          args: {a: 1},
-          functionResponseEvent: createFunctionResponseEvent(),
-          invocationContext: createInvocationContext(),
-        }),
-      );
-
-      expect(span.attributes['gcp.vertex.agent.tool_call_args']).toBe('{}');
-      expect(span.attributes['gcp.vertex.agent.tool_response']).toBe('{}');
-      expect(span.attributes['gen_ai.system']).toBe('gcp.vertex.agent');
-      expect(span.attributes['gcp.vertex.agent.invocation_id']).toBe(
-        INVOCATION_ID,
-      );
-    });
-
-    it('sets the tool call arguments, response and event id', () => {
+    it('sets the tool call arguments, response and event id when legacy span content capture is enabled', () => {
       const span = recordSpan('execute_tool test_tool', () =>
         traceToolCall({
           tool: createTestTool(),
@@ -244,6 +169,29 @@ describe('exported span attributes', () => {
       expect(span.attributes['gcp.vertex.agent.event_id']).toBe(EVENT_ID);
       expect(span.attributes['gcp.vertex.agent.llm_request']).toBe('{}');
       expect(span.attributes['gcp.vertex.agent.llm_response']).toBe('{}');
+    });
+
+    it('records <not specified> placeholders when tool call id and response are undefined', () => {
+      const emptyEvent = createEvent({
+        id: EVENT_ID,
+        invocationId: INVOCATION_ID,
+        author: 'test-agent',
+        content: {parts: []},
+      });
+
+      const span = recordSpan('execute_tool test_tool', () =>
+        traceToolCall({
+          tool: createTestTool(),
+          args: {},
+          functionResponseEvent: emptyEvent,
+          invocationContext: createInvocationContext(),
+        }),
+      );
+
+      expect(span.attributes['gen_ai.tool.call.id']).toBe('<not specified>');
+      expect(span.attributes['gcp.vertex.agent.tool_response']).toBe(
+        '{"result":"<not specified>"}',
+      );
     });
   });
 
@@ -283,34 +231,6 @@ describe('exported span attributes', () => {
   });
 
   describe('traceCallLlm', () => {
-    it('sets the core llm attributes', () => {
-      const llmResponse: LlmResponse = {
-        content: {role: 'model', parts: [{text: 'hello'}]},
-      };
-
-      const span = recordSpan('call_llm', () =>
-        traceCallLlm({
-          invocationContext: createInvocationContext(),
-          eventId: EVENT_ID,
-          llmRequest: createTestLlmRequest(),
-          llmResponse,
-        }),
-      );
-
-      expect(span.attributes['gen_ai.system']).toBe('gcp.vertex.agent');
-      expect(span.attributes['gen_ai.request.model']).toBe('test-model');
-      expect(span.attributes['gcp.vertex.agent.invocation_id']).toBe(
-        INVOCATION_ID,
-      );
-      expect(span.attributes['gcp.vertex.agent.event_id']).toBe(EVENT_ID);
-      expect(span.attributes['gcp.vertex.agent.llm_request']).toContain(
-        'test-model',
-      );
-      expect(span.attributes['gcp.vertex.agent.llm_response']).toBe(
-        JSON.stringify(llmResponse),
-      );
-    });
-
     it('drops responseSchema from the serialized request', () => {
       const span = recordSpan('call_llm', () =>
         traceCallLlm({

@@ -1,0 +1,18 @@
+# Telemetry Functional Goldens
+
+Each `.json` file under this directory records the OpenTelemetry surface
+(`root_span` tree with attributes, status, and nested log records, plus
+`metric_points` grouped by metric name) emitted by one scenario under one
+telemetry environment configuration.
+
+## Re-recording Goldens
+
+After an intentional telemetry change, re-record every golden from the
+repository root with:
+
+```bash
+ADK_UPDATE_TELEMETRY_GOLDENS=1 npx vitest run --project unit:core core/test/telemetry/functional_test.ts
+```
+
+Then run `npm test` and inspect `git diff core/test/telemetry/goldens/` to
+review the resulting telemetry changes.
