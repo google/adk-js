@@ -496,10 +496,10 @@ export function convertResources(
  */
 @experimental
 export class GoogleApiToOpenApiConverter {
-  readonly apiName: string;
-  readonly apiVersion: string;
-  googleApiSpec: GoogleApiSpec | null = null;
-  openapiSpec: OpenAPIV3.Document;
+  private readonly apiName: string;
+  private readonly apiVersion: string;
+  private googleApiSpec: GoogleApiSpec | null = null;
+  private openapiSpec: OpenAPIV3.Document;
 
   constructor(apiName: string, apiVersion: string) {
     this.apiName = apiName;
