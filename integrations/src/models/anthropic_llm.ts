@@ -15,6 +15,7 @@ import {
 } from '@google/adk';
 
 import {
+  buildAnthropicThinkingParam,
   collectFunctionDeclarations,
   contentToMessageParam,
   createAnthropicClient,
@@ -132,9 +133,9 @@ export class AnthropicLlm extends BaseLlm {
     abortSignal?: AbortSignal,
   ): AsyncGenerator<LlmResponse, void> {
     const sanitizer = new ToolUseIdSanitizer();
-    const messages = (llmRequest.contents ?? []).map((content) =>
-      contentToMessageParam(content, sanitizer),
-    );
+    const messages = (llmRequest.contents ?? [])
+      .map((content) => contentToMessageParam(content, sanitizer))
+      .filter((message) => message.content.length > 0);
     const functionDeclarations = collectFunctionDeclarations(llmRequest);
     const tools: Anthropic.Tool[] | undefined =
       functionDeclarations.length > 0
@@ -148,6 +149,7 @@ export class AnthropicLlm extends BaseLlm {
           disable_parallel_tool_use: true,
         }
       : undefined;
+    const thinking = buildAnthropicThinkingParam(llmRequest.config);
 
     this.anthropicClientPromise ??= this.createClient().catch(
       (err: unknown) => {
@@ -163,6 +165,7 @@ export class AnthropicLlm extends BaseLlm {
         messages,
         tools,
         tool_choice: toolChoice,
+        ...(thinking ? {thinking} : {}),
         max_tokens: llmRequest.config?.maxOutputTokens ?? this.maxTokens,
       },
       abortSignal ? {signal: abortSignal} : undefined,
