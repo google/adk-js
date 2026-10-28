@@ -162,11 +162,7 @@ describe('OperationParser parity with adk-python v0.1.0', () => {
     const params = parser.getParameters();
 
     expect(params.length).toBe(1);
-    // Deliberate divergence: adk-js names a primitive body `body` where the
-    // reference leaves `original_name` empty. `prepareRequestParams` in
-    // `rest_api_tool.ts` treats `body`, `array` and `''` identically, so the
-    // adk-js name is kept.
-    expect(params[0].originalName).toBe('body');
+    expect(params[0].originalName).toBe('');
     expect(params[0].paramLocation).toBe('body');
   });
 
@@ -409,8 +405,26 @@ describe('OperationParser requestBody empty object', () => {
     const parser = new OperationParser(operation);
     const params = parser.getParameters();
 
-    // An object request body without declared properties falls back to a single
-    // whole-body parameter so callers can still pass an arbitrary JSON object.
+    expect(params).toHaveLength(0);
+  });
+
+  it('test_process_request_body_empty_object_with_unconstrained_compat_option', () => {
+    const operation: OpenAPIV3.OperationObject = {
+      requestBody: {
+        content: {
+          'application/json': {
+            schema: {type: 'object'},
+          },
+        },
+      },
+      responses: {},
+    };
+
+    const parser = new OperationParser(operation, {
+      unconstrainedObjectBodyAsParameter: true,
+    });
+    const params = parser.getParameters();
+
     expect(params).toHaveLength(1);
     expect(params[0]).toMatchObject({
       name: 'body',

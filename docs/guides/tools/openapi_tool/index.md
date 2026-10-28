@@ -182,10 +182,8 @@ a mismatch renames a parameter between the two SDKs.
 
 The declaration the model receives is a Gemini `Schema`, not the raw OpenAPI
 schema, and the two are not the same language. The conversion keeps the fields
-Gemini declares, drops `title`, `default` and `format` because the backend
-refuses them, and gives an operation with no arguments a placeholder property
-named `dummy_DO_NOT_GENERATE`, because the backend also refuses an object type
-with no properties. A schema whose `type` is outside Gemini's set — `array`,
+Gemini declares, and drops `title`, `default` and `format` because the backend
+refuses them. A schema whose `type` is outside Gemini's set — `array`,
 `boolean`, `integer`, `null`, `number`, `object`, `string` — has its type
 dropped rather than mapped to a near equivalent, because a schema with no type
 is valid and a schema Gemini rejects fails the whole declaration.

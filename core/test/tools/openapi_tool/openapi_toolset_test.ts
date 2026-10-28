@@ -9,6 +9,7 @@ import {
   OpenApiSpecParser,
   OpenAPIToolset,
   ReadonlyContext,
+  RestApiTool,
 } from '@google/adk';
 import * as yaml from 'js-yaml';
 import {OpenAPIV3} from 'openapi-types';
@@ -545,5 +546,66 @@ describe('OpenApiSpecParser', () => {
       'multiProp'
     ] as OpenAPIV3.SchemaObject;
     expect(multiPropSchema.type).toEqual(['string', 'integer']);
+  });
+
+  it('should omit whole-body parameter for empty object request body by default', async () => {
+    const specWithEmptyObjectBody: OpenAPIV3.Document = {
+      openapi: '3.0.0',
+      info: {title: 'Test', version: '1.0.0'},
+      servers: [{url: 'https://api.example.com'}],
+      paths: {
+        '/items': {
+          post: {
+            operationId: 'createItem',
+            requestBody: {
+              content: {
+                'application/json': {
+                  schema: {type: 'object'},
+                },
+              },
+            },
+            responses: {'200': {description: 'OK'}},
+          },
+        },
+      },
+    };
+
+    const toolset = new OpenAPIToolset({specDict: specWithEmptyObjectBody});
+    const tools = await toolset.getTools();
+    expect(tools.length).toBe(1);
+    const decl = (tools[0] as RestApiTool)._getDeclaration();
+    expect(decl.parameters?.properties).toEqual({});
+  });
+
+  it('should emit whole-body parameter for empty object request body when unconstrainedObjectBodyAsParameter is true', async () => {
+    const specWithEmptyObjectBody: OpenAPIV3.Document = {
+      openapi: '3.0.0',
+      info: {title: 'Test', version: '1.0.0'},
+      servers: [{url: 'https://api.example.com'}],
+      paths: {
+        '/items': {
+          post: {
+            operationId: 'createItem',
+            requestBody: {
+              content: {
+                'application/json': {
+                  schema: {type: 'object'},
+                },
+              },
+            },
+            responses: {'200': {description: 'OK'}},
+          },
+        },
+      },
+    };
+
+    const toolset = new OpenAPIToolset({
+      specDict: specWithEmptyObjectBody,
+      unconstrainedObjectBodyAsParameter: true,
+    });
+    const tools = await toolset.getTools();
+    expect(tools.length).toBe(1);
+    const decl = (tools[0] as RestApiTool)._getDeclaration();
+    expect(decl.parameters?.properties).toHaveProperty('body');
   });
 });

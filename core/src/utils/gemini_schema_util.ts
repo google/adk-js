@@ -227,12 +227,6 @@ const GEMINI_REJECTED_SCHEMA_FIELDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Placeholder property of an otherwise empty OBJECT schema. The Gemini backend
- * rejects such a schema with "properties: should be non-empty for OBJECT type".
- */
-const EMPTY_OBJECT_PLACEHOLDER = 'dummy_DO_NOT_GENERATE';
-
-/**
  * Normalizes an OpenAPI schema key to the corresponding `Schema` field name.
  *
  * The key is snake_cased first so that a separator, an acronym or a spelling
@@ -331,12 +325,6 @@ export function openApiSchemaToGeminiSchema(
   // type", so an untyped schema is treated as an object.
   if (!source['type']) {
     source['type'] = 'object';
-  }
-  const properties = source['properties'];
-  const hasProperties =
-    isPlainObject(properties) && Object.keys(properties).length > 0;
-  if (source['type'] === 'object' && !hasProperties) {
-    source['properties'] = {[EMPTY_OBJECT_PLACEHOLDER]: {type: 'string'}};
   }
 
   // Every key is checked against GEMINI_SCHEMA_FIELDS before it is written, so

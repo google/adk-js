@@ -146,6 +146,19 @@ describe('OAuth2BearerExchanger ported reference tests', () => {
     );
   });
 
+  it('test_exchange_credential_refresh_token_only', () => {
+    const authCredential = oauth2Credential({
+      clientId: 'test_client',
+      clientSecret: 'test_secret',
+      redirectUri: 'http://localhost:8080',
+      refreshToken: 'test_refresh_token',
+    });
+
+    const updatedCredential = exchangeCredential(authScheme, authCredential);
+
+    expect(updatedCredential).toBeNull();
+  });
+
   it('test_exchange_credential_auth_missing', () => {
     expect(() => exchangeCredential(authScheme, undefined)).toThrow(
       'auth_credential is empty. Please create AuthCredential using',

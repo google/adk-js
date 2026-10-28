@@ -325,7 +325,7 @@ describe('RestApiTool', () => {
       description: 'description',
       parameters: {
         type: Type.OBJECT,
-        properties: {dummy_DO_NOT_GENERATE: {type: Type.STRING}},
+        properties: {},
       },
     });
   });
@@ -1703,5 +1703,54 @@ describe('RestApiTool v0.1.0 parity behaviour', () => {
       '[object Object]',
     );
     expect(headers['Content-Type']).toBe('application/octet-stream');
+  });
+
+  it('should omit whole-body parameter for empty object request body by default', () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/test',
+      method: 'POST',
+    };
+    const operation: OpenAPIV3.OperationObject = {
+      operationId: 'testEmptyObj',
+      requestBody: {
+        content: {'application/json': {schema: {type: 'object'}}},
+      },
+      responses: {},
+    };
+    const tool = createRestApiTool({
+      name: 'test_tool',
+      description: 'description',
+      endpoint,
+      operation,
+    });
+    const declaration = tool._getDeclaration();
+    expect(declaration.parameters?.properties).toEqual({});
+  });
+
+  it('should include whole-body parameter for empty object request body when unconstrainedObjectBodyAsParameter is true', () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/test',
+      method: 'POST',
+    };
+    const operation: OpenAPIV3.OperationObject = {
+      operationId: 'testEmptyObj',
+      requestBody: {
+        content: {'application/json': {schema: {type: 'object'}}},
+      },
+      responses: {},
+    };
+    const tool = createRestApiTool(
+      {
+        name: 'test_tool',
+        description: 'description',
+        endpoint,
+        operation,
+      },
+      {unconstrainedObjectBodyAsParameter: true},
+    );
+    const declaration = tool._getDeclaration();
+    expect(declaration.parameters?.properties).toHaveProperty('body');
   });
 });

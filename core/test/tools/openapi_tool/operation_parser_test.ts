@@ -181,10 +181,46 @@ describe('OperationParser', () => {
 
     expect(params.length).toBe(1);
     expect(params[0].name).toBe('body');
-    expect(params[0].originalName).toBe('body');
+    expect(params[0].originalName).toBe('');
     expect(params[0].paramLocation).toBe('body');
     expect(params[0].paramSchema).toEqual({});
     expect(params[0].description).toBe('Arbitrary JSON payload.');
+  });
+
+  it('should omit parameters for an unconstrained object body by default', () => {
+    const op: OpenAPIV3.OperationObject = {
+      operationId: 'testOp',
+      requestBody: {
+        description: 'Unconstrained object body.',
+        content: {'application/json': {schema: {type: 'object'}}},
+      },
+      responses: {},
+    };
+
+    const parser = new OperationParser(op);
+    expect(parser.getParameters()).toHaveLength(0);
+  });
+
+  it('should emit a whole-body parameter for an unconstrained object body when option is set', () => {
+    const op: OpenAPIV3.OperationObject = {
+      operationId: 'testOp',
+      requestBody: {
+        description: 'Unconstrained object body.',
+        content: {'application/json': {schema: {type: 'object'}}},
+      },
+      responses: {},
+    };
+
+    const parser = new OperationParser(op, {
+      unconstrainedObjectBodyAsParameter: true,
+    });
+    const params = parser.getParameters();
+
+    expect(params).toHaveLength(1);
+    expect(params[0].name).toBe('body');
+    expect(params[0].originalName).toBe('');
+    expect(params[0].paramLocation).toBe('body');
+    expect(params[0].paramSchema).toEqual({type: 'object'});
   });
 
   it('should advertise the body argument for a schema-less request body', () => {
