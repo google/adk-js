@@ -39,7 +39,7 @@ export function isGoogleApiTool(obj: unknown): obj is GoogleApiTool {
 @experimental
 export class GoogleApiTool extends BaseTool {
   readonly [GOOGLE_API_TOOL_SIGNATURE_SYMBOL] = true;
-  readonly restApiTool: RestApiTool;
+  private readonly restApiTool: RestApiTool;
 
   constructor(restApiTool: RestApiTool, options: GoogleApiToolOptions = {}) {
     super({
