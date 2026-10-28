@@ -219,7 +219,6 @@ export type {
 export {loadDotenvForAgent, walkToRootUntilFound} from './cli/utils/envs.js';
 export {
   LOGGING_FORMAT,
-  logToStderr,
   logToTmpFolder,
   setupAdkLogger,
 } from './cli/utils/logs.js';
