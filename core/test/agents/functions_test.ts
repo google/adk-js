@@ -14,6 +14,7 @@ import {
   BasePlugin,
   BaseTool,
   BeforeToolCallback,
+  ComputerUseTool,
   Context,
   createEvent,
   createEventActions,
@@ -33,7 +34,7 @@ import {
   SingleBeforeToolCallback,
   ToolConfirmation,
 } from '@google/adk';
-import {FunctionCall} from '@google/genai';
+import {FunctionCall, FunctionResponse} from '@google/genai';
 import {Span, SpanStatusCode} from '@opentelemetry/api';
 import type {MockInstance} from 'vitest';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
@@ -2574,4 +2575,76 @@ describe('async tool callbacks on LlmAgent', () => {
       }
     },
   );
+});
+
+describe('computer use function responses', () => {
+  function makeInvocationContext(): InvocationContext {
+    return new InvocationContext({
+      invocationId: 'inv_computer_use',
+      session: createSession({id: 's1', appName: 'app', userId: 'u1'}),
+      agent: new LlmAgent({name: 'test_agent', model: 'test_model'}),
+      pluginManager: new PluginManager(),
+    });
+  }
+
+  async function respond(tool: BaseTool): Promise<FunctionResponse> {
+    const event = await handleFunctionCallList({
+      invocationContext: makeInvocationContext(),
+      functionCalls: [callFor(tool)],
+      toolsDict: {[tool.name]: tool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    const functionResponse = event?.content?.parts?.[0].functionResponse;
+    if (!functionResponse) {
+      throw new Error('No function response in the event');
+    }
+    return functionResponse;
+  }
+
+  function computerUseTool(result: unknown): ComputerUseTool {
+    return new ComputerUseTool({
+      name: 'current_state',
+      description: 'Returns the current state.',
+      screenSize: [1920, 1080],
+      execute: () => result,
+    });
+  }
+
+  it('sends the screenshot as an inline image part', async () => {
+    const functionResponse = await respond(
+      computerUseTool({
+        screenshot: new Uint8Array([1, 2, 3]),
+        url: 'https://example.com',
+      }),
+    );
+
+    expect(functionResponse.response).toEqual({url: 'https://example.com'});
+    expect(functionResponse.parts).toEqual([
+      {inlineData: {data: 'AQID', mimeType: 'image/png'}},
+    ]);
+  });
+
+  it('leaves an image that is not base64 in the response', async () => {
+    const image = {data: 'not base64!', mimetype: 'image/png'};
+
+    const functionResponse = await respond(computerUseTool({image}));
+
+    expect(functionResponse.response).toEqual({image});
+    expect(functionResponse.parts).toBeUndefined();
+  });
+
+  it('leaves the image of a tool that is not a computer use tool', async () => {
+    const image = {data: 'AQID', mimetype: 'image/png'};
+    const tool = new FunctionTool({
+      name: 'imageTool',
+      description: 'returns an image field',
+      execute: async () => ({image}),
+    });
+
+    const functionResponse = await respond(tool);
+
+    expect(functionResponse.response).toEqual({image});
+    expect(functionResponse.parts).toBeUndefined();
+  });
 });
