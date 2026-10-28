@@ -122,5 +122,39 @@
     ],
     "logs": []
   },
-  "metric_points": {}
+  "metric_points": {
+    "gen_ai.invoke_agent.duration": [
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_root_agent"
+        },
+        "value": "PRESENT"
+      }
+    ],
+    "gen_ai.invoke_agent.inference_calls": [
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_root_agent"
+        },
+        "value": 1
+      }
+    ],
+    "gen_ai.invoke_agent.tool_calls": [
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_root_agent"
+        },
+        "value": 0
+      }
+    ],
+    "gen_ai.invoke_workflow.duration": [
+      {
+        "attributes": {
+          "gen_ai.operation.name": "invoke_workflow",
+          "gen_ai.workflow.name": "some_root_agent"
+        },
+        "value": "PRESENT"
+      }
+    ]
+  }
 }

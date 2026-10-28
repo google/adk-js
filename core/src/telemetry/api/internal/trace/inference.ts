@@ -21,7 +21,7 @@ import {
   withoutContent,
 } from '../common/genai_messages.js';
 import {safeJsonSerialize} from '../common/serialization.js';
-import {buildTokenUsageAttributes} from '../common/token_usage.js';
+import {TokenUsage} from '../common/token_usage.js';
 import {getTracer} from './tracer.js';
 
 /** Parameters for {@link startInferenceSpan}. */
@@ -69,7 +69,7 @@ export function buildResponseAttributes(llmResponse: LlmResponse): Attributes {
         }
       : {}),
     ...(llmResponse.usageMetadata
-      ? buildTokenUsageAttributes(llmResponse.usageMetadata)
+      ? new TokenUsage(llmResponse.usageMetadata).asAttributes()
       : {}),
   };
 }
