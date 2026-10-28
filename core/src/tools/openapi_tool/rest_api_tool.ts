@@ -100,6 +100,11 @@ export class RestApiTool extends BaseTool {
       headerProvider?: (context: ReadonlyContext) => Record<string, string>;
       credentialKey?: string;
       operationParser?: OperationParser;
+      /**
+       * @deprecated Emits a whole-body parameter for unconstrained object schemas.
+       * Will be removed in a future release.
+       */
+      unconstrainedObjectBodyAsParameter?: boolean;
     } = {},
   ) {
     super({name: name.slice(0, MAX_TOOL_NAME_LENGTH), description});
@@ -476,6 +481,11 @@ export function createRestApiTool(
     preservePropertyNames?: boolean;
     headerProvider?: (context: ReadonlyContext) => Record<string, string>;
     credentialKey?: string;
+    /**
+     * @deprecated Emits a whole-body parameter for unconstrained object schemas.
+     * Will be removed in a future release.
+     */
+    unconstrainedObjectBodyAsParameter?: boolean;
   } = {},
 ): RestApiTool {
   const operationParser = parsed.parameters

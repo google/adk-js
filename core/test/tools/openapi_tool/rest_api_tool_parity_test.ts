@@ -626,18 +626,14 @@ describe('openApiSchemaToGeminiSchema parity with adk-python v0.1.0', () => {
     const result = openApiSchemaToGeminiSchema({});
 
     expect(result?.type).toBe(Type.OBJECT);
-    expect(result?.properties).toEqual({
-      dummy_DO_NOT_GENERATE: {type: Type.STRING},
-    });
+    expect(result?.properties).toBeUndefined();
   });
 
   it('test_to_gemini_schema_dict_with_only_object_type', () => {
     const result = openApiSchemaToGeminiSchema({type: 'object'});
 
     expect(result?.type).toBe(Type.OBJECT);
-    expect(result?.properties).toEqual({
-      dummy_DO_NOT_GENERATE: {type: Type.STRING},
-    });
+    expect(result?.properties).toBeUndefined();
   });
 
   it('test_to_gemini_schema_basic_types', () => {
@@ -750,9 +746,7 @@ describe('openApiSchemaToGeminiSchema parity with adk-python v0.1.0', () => {
     // `metadata` is neither a properties map nor an items schema, so it is
     // converted recursively and gains the default object type.
     expect(metadata?.type).toBe(Type.OBJECT);
-    expect(metadata?.properties).toEqual({
-      dummy_DO_NOT_GENERATE: {type: Type.STRING},
-    });
+    expect(metadata?.properties).toBeUndefined();
   });
 
   it('test_to_gemini_schema_ignore_title_default_format', () => {

@@ -36,6 +36,7 @@ export class OperationParser {
   private params: ApiParameter[] = [];
   private returnValue?: ApiParameter;
   private preservePropertyNames: boolean;
+  private unconstrainedObjectBodyAsParameter: boolean;
   private readonly operation: OpenAPIV3.OperationObject;
 
   /**
@@ -45,10 +46,20 @@ export class OperationParser {
    *     function names instead of converting them to snake_case.
    * @param options.shouldParse Whether to parse the operation during
    *     construction. Defaults to `true`.
+   * @param options.unconstrainedObjectBodyAsParameter Emits a whole-body
+   *     parameter named `body` when an object request body schema has no
+   *     properties. Defaults to `false`.
+   *     @deprecated Retained for backwards compatibility; empty object schemas
+   *     produce no parameters by default. This option will be removed in a
+   *     future release.
    */
   constructor(
     operation: OpenAPIV3.OperationObject | Record<string, unknown> | string,
-    options: {preservePropertyNames?: boolean; shouldParse?: boolean} = {},
+    options: {
+      preservePropertyNames?: boolean;
+      shouldParse?: boolean;
+      unconstrainedObjectBodyAsParameter?: boolean;
+    } = {},
   ) {
     // adk-js has no runtime schema validation for an OperationObject, so an
     // untyped input is narrowed here rather than validated.
@@ -56,6 +67,8 @@ export class OperationParser {
       typeof operation === 'string' ? JSON.parse(operation) : operation
     ) as OpenAPIV3.OperationObject;
     this.preservePropertyNames = options.preservePropertyNames ?? false;
+    this.unconstrainedObjectBodyAsParameter =
+      options.unconstrainedObjectBodyAsParameter ?? false;
     if (options.shouldParse ?? true) {
       this.processOperationParameters();
       this.processRequestBody();
@@ -162,7 +175,7 @@ export class OperationParser {
               });
             }
           }
-        } else {
+        } else if (this.unconstrainedObjectBodyAsParameter) {
           this.params.push({
             originalName: '',
             paramLocation: 'body',
@@ -183,7 +196,7 @@ export class OperationParser {
         });
       } else {
         this.params.push({
-          originalName: 'body',
+          originalName: '',
           paramLocation: 'body',
           paramSchema: schema,
           description,
