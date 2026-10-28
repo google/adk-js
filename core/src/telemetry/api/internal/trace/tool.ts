@@ -15,7 +15,7 @@ import {
   GcpAttr,
   GenAiAttr,
 } from '../common/attributes.js';
-import type {TelemetryConfig} from '../common/config.js';
+import type {ResolvedTelemetryConfig} from '../common/config.js';
 import {shouldAddContentToSpans} from '../common/config.js';
 import {redactCredentialSecrets} from '../common/redaction.js';
 import {safeJsonSerialize} from '../common/serialization.js';
@@ -38,7 +38,7 @@ export interface ToolCallAttributesParams {
   readonly args: Record<string, unknown>;
   readonly agentName?: string;
   readonly outcome: ToolCallOutcome;
-  readonly config: TelemetryConfig;
+  readonly config: ResolvedTelemetryConfig;
 }
 
 function serializeToolResult(result: unknown): string {

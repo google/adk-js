@@ -8,7 +8,7 @@ import type {Skill} from '../../../../skills/skill.js';
 import {ERROR_TYPE_ATTR, GenAiAttr} from '../common/attributes.js';
 import {
   isExperimentalFeatureEnabled,
-  type TelemetryConfig,
+  type ResolvedTelemetryConfig,
 } from '../common/config.js';
 import {cachedInstruments, createHistogram} from './meters.js';
 
@@ -71,7 +71,7 @@ export function recordToolMetrics({
 
 /** What a skill tool asked for and what it resolved. */
 export interface SkillMetricsParams {
-  readonly config: TelemetryConfig;
+  readonly config: ResolvedTelemetryConfig;
   readonly agentName: string;
   /** The skill, if the tool resolved one. */
   readonly skill?: Skill;

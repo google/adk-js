@@ -18,6 +18,7 @@ import type {AnyValueMap} from '@opentelemetry/api-logs';
 
 import type {BaseAgent} from '../../agents/base_agent.js';
 import type {InvocationContext} from '../../agents/invocation_context.js';
+import type {RunConfig} from '../../agents/run_config.js';
 import type {Event} from '../../events/event.js';
 import type {LlmRequest} from '../../models/llm_request.js';
 import type {LlmResponse} from '../../models/llm_response.js';
@@ -39,7 +40,9 @@ import {
   USER_ID_ATTR,
 } from './internal/common/attributes.js';
 import {
-  readTelemetryConfig,
+  isExperimentalFeatureEnabled,
+  type ResolvedTelemetryConfig,
+  resolveTelemetryConfig,
   shouldAddContentToLogs,
   type TelemetryConfig,
 } from './internal/common/config.js';
@@ -57,6 +60,10 @@ import {
 import {resolveProviderName} from './internal/common/provider_name.js';
 import {TokenUsage} from './internal/common/token_usage.js';
 import {emitInferenceOperationDetails} from './internal/logs/inference.js';
+import {
+  readMcpHttpExchangeSettings,
+  reportMcpHttpExchange,
+} from './internal/logs/mcp.js';
 import {recordAgentMetrics} from './internal/metrics/agent.js';
 import {
   recordSkillLoad,
@@ -94,6 +101,12 @@ import {
   setSpanError,
 } from './internal/trace/tracer.js';
 import {startWorkflowSpan} from './internal/trace/workflow.js';
+
+export type {
+  ContentCapturingMode,
+  ExperimentalFeature,
+  TelemetryConfig,
+} from './internal/common/config.js';
 
 /** Returns the seconds elapsed since `startTime`, a `performance.now()`. */
 function secondsSince(startTime: number): number {
@@ -165,6 +178,8 @@ interface StartWorkflowScopeParams {
   readonly sessionId: string;
   /** The runner's entrypoint, when the scope is opened for it. */
   readonly entrypoint?: object;
+  /** The run's telemetry overrides, when the scope is opened for a run. */
+  readonly telemetry?: TelemetryConfig;
 }
 
 /**
@@ -176,11 +191,12 @@ function startWorkflowScope({
   workflowName,
   sessionId,
   entrypoint,
+  telemetry,
 }: StartWorkflowScopeParams): StartedScope {
   const startTime = performance.now();
   const {frame, context: frameContext} = openWorkflowFrame(context.active(), {
     workflowName,
-    config: readTelemetryConfig(),
+    config: resolveTelemetryConfig(telemetry),
     entrypoint,
   });
   const nested = frame.parent !== undefined;
@@ -213,6 +229,8 @@ export interface RecordInvocationParams {
   readonly entrypoint: BaseNode;
   /** The session the invocation runs in. */
   readonly sessionId: string;
+  /** The run's config, whose `telemetry` overrides apply to the invocation. */
+  readonly runConfig?: RunConfig;
 }
 
 /**
@@ -222,7 +240,7 @@ export interface RecordInvocationParams {
  * workflow entrypoint runs inside it rather than opening a second one.
  */
 export function recordInvocation<T>(
-  {entrypoint, sessionId}: RecordInvocationParams,
+  {entrypoint, sessionId, runConfig}: RecordInvocationParams,
   createGenerator: () => AsyncGenerator<T, void, void>,
 ): AsyncGenerator<T, void, void> {
   return streamInScope(
@@ -231,6 +249,7 @@ export function recordInvocation<T>(
         workflowName: entrypoint.name,
         sessionId,
         entrypoint,
+        telemetry: runConfig?.telemetry,
       }),
     createGenerator,
   );
@@ -251,7 +270,9 @@ export function recordAgentInvocation<T>(
   createGenerator: () => AsyncGenerator<T, void, void>,
 ): AsyncGenerator<T, void, void> {
   return streamInScope(() => {
-    const config = readTelemetryConfig();
+    const config = resolveTelemetryConfig(
+      invocationContext.runConfig?.telemetry,
+    );
     const startTime = performance.now();
     const span = getTracer().startSpan(`invoke_agent ${agent.name}`, {
       attributes: buildAgentInvocationAttributes({
@@ -315,7 +336,7 @@ function startInference({
   llmRequest,
   modelResponseEvent,
 }: RecordInferenceParams): Inference {
-  const config = readTelemetryConfig();
+  const config = resolveTelemetryConfig(invocationContext.runConfig?.telemetry);
   const accumulators = captureAccumulators(context.active());
   const agentName = invocationContext.agent?.name;
   const commonAttributes: Attributes = {
@@ -484,7 +505,7 @@ interface RecordSkillMetricsParams {
   readonly report: SkillActivityReport;
   readonly agentName: string;
   readonly errorType: string | undefined;
-  readonly config: TelemetryConfig;
+  readonly config: ResolvedTelemetryConfig;
 }
 
 /** Records the skill load and script execution counters. */
@@ -552,7 +573,7 @@ export async function recordToolExecution<T>(
   {tool, args, invocationContext}: RecordToolExecutionParams,
   fn: (scope: ToolExecutionScope) => Promise<T>,
 ): Promise<T> {
-  const config = readTelemetryConfig();
+  const config = resolveTelemetryConfig(invocationContext.runConfig?.telemetry);
   const accumulators = captureAccumulators(context.active());
   const startTime = performance.now();
   const toolScope: ToolScopeState = {skillActivity: undefined};
@@ -890,4 +911,51 @@ export async function recordCompaction<T>(
       span.end();
     }
   });
+}
+
+/** A `fetch` as the MCP HTTP transports call it. */
+export type McpFetch = (
+  url: string | URL,
+  init?: Parameters<typeof globalThis.fetch>[1],
+) => Promise<Response>;
+
+/**
+ * Returns a `fetch` for an MCP HTTP transport that reports each exchange as
+ * an `adk.experimental.mcp.http.client.response.end` log record, parented to
+ * the span active when the request was sent.
+ *
+ * Returns `fetch` unchanged, `undefined` included, unless the experimental
+ * `mcp` telemetry feature is enabled in the environment, which is read when
+ * this is called, so call it when the transport is built. The returned
+ * function sends each request with `fetch`, or the global `fetch` when that is
+ * `undefined`, and resolves with its response as soon as it arrives: the
+ * record is written in the background, and a failure to write it is logged,
+ * never thrown.
+ */
+export function instrumentMcpFetch(
+  fetch: McpFetch | undefined,
+): McpFetch | undefined {
+  if (!isExperimentalFeatureEnabled(resolveTelemetryConfig(), 'mcp')) {
+    return fetch;
+  }
+  return async (
+    url: string | URL,
+    init?: Parameters<McpFetch>[1],
+  ): Promise<Response> => {
+    const settings = readMcpHttpExchangeSettings();
+    const requestContext = context.active();
+    const response = await (fetch ?? globalThis.fetch)(url, init);
+    void reportMcpHttpExchange({
+      url,
+      init,
+      response,
+      settings,
+      context: requestContext,
+    }).catch((error: unknown) => {
+      logger.warn(
+        `Failed to record an MCP HTTP exchange: ${resolveErrorType(error)}`,
+      );
+    });
+    return response;
+  };
 }

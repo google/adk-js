@@ -12,7 +12,7 @@ import {
   Type,
 } from '@google/genai';
 import {context, metrics, SpanStatusCode, trace} from '@opentelemetry/api';
-import {logs} from '@opentelemetry/api-logs';
+import {type Logger, logs, SeverityNumber} from '@opentelemetry/api-logs';
 import {AsyncLocalStorageContextManager} from '@opentelemetry/context-async-hooks';
 import {
   InMemoryLogRecordExporter,
@@ -58,6 +58,7 @@ import {
   LlmRequest,
   LlmResponse,
   PluginManager,
+  type TelemetryConfig,
   ToolErrorType,
   ToolExecutionError,
   Workflow,
@@ -65,6 +66,8 @@ import {
 import {createCompactedEvent} from '../../src/events/compacted_event.js';
 import {ContextCompactionTrigger} from '../../src/plugins/base_plugin.js';
 import {
+  instrumentMcpFetch,
+  type McpFetch,
   recordAgentInvocation,
   recordCompaction,
   recordInference,
@@ -76,6 +79,7 @@ import {
   recordToolExecution,
   recordWorkflowInvocation,
 } from '../../src/telemetry/api/instrumentation.js';
+import {logger} from '../../src/utils/logger.js';
 import {version} from '../../src/version.js';
 
 const CAPTURE_ENV = 'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT';
@@ -151,6 +155,16 @@ beforeEach(() => {
   vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', undefined);
   vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
   vi.stubEnv('GOOGLE_GENAI_USE_ENTERPRISE', undefined);
+  vi.stubEnv('ADK_TELEMETRY_IGNORE_RUN_CONFIG', undefined);
+  vi.stubEnv('ADK_CAPTURE_MCP_HTTP_BODIES', undefined);
+  vi.stubEnv(
+    'OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_REQUEST',
+    undefined,
+  );
+  vi.stubEnv(
+    'OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_RESPONSE',
+    undefined,
+  );
 });
 
 afterEach(() => {
@@ -1810,4 +1824,742 @@ describe('metrics', () => {
       ).toBe(compactions);
     },
   );
+});
+
+describe('per-run telemetry overrides', () => {
+  const GROUNDED_RESPONSE: LlmResponse = {
+    ...textResponse('done', {finishReason: FinishReason.STOP}),
+    groundingMetadata: {
+      webSearchQueries: ['adk'],
+      groundingChunks: [{web: {uri: 'https://a.test/1'}}],
+    },
+  };
+
+  /** Answers every request with one text response, after a timer tick. */
+  class ScriptedLlm extends BaseLlm {
+    constructor() {
+      super({model: MODEL});
+    }
+    override async *generateContentAsync(): AsyncGenerator<LlmResponse, void> {
+      // Yields to the timer queue so that concurrent runs interleave.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      yield textResponse('done', {finishReason: FinishReason.STOP});
+    }
+    override async connect(): Promise<BaseLlmConnection> {
+      throw new Error('Live connections are not supported.');
+    }
+  }
+
+  function contextWith(telemetry: TelemetryConfig): InvocationContext {
+    const invocationContext = createInvocationContext();
+    invocationContext.runConfig = {telemetry};
+    return invocationContext;
+  }
+
+  async function metricNames(): Promise<string[]> {
+    const {resourceMetrics} = await metricReader.collect();
+    return resourceMetrics.scopeMetrics.flatMap((scope) =>
+      scope.metrics.map((metric) => metric.descriptor.name),
+    );
+  }
+
+  /**
+   * Runs an agent invocation under the runner's invocation scope, with one
+   * grounded model call, all with `telemetry` as the run's overrides.
+   */
+  async function runWith(telemetry: TelemetryConfig): Promise<void> {
+    const invocationContext = contextWith(telemetry);
+    const agent = invocationContext.agent;
+    if (!agent) {
+      throw new Error('Agent is not defined in invocationContext');
+    }
+    await drain(
+      recordInvocation(
+        {entrypoint: agent, sessionId: SESSION_ID, runConfig: {telemetry}},
+        async function* () {
+          yield* recordAgentInvocation(
+            {agent, invocationContext},
+            async function* () {
+              yield* [];
+              await drain(
+                recordInference({...inferenceParams(), invocationContext}, () =>
+                  streamOf([GROUNDED_RESPONSE]),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  function groundingAttributes(): string[] {
+    return Object.keys(onlySpan(`generate_content ${MODEL}`).attributes).filter(
+      (key) => key.startsWith('adk.experimental.grounding'),
+    );
+  }
+
+  beforeEach(async () => {
+    await metricReader.collect();
+  });
+
+  it('puts content on the span when the run asks for it and the environment does not', async () => {
+    vi.stubEnv(CAPTURE_ENV, 'NO_CONTENT');
+
+    await drain(
+      recordInference(
+        {
+          ...inferenceParams(),
+          invocationContext: contextWith({captureMessageContent: 'SPAN_ONLY'}),
+        },
+        () =>
+          streamOf([textResponse('done', {finishReason: FinishReason.STOP})]),
+      ),
+    );
+
+    expect(onlySpan(`generate_content ${MODEL}`).attributes).toHaveProperty(
+      'gen_ai.input.messages',
+    );
+    expect(inferenceLogs()[0].attributes).not.toHaveProperty(
+      'gen_ai.input.messages',
+    );
+  });
+
+  it('keeps content off the span and log when the run turns it off', async () => {
+    vi.stubEnv(CAPTURE_ENV, 'SPAN_AND_EVENT');
+
+    await drain(
+      recordInference(
+        {
+          ...inferenceParams(),
+          invocationContext: contextWith({captureMessageContent: 'NO_CONTENT'}),
+        },
+        () =>
+          streamOf([textResponse('done', {finishReason: FinishReason.STOP})]),
+      ),
+    );
+
+    expect(onlySpan(`generate_content ${MODEL}`).attributes).not.toHaveProperty(
+      'gen_ai.input.messages',
+    );
+    expect(inferenceLogs()[0].attributes).not.toHaveProperty(
+      'gen_ai.input.messages',
+    );
+  });
+
+  it('turns every experimental feature off, including listed ones, when the run opts out', async () => {
+    vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY', 'true');
+    vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', 'grounding,workflow');
+
+    await runWith({adkExperimentalTelemetryOptIn: false});
+
+    expect(groundingAttributes()).toEqual([]);
+    expect(
+      (await metricNames()).filter((name) => name.startsWith('adk.')),
+    ).toEqual([]);
+  });
+
+  it('turns every experimental feature on when the run opts in', async () => {
+    await runWith({adkExperimentalTelemetryOptIn: true});
+
+    expect(groundingAttributes()).not.toEqual([]);
+    expect(await metricNames()).toEqual(
+      expect.arrayContaining([
+        'adk.experimental.invoke_workflow.inference_calls',
+        'adk.experimental.invoke_agent.input_tokens',
+      ]),
+    );
+  });
+
+  it('enables exactly the features the run lists', async () => {
+    vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY', 'true');
+    vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', 'grounding');
+
+    await runWith({experimentalFeaturesOptIn: ['workflow']});
+
+    const recorded = await metricNames();
+    expect(groundingAttributes()).toEqual([]);
+    expect(recorded).toContain(
+      'adk.experimental.invoke_workflow.inference_calls',
+    );
+    expect(recorded).not.toContain(
+      'adk.experimental.invoke_agent.input_tokens',
+    );
+  });
+
+  it.each([
+    {name: 'empty', features: []},
+    // A JavaScript caller is not held to the feature type.
+    {name: 'unrecognized', features: JSON.parse('["not_a_feature"]')},
+  ])(
+    'falls back to the environment for an $name feature list',
+    async ({features}) => {
+      vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', 'grounding');
+
+      await runWith({experimentalFeaturesOptIn: features});
+
+      expect(groundingAttributes()).not.toEqual([]);
+      expect(
+        (await metricNames()).filter((name) => name.startsWith('adk.')),
+      ).toEqual([]);
+    },
+  );
+
+  it.each(['true', '1', ' TRUE '])(
+    'ignores every override when ADK_TELEMETRY_IGNORE_RUN_CONFIG is %j',
+    async (lock) => {
+      vi.stubEnv('ADK_TELEMETRY_IGNORE_RUN_CONFIG', lock);
+      vi.stubEnv(CAPTURE_ENV, 'NO_CONTENT');
+      vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', 'grounding');
+
+      await runWith({
+        captureMessageContent: 'SPAN_ONLY',
+        adkExperimentalTelemetryOptIn: false,
+      });
+
+      expect(
+        onlySpan(`generate_content ${MODEL}`).attributes,
+      ).not.toHaveProperty('gen_ai.input.messages');
+      expect(groundingAttributes()).not.toEqual([]);
+
+      spanExporter.reset();
+      await metricReader.collect();
+      await runWith({experimentalFeaturesOptIn: ['workflow']});
+
+      expect(groundingAttributes()).not.toEqual([]);
+      expect(
+        (await metricNames()).filter((name) => name.startsWith('adk.')),
+      ).toEqual([]);
+    },
+  );
+
+  it("applies the run's overrides to the runner's workflow metrics", async () => {
+    const agent = new LlmAgent({name: 'test_agent', model: new ScriptedLlm()});
+    const runner = new InMemoryRunner({agent, appName: 'test-app'});
+    const session = await runner.sessionService.createSession({
+      appName: 'test-app',
+      userId: USER_ID,
+    });
+
+    await drain(
+      runner.runAsync({
+        userId: USER_ID,
+        sessionId: session.id,
+        newMessage: {role: 'user', parts: [{text: 'hello'}]},
+        runConfig: {telemetry: {experimentalFeaturesOptIn: ['workflow']}},
+      }),
+    );
+
+    expect(await metricNames()).toContain(
+      'adk.experimental.invoke_workflow.inference_calls',
+    );
+  });
+
+  it('keeps the overrides of two concurrent runs apart', async () => {
+    async function run(
+      agentName: string,
+      telemetry: TelemetryConfig,
+    ): Promise<void> {
+      const agent = new LlmAgent({name: agentName, model: new ScriptedLlm()});
+      const runner = new InMemoryRunner({agent, appName: 'test-app'});
+      const session = await runner.sessionService.createSession({
+        appName: 'test-app',
+        userId: USER_ID,
+      });
+      await drain(
+        runner.runAsync({
+          userId: USER_ID,
+          sessionId: session.id,
+          newMessage: {role: 'user', parts: [{text: 'hello'}]},
+          runConfig: {telemetry},
+        }),
+      );
+    }
+
+    await Promise.all([
+      run('agent_a', {
+        captureMessageContent: 'SPAN_ONLY',
+        experimentalFeaturesOptIn: ['token_usage'],
+      }),
+      run('agent_b', {captureMessageContent: 'NO_CONTENT'}),
+    ]);
+
+    const inferenceSpanOf = (agentName: string): ReadableSpan => {
+      const spans = spansNamed(`generate_content ${MODEL}`).filter(
+        (span) => span.attributes['gen_ai.agent.name'] === agentName,
+      );
+      expect(spans).toHaveLength(1);
+      return spans[0];
+    };
+    expect(inferenceSpanOf('agent_a').attributes).toHaveProperty(
+      'gen_ai.input.messages',
+    );
+    expect(inferenceSpanOf('agent_b').attributes).not.toHaveProperty(
+      'gen_ai.input.messages',
+    );
+    const {resourceMetrics} = await metricReader.collect();
+    const agentTokens = resourceMetrics.scopeMetrics
+      .flatMap((scope) => scope.metrics)
+      .find(
+        (metric) =>
+          metric.descriptor.name ===
+          'adk.experimental.invoke_agent.input_tokens',
+      );
+    expect(
+      agentTokens?.dataPoints.map(
+        (point) => point.attributes['gen_ai.agent.name'],
+      ),
+    ).toEqual(['agent_a']);
+  });
+});
+
+describe('instrumentMcpFetch', () => {
+  const MCP_EVENT = 'adk.experimental.mcp.http.client.response.end';
+  const MCP_URL = 'https://mcp.example.com/mcp';
+  const ELIDED_BODY = {
+    'http.request.body.content': '<elided>',
+    'http.response.body.content': '<elided>',
+  };
+
+  function mcpRecords(): ReadableLogRecord[] {
+    return logExporter
+      .getFinishedLogRecords()
+      .filter((record) => record.eventName === MCP_EVENT);
+  }
+
+  /** Waits for the one record a call reports in the background. */
+  async function onlyMcpRecord(): Promise<ReadableLogRecord> {
+    await vi.waitFor(() => expect(mcpRecords()).toHaveLength(1));
+    return mcpRecords()[0];
+  }
+
+  function jsonResponse(
+    body: string,
+    {
+      status = 200,
+      headers = {},
+    }: {
+      status?: number;
+      headers?: Record<string, string>;
+    } = {},
+  ): Response {
+    return new Response(body, {
+      status,
+      headers: {'content-type': 'application/json', ...headers},
+    });
+  }
+
+  /** A body stream that never closes. */
+  function openStream(): ReadableStream<Uint8Array> {
+    return new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: {}\n\n'));
+      },
+    });
+  }
+
+  function instrumented(respond: () => Response | Promise<Response>): McpFetch {
+    const wrapped = instrumentMcpFetch(async () => respond());
+    if (wrapped === undefined) {
+      return expect.fail('instrumentMcpFetch returned no fetch');
+    }
+    return wrapped;
+  }
+
+  describe('with the mcp feature off', () => {
+    it('returns the given fetch unchanged and emits nothing', async () => {
+      const fetch = vi.fn(async () => jsonResponse('{}'));
+
+      const wrapped = instrumentMcpFetch(fetch);
+      await wrapped?.(MCP_URL);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(wrapped).toBe(fetch);
+      expect(instrumentMcpFetch(undefined)).toBeUndefined();
+      expect(mcpRecords()).toEqual([]);
+    });
+  });
+
+  describe('with the mcp feature on', () => {
+    beforeEach(() => {
+      vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', 'mcp');
+    });
+
+    it.each([
+      {name: 'ADK_EXPERIMENTAL_TELEMETRY_FEATURES', value: 'mcp'},
+      {name: 'ADK_EXPERIMENTAL_TELEMETRY', value: 'true'},
+    ])(
+      'emits one DEBUG record parented to the calling span when $name is $value',
+      async ({name, value}) => {
+        vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', undefined);
+        vi.stubEnv(name, value);
+        const fetch = instrumented(() =>
+          jsonResponse('{}', {
+            headers: {
+              'mcp-session-id': 'session-1',
+              'mcp-protocol-version': '2025-06-18',
+            },
+          }),
+        );
+
+        const span = trace.getTracer('test').startSpan('caller');
+        await context.with(trace.setSpan(context.active(), span), () =>
+          fetch(MCP_URL, {method: 'post', body: '{}'}),
+        );
+        span.end();
+
+        const record = await onlyMcpRecord();
+        expect(record.severityNumber).toBe(SeverityNumber.DEBUG);
+        expect(record.severityText).toBe('DEBUG');
+        expect(record.spanContext?.spanId).toBe(span.spanContext().spanId);
+        expect(record.body).toEqual(ELIDED_BODY);
+        expect(record.attributes).toEqual({
+          'http.request.method': 'POST',
+          'url.full': MCP_URL,
+          'http.response.status_code': 200,
+          'server.address': 'mcp.example.com',
+          'mcp.session.id': 'session-1',
+          'mcp.protocol.version': '2025-06-18',
+        });
+      },
+    );
+
+    it('records the request and response bodies when asked to', async () => {
+      vi.stubEnv('ADK_CAPTURE_MCP_HTTP_BODIES', ' True ');
+      const fetch = instrumented(() => jsonResponse('{"result":{}}'));
+
+      await fetch(MCP_URL, {method: 'POST', body: '{"id":1}'});
+
+      expect((await onlyMcpRecord()).body).toEqual({
+        'http.request.body.content': '{"id":1}',
+        'http.response.body.content': '{"result":{}}',
+      });
+    });
+
+    it.each([
+      {name: 'bytes', body: new TextEncoder().encode('{"id":1}')},
+      {name: 'URLSearchParams', body: new URLSearchParams({id: '1'})},
+    ])('records a $name request body as text', async ({body}) => {
+      vi.stubEnv('ADK_CAPTURE_MCP_HTTP_BODIES', 'true');
+      const fetch = instrumented(() => jsonResponse('{}'));
+
+      await fetch(MCP_URL, {method: 'POST', body});
+
+      expect((await onlyMcpRecord()).body).toMatchObject({
+        'http.request.body.content':
+          body instanceof URLSearchParams ? 'id=1' : '{"id":1}',
+      });
+    });
+
+    it('leaves out a request body that cannot be read without consuming it', async () => {
+      vi.stubEnv('ADK_CAPTURE_MCP_HTTP_BODIES', 'true');
+      const fetch = instrumented(() => jsonResponse('{}'));
+
+      await fetch(MCP_URL, {method: 'POST', body: openStream()});
+
+      expect((await onlyMcpRecord()).body).toEqual({
+        'http.response.body.content': '{}',
+      });
+    });
+
+    it.each([
+      {
+        name: 'a long body',
+        body: 'a'.repeat(1001),
+        recorded: 'a'.repeat(1000),
+      },
+      {
+        name: 'a body whose cut falls inside a surrogate pair',
+        body: 'a'.repeat(999) + '\u{1F600}b',
+        recorded: 'a'.repeat(999) + '\u{1F600}',
+      },
+    ])('truncates $name at 1000 characters', async ({body, recorded}) => {
+      vi.stubEnv('ADK_CAPTURE_MCP_HTTP_BODIES', 'true');
+      const fetch = instrumented(() => jsonResponse(body));
+
+      await fetch(MCP_URL, {method: 'POST', body});
+
+      expect((await onlyMcpRecord()).body).toEqual({
+        'http.request.body.content': `${recorded}... [truncated]`,
+        'http.response.body.content': `${recorded}... [truncated]`,
+      });
+    });
+
+    it('never reads or clones an event stream response', async () => {
+      vi.stubEnv('ADK_CAPTURE_MCP_HTTP_BODIES', 'true');
+      const response = new Response(openStream(), {
+        headers: {'content-type': 'text/event-stream'},
+      });
+      const clone = vi.spyOn(response, 'clone');
+      const fetch = instrumented(() => response);
+
+      const received = await fetch(MCP_URL);
+
+      expect((await onlyMcpRecord()).body).toEqual({
+        'http.response.body.content': '<SSE stream>',
+      });
+      expect(received).toBe(response);
+      expect(clone).not.toHaveBeenCalled();
+      expect(received.bodyUsed).toBe(false);
+      const reader = received.body?.getReader();
+      expect((await reader?.read())?.done).toBe(false);
+      await reader?.cancel();
+    });
+
+    it('hands the response on before its body has been read', async () => {
+      vi.stubEnv('ADK_CAPTURE_MCP_HTTP_BODIES', 'true');
+      const response = new Response(openStream(), {
+        headers: {'content-type': 'application/json'},
+      });
+      const fetch = instrumented(() => response);
+
+      const received = await fetch(MCP_URL);
+
+      expect(received).toBe(response);
+      expect(received.bodyUsed).toBe(false);
+      expect(mcpRecords()).toEqual([]);
+    });
+
+    it('records no header without an allowlist', async () => {
+      const fetch = instrumented(() => jsonResponse('{}'));
+
+      await fetch(MCP_URL, {headers: {'X-Trace': 'a'}});
+
+      expect(
+        Object.keys((await onlyMcpRecord()).attributes).filter((key) =>
+          key.includes('.header.'),
+        ),
+      ).toEqual([]);
+    });
+
+    it('records allowlisted headers, with credentials redacted', async () => {
+      vi.stubEnv(
+        'OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_REQUEST',
+        'authorization, x-.*',
+      );
+      vi.stubEnv(
+        'OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_RESPONSE',
+        'Content-Type,set-cookie',
+      );
+      const fetch = instrumented(() =>
+        jsonResponse('{}', {headers: {'set-cookie': 'sid=token-2'}}),
+      );
+
+      await fetch(MCP_URL, {
+        headers: {
+          Authorization: 'Bearer token-1',
+          'X-Trace': 'a',
+          'Other-Header': 'b',
+        },
+      });
+
+      const {attributes} = await onlyMcpRecord();
+      expect(attributes).toMatchObject({
+        'http.request.header.authorization': ['<redacted>'],
+        'http.request.header.x-trace': ['a'],
+        'http.response.header.content-type': ['application/json'],
+        'http.response.header.set-cookie': ['<redacted>'],
+      });
+      expect(attributes).not.toHaveProperty('http.request.header.other-header');
+      expect(JSON.stringify(attributes)).not.toContain('token-');
+    });
+
+    it('matches a header pattern against the whole name', async () => {
+      vi.stubEnv(
+        'OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_REQUEST',
+        'x',
+      );
+      const fetch = instrumented(() => jsonResponse('{}'));
+
+      await fetch(MCP_URL, {headers: {'X-Trace': 'a'}});
+
+      expect((await onlyMcpRecord()).attributes).not.toHaveProperty(
+        'http.request.header.x-trace',
+      );
+    });
+
+    it('skips a malformed header pattern with a warning', async () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      vi.stubEnv(
+        'OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_REQUEST',
+        '(,x-trace',
+      );
+      const fetch = instrumented(() => jsonResponse('{}'));
+
+      await fetch(MCP_URL, {headers: {'X-Trace': 'a'}});
+
+      expect((await onlyMcpRecord()).attributes).toMatchObject({
+        'http.request.header.x-trace': ['a'],
+      });
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_REQUEST',
+        ),
+      );
+      warn.mockRestore();
+    });
+
+    it('drops userinfo and redacts query values from the URL', async () => {
+      const fetch = instrumented(() => jsonResponse('{}'));
+
+      await fetch(
+        'https://user:password@mcp.example.com:8443/messages?sessionId=s-1&b=2&b=3&empty=',
+      );
+
+      expect((await onlyMcpRecord()).attributes).toMatchObject({
+        'url.full':
+          'https://mcp.example.com:8443/messages?sessionId=REDACTED&b=REDACTED',
+        'server.address': 'mcp.example.com',
+        'server.port': 8443,
+        'mcp.session.id': 's-1',
+      });
+    });
+
+    it('falls back to the request headers for the session and protocol', async () => {
+      const fetch = instrumented(() => jsonResponse('{}'));
+
+      await fetch(new URL(MCP_URL), {
+        headers: {
+          'mcp-session-id': 'session-2',
+          'mcp-protocol-version': '2025-03-26',
+        },
+      });
+
+      expect((await onlyMcpRecord()).attributes).toMatchObject({
+        'mcp.session.id': 'session-2',
+        'mcp.protocol.version': '2025-03-26',
+      });
+    });
+
+    it('records the status code as the error type of a failed response', async () => {
+      const fetch = instrumented(() => jsonResponse('{}', {status: 500}));
+
+      await fetch(MCP_URL);
+
+      expect((await onlyMcpRecord()).attributes).toMatchObject({
+        'http.response.status_code': 500,
+        'error.type': '500',
+      });
+    });
+
+    it('records the error type when the response body cannot be read', async () => {
+      vi.stubEnv('ADK_CAPTURE_MCP_HTTP_BODIES', 'true');
+      const failing = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(new TypeError('stream broke with token-1'));
+        },
+      });
+      const fetch = instrumented(
+        () =>
+          new Response(failing, {
+            headers: {'content-type': 'application/json'},
+          }),
+      );
+
+      await fetch(MCP_URL);
+
+      expect((await onlyMcpRecord()).body).toEqual({
+        'http.response.body.content': '<failed to read body: TypeError>',
+      });
+    });
+
+    it('logs and does not throw when the record cannot be emitted', async () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const failingLogger: Logger = {
+        emit() {
+          throw new Error('exporter down');
+        },
+        enabled: () => true,
+      };
+      const getLogger = vi
+        .spyOn(logs, 'getLogger')
+        .mockReturnValue(failingLogger);
+      const response = jsonResponse('{}');
+      const fetch = instrumented(() => response);
+
+      await expect(fetch(MCP_URL)).resolves.toBe(response);
+
+      await vi.waitFor(() =>
+        expect(warn).toHaveBeenCalledWith(
+          'Failed to record an MCP HTTP exchange: Error',
+        ),
+      );
+      getLogger.mockRestore();
+      warn.mockRestore();
+    });
+
+    it('sends the request with the given fetch', async () => {
+      const response = jsonResponse('{}');
+      const userFetch = vi.fn(
+        async (_url: string | URL, _init?: Parameters<typeof fetch>[1]) =>
+          response,
+      );
+      const init: NonNullable<Parameters<typeof fetch>[1]> = {
+        method: 'POST',
+        body: '{}',
+      };
+
+      const received = await instrumentMcpFetch(userFetch)?.(MCP_URL, init);
+
+      expect(received).toBe(response);
+      expect(userFetch).toHaveBeenCalledWith(MCP_URL, init);
+      expect(userFetch.mock.calls[0][1]).toBe(init);
+    });
+
+    it('sends the request with the global fetch when none is given', async () => {
+      const response = jsonResponse('{}');
+      const globalFetch = vi.fn(async () => response);
+      const wrapped = instrumentMcpFetch(undefined);
+      vi.stubGlobal('fetch', globalFetch);
+      const init: NonNullable<Parameters<typeof fetch>[1]> = {
+        method: 'POST',
+        body: '{}',
+      };
+
+      try {
+        await expect(wrapped?.(MCP_URL, init)).resolves.toBe(response);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+
+      expect(globalFetch).toHaveBeenCalledWith(MCP_URL, init);
+    });
+
+    it('reads its settings when the request is sent', async () => {
+      vi.stubEnv('ADK_CAPTURE_MCP_HTTP_BODIES', 'true');
+      vi.stubEnv(
+        'OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_REQUEST',
+        'x-trace',
+      );
+      let respond: (response: Response) => void = () => {};
+      const fetch = instrumented(
+        () =>
+          new Promise<Response>((resolve) => {
+            respond = resolve;
+          }),
+      );
+
+      const pending = fetch(MCP_URL, {
+        method: 'POST',
+        body: '{}',
+        headers: {'X-Trace': 'a'},
+      });
+      vi.stubEnv('ADK_CAPTURE_MCP_HTTP_BODIES', undefined);
+      vi.stubEnv(
+        'OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_REQUEST',
+        undefined,
+      );
+      respond(jsonResponse('{"ok":true}'));
+      await pending;
+
+      const record = await onlyMcpRecord();
+      expect(record.body).toEqual({
+        'http.request.body.content': '{}',
+        'http.response.body.content': '{"ok":true}',
+      });
+      expect(record.attributes).toMatchObject({
+        'http.request.header.x-trace': ['a'],
+      });
+    });
+  });
 });

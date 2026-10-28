@@ -6,7 +6,7 @@
 
 import {type Context, createContextKey} from '@opentelemetry/api';
 
-import type {TelemetryConfig} from './config.js';
+import type {ResolvedTelemetryConfig} from './config.js';
 import {TokenUsage} from './token_usage.js';
 
 const AGENT_FRAME_KEY = createContextKey('adk_agent_frame');
@@ -48,7 +48,7 @@ export interface WorkflowFrame extends Accumulator {
   /** What the runner was entered at; nested workflows inherit it. */
   readonly rootAgentName: string;
   /** The config of the root workflow; nested workflows inherit it. */
-  readonly config: TelemetryConfig;
+  readonly config: ResolvedTelemetryConfig;
   /**
    * The runner's workflow entrypoint, which runs inside this frame instead of
    * opening its own. Cleared once that workflow has claimed it.
@@ -88,7 +88,7 @@ export function openAgentFrame(ctx: Context): OpenedAgentFrame {
 export interface OpenWorkflowFrameParams {
   readonly workflowName: string;
   /** The config to use if this is the root workflow. */
-  readonly config: TelemetryConfig;
+  readonly config: ResolvedTelemetryConfig;
   /** The runner's entrypoint, when this frame is opened for it. */
   readonly entrypoint?: object;
 }

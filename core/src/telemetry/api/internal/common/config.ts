@@ -11,6 +11,7 @@ const CAPTURE_MESSAGE_CONTENT_ENV =
 const EXPERIMENTAL_TELEMETRY_ENV = 'ADK_EXPERIMENTAL_TELEMETRY';
 const EXPERIMENTAL_TELEMETRY_FEATURES_ENV =
   'ADK_EXPERIMENTAL_TELEMETRY_FEATURES';
+const IGNORE_RUN_CONFIG_ENV = 'ADK_TELEMETRY_IGNORE_RUN_CONFIG';
 
 const TRUTHY_ENV_VALUES: ReadonlySet<string> = new Set(['1', 'true']);
 
@@ -51,19 +52,44 @@ const EXPERIMENTAL_FEATURES: ReadonlySet<string> = new Set<ExperimentalFeature>(
   ],
 );
 
-/** The telemetry decisions for one scope, resolved from the environment. */
+/**
+ * Per-run telemetry overrides, set through `RunConfig.telemetry`.
+ *
+ * A field left unset falls back to the environment variable it overrides.
+ * When `ADK_TELEMETRY_IGNORE_RUN_CONFIG` is `true` or `1`, every field is
+ * ignored and the environment decides.
+ */
 export interface TelemetryConfig {
+  /** Overrides `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`. */
+  readonly captureMessageContent?: ContentCapturingMode;
+  /**
+   * Overrides `ADK_EXPERIMENTAL_TELEMETRY`. `true` enables every experimental
+   * feature for the run, and `false` disables every one, including those named
+   * in `ADK_EXPERIMENTAL_TELEMETRY_FEATURES` or `experimentalFeaturesOptIn`.
+   */
+  readonly adkExperimentalTelemetryOptIn?: boolean;
+  /**
+   * Overrides `ADK_EXPERIMENTAL_TELEMETRY_FEATURES`: exactly these features
+   * are enabled for the run. Unrecognized names are ignored, and a list with
+   * no recognized name falls back to the environment.
+   */
+  readonly experimentalFeaturesOptIn?: readonly ExperimentalFeature[];
+}
+
+/** The telemetry decisions for one scope. */
+export interface ResolvedTelemetryConfig {
   /** Where message content is recorded. */
   readonly contentCapturingMode: ContentCapturingMode;
-  /** Whether `ADK_EXPERIMENTAL_TELEMETRY` enables every experimental feature. */
+  /** Whether every experimental feature is enabled. */
   readonly experimentalTelemetry: boolean;
-  /** Features enabled one by one through `ADK_EXPERIMENTAL_TELEMETRY_FEATURES`. */
+  /** Features enabled one by one. */
   readonly experimentalFeatures: ReadonlySet<ExperimentalFeature>;
 }
 
 const warnedFeatures = new Set<string>();
 
-function readEnv(name: string): string | undefined {
+/** Reads an environment variable, where the platform has an environment. */
+export function readEnv(name: string): string | undefined {
   return typeof process === 'undefined' ? undefined : process.env?.[name];
 }
 
@@ -86,12 +112,21 @@ function readContentCapturingMode(): ContentCapturingMode {
   return isContentCapturingMode(mode) ? mode : 'NO_CONTENT';
 }
 
-function readExperimentalFeatures(): ReadonlySet<ExperimentalFeature> {
+/** Whether an environment variable is `true` or `1`, ignoring case and spaces. */
+export function isTruthyEnv(name: string): boolean {
+  return TRUTHY_ENV_VALUES.has((readEnv(name) ?? '').trim().toLowerCase());
+}
+
+/**
+ * Returns the recognized features in `names`, warning once for each name that
+ * is not one.
+ */
+function normalizeExperimentalFeatures(
+  names: Iterable<string>,
+): ReadonlySet<ExperimentalFeature> {
   const features = new Set<ExperimentalFeature>();
-  for (const entry of (
-    readEnv(EXPERIMENTAL_TELEMETRY_FEATURES_ENV) ?? ''
-  ).split(',')) {
-    const feature = entry.trim().toLowerCase();
+  for (const name of names) {
+    const feature = name.trim().toLowerCase();
     if (!feature) {
       continue;
     }
@@ -108,23 +143,52 @@ function readExperimentalFeatures(): ReadonlySet<ExperimentalFeature> {
 }
 
 /**
- * Resolves the telemetry configuration from the environment.
+ * Resolves the telemetry configuration of one scope.
  *
- * Read when a scope starts rather than at import, so a change to the
- * environment applies to the next scope.
+ * Each value comes from `overrides` when it sets it, else from its environment
+ * variable, else from its default. `ADK_TELEMETRY_IGNORE_RUN_CONFIG` makes the
+ * environment win over every override. The environment is read on each call
+ * rather than at import, so a change to it applies to the next scope.
  */
-export function readTelemetryConfig(): TelemetryConfig {
-  return {
+export function resolveTelemetryConfig(
+  overrides?: TelemetryConfig,
+): ResolvedTelemetryConfig {
+  const env: ResolvedTelemetryConfig = {
     contentCapturingMode: readContentCapturingMode(),
-    experimentalTelemetry: TRUTHY_ENV_VALUES.has(
-      (readEnv(EXPERIMENTAL_TELEMETRY_ENV) ?? 'false').trim().toLowerCase(),
+    experimentalTelemetry: isTruthyEnv(EXPERIMENTAL_TELEMETRY_ENV),
+    experimentalFeatures: normalizeExperimentalFeatures(
+      (readEnv(EXPERIMENTAL_TELEMETRY_FEATURES_ENV) ?? '').split(','),
     ),
-    experimentalFeatures: readExperimentalFeatures(),
   };
+  if (overrides === undefined || isTruthyEnv(IGNORE_RUN_CONFIG_ENV)) {
+    return env;
+  }
+  const contentCapturingMode =
+    overrides.captureMessageContent ?? env.contentCapturingMode;
+  if (overrides.adkExperimentalTelemetryOptIn !== undefined) {
+    return {
+      contentCapturingMode,
+      experimentalTelemetry: overrides.adkExperimentalTelemetryOptIn,
+      experimentalFeatures: new Set(),
+    };
+  }
+  const features = normalizeExperimentalFeatures(
+    overrides.experimentalFeaturesOptIn ?? [],
+  );
+  if (features.size > 0) {
+    return {
+      contentCapturingMode,
+      experimentalTelemetry: false,
+      experimentalFeatures: features,
+    };
+  }
+  return {...env, contentCapturingMode};
 }
 
 /** Whether message content goes on log records (`EVENT_ONLY`, `SPAN_AND_EVENT`). */
-export function shouldAddContentToLogs(config: TelemetryConfig): boolean {
+export function shouldAddContentToLogs(
+  config: ResolvedTelemetryConfig,
+): boolean {
   return (
     config.contentCapturingMode === 'EVENT_ONLY' ||
     config.contentCapturingMode === 'SPAN_AND_EVENT'
@@ -132,7 +196,9 @@ export function shouldAddContentToLogs(config: TelemetryConfig): boolean {
 }
 
 /** Whether message content goes on spans (`SPAN_ONLY`, `SPAN_AND_EVENT`). */
-export function shouldAddContentToSpans(config: TelemetryConfig): boolean {
+export function shouldAddContentToSpans(
+  config: ResolvedTelemetryConfig,
+): boolean {
   return (
     config.contentCapturingMode === 'SPAN_ONLY' ||
     config.contentCapturingMode === 'SPAN_AND_EVENT'
@@ -141,7 +207,7 @@ export function shouldAddContentToSpans(config: TelemetryConfig): boolean {
 
 /** Whether the named experimental feature is enabled. */
 export function isExperimentalFeatureEnabled(
-  config: TelemetryConfig,
+  config: ResolvedTelemetryConfig,
   feature: ExperimentalFeature,
 ): boolean {
   return (

@@ -10,7 +10,7 @@ import type {Totals} from '../common/accumulators.js';
 import {ERROR_TYPE_ATTR, GenAiAttr} from '../common/attributes.js';
 import {
   isExperimentalFeatureEnabled,
-  type TelemetryConfig,
+  type ResolvedTelemetryConfig,
 } from '../common/config.js';
 import {
   CALL_COUNT_BUCKETS,
@@ -64,7 +64,7 @@ export interface AgentMetricsParams {
   readonly errorType?: string;
   /** What the invocation's own model and tool calls added up to. */
   readonly totals: Totals;
-  readonly config: TelemetryConfig;
+  readonly config: ResolvedTelemetryConfig;
 }
 
 /**
