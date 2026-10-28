@@ -9,6 +9,8 @@ import {
   createEventActions,
   DatabaseSessionService,
   Event,
+  isStaleSessionError,
+  StaleSessionError,
   State,
 } from '@google/adk';
 import {MikroORM} from '@mikro-orm/core';
@@ -299,15 +301,122 @@ describe('DatabaseSessionService', () => {
     expect(after2?.events[0].id).toBe(e3.id);
   });
 
-  it('should refresh events on a stale session object in appendEvent', async () => {
+  it('should refresh events on a stale session object in appendEvent when configured with staleSession reload', async () => {
+    const reloadService = new DatabaseSessionService({
+      dbName: ':memory:',
+      driver: SqliteDriver,
+      allowGlobalContext: true,
+      staleSession: 'reload',
+    });
+    await reloadService.init();
+
+    try {
+      const session = await reloadService.createSession({
+        appName: 'test-app',
+        userId: 'user1',
+        sessionId: 's1',
+      });
+
+      // A second handle on the same session appends an event, making the
+      // first handle stale.
+      const otherHandle = await reloadService.getSession({
+        appName: 'test-app',
+        userId: 'user1',
+        sessionId: 's1',
+      });
+      const now = Date.now();
+      const concurrentEvent = createEvent({timestamp: now + 10});
+      await reloadService.appendEvent({
+        session: otherHandle!,
+        event: concurrentEvent,
+      });
+
+      // Older than the concurrent event: this is the contended case, where the
+      // caller built its event and then waited on the row lock while another
+      // handle committed. Reloading after the commit sorts the caller's event
+      // into its timestamp position instead of appending it at the tail.
+      const ownEvent = createEvent({timestamp: now + 5});
+      await reloadService.appendEvent({session, event: ownEvent});
+
+      // The stale handle must see both events in timestamp order, without
+      // duplicates, and keep its own event object.
+      expect(session.events.map((e) => e.id)).toEqual([
+        ownEvent.id,
+        concurrentEvent.id,
+      ]);
+      expect(session.events[0]).toBe(ownEvent);
+    } finally {
+      const orm = (reloadService as unknown as {orm: MikroORM}).orm;
+      if (orm) {
+        await orm.close();
+      }
+    }
+  });
+
+  it('should keep a stale session usable when the event reload fails', async () => {
+    const reloadService = new DatabaseSessionService({
+      dbName: ':memory:',
+      driver: SqliteDriver,
+      allowGlobalContext: true,
+      staleSession: 'reload',
+    });
+    await reloadService.init();
+
+    try {
+      const session = await reloadService.createSession({
+        appName: 'test-app',
+        userId: 'user1',
+        sessionId: 's1',
+      });
+
+      const otherHandle = await reloadService.getSession({
+        appName: 'test-app',
+        userId: 'user1',
+        sessionId: 's1',
+      });
+      const now = Date.now();
+      await reloadService.appendEvent({
+        session: otherHandle!,
+        event: createEvent({timestamp: now + 10}),
+      });
+
+      const orm = (reloadService as unknown as {orm: MikroORM}).orm;
+      const fork = orm.em.fork.bind(orm.em);
+      vi.spyOn(orm.em, 'fork').mockImplementation((...args) => {
+        const em = fork(...args);
+        vi.spyOn(em, 'find').mockRejectedValue(new Error('reload failed'));
+        return em;
+      });
+
+      const ownEvent = createEvent({timestamp: now + 20});
+      await expect(
+        reloadService.appendEvent({session, event: ownEvent}),
+      ).resolves.toBe(ownEvent);
+
+      vi.restoreAllMocks();
+
+      // The append committed even though the in-memory reload could not run.
+      const reloaded = await reloadService.getSession({
+        appName: 'test-app',
+        userId: 'user1',
+        sessionId: 's1',
+      });
+      expect(reloaded?.events.map((e) => e.id)).toContain(ownEvent.id);
+    } finally {
+      const orm = (reloadService as unknown as {orm: MikroORM}).orm;
+      if (orm) {
+        await orm.close();
+      }
+    }
+  });
+
+  it('should reject a stale session object in appendEvent by default', async () => {
     const session = await service.createSession({
       appName: 'test-app',
       userId: 'user1',
       sessionId: 's1',
     });
 
-    // A second handle on the same session appends an event, making the
-    // first handle stale.
     const otherHandle = await service.getSession({
       appName: 'test-app',
       userId: 'user1',
@@ -317,62 +426,114 @@ describe('DatabaseSessionService', () => {
     const concurrentEvent = createEvent({timestamp: now + 10});
     await service.appendEvent({session: otherHandle!, event: concurrentEvent});
 
-    // Older than the concurrent event: this is the contended case, where the
-    // caller built its event and then waited on the row lock while another
-    // handle committed. Reloading after the commit sorts the caller's event
-    // into its timestamp position instead of appending it at the tail.
-    const ownEvent = createEvent({timestamp: now + 5});
-    await service.appendEvent({session, event: ownEvent});
+    const ownEvent = createEvent({
+      timestamp: now + 5,
+      actions: createEventActions({stateDelta: {key: 'value'}}),
+    });
+    await expect(
+      service.appendEvent({session, event: ownEvent}),
+    ).rejects.toThrow(StaleSessionError);
 
-    // The stale handle must see both events in timestamp order, without
-    // duplicates, and keep its own event object.
-    expect(session.events.map((e) => e.id)).toEqual([
-      ownEvent.id,
-      concurrentEvent.id,
-    ]);
-    expect(session.events[0]).toBe(ownEvent);
+    // Verify type guard and message
+    try {
+      await service.appendEvent({session, event: ownEvent});
+      expect.fail('Expected StaleSessionError to be thrown');
+    } catch (e: unknown) {
+      expect(isStaleSessionError(e)).toBe(true);
+      expect((e as Error).message).toMatch(
+        /is earlier than the update_time in the storage_session/,
+      );
+    }
+
+    // Verify session in memory was not modified
+    expect(session.events).toHaveLength(0);
+    expect(session.state['key']).toBeUndefined();
+
+    // Verify storage was not modified by the failed append
+    const stored = await service.getSession({
+      appName: 'test-app',
+      userId: 'user1',
+      sessionId: 's1',
+    });
+    expect(stored?.events.map((e) => e.id)).toEqual([concurrentEvent.id]);
+    expect(stored?.state['key']).toBeUndefined();
   });
 
-  it('should keep a stale session usable when the event reload fails', async () => {
-    const session = await service.createSession({
-      appName: 'test-app',
-      userId: 'user1',
-      sessionId: 's1',
-    });
+  it('test_append_event_to_stale_session', async () => {
+    const appName = 'my_app';
+    const userId = 'user';
+    const currentTime = Date.now();
 
-    const otherHandle = await service.getSession({
-      appName: 'test-app',
-      userId: 'user1',
-      sessionId: 's1',
+    const originalSession = await service.createSession({
+      appName,
+      userId,
     });
-    const now = Date.now();
-    await service.appendEvent({
-      session: otherHandle!,
-      event: createEvent({timestamp: now + 10}),
+    const event1 = createEvent({
+      invocationId: 'inv1',
+      author: 'user',
+      timestamp: currentTime + 1000,
+      actions: createEventActions({stateDelta: {sk1: 'v1'}}),
     });
+    await service.appendEvent({session: originalSession, event: event1});
 
-    const orm = (service as unknown as {orm: MikroORM}).orm;
-    const fork = orm.em.fork.bind(orm.em);
-    vi.spyOn(orm.em, 'fork').mockImplementation((...args) => {
-      const em = fork(...args);
-      vi.spyOn(em, 'find').mockRejectedValue(new Error('reload failed'));
-      return em;
+    const updatedSession = (await service.getSession({
+      appName,
+      userId,
+      sessionId: originalSession.id,
+    }))!;
+    const event2 = createEvent({
+      invocationId: 'inv2',
+      author: 'user',
+      timestamp: currentTime + 2000,
+      actions: createEventActions({stateDelta: {sk2: 'v2'}}),
     });
+    await service.appendEvent({session: updatedSession, event: event2});
 
-    const ownEvent = createEvent({timestamp: now + 20});
-    await expect(service.appendEvent({session, event: ownEvent})).resolves.toBe(
-      ownEvent,
+    // originalSession is now stale
+    expect(originalSession.lastUpdateTime).toBeLessThan(
+      updatedSession.lastUpdateTime,
     );
+    expect(originalSession.events.length).toBe(1);
+    expect(originalSession.state['sk2']).toBeUndefined();
 
-    vi.restoreAllMocks();
-
-    // The append committed even though the in-memory reload could not run.
-    const reloaded = await service.getSession({
-      appName: 'test-app',
-      userId: 'user1',
-      sessionId: 's1',
+    // Appending another event to stale originalSession should be rejected.
+    const event3 = createEvent({
+      invocationId: 'inv3',
+      author: 'user',
+      timestamp: currentTime + 3000,
+      actions: createEventActions({stateDelta: {sk3: 'v3'}}),
     });
-    expect(reloaded?.events.map((e) => e.id)).toContain(ownEvent.id);
+    await expect(
+      service.appendEvent({session: originalSession, event: event3}),
+    ).rejects.toThrow(StaleSessionError);
+
+    // If we fetch session from DB, it should only contain the committed events.
+    const sessionFinal = (await service.getSession({
+      appName,
+      userId,
+      sessionId: originalSession.id,
+    }))!;
+    expect(sessionFinal.events.length).toBe(2);
+    expect(sessionFinal.state['sk1']).toBe('v1');
+    expect(sessionFinal.state['sk2']).toBe('v2');
+    expect(sessionFinal.state['sk3']).toBeUndefined();
+    expect(sessionFinal.events.map((e) => e.invocationId)).toEqual([
+      'inv1',
+      'inv2',
+    ]);
+  });
+
+  it('identifies StaleSessionError with isStaleSessionError', () => {
+    const error = new StaleSessionError('stale');
+    expect(isStaleSessionError(error)).toBe(true);
+    expect(isStaleSessionError(new Error('other'))).toBe(false);
+    expect(isStaleSessionError(null)).toBe(false);
+    expect(isStaleSessionError(undefined)).toBe(false);
+    expect(
+      isStaleSessionError({
+        [Symbol.for('google.adk.staleSessionError')]: true,
+      }),
+    ).toBe(true);
   });
 
   it('should filter sessions by userId in listSessions', async () => {
@@ -967,6 +1128,7 @@ describe('DatabaseSessionService stale-session reload', () => {
       dbName: ':memory:',
       driver: SqliteDriver,
       allowGlobalContext: true,
+      staleSession: 'reload',
     });
     await service.createSession({...key, state: {count: 0}});
   });
