@@ -72,6 +72,30 @@ describe('LoadMemoryTool', () => {
     expect(result).toEqual({
       memories: [
         {
+          content: {role: 'user', parts: [{text: 'hi'}]},
+          author: 'someone',
+        },
+      ],
+    });
+  });
+
+  it('returns flattened text entries when textOnlyContent is enabled', async () => {
+    const tool = new LoadMemoryTool({textOnlyContent: true});
+    const mockContext = new StubToolContext([
+      {
+        content: {role: 'user', parts: [{text: 'hi'}]},
+        author: 'someone',
+      },
+    ]) as unknown as Context;
+
+    const result = await tool.runAsync({
+      args: {query: 'hello'},
+      toolContext: mockContext,
+    });
+
+    expect(result).toEqual({
+      memories: [
+        {
           content: 'hi',
           author: 'someone',
           timestamp: undefined,
@@ -125,6 +149,36 @@ describe('LoadMemoryTool', () => {
     const tool = new LoadMemoryTool();
     await tool.processLlmRequest({toolContext, llmRequest});
     // Instructions should be appended
+    expect(llmRequest.config?.systemInstruction).toContain('You have memory.');
+  });
+
+  it('registers the tool in toolsDict', async () => {
+    const toolContext = new StubToolContext([]) as unknown as Context;
+    const llmRequest: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+    const tool = new LoadMemoryTool();
+
+    await tool.processLlmRequest({toolContext, llmRequest});
+
+    expect(llmRequest.toolsDict['load_memory']).toBe(tool);
+  });
+
+  it('appends to existing system instructions', async () => {
+    const toolContext = new StubToolContext([]) as unknown as Context;
+    const llmRequest: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+      config: {systemInstruction: 'be terse'},
+    };
+    const tool = new LoadMemoryTool();
+
+    await tool.processLlmRequest({toolContext, llmRequest});
+
+    expect(llmRequest.config?.systemInstruction).toMatch(/^be terse/);
     expect(llmRequest.config?.systemInstruction).toContain('You have memory.');
   });
 });
