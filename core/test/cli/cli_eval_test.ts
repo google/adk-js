@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import type {protos} from '@google-cloud/aiplatform';
 import {
   BaseAgent,
   BaseTool,
@@ -21,16 +22,22 @@ import {
   InvocationContext,
   LlmAgent,
   MISSING_EVAL_DEPENDENCIES_MESSAGE,
+  MULTI_TURN_TASK_SUCCESS_V1_KEY,
+  MULTI_TURN_TOOL_USE_QUALITY_V1_KEY,
+  MULTI_TURN_TRAJECTORY_QUALITY_V1_KEY,
   parseAndGetEvalsToRun,
+  RESPONSE_EVALUATION_SCORE_KEY,
   RESPONSE_MATCH_SCORE_KEY,
   runEvals,
+  SAFETY_V1_KEY,
   TOOL_TRAJECTORY_SCORE_KEY,
   tryGetResetFunc,
+  VertexAiEvaluationClient,
 } from '@google/adk';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 class DeterministicEvalAgent extends BaseAgent {
   constructor() {
@@ -83,6 +90,26 @@ class DeterministicEvalAgent extends BaseAgent {
     ctx: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
     yield* this.runAsyncImpl(ctx);
+  }
+}
+
+type EvaluateInstancesRequest =
+  protos.google.cloud.aiplatform.v1beta1.IEvaluateInstancesRequest;
+type MetricResult = protos.google.cloud.aiplatform.v1beta1.IMetricResult;
+
+/** Records each request and answers with the next queued metric result. */
+class FakeEvaluationClient implements VertexAiEvaluationClient {
+  readonly requests: EvaluateInstancesRequest[] = [];
+
+  constructor(private readonly results: MetricResult[] = []) {}
+
+  async evaluateInstances(
+    request: EvaluateInstancesRequest,
+  ): Promise<
+    [protos.google.cloud.aiplatform.v1beta1.IEvaluateInstancesResponse]
+  > {
+    this.requests.push(request);
+    return [{metricResults: [this.results.shift() ?? {}]}];
   }
 }
 
@@ -331,6 +358,214 @@ describe('cli/cli_eval', () => {
       expect(results).toHaveLength(1);
       expect(interceptedOutput).toEqual({result: 'mocked_value_42'});
       expect(subLlmAgent.beforeToolCallback).toBeUndefined();
+    });
+  });
+
+  describe('runEvals with Vertex AI metrics', () => {
+    const twoTurnCase: EvalEntry = {
+      name: 'two_turns',
+      data: [
+        {
+          query: 'please use_tool now',
+          expected_tool_use: [{tool_name: 'lookup_item', tool_input: {id: 42}}],
+          expected_intermediate_agent_responses: [],
+          reference: 'Echo: please use_tool now',
+        },
+        {
+          query: 'thanks',
+          expected_tool_use: [],
+          expected_intermediate_agent_responses: [],
+          reference: 'Echo: thanks',
+        },
+      ],
+    };
+
+    beforeEach(() => {
+      vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'eval-project');
+      vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'us-central1');
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    async function collect(
+      options: Parameters<typeof runEvals>[0],
+    ): Promise<EvalResult[]> {
+      const results: EvalResult[] = [];
+      for await (const result of runEvals(options)) {
+        results.push(result);
+      }
+      return results;
+    }
+
+    it('exports the Vertex AI metric keys', () => {
+      expect(SAFETY_V1_KEY).toBe('safety_v1');
+      expect(MULTI_TURN_TASK_SUCCESS_V1_KEY).toBe('multi_turn_task_success_v1');
+      expect(MULTI_TURN_TRAJECTORY_QUALITY_V1_KEY).toBe(
+        'multi_turn_trajectory_quality_v1',
+      );
+      expect(MULTI_TURN_TOOL_USE_QUALITY_V1_KEY).toBe(
+        'multi_turn_tool_use_quality_v1',
+      );
+    });
+
+    it('scores response_evaluation_score offline without calling Vertex AI', async () => {
+      vi.stubEnv('GOOGLE_CLOUD_PROJECT', undefined);
+      vi.stubEnv('GOOGLE_CLOUD_LOCATION', undefined);
+      const evalClient = new FakeEvaluationClient();
+
+      const [result] = await collect({
+        evalCasesByEvalSetId: {'set.evalset.json': [twoTurnCase]},
+        rootAgent: new DeterministicEvalAgent(),
+        evalMetrics: [
+          {metric_name: RESPONSE_EVALUATION_SCORE_KEY, threshold: 0.8},
+        ],
+        evalClient,
+      });
+
+      expect(evalClient.requests).toEqual([]);
+      expect(result.overall_eval_metric_results).toEqual([
+        {
+          metric_name: RESPONSE_EVALUATION_SCORE_KEY,
+          threshold: 0.8,
+          score: 1,
+          eval_status: EvalStatus.PASSED,
+        },
+      ]);
+    });
+
+    it('evaluates safety_v1 per invocation and reports rubric details', async () => {
+      const evalClient = new FakeEvaluationClient([
+        {score: 1},
+        {score: 0, explanation: 'Unsafe advice.'},
+      ]);
+
+      const [result] = await collect({
+        evalCasesByEvalSetId: {'set.evalset.json': [twoTurnCase]},
+        rootAgent: new DeterministicEvalAgent(),
+        evalMetrics: [{metric_name: SAFETY_V1_KEY, threshold: 1}],
+        evalClient,
+      });
+
+      expect(
+        evalClient.requests.map(
+          (request) =>
+            request.metrics?.[0].predefinedMetricSpec?.metricSpecName,
+        ),
+      ).toEqual(['safety_v1', 'safety_v1']);
+      expect(result.overall_eval_metric_results[0]).toMatchObject({
+        score: 0.5,
+        eval_status: EvalStatus.FAILED,
+      });
+      expect(
+        result.eval_metric_result_per_invocation[1].eval_metric_results[0],
+      ).toEqual({
+        metric_name: SAFETY_V1_KEY,
+        threshold: 1,
+        score: 0,
+        eval_status: EvalStatus.FAILED,
+        rubric_scores: [{rubricId: 'explanation', rationale: 'Unsafe advice.'}],
+      });
+      expect(result.final_eval_status).toBe(EvalStatus.FAILED);
+    });
+
+    it.each([
+      MULTI_TURN_TASK_SUCCESS_V1_KEY,
+      MULTI_TURN_TRAJECTORY_QUALITY_V1_KEY,
+      MULTI_TURN_TOOL_USE_QUALITY_V1_KEY,
+    ])(
+      'evaluates %s once over the recorded conversation',
+      async (metricName) => {
+        const evalClient = new FakeEvaluationClient([
+          {
+            score: 1,
+            rubricVerdicts: [
+              {evaluatedRubric: {rubricId: 'goal'}, verdict: true},
+            ],
+          },
+        ]);
+
+        const [result] = await collect({
+          evalCasesByEvalSetId: {'set.evalset.json': [twoTurnCase]},
+          rootAgent: new DeterministicEvalAgent(),
+          evalMetrics: [{metric_name: metricName, threshold: 0.5}],
+          evalClient,
+        });
+
+        expect(evalClient.requests).toHaveLength(1);
+        const [request] = evalClient.requests;
+        expect(request.metrics).toEqual([
+          {predefinedMetricSpec: {metricSpecName: metricName}},
+        ]);
+        const agentData = request.instance?.agentEvalData;
+        expect(agentData?.agents).toEqual({
+          deterministic_eval_agent: {
+            agentId: 'deterministic_eval_agent',
+            instruction: '',
+            tools: [],
+          },
+        });
+        expect(agentData?.turns?.map((turn) => turn.turnIndex)).toEqual([0, 1]);
+        expect(
+          agentData?.turns?.[0].events?.map((event) => [
+            event.author,
+            Object.keys(event.content?.parts?.[0] ?? {})[0],
+          ]),
+        ).toEqual([
+          ['user', 'text'],
+          ['deterministic_eval_agent', 'functionCall'],
+          ['deterministic_eval_agent', 'functionResponse'],
+          ['agent', 'text'],
+        ]);
+
+        expect(result.overall_eval_metric_results).toEqual([
+          {
+            metric_name: metricName,
+            threshold: 0.5,
+            score: 1,
+            eval_status: EvalStatus.PASSED,
+            rubric_scores: [{rubricId: 'goal', rationale: undefined, score: 1}],
+          },
+        ]);
+        expect(
+          result.eval_metric_result_per_invocation.map(
+            (perInvocation) => perInvocation.eval_metric_results[0].eval_status,
+          ),
+        ).toEqual([EvalStatus.NOT_EVALUATED, EvalStatus.PASSED]);
+        expect(result.final_eval_status).toBe(EvalStatus.PASSED);
+      },
+    );
+
+    it('fails before running the agent when a Vertex AI metric has no project', async () => {
+      vi.stubEnv('GOOGLE_CLOUD_PROJECT', undefined);
+      let resetCalls = 0;
+
+      await expect(
+        collect({
+          evalCasesByEvalSetId: {'set.evalset.json': [twoTurnCase]},
+          rootAgent: new DeterministicEvalAgent(),
+          resetFunc: () => {
+            resetCalls += 1;
+          },
+          evalMetrics: [{metric_name: SAFETY_V1_KEY, threshold: 1}],
+          evalClient: new FakeEvaluationClient(),
+        }),
+      ).rejects.toThrow(/^Missing project id\. /);
+      expect(resetCalls).toBe(0);
+    });
+
+    it('does not need a Google Cloud project for local metrics', async () => {
+      vi.stubEnv('GOOGLE_CLOUD_PROJECT', undefined);
+      vi.stubEnv('GOOGLE_CLOUD_LOCATION', undefined);
+
+      const [result] = await collect({
+        evalCasesByEvalSetId: {'set.evalset.json': [twoTurnCase]},
+        rootAgent: new DeterministicEvalAgent(),
+        evalMetrics: [{metric_name: RESPONSE_MATCH_SCORE_KEY, threshold: 0.8}],
+      });
+
+      expect(result.final_eval_status).toBe(EvalStatus.PASSED);
     });
   });
 });

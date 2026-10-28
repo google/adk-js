@@ -582,6 +582,31 @@ export type {
   ToolUseItem,
 } from './cli/utils/evals.js';
 export {
+  EvalStatus,
+  Evaluator,
+  buildAppDetailsFromAgent,
+  getAllToolCalls,
+  getDeveloperInstructionsByAgentName,
+  getToolsByAgentName,
+  isIntermediateData,
+  isInvocationEvents,
+  validateInvocationLengths,
+} from './evaluation/index.js';
+export type {
+  AgentDetails,
+  AppDetails,
+  ConversationScenario,
+  EvaluationResult,
+  IntermediateData,
+  Invocation,
+  InvocationEvent,
+  InvocationEvents,
+  PerInvocationResult,
+  Rubric,
+  RubricContent,
+  RubricScore,
+} from './evaluation/index.js';
+export {
   buildFunctionDeclarationForLangchain,
   buildFunctionDeclarationForParamsForCrewai,
   buildFunctionDeclarationUtil,
