@@ -80,7 +80,7 @@ The pre-configured toolsets such as `calendarToolSet` and `bigqueryToolSet` are 
 
 `apiName` and `apiVersion` work together. When `tools` is `undefined` and both `apiName` and `apiVersion` are set, the first call to `getTools()` or `getTool()` invokes `GoogleApiToolSet.loadToolSet(apiName, apiVersion)` and caches the resulting tools on the instance. Calling `close()` delegates to the underlying `OpenAPIToolset.close()` when loaded.
 
-`toolFilter` accepts either an array of tool names or a `(tool, readonlyContext) => boolean` predicate function, and can be updated at runtime with `setToolFilter(toolFilter)`. Construct a dedicated `GoogleApiToolset` or service-specific subclass instance (`new CalendarToolset({clientId, clientSecret, toolFilter})`) when narrowing an API to the specific methods an agent needs.
+`toolFilter` accepts either an array of tool names or a `(tool, readonlyContext?) => boolean` predicate function, and can be updated at runtime with `setToolFilter(toolFilter)`. Construct a dedicated `GoogleApiToolset` or service-specific subclass instance (`new CalendarToolset({clientId, clientSecret, toolFilter})`) when narrowing an API to the specific methods an agent needs.
 
 ### GoogleApiToolOptions
 

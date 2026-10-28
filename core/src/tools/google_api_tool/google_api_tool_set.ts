@@ -156,9 +156,7 @@ export class GoogleApiToolSet extends BaseToolset {
   @experimental
   override async getTools(context?: ReadonlyContext): Promise<GoogleApiTool[]> {
     await this.ensureToolsLoaded();
-    return this.tools.filter((tool) =>
-      this.isToolSelected(tool, context as ReadonlyContext),
-    );
+    return this.tools.filter((tool) => this.isToolSelected(tool, context));
   }
 
   /**

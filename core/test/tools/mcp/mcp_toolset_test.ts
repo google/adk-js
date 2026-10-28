@@ -143,15 +143,15 @@ describe('MCPToolset', () => {
       expect(tools[0].name).toBe('other-tool');
     });
 
-    it('predicate filter returns all tools when no context is provided', async () => {
+    it('predicate filter applies when no context is provided', async () => {
       const toolset = new MCPToolset(
         stdioParams,
         (tool) => tool.name === 'other-tool',
       );
-      // No context passed — filter cannot be applied, returns all tools
       const tools = await toolset.getTools();
 
-      expect(tools).toHaveLength(2);
+      expect(tools).toHaveLength(1);
+      expect(tools[0].name).toBe('other-tool');
     });
   });
 

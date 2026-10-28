@@ -13,7 +13,7 @@ import {
   ReadonlyContext,
   ToolPredicate,
 } from '@google/adk';
-import {describe, expect, it} from 'vitest';
+import {describe, expect, expectTypeOf, it} from 'vitest';
 
 class DummyTool extends BaseTool {
   constructor(name: string) {
@@ -52,9 +52,6 @@ class FilteringToolset extends BaseToolset {
 
   async getTools(context?: ReadonlyContext): Promise<BaseTool[]> {
     const rawTools = [new DummyTool('tool1'), new DummyTool('tool2')];
-    if (!context) {
-      return rawTools;
-    }
     return rawTools.filter((tool) => this.isToolSelected(tool, context));
   }
 
@@ -80,6 +77,49 @@ describe('BaseToolset.isToolSelected', () => {
     const toolset = new FilteringToolset((tool) => tool.name === 'tool1');
     const tools = await toolset.getTools(context);
     expect(tools.map((tool) => tool.name)).toEqual(['tool1']);
+  });
+
+  it('applies a ToolPredicate filter when called without context', async () => {
+    const toolset = new FilteringToolset((tool) => tool.name === 'tool1');
+    const tools = await toolset.getTools();
+    expect(tools.map((tool) => tool.name)).toEqual(['tool1']);
+  });
+});
+
+describe('ToolPredicate type compatibility', () => {
+  it('accepts one-parameter and two-parameter predicates and callable with or without context', () => {
+    const dummy = new DummyTool('tool1');
+    const context = {} as unknown as ReadonlyContext;
+
+    const pOne: ToolPredicate = (tool: BaseTool) => tool.name === 'tool1';
+    const pTwo: ToolPredicate = (
+      tool: BaseTool,
+      readonlyContext: ReadonlyContext,
+    ) => tool.name === 'tool1' && readonlyContext !== undefined;
+    const pOpt: ToolPredicate = (
+      tool: BaseTool,
+      readonlyContext?: ReadonlyContext,
+    ) => tool.name === 'tool1' && readonlyContext !== undefined;
+
+    expect(pOne(dummy)).toBe(true);
+    expect(pTwo(dummy, context)).toBe(true);
+    expect(pOpt(dummy, context)).toBe(true);
+
+    expect(pOne(dummy)).toBe(true);
+    expect(pTwo(dummy)).toBe(false);
+    expect(pOpt(dummy)).toBe(false);
+
+    expect(pOne(dummy, undefined)).toBe(true);
+    expect(pTwo(dummy, undefined)).toBe(false);
+    expect(pOpt(dummy, undefined)).toBe(false);
+
+    expectTypeOf(pOne).toBeCallableWith(dummy);
+    expectTypeOf(pTwo).toBeCallableWith(dummy);
+    expectTypeOf(pTwo).toBeCallableWith(dummy, context);
+    expectTypeOf(pTwo).toBeCallableWith(dummy, undefined);
+    expectTypeOf(pOpt).toBeCallableWith(dummy);
+    expectTypeOf(pOpt).toBeCallableWith(dummy, context);
+    expectTypeOf(pOpt).toBeCallableWith(dummy, undefined);
   });
 });
 
