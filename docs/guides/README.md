@@ -54,6 +54,8 @@ The `LlmAgent` request/response processor pipeline, live streaming function-call
 Third-party model and ecosystem integrations packaged in `@google/adk-integrations`.
 
 - [Claude on Vertex AI](integrations/models/anthropic_llm/index.md) - `Claude`, `LLMRegistry` registration for `claude-*` models on Vertex AI, and Anthropic message and tool conversion helpers.
+- [CrewAI tool](integrations/crewai/index.md) - `CrewaiTool`, `isCrewaiTool`, and adapting CrewAI tools into ADK tools.
+- [LangChain tool](integrations/langchain/index.md) - `LangchainTool`, `isLangchainTool`, and adapting LangChain structured and simple tools into ADK tools.
 
 ### Memory
 
@@ -89,9 +91,9 @@ Conversations and their state: the events of each session, and the `app:`, `user
 
 ### Tools
 
-Function, agent, ecosystem-adapter, and built-in model tools (`BaseTool`, `FunctionTool`, `LongRunningFunctionTool`, `AgentTool`, `ToolContext`, `CrewaiTool`, `LangchainTool`, `ToolboxToolset`, and built-in grounding and control-flow tools).
+Function, agent, ecosystem-adapter, and built-in model tools (`BaseTool`, `FunctionTool`, `LongRunningFunctionTool`, `AgentTool`, `ToolContext`, `ToolboxToolset`, and built-in grounding and control-flow tools).
 
-- [Tools](tools/index.md) - `BaseTool`, `FunctionTool` (with `response` schema and `_callLive` streaming), `LongRunningFunctionTool`, `AgentTool` (with `inputSchema` and `outputSchema`), `ToolContext`, `CrewaiTool`, `LangchainTool`, `ToolboxToolset`, and built-in utility tools.
+- [Tools](tools/index.md) - `BaseTool`, `FunctionTool` (with `response` schema and `_callLive` streaming), `LongRunningFunctionTool`, `AgentTool` (with `inputSchema` and `outputSchema`), `ToolContext`, `ToolboxToolset`, and built-in utility tools.
 
 #### Retrieval
 

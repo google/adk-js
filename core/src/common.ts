@@ -469,7 +469,12 @@ export {
 } from './utils/model_name.js';
 export {toJsonSchema} from './utils/schema.js';
 export type {SchemaLike} from './utils/schema.js';
-export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
+export {
+  isZodObject,
+  isZodSchema,
+  zodObjectToSchema,
+} from './utils/simple_zod_to_json.js';
+export type {ZodSchema} from './utils/simple_zod_to_json.js';
 export {Task} from './utils/task.js';
 export type {TaskExecutable} from './utils/task.js';
 export {GoogleLLMVariant} from './utils/variant_utils.js';
@@ -576,24 +581,12 @@ export type {
   IntermediateAgentResponseItem,
   ToolUseItem,
 } from './cli/utils/evals.js';
-export {CrewaiTool, isCrewaiTool} from './tools/crewai_tool.js';
-export type {
-  CrewaiSchemaLike,
-  CrewaiToolConfig,
-  CrewaiToolLike,
-} from './tools/crewai_tool.js';
 export {
   buildFunctionDeclarationForLangchain,
   buildFunctionDeclarationForParamsForCrewai,
   buildFunctionDeclarationUtil,
 } from './tools/function_tool.js';
 export type {CallLiveToolRequest} from './tools/function_tool.js';
-export {LangchainTool, isLangchainTool} from './tools/langchain_tool.js';
-export type {
-  LangchainSchemaLike,
-  LangchainToolConfig,
-  LangchainToolLike,
-} from './tools/langchain_tool.js';
 export type {
   LoadMemoryResponse,
   LoadMemoryToolOptions,
