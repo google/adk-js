@@ -185,9 +185,9 @@ Write a `user:` key to keep a preference across every session of one user, and a
 
 ### Concurrent writes in DatabaseSessionService
 
-`DatabaseSessionService` locks the session row inside a transaction during `appendEvent` and compares the stored update time with `session.lastUpdateTime`. When another writer has appended since your copy of the session was read, the service reloads the stored state and events into your `session` object before applying the new event's `stateDelta` and appending the event.
+`DatabaseSessionService` locks the session row inside a transaction during `appendEvent` and compares the stored update time with `session.lastUpdateTime`. When another writer has appended since your copy of the session was read, the service rejects the append and throws a `StaleSessionError`. The event and its state deltas are not persisted.
 
-Reloading brings earlier events and keys written by the other writer into your session object, and your event's `stateDelta` overwrites any key both writers set. Keep using the session object a call returned to you, or call `getSession` before a new turn when you need to inspect state written elsewhere first.
+Callers should re-read the session with `getSession` and retry. For backward compatibility, configuring `staleSession: 'reload'` preserves the deprecated reload behavior.
 
 ## Limitations
 
