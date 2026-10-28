@@ -30,6 +30,7 @@ import {Event} from '../events/event.js';
 import {LlmRequest} from '../models/llm_request.js';
 import {LlmResponse} from '../models/llm_response.js';
 import {BaseTool} from '../tools/base_tool.js';
+import {getEnvVar} from '../utils/env_aware_utils.js';
 import {version} from '../version.js';
 
 /** OpenTelemetry GenAI semantic-convention span attribute keys. */
@@ -602,6 +603,6 @@ export function runAsyncGeneratorWithOtelContext<TThis, T>(
  * @returns false only when ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS is explicitly set to 'false' or '0'
  */
 function shouldAddRequestResponseToSpans(): boolean {
-  const envValue = process.env.ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS || 'true';
+  const envValue = getEnvVar('ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS') || 'true';
   return envValue === 'true' || envValue === '1';
 }

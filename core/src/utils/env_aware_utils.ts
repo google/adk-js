@@ -136,17 +136,31 @@ export function isBase64Encoded(data: string): boolean {
 }
 
 /**
+ * Gets the value of the given environment variable.
+ *
+ * Browsers have no `process` global, and there even `process?.env` throws a
+ * ReferenceError, so this checks `typeof process` first and treats every
+ * variable as unset.
+ *
+ * @param envVar The environment variable to get the value of.
+ * @return The value of the environment variable, or undefined if it is unset.
+ */
+export function getEnvVar(envVar: string): string | undefined {
+  if (typeof process === 'undefined') {
+    return undefined;
+  }
+
+  return process.env?.[envVar];
+}
+
+/**
  * Gets the boolean value of the given environment variable.
  *
  * @param envVar The environment variable to get the value of.
  * @return The boolean value of the environment variable.
  */
 export function getBooleanEnvVar(envVar: string): boolean {
-  if (!process.env) {
-    return false;
-  }
-
-  const envVarValue = (process.env[envVar] || '').toLowerCase();
+  const envVarValue = (getEnvVar(envVar) || '').toLowerCase();
 
   return ['true', '1'].includes(envVarValue);
 }
@@ -178,9 +192,9 @@ function warnDeprecatedEnterpriseModeEnvVar(message: string): void {
  */
 export function isEnterpriseModeEnabled(): boolean {
   const deprecatedIsSet =
-    process.env?.[DEPRECATED_ENTERPRISE_MODE_ENV_VAR] !== undefined;
+    getEnvVar(DEPRECATED_ENTERPRISE_MODE_ENV_VAR) !== undefined;
 
-  if (process.env?.[ENTERPRISE_MODE_ENV_VAR] !== undefined) {
+  if (getEnvVar(ENTERPRISE_MODE_ENV_VAR) !== undefined) {
     if (deprecatedIsSet) {
       warnDeprecatedEnterpriseModeEnvVar(
         `${DEPRECATED_ENTERPRISE_MODE_ENV_VAR} is set but ignored because ` +
