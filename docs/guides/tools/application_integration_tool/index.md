@@ -234,7 +234,7 @@ connection tools when `authOverrideEnabled` is enabled on the connection. If
 `authOverrideEnabled` is not enabled, the toolset logs a warning and omits them.
 
 `toolFilter` accepts an array of tool names or a `ToolPredicate` function
-`(tool, readonlyContext) => boolean` and filters the tools returned by
+`(tool, readonlyContext?) => boolean` and filters the tools returned by
 `getTools` in both integration and connection modes.
 
 ## Advanced applications

@@ -171,7 +171,7 @@ The `ToolboxToolsetOptions` interface configures `new ToolboxToolset(options)` o
 | `toolFilter`       | `ToolPredicate \| string[]`                       | `[]`        | Optional filter restricting which loaded tools are returned by `getTools(context)`.                      |
 | `prefix`           | `string`                                          | `undefined` | Optional prefix prepended (`${prefix}_`) to every loaded tool name.                                      |
 
-`ToolboxToolset` extends `BaseToolset`, loads tools asynchronously via `getTools(context)` while forwarding `authTokenGetters` and `boundParams`, wraps functions and tool descriptors into `BaseTool` instances, and releases client resources via `close()`.
+`ToolboxToolset` extends `BaseToolset`, loads tools asynchronously via `getTools(context)` while forwarding `authTokenGetters` and `boundParams`, wraps functions and tool descriptors into `BaseTool` instances, and releases client resources via `close()`. Its `toolFilter` option accepts an array of tool names or a `ToolPredicate` function (`(tool, readonlyContext?) => boolean`).
 
 ### `VertexAiSearchToolParams`
 

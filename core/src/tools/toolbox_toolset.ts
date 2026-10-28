@@ -375,9 +375,7 @@ export class ToolboxToolset extends BaseToolset {
       }
     }
 
-    return tools.filter((tool) =>
-      this.isToolSelected(tool, context as ReadonlyContext),
-    );
+    return tools.filter((tool) => this.isToolSelected(tool, context));
   }
 
   /**

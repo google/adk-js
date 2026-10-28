@@ -97,9 +97,7 @@ export class OpenAPIToolset extends BaseToolset {
 
   @experimental
   override async getTools(context?: ReadonlyContext): Promise<BaseTool[]> {
-    return this.tools.filter((tool) =>
-      this.isToolSelected(tool, context as ReadonlyContext),
-    );
+    return this.tools.filter((tool) => this.isToolSelected(tool, context));
   }
 
   /**

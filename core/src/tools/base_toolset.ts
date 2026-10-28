@@ -11,14 +11,12 @@ import {Context} from '../agents/context.js';
 import {BaseTool} from './base_tool.js';
 
 /**
- * Function to decide whether a tool should be exposed to LLM. Toolset
- * implementer could consider whether to accept such instance in the toolset's
- * constructor and apply the predicate in getTools method.
+ * Decides whether a tool should be exposed to the LLM based on the tool and
+ * optional context.
  */
-export type ToolPredicate = (
-  tool: BaseTool,
-  readonlyContext: ReadonlyContext,
-) => boolean;
+export type ToolPredicate = {
+  bivariance(tool: BaseTool, readonlyContext?: ReadonlyContext): boolean;
+}['bivariance'];
 
 /**
  * A unique symbol to identify ADK agent classes.
@@ -76,7 +74,7 @@ export abstract class BaseToolset {
    * @param context Context used to filter tools available to the agent.
    * @return Whether the tool should be exposed to LLM.
    */
-  protected isToolSelected(tool: BaseTool, context: ReadonlyContext): boolean {
+  protected isToolSelected(tool: BaseTool, context?: ReadonlyContext): boolean {
     // An empty tool filter means no filtering: all tools are selected.
     if (
       !this.toolFilter ||

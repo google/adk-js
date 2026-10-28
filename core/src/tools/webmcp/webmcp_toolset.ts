@@ -94,20 +94,7 @@ export class WebMCPToolset extends BaseToolset {
         }),
     );
 
-    const filter = this.toolFilter;
-    if (!filter || (Array.isArray(filter) && filter.length === 0)) {
-      return tools;
-    }
-    if (Array.isArray(filter)) {
-      return tools.filter((tool) => filter.includes(tool.name));
-    }
-    if (context) {
-      return tools.filter((tool) => filter(tool, context));
-    }
-    logger.warn(
-      'WebMCPToolset: a ToolPredicate toolFilter was provided but getTools() was called without a ReadonlyContext. The filter will not be applied.',
-    );
-    return tools;
+    return tools.filter((tool) => this.isToolSelected(tool, context));
   }
 
   /**

@@ -161,9 +161,7 @@ export class ApplicationIntegrationToolset extends BaseToolset {
     }
     try {
       const tools = await this.toolsPromise;
-      return tools.filter((tool) =>
-        this.isToolSelected(tool, context as ReadonlyContext),
-      );
+      return tools.filter((tool) => this.isToolSelected(tool, context));
     } catch (e: unknown) {
       this.toolsPromise = undefined;
       throw e;
