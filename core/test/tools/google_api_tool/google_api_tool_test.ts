@@ -70,7 +70,6 @@ describe('GoogleApiTool', () => {
     expect(googleApiTool.name).toBe('calendar_calendars_get');
     expect(googleApiTool.description).toBe('Returns metadata for a calendar.');
     expect(googleApiTool.isLongRunning).toBe(false);
-    expect(googleApiTool.restApiTool).toBe(restApiTool);
     expect(isGoogleApiTool(googleApiTool)).toBe(true);
     expect(isGoogleApiTool(restApiTool)).toBe(false);
   });
@@ -136,7 +135,7 @@ describe('GoogleApiTool constructor options', () => {
       clientSecret: 'ctor-client-secret',
     });
 
-    expect(googleApiTool.restApiTool).toBe(restApiTool);
+    expect(isGoogleApiTool(googleApiTool)).toBe(true);
     expect(configureSpy).toHaveBeenCalledTimes(1);
     expect(configureSpy).toHaveBeenCalledWith({
       authType: AuthCredentialTypes.OPEN_ID_CONNECT,

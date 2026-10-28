@@ -699,6 +699,8 @@ describe('deployToAgentEngine', () => {
             },
           },
         },
+        updateMask:
+          'display_name,spec.container_spec,spec.deployment_spec.container_concurrency,spec.deployment_spec.min_instances,spec.deployment_spec.max_instances,spec.deployment_spec.resource_limits',
       },
     });
     expect(mockCreateInternal).not.toHaveBeenCalled();
@@ -745,9 +747,50 @@ describe('deployToAgentEngine', () => {
             },
           },
         },
+        updateMask:
+          'display_name,spec.container_spec,spec.deployment_spec.container_concurrency,spec.deployment_spec.min_instances,spec.deployment_spec.max_instances,spec.deployment_spec.resource_limits',
       },
     });
     expect(mockCreateInternal).not.toHaveBeenCalled();
+  });
+
+  it('should include description in the update mask only when one is provided', async () => {
+    await deployToAgentEngine({
+      ...defaultOptions,
+      agentEngineId: '12345',
+      description: 'new-description',
+    });
+
+    expect(mockUpdateInternal).toHaveBeenCalledWith({
+      name: 'projects/test-project/locations/us-central1/reasoningEngines/12345',
+      config: expect.objectContaining({
+        description: 'new-description',
+        updateMask:
+          'display_name,description,spec.container_spec,spec.deployment_spec.container_concurrency,spec.deployment_spec.min_instances,spec.deployment_spec.max_instances,spec.deployment_spec.resource_limits',
+      }),
+    });
+  });
+
+  it('should not overwrite server-managed env vars on update', async () => {
+    await deployToAgentEngine({...defaultOptions, agentEngineId: '12345'});
+
+    const {config} = mockUpdateInternal.mock.calls[0][0];
+    expect(config.updateMask.split(',')).not.toContain(
+      'spec.deployment_spec.env',
+    );
+    expect(config.updateMask.split(',')).not.toContain(
+      'spec.deployment_spec.secret_env',
+    );
+    expect(config.spec.deploymentSpec).not.toHaveProperty('env');
+    expect(config.spec.deploymentSpec).not.toHaveProperty('secretEnv');
+  });
+
+  it('should not send an update mask when creating a Reasoning Engine', async () => {
+    await deployToAgentEngine(defaultOptions);
+
+    expect(mockCreateInternal.mock.calls[0][0].config).not.toHaveProperty(
+      'updateMask',
+    );
   });
 
   it('should throw descriptive error if update operation times out when agentEngineId is provided', async () => {

@@ -10,9 +10,9 @@ This index is the only table of contents. A guide that is not listed here is unr
 
 ### Agents
 
-Model-backed, workflow, graph-backed, and remote agents (`BaseAgent`, `LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `LangGraphAgent`, and `RemoteAgent`), along with invocation contexts and `RunConfig`.
+Model-backed, workflow, and graph-backed agents (`BaseAgent`, `LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, and `LangGraphAgent`), along with invocation contexts and `RunConfig`.
 
-- [Agents](agents/index.md) - `BaseAgent`, `LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `LangGraphAgent`, `RemoteAgent`, `InvocationContext`, `CallbackContext`, `RunConfig`, and `LlmCallsLimitExceededError`.
+- [Agents](agents/index.md) - `BaseAgent`, `LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `LangGraphAgent`, `InvocationContext`, `CallbackContext`, `RunConfig`, and `LlmCallsLimitExceededError`.
 
 ### Artifacts
 
@@ -29,7 +29,7 @@ Credentials for tools that call protected APIs: how a credential is described, h
 
 Environment loading, session-to-eval conversion, instruction placeholder initialization, log routing, and batch evaluation utilities backing the ADK CLI and development server.
 
-- [CLI and Evaluation Utilities](cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalFormat`, `logToStderr`, `logToTmpFolder`, `runEvals`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun`.
+- [CLI and Evaluation Utilities](cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalFormat`, `setupAdkLogger`, `logToTmpFolder`, `runEvals`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun`.
 
 ### Code executors
 
@@ -89,9 +89,9 @@ Conversations and their state: the events of each session, and the `app:`, `user
 
 ### Tools
 
-Function, agent, ecosystem-adapter, and built-in model tools (`BaseTool`, `FunctionTool`, `LongRunningFunctionTool`, `AgentTool`, `ToolContext`, `CrewaiTool`, `LangchainTool`, `ToolboxTool`, and built-in grounding and control-flow tools).
+Function, agent, ecosystem-adapter, and built-in model tools (`BaseTool`, `FunctionTool`, `LongRunningFunctionTool`, `AgentTool`, `ToolContext`, `CrewaiTool`, `LangchainTool`, `ToolboxToolset`, and built-in grounding and control-flow tools).
 
-- [Tools](tools/index.md) - `BaseTool`, `FunctionTool` (with `response` schema and `_callLive` streaming), `LongRunningFunctionTool`, `AgentTool` (with `inputSchema` and `outputSchema`), `ToolContext`, `CrewaiTool`, `LangchainTool`, `ToolboxTool`, and built-in utility tools.
+- [Tools](tools/index.md) - `BaseTool`, `FunctionTool` (with `response` schema and `_callLive` streaming), `LongRunningFunctionTool`, `AgentTool` (with `inputSchema` and `outputSchema`), `ToolContext`, `CrewaiTool`, `LangchainTool`, `ToolboxToolset`, and built-in utility tools.
 
 #### Retrieval
 

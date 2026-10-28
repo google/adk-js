@@ -462,8 +462,8 @@ The sniff is a convenience, not a parser; a YAML document without the leading
 `---` is read as JSON and fails. Pass `specType` whenever you know the format.
 
 `toolFilter` narrows `getTools()`. A `string[]` lists names to keep and applies
-whether or not a context is supplied; a `ToolPredicate` takes the tool and a
-`ReadonlyContext` and applies only when `getTools()` receives one. Use the array
+whether or not a context is supplied; a `ToolPredicate` takes the tool and an
+optional `ReadonlyContext`. Use the array
 to trim a large spec, the predicate when the answer depends on who is asking.
 
 `prefix` prepends `<prefix>_` to every name, so two toolsets on one agent can

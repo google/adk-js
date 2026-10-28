@@ -50,14 +50,11 @@ export interface ApplicationIntegrationToolsetOptions {
   project: string;
   /** The Google Cloud location, such as `us-central1`. */
   location: string;
-  /** The integration name. Set it together with `trigger` or `triggers`. */
+  /** The integration name. Set it together with `triggers` or alone for all triggers. */
   integration?: string;
-  /** The API trigger ID of the integration, such as `api_trigger/my_trigger`. */
-  trigger?: string;
   /**
    * The API trigger IDs of the integration, such as
-   * `['api_trigger/my_trigger']`. When both `triggers` and `trigger` are
-   * provided, `triggers` takes precedence.
+   * `['api_trigger/my_trigger']`.
    */
   triggers?: string[];
   /**
@@ -74,11 +71,6 @@ export interface ApplicationIntegrationToolsetOptions {
   /** Connection actions to expose, such as `['ExecuteCustomQuery']`. */
   actions?: string[];
   /** Prefix of every generated tool name. Defaults to `''`. */
-  toolName?: string;
-  /**
-   * Prefix of every generated tool name. Takes precedence over `toolName` when
-   * both are set.
-   */
   toolNamePrefix?: string;
   /** Text appended to every generated tool description. Defaults to `''`. */
   toolInstructions?: string;
@@ -118,7 +110,7 @@ export interface ApplicationIntegrationToolsetOptions {
  *   project: 'my-project',
  *   location: 'us-central1',
  *   integration: 'my-integration',
- *   trigger: 'api_trigger/my_trigger',
+ *   triggers: ['api_trigger/my_trigger'],
  * });
  *
  * @example
@@ -138,15 +130,12 @@ export class ApplicationIntegrationToolset extends BaseToolset {
   private openApiToolsets: OpenAPIToolset[] = [];
 
   /**
-   * @throws Error Unless the options name either an integration and a trigger,
-   *   or a connection with at least one entity operation or action.
+   * @throws Error Unless the options name either an integration, or a
+   *   connection with at least one entity operation or action.
    */
   constructor(options: ApplicationIntegrationToolsetOptions) {
     super(options.toolFilter ?? []);
-    const hasIntegration = Boolean(
-      options.integration &&
-      (options.trigger || options.triggers !== undefined),
-    );
+    const hasIntegration = Boolean(options.integration);
     const hasConnection = Boolean(
       options.connection &&
       (Object.keys(options.entityOperations ?? {}).length > 0 ||
@@ -154,7 +143,7 @@ export class ApplicationIntegrationToolset extends BaseToolset {
     );
     if (!hasIntegration && !hasConnection) {
       throw new Error(
-        'Either (integration and trigger) or (connection and (entityOperations or actions)) should be provided.',
+        'Either integration or (connection and (entityOperations or actions)) should be provided.',
       );
     }
     this.options = options;
@@ -172,9 +161,7 @@ export class ApplicationIntegrationToolset extends BaseToolset {
     }
     try {
       const tools = await this.toolsPromise;
-      return tools.filter((tool) =>
-        this.isToolSelected(tool, context as ReadonlyContext),
-      );
+      return tools.filter((tool) => this.isToolSelected(tool, context));
     } catch (e: unknown) {
       this.toolsPromise = undefined;
       throw e;
@@ -192,26 +179,23 @@ export class ApplicationIntegrationToolset extends BaseToolset {
       project,
       location,
       integration,
-      trigger,
       triggers,
       connection,
       entityOperations,
       actions,
-      toolName,
       toolNamePrefix,
       toolInstructions = '',
       serviceAccountJson,
       authScheme,
       authCredential: dynamicAuthCredential,
     } = this.options;
-    const resolvedToolName = toolNamePrefix ?? toolName ?? '';
+    const resolvedToolName = toolNamePrefix ?? '';
     this.openApiToolsets = [];
 
     const integrationClient = new IntegrationClient({
       project,
       location,
       integration,
-      trigger,
       triggers,
       connection,
       entityOperations,
@@ -222,7 +206,7 @@ export class ApplicationIntegrationToolset extends BaseToolset {
     const authCredential = buildAuthCredential(serviceAccountJson);
     const toolsByName = new Map<string, BaseTool>();
 
-    if (integration && (trigger || triggers !== undefined)) {
+    if (integration) {
       const specDict = await integrationClient.getOpenApiSpecForIntegration();
       const spec = toOpenApiDocument(specDict);
       for (const [path, pathItem] of Object.entries(spec.paths ?? {})) {

@@ -105,30 +105,7 @@ export class MCPToolset extends BaseToolset {
       return new MCPTool(toolWithPrefix, this.mcpSessionManager, tool.name);
     });
 
-    // Apply toolFilter when specified.
-    // An empty array (the default) means no filter — all tools are returned.
-    const filter = this.toolFilter;
-    if (!filter || (Array.isArray(filter) && filter.length === 0)) {
-      return tools;
-    }
-
-    if (Array.isArray(filter)) {
-      // String-array filter: match against the (possibly-prefixed) tool name.
-      return tools.filter((tool) => (filter as string[]).includes(tool.name));
-    }
-
-    if (context) {
-      // Predicate filter: requires a ReadonlyContext to evaluate.
-      return tools.filter((tool) => filter(tool, context));
-    }
-
-    // Predicate filter requested but no context provided — return all tools
-    // and log a warning so callers are aware the filter was not applied.
-    logger.warn(
-      'MCPToolset: a ToolPredicate toolFilter was provided but getTools() ' +
-        'was called without a ReadonlyContext. The filter will not be applied.',
-    );
-    return tools;
+    return tools.filter((tool) => this.isToolSelected(tool, context));
   }
 
   /**

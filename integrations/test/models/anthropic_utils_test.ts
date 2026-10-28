@@ -18,6 +18,7 @@ import {
   partToMessageBlock,
   toClaudeRole,
   toGoogleGenaiFinishReason,
+  ToolUseIdSanitizer,
 } from '../../src/models/anthropic_utils.js';
 
 const {mockAnthropicVertexCtor, mockImportState} = vi.hoisted(() => {
@@ -87,18 +88,26 @@ describe('Claude conversion helpers', () => {
   });
 
   describe('toGoogleGenaiFinishReason', () => {
-    it('maps end_turn, stop_sequence, and tool_use to STOP', () => {
+    it('maps end_turn, stop_sequence, tool_use, and pause_turn to STOP', () => {
       expect(toGoogleGenaiFinishReason('end_turn')).toBe(FinishReason.STOP);
       expect(toGoogleGenaiFinishReason('stop_sequence')).toBe(
         FinishReason.STOP,
       );
       expect(toGoogleGenaiFinishReason('tool_use')).toBe(FinishReason.STOP);
+      expect(toGoogleGenaiFinishReason('pause_turn')).toBe(FinishReason.STOP);
     });
 
-    it('maps max_tokens to MAX_TOKENS', () => {
+    it('maps max_tokens and model_context_window_exceeded to MAX_TOKENS', () => {
       expect(toGoogleGenaiFinishReason('max_tokens')).toBe(
         FinishReason.MAX_TOKENS,
       );
+      expect(toGoogleGenaiFinishReason('model_context_window_exceeded')).toBe(
+        FinishReason.MAX_TOKENS,
+      );
+    });
+
+    it('maps refusal to SAFETY', () => {
+      expect(toGoogleGenaiFinishReason('refusal')).toBe(FinishReason.SAFETY);
     });
 
     it('maps unknown or null stop reasons to FINISH_REASON_UNSPECIFIED', () => {
@@ -108,8 +117,152 @@ describe('Claude conversion helpers', () => {
       expect(toGoogleGenaiFinishReason(undefined)).toBe(
         FinishReason.FINISH_REASON_UNSPECIFIED,
       );
-      expect(toGoogleGenaiFinishReason('pause_turn')).toBe(
+      expect(toGoogleGenaiFinishReason('unknown_reason')).toBe(
         FinishReason.FINISH_REASON_UNSPECIFIED,
+      );
+    });
+
+    it.each<[Anthropic.StopReason | string | null | undefined, FinishReason]>([
+      ['end_turn', FinishReason.STOP],
+      ['stop_sequence', FinishReason.STOP],
+      ['tool_use', FinishReason.STOP],
+      ['pause_turn', FinishReason.STOP],
+      ['max_tokens', FinishReason.MAX_TOKENS],
+      ['model_context_window_exceeded', FinishReason.MAX_TOKENS],
+      ['refusal', FinishReason.SAFETY],
+      ['unknown', FinishReason.FINISH_REASON_UNSPECIFIED],
+      [null, FinishReason.FINISH_REASON_UNSPECIFIED],
+      [undefined, FinishReason.FINISH_REASON_UNSPECIFIED],
+    ])(
+      'test_to_google_genai_finish_reason (%s)',
+      (stopReason, expectedFinishReason) => {
+        expect(toGoogleGenaiFinishReason(stopReason)).toBe(
+          expectedFinishReason,
+        );
+      },
+    );
+  });
+
+  describe('ToolUseIdSanitizer', () => {
+    it('pairs multiple missing tool IDs with the same tool name in FIFO order', () => {
+      const sanitizer = new ToolUseIdSanitizer();
+      const call1 = partToMessageBlock(
+        {functionCall: {name: 'get_weather', args: {city: 'Paris'}}},
+        sanitizer,
+      );
+      const call2 = partToMessageBlock(
+        {functionCall: {name: 'get_weather', args: {city: 'London'}}},
+        sanitizer,
+      );
+      const result1 = partToMessageBlock(
+        {
+          functionResponse: {
+            name: 'get_weather',
+            response: {result: 'Sunny'},
+          },
+        },
+        sanitizer,
+      );
+      const result2 = partToMessageBlock(
+        {
+          functionResponse: {
+            name: 'get_weather',
+            response: {result: 'Rainy'},
+          },
+        },
+        sanitizer,
+      );
+
+      expect(call1).toEqual({
+        type: 'tool_use',
+        id: 'toolu_fallback_0',
+        name: 'get_weather',
+        input: {city: 'Paris'},
+      });
+      expect(call2).toEqual({
+        type: 'tool_use',
+        id: 'toolu_fallback_1',
+        name: 'get_weather',
+        input: {city: 'London'},
+      });
+      expect(result1).toEqual({
+        type: 'tool_result',
+        tool_use_id: 'toolu_fallback_0',
+        content: 'Sunny',
+        is_error: false,
+      });
+      expect(result2).toEqual({
+        type: 'tool_result',
+        tool_use_id: 'toolu_fallback_1',
+        content: 'Rainy',
+        is_error: false,
+      });
+    });
+
+    it('pairs missing tool IDs by tool name when responses arrive out of order', () => {
+      const sanitizer = new ToolUseIdSanitizer();
+      expect(sanitizer.sanitize(undefined, 'tool_a', true)).toBe(
+        'toolu_fallback_0',
+      );
+      expect(sanitizer.sanitize(undefined, 'tool_b', true)).toBe(
+        'toolu_fallback_1',
+      );
+      expect(sanitizer.sanitize(undefined, 'tool_b', false)).toBe(
+        'toolu_fallback_1',
+      );
+      expect(sanitizer.sanitize(undefined, 'tool_a', false)).toBe(
+        'toolu_fallback_0',
+      );
+    });
+
+    it('falls back to FIFO order across unpaired calls when response toolName does not match', () => {
+      const sanitizer = new ToolUseIdSanitizer();
+      expect(sanitizer.sanitize(undefined, 'tool_a', true)).toBe(
+        'toolu_fallback_0',
+      );
+      expect(sanitizer.sanitize(undefined, 'other_tool', false)).toBe(
+        'toolu_fallback_0',
+      );
+      expect(sanitizer.sanitize(undefined, 'tool_a', false)).toBe(
+        'toolu_fallback_1',
+      );
+    });
+
+    it('removes assigned ID from unpairedCallsList when a named response claims it', () => {
+      const sanitizer = new ToolUseIdSanitizer();
+      expect(sanitizer.sanitize('', 'fetch_schema', true)).toBe(
+        'toolu_fallback_0',
+      );
+      expect(sanitizer.sanitize('', 'execute_sql', true)).toBe(
+        'toolu_fallback_1',
+      );
+      expect(sanitizer.sanitize('', 'fetch_schema', false)).toBe(
+        'toolu_fallback_0',
+      );
+      expect(sanitizer.sanitize('', '', false)).toBe('toolu_fallback_1');
+    });
+
+    it('removes assigned ID from unpairedCallsByName when an anonymous response claims it', () => {
+      const sanitizer = new ToolUseIdSanitizer();
+      expect(sanitizer.sanitize('', 'fetch_schema', true)).toBe(
+        'toolu_fallback_0',
+      );
+      expect(sanitizer.sanitize('', 'fetch_schema', true)).toBe(
+        'toolu_fallback_1',
+      );
+      expect(sanitizer.sanitize('', '', false)).toBe('toolu_fallback_0');
+      expect(sanitizer.sanitize('', 'fetch_schema', false)).toBe(
+        'toolu_fallback_1',
+      );
+    });
+
+    it('maps an unmapped non-empty invalid ID on a response to a deterministic fallback ID', () => {
+      const sanitizer = new ToolUseIdSanitizer();
+      expect(sanitizer.sanitize('bad id!', 'tool_a', false)).toBe(
+        'toolu_fallback_0',
+      );
+      expect(sanitizer.sanitize('bad id!', 'tool_a', false)).toBe(
+        'toolu_fallback_0',
       );
     });
   });
@@ -139,7 +292,7 @@ describe('Claude conversion helpers', () => {
       });
     });
 
-    it('defaults missing functionCall id and args', () => {
+    it('assigns a fallback id and defaults missing functionCall args', () => {
       expect(
         partToMessageBlock({
           functionCall: {
@@ -148,9 +301,162 @@ describe('Claude conversion helpers', () => {
         }),
       ).toEqual({
         type: 'tool_use',
-        id: '',
+        id: 'toolu_fallback_0',
         name: 'ping',
         input: {},
+      });
+    });
+
+    it('preserves valid tool use IDs matching ^[a-zA-Z0-9_-]+$', () => {
+      const validIds = ['toolu_01A09q90qw90lq917835lq9', 'adk-12345-abc_DEF'];
+      for (const validId of validIds) {
+        expect(
+          partToMessageBlock({
+            functionCall: {id: validId, name: 'test_tool', args: {}},
+          }),
+        ).toEqual({
+          type: 'tool_use',
+          id: validId,
+          name: 'test_tool',
+          input: {},
+        });
+        expect(
+          partToMessageBlock({
+            functionResponse: {
+              id: validId,
+              name: 'test_tool',
+              response: {result: 'ok'},
+            },
+          }),
+        ).toEqual({
+          type: 'tool_result',
+          tool_use_id: validId,
+          content: 'ok',
+          is_error: false,
+        });
+      }
+    });
+
+    it('sanitizes invalid or missing tool use IDs consistently across a shared ToolUseIdSanitizer', () => {
+      const invalidIds: Array<string | undefined> = [
+        'invalid id with spaces!',
+        'another@invalid#id',
+        '',
+        undefined,
+      ];
+      const sanitizer = new ToolUseIdSanitizer();
+
+      for (const [index, badId] of invalidIds.entries()) {
+        const expectedFallback = `toolu_fallback_${index}`;
+        const callBlock = partToMessageBlock(
+          {
+            functionCall: {id: badId, name: 'test_tool', args: {}},
+          },
+          sanitizer,
+        );
+        const resultBlock = partToMessageBlock(
+          {
+            functionResponse: {
+              id: badId,
+              name: 'test_tool',
+              response: {result: 'ok'},
+            },
+          },
+          sanitizer,
+        );
+
+        expect(callBlock).toEqual({
+          type: 'tool_use',
+          id: expectedFallback,
+          name: 'test_tool',
+          input: {},
+        });
+        expect(resultBlock).toEqual({
+          type: 'tool_result',
+          tool_use_id: expectedFallback,
+          content: 'ok',
+          is_error: false,
+        });
+      }
+    });
+
+    it('test_part_to_message_block_function_call_none_id', () => {
+      const result = partToMessageBlock({
+        functionCall: {
+          id: undefined,
+          name: 'test_tool',
+          args: {key: 'value'},
+        },
+      });
+      expect(result).toEqual({
+        type: 'tool_use',
+        id: 'toolu_fallback_0',
+        name: 'test_tool',
+        input: {key: 'value'},
+      });
+    });
+
+    it('test_part_to_message_block_function_call_empty_id', () => {
+      const result = partToMessageBlock({
+        functionCall: {
+          id: '',
+          name: 'test_tool',
+          args: {key: 'value'},
+        },
+      });
+      expect(result).toEqual({
+        type: 'tool_use',
+        id: 'toolu_fallback_0',
+        name: 'test_tool',
+        input: {key: 'value'},
+      });
+    });
+
+    it('test_part_to_message_block_function_call_invalid_chars_id', () => {
+      const result = partToMessageBlock({
+        functionCall: {
+          id: 'invalid id with spaces!',
+          name: 'test_tool',
+          args: {key: 'value'},
+        },
+      });
+      expect(result).toEqual({
+        type: 'tool_use',
+        id: 'toolu_fallback_0',
+        name: 'test_tool',
+        input: {key: 'value'},
+      });
+    });
+
+    it('test_part_to_message_block_function_response_none_id', () => {
+      const result = partToMessageBlock({
+        functionResponse: {
+          id: undefined,
+          name: 'test_tool',
+          response: {result: 'ok'},
+        },
+      });
+      expect(result).toEqual({
+        type: 'tool_result',
+        tool_use_id: 'toolu_fallback_0',
+        content: 'ok',
+        is_error: false,
+      });
+    });
+
+    it('test_part_to_message_block_function_response_empty_id', () => {
+      const result = partToMessageBlock({
+        functionResponse: {
+          id: '',
+          name: 'test_tool',
+          response: {result: 'ok'},
+        },
+      });
+      expect(result).toEqual({
+        type: 'tool_result',
+        tool_use_id: 'toolu_fallback_0',
+        content: 'ok',
+        is_error: false,
       });
     });
 
@@ -269,7 +575,7 @@ describe('Claude conversion helpers', () => {
         }),
       ).toEqual({
         type: 'tool_result',
-        tool_use_id: '',
+        tool_use_id: 'toolu_fallback_0',
         content: '',
         is_error: false,
       });
@@ -292,7 +598,7 @@ describe('Claude conversion helpers', () => {
         }),
       ).toEqual({
         type: 'tool_use',
-        id: '',
+        id: 'toolu_fallback_0',
         name: 'x',
         input: {},
       });
@@ -400,6 +706,87 @@ describe('Claude conversion helpers', () => {
         content: [],
       });
     });
+
+    it('forwards the provided ToolUseIdSanitizer across all parts in the content', () => {
+      const sanitizer = new ToolUseIdSanitizer();
+      const assistantMessage = contentToMessageParam(
+        {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'bad id!',
+                name: 'get_weather',
+                args: {city: 'Rome'},
+              },
+            },
+            {
+              functionCall: {
+                name: 'get_time',
+                args: {city: 'Rome'},
+              },
+            },
+          ],
+        },
+        sanitizer,
+      );
+      const userMessage = contentToMessageParam(
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'get_time',
+                response: {result: '15:00'},
+              },
+            },
+            {
+              functionResponse: {
+                id: 'bad id!',
+                name: 'get_weather',
+                response: {result: 'Warm'},
+              },
+            },
+          ],
+        },
+        sanitizer,
+      );
+
+      expect(assistantMessage).toEqual({
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_fallback_0',
+            name: 'get_weather',
+            input: {city: 'Rome'},
+          },
+          {
+            type: 'tool_use',
+            id: 'toolu_fallback_1',
+            name: 'get_time',
+            input: {city: 'Rome'},
+          },
+        ],
+      });
+      expect(userMessage).toEqual({
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'toolu_fallback_1',
+            content: '15:00',
+            is_error: false,
+          },
+          {
+            type: 'tool_result',
+            tool_use_id: 'toolu_fallback_0',
+            content: 'Warm',
+            is_error: false,
+          },
+        ],
+      });
+    });
   });
 
   describe('contentBlockToPart', () => {
@@ -497,6 +884,7 @@ describe('Claude conversion helpers', () => {
             },
           ],
         },
+        finishReason: FinishReason.STOP,
         usageMetadata: {
           promptTokenCount: 42,
           candidatesTokenCount: 18,
@@ -504,6 +892,24 @@ describe('Claude conversion helpers', () => {
         },
       });
     });
+
+    it.each<[Anthropic.StopReason | null, FinishReason]>([
+      ['end_turn', FinishReason.STOP],
+      ['stop_sequence', FinishReason.STOP],
+      ['tool_use', FinishReason.STOP],
+      ['pause_turn', FinishReason.STOP],
+      ['max_tokens', FinishReason.MAX_TOKENS],
+      ['model_context_window_exceeded', FinishReason.MAX_TOKENS],
+      ['refusal', FinishReason.SAFETY],
+      [null, FinishReason.FINISH_REASON_UNSPECIFIED],
+    ])(
+      'test_message_to_generate_content_response_maps_finish_reason (%s)',
+      (stopReason, expectedFinishReason) => {
+        const message = createSampleAnthropicMessage({stop_reason: stopReason});
+        const response = messageToGenerateContentResponse(message);
+        expect(response.finishReason).toBe(expectedFinishReason);
+      },
+    );
   });
 
   describe('functionDeclarationToToolParam', () => {

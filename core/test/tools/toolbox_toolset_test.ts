@@ -9,7 +9,6 @@ import {
   FunctionTool,
   isBaseToolset,
   isFunctionTool,
-  isLangchainTool,
   isToolboxToolset,
   ReadonlyContext,
   ToolboxLoadOptions,
@@ -86,7 +85,7 @@ describe('ToolboxToolset', () => {
         return {
           name: toolName,
           description: `Loaded ${toolName}`,
-          _run: async (args: Record<string, unknown>) =>
+          execute: async (args: Record<string, unknown>) =>
             `canceled:${String(args['bookingId'])}`,
         };
       },
@@ -116,7 +115,7 @@ describe('ToolboxToolset', () => {
     ]);
     expect(isFunctionTool(tools[0])).toBe(true);
     expect(isFunctionTool(tools[1])).toBe(true);
-    expect(isLangchainTool(tools[2])).toBe(true);
+    expect(isFunctionTool(tools[2])).toBe(true);
 
     expect(loadToolset).toHaveBeenCalledWith('hotels', {
       authTokenGetters,
@@ -171,7 +170,7 @@ describe('ToolboxToolset', () => {
         load_tool: async (name: string) => ({
           name,
           description: 'Single tool',
-          _run: () => 'single_ok',
+          execute: () => 'single_ok',
         }),
       },
     });
@@ -226,5 +225,54 @@ describe('ToolboxToolset', () => {
     await expect(missingToolLoader.getTools()).rejects.toThrow(
       /loadTool or load_tool/,
     );
+  });
+
+  it('throws a TypeError when a loaded tool does not match supported shapes', async () => {
+    const invalidToolset = new ToolboxToolset({
+      serverUrl: 'http://127.0.0.1:5000',
+      toolNames: ['invalid_tool'],
+      client: {
+        loadTool: async (name: string) =>
+          ({
+            name,
+            description: 'Unsupported tool with only invoke methods',
+            _run: () => 'unsupported',
+          }) as unknown as FunctionTool,
+      },
+    });
+
+    await expect(invalidToolset.getTools()).rejects.toThrow(TypeError);
+    await expect(invalidToolset.getTools()).rejects.toThrow(
+      /Unsupported Toolbox tool shape/,
+    );
+  });
+
+  it('test_toolbox_toolset_delegates_typed_lifecycle', async () => {
+    const dummyTool = new FunctionTool({
+      name: 'search',
+      description: 'Search tool',
+      execute: () => 'ok',
+    });
+    const loadTool = vi.fn(async () => dummyTool);
+    const close = vi.fn(async () => {});
+
+    const toolset = new ToolboxToolset({
+      serverUrl: 'https://toolbox.example',
+      toolNames: ['search'],
+      client: {
+        loadTool,
+        close,
+      },
+    });
+
+    const tools = await toolset.getTools(readonlyContext);
+    await toolset.close();
+
+    expect(tools).toEqual([dummyTool]);
+    expect(loadTool).toHaveBeenCalledWith('search', {
+      authTokenGetters: {},
+      boundParams: {},
+    });
+    expect(close).toHaveBeenCalledTimes(1);
   });
 });

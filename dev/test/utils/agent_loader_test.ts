@@ -8,6 +8,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {pathToFileURL} from 'node:url';
+import * as vm from 'node:vm';
 import {
   afterAll,
   afterEach,
@@ -433,8 +434,17 @@ describe('AgentLoader', () => {
 
       expect((esbuild.build as Mock).mock.calls[0][0]).toMatchObject({
         minify: true,
+        keepNames: true,
         sourcemap: false,
       });
+      const buildOptions = (esbuild.build as Mock).mock.calls[0][0];
+      const transformed = await esbuild.transform(
+        'function myFunctionNode() {} globalThis.nodeName = myFunctionNode.name;',
+        {minify: buildOptions.minify, keepNames: buildOptions.keepNames},
+      );
+      const context = vm.createContext({});
+      vm.runInContext(transformed.code, context);
+      expect(context.nodeName).toBe('myFunctionNode');
       expect(setSourceMapsEnabledSpy).not.toHaveBeenCalled();
 
       await agentFile.dispose();

@@ -1280,10 +1280,6 @@ export class AdkApiServer {
     });
 
     app.post('/api/reasoning_engine', async (req: Request, res: Response) => {
-      this.logger.info(
-        `Received Reasoning Engine query headers: ${JSON.stringify(req.headers)}`,
-      );
-
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const executeQuery = async (body: any) => {
         const input = body.input || {};
@@ -1332,9 +1328,6 @@ export class AdkApiServer {
       const isParsed =
         req.body && (Object.keys(req.body).length > 0 || !req.readable);
       if (isParsed) {
-        this.logger.info(
-          `Using already parsed body: ${JSON.stringify(req.body)}`,
-        );
         await executeQuery(req.body);
       } else {
         let rawBody = '';
@@ -1342,7 +1335,6 @@ export class AdkApiServer {
           rawBody += chunk;
         });
         req.on('end', async () => {
-          this.logger.info(`Received Reasoning Engine raw body: ${rawBody}`);
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           let body: any = {};
           if (rawBody) {

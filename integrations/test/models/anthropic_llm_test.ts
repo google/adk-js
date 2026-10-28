@@ -13,7 +13,7 @@ import {
   type LlmResponse,
 } from '@google/adk';
 import {Claude, isClaude} from '@google/adk-integrations';
-import {Type} from '@google/genai';
+import {FinishReason, Type} from '@google/genai';
 import {
   afterEach,
   beforeAll,
@@ -28,7 +28,13 @@ import {MAX_TOKEN} from '../../src/models/anthropic_llm.js';
 
 const {mockMessagesCreate, mockAnthropicVertexCtor, mockImportState} =
   vi.hoisted(() => {
-    const createFn = vi.fn();
+    const createFn =
+      vi.fn<
+        (
+          body: Anthropic.MessageCreateParamsNonStreaming,
+          options?: Anthropic.RequestOptions,
+        ) => Promise<Anthropic.Message>
+      >();
     const importState = {shouldFailImport: false};
     const ctorFn = vi.fn(function (
       this: {options?: unknown; messages?: {create: typeof createFn}},
@@ -45,6 +51,25 @@ const {mockMessagesCreate, mockAnthropicVertexCtor, mockImportState} =
       mockImportState: importState,
     };
   });
+
+function extractSentToolIds(): {useIds: string[]; resultIds: string[]} {
+  const sentMessages = mockMessagesCreate.mock.calls[0]?.[0]?.messages ?? [];
+  const useIds: string[] = [];
+  const resultIds: string[] = [];
+  for (const message of sentMessages) {
+    if (!Array.isArray(message.content)) {
+      continue;
+    }
+    for (const block of message.content) {
+      if (block.type === 'tool_use') {
+        useIds.push(block.id);
+      } else if (block.type === 'tool_result') {
+        resultIds.push(block.tool_use_id);
+      }
+    }
+  }
+  return {useIds, resultIds};
+}
 
 vi.mock('@anthropic-ai/vertex-sdk', () => ({
   get AnthropicVertex() {
@@ -131,15 +156,20 @@ describe('Claude', () => {
     vi.unstubAllEnvs();
   });
 
-  it('uses claude-sonnet-4-6@default when no model is specified', () => {
+  it('uses claude-sonnet-4-6@default and 8192 maxTokens when no options are specified', () => {
     const llm = new Claude();
     expect(llm.model).toBe('claude-sonnet-4-6@default');
+    expect(llm.maxTokens).toBe(8192);
     expect(MAX_TOKEN).toBe(1024);
   });
 
-  it('accepts a custom model identifier', () => {
-    const llm = new Claude({model: 'claude-opus-4-7@default'});
+  it('accepts a custom model identifier and custom maxTokens', () => {
+    const llm = new Claude({
+      model: 'claude-opus-4-7@default',
+      maxTokens: 4096,
+    });
     expect(llm.model).toBe('claude-opus-4-7@default');
+    expect(llm.maxTokens).toBe(4096);
   });
 
   it('identifies Claude instances via isClaude', () => {
@@ -250,6 +280,7 @@ describe('Claude', () => {
         role: 'model',
         parts: [{text: 'Hello from Claude!'}],
       },
+      finishReason: FinishReason.STOP,
       usageMetadata: {
         promptTokenCount: 15,
         candidatesTokenCount: 8,
@@ -300,7 +331,7 @@ describe('Claude', () => {
           type: 'auto',
           disable_parallel_tool_use: true,
         },
-        max_tokens: 1024,
+        max_tokens: 8192,
       },
       {signal: abortController.signal},
     );
@@ -335,10 +366,408 @@ describe('Claude', () => {
         messages: [{role: 'user', content: [{type: 'text', text: 'Hello'}]}],
         tools: undefined,
         tool_choice: undefined,
-        max_tokens: 1024,
+        max_tokens: 8192,
       },
       undefined,
     );
+  });
+
+  it('test_generate_content_async_with_max_tokens', async () => {
+    mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
+
+    const llm = new Claude({maxTokens: 4096});
+    const request: LlmRequest = {
+      contents: [{role: 'user', parts: [{text: 'Hello'}]}],
+      liveConnectConfig: {},
+      toolsDict: {},
+    };
+
+    for await (const _ of llm.generateContentAsync(request)) {
+      // consume response
+    }
+
+    expect(mockMessagesCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        max_tokens: 4096,
+      }),
+      undefined,
+    );
+  });
+
+  it('overrides constructor maxTokens when llmRequest.config.maxOutputTokens is set', async () => {
+    mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
+
+    const llm = new Claude({maxTokens: 4096});
+    const request: LlmRequest = {
+      contents: [{role: 'user', parts: [{text: 'Hello'}]}],
+      config: {
+        maxOutputTokens: 2048,
+      },
+      liveConnectConfig: {},
+      toolsDict: {},
+    };
+
+    for await (const _ of llm.generateContentAsync(request)) {
+      // consume response
+    }
+
+    expect(mockMessagesCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        max_tokens: 2048,
+      }),
+      undefined,
+    );
+  });
+
+  it.each<[Anthropic.StopReason, FinishReason]>([
+    ['end_turn', FinishReason.STOP],
+    ['max_tokens', FinishReason.MAX_TOKENS],
+    ['refusal', FinishReason.SAFETY],
+  ])(
+    'test_non_streaming_sets_finish_reason (%s)',
+    async (stopReason, expectedFinishReason) => {
+      mockMessagesCreate.mockResolvedValue(
+        createSampleAnthropicMessage({stop_reason: stopReason}),
+      );
+
+      const llm = new Claude();
+      const request: LlmRequest = {
+        contents: [{role: 'user', parts: [{text: 'Hi'}]}],
+        config: {systemInstruction: 'Test'},
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      const responses: LlmResponse[] = [];
+      for await (const response of llm.generateContentAsync(request, false)) {
+        responses.push(response);
+      }
+
+      expect(responses).toHaveLength(1);
+      expect(responses[0]?.finishReason).toBe(expectedFinishReason);
+    },
+  );
+
+  it('sanitizes and pairs invalid or missing tool use IDs across messages in a single request', async () => {
+    mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
+
+    const llm = new Claude();
+    const request: LlmRequest = {
+      contents: [
+        {
+          role: 'user',
+          parts: [{text: 'Check weather and time'}],
+        },
+        {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'bad id 1',
+                name: 'get_weather',
+                args: {city: 'Paris'},
+              },
+            },
+            {
+              functionCall: {
+                name: 'get_time',
+                args: {city: 'Paris'},
+              },
+            },
+          ],
+        },
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'get_time',
+                response: {result: '14:00'},
+              },
+            },
+            {
+              functionResponse: {
+                id: 'bad id 1',
+                name: 'get_weather',
+                response: {result: 'Sunny'},
+              },
+            },
+          ],
+        },
+      ],
+      liveConnectConfig: {},
+      toolsDict: {},
+    };
+
+    for await (const _ of llm.generateContentAsync(request)) {
+      // consume first response
+    }
+
+    expect(mockMessagesCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          {
+            role: 'user',
+            content: [{type: 'text', text: 'Check weather and time'}],
+          },
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'toolu_fallback_0',
+                name: 'get_weather',
+                input: {city: 'Paris'},
+              },
+              {
+                type: 'tool_use',
+                id: 'toolu_fallback_1',
+                name: 'get_time',
+                input: {city: 'Paris'},
+              },
+            ],
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'toolu_fallback_1',
+                content: '14:00',
+                is_error: false,
+              },
+              {
+                type: 'tool_result',
+                tool_use_id: 'toolu_fallback_0',
+                content: 'Sunny',
+                is_error: false,
+              },
+            ],
+          },
+        ],
+      }),
+      undefined,
+    );
+  });
+
+  it.each<
+    [string, Array<string | undefined>, Array<string | undefined>, number]
+  >([
+    [
+      'distinct_invalid_pair_uniquely',
+      ['bad A!', 'bad B!'],
+      ['bad A!', 'bad B!'],
+      2,
+    ],
+    ['matching_empty_ids_pair', [''], [''], 1],
+    ['multiple_empty_ids_pair_distinctly', ['', ''], ['', ''], 2],
+    [
+      'multiple_none_ids_pair_distinctly',
+      [undefined, undefined],
+      [undefined, undefined],
+      2,
+    ],
+    ['none_and_empty_collapse', [undefined], [''], 1],
+    ['repeated_invalid_id_consistent', ['bad!'], ['bad!'], 1],
+  ])(
+    'test_generate_content_async_pairs_invalid_tool_ids (%s)',
+    async (_caseId, callIds, responseIds, expectedUnique) => {
+      mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
+
+      const llm = new Claude();
+      const request: LlmRequest = {
+        contents: [
+          {role: 'user', parts: [{text: 'Hi'}]},
+          {
+            role: 'model',
+            parts: callIds.map((id, i) => ({
+              functionCall: {
+                id,
+                name: `tool_${i}`,
+                args: {},
+              },
+            })),
+          },
+          {
+            role: 'user',
+            parts: responseIds.map((id, i) => ({
+              functionResponse: {
+                id,
+                name: `tool_${i}`,
+                response: {result: 'ok'},
+              },
+            })),
+          },
+        ],
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      for await (const _ of llm.generateContentAsync(request)) {
+        // consume response
+      }
+
+      const {useIds, resultIds} = extractSentToolIds();
+      expect(new Set(useIds).size).toBe(expectedUnique);
+      expect(new Set(useIds)).toEqual(new Set(resultIds));
+      expect(useIds).toEqual(resultIds);
+    },
+  );
+
+  it('test_generate_content_async_multiturn_empty_tool_ids_unique', async () => {
+    mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
+
+    const llm = new Claude();
+    const request: LlmRequest = {
+      contents: [
+        {role: 'user', parts: [{text: 'Question 1'}]},
+        {
+          role: 'model',
+          parts: [{functionCall: {id: '', name: 'execute_sql', args: {}}}],
+        },
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: '',
+                name: 'execute_sql',
+                response: {result: 'ok'},
+              },
+            },
+          ],
+        },
+        {role: 'user', parts: [{text: 'Question 2'}]},
+        {
+          role: 'model',
+          parts: [{functionCall: {id: '', name: 'execute_sql', args: {}}}],
+        },
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: '',
+                name: 'execute_sql',
+                response: {result: 'ok'},
+              },
+            },
+          ],
+        },
+      ],
+      liveConnectConfig: {},
+      toolsDict: {},
+    };
+
+    for await (const _ of llm.generateContentAsync(request)) {
+      // consume response
+    }
+
+    const {useIds, resultIds} = extractSentToolIds();
+    expect(useIds).toEqual(['toolu_fallback_0', 'toolu_fallback_1']);
+    expect(resultIds).toEqual(['toolu_fallback_0', 'toolu_fallback_1']);
+    expect(new Set(useIds).size).toBe(2);
+    expect(useIds).toEqual(resultIds);
+  });
+
+  it('test_generate_content_async_named_response_removes_from_fallback_list', async () => {
+    mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
+
+    const llm = new Claude();
+    const request: LlmRequest = {
+      contents: [
+        {role: 'user', parts: [{text: 'Question 1'}]},
+        {
+          role: 'model',
+          parts: [
+            {functionCall: {id: '', name: 'fetch_schema', args: {}}},
+            {functionCall: {id: '', name: 'execute_sql', args: {}}},
+          ],
+        },
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: '',
+                name: 'fetch_schema',
+                response: {result: 'ok'},
+              },
+            },
+            {
+              functionResponse: {
+                id: '',
+                name: '',
+                response: {result: 'ok'},
+              },
+            },
+          ],
+        },
+      ],
+      liveConnectConfig: {},
+      toolsDict: {},
+    };
+
+    for await (const _ of llm.generateContentAsync(request)) {
+      // consume response
+    }
+
+    const {useIds, resultIds} = extractSentToolIds();
+    expect(useIds).toEqual(['toolu_fallback_0', 'toolu_fallback_1']);
+    expect(resultIds).toEqual(['toolu_fallback_0', 'toolu_fallback_1']);
+    expect(new Set(useIds).size).toBe(2);
+    expect(new Set(resultIds).size).toBe(2);
+    expect(useIds).toEqual(resultIds);
+  });
+
+  it('test_generate_content_async_anonymous_response_removes_from_named_map', async () => {
+    mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
+
+    const llm = new Claude();
+    const request: LlmRequest = {
+      contents: [
+        {role: 'user', parts: [{text: 'Question 1'}]},
+        {
+          role: 'model',
+          parts: [
+            {functionCall: {id: '', name: 'fetch_schema', args: {}}},
+            {functionCall: {id: '', name: 'fetch_schema', args: {}}},
+          ],
+        },
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: '',
+                name: '',
+                response: {result: 'ok'},
+              },
+            },
+            {
+              functionResponse: {
+                id: '',
+                name: 'fetch_schema',
+                response: {result: 'ok'},
+              },
+            },
+          ],
+        },
+      ],
+      liveConnectConfig: {},
+      toolsDict: {},
+    };
+
+    for await (const _ of llm.generateContentAsync(request)) {
+      // consume response
+    }
+
+    const {useIds, resultIds} = extractSentToolIds();
+    expect(useIds).toEqual(['toolu_fallback_0', 'toolu_fallback_1']);
+    expect(resultIds).toEqual(['toolu_fallback_0', 'toolu_fallback_1']);
+    expect(new Set(useIds).size).toBe(2);
+    expect(new Set(resultIds).size).toBe(2);
+    expect(useIds).toEqual(resultIds);
   });
 
   it('caches the AnthropicVertex client across calls on the same Claude instance', async () => {

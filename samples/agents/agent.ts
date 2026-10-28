@@ -5,7 +5,7 @@
  */
 
 /**
- * Agents (`LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `LangGraphAgent`, `RemoteAgent`, and `LlmCallsLimitExceededError`)
+ * Agents (`LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `LangGraphAgent`, and `LlmCallsLimitExceededError`)
  * ../../docs/guides/agents/index.md
  *
  * Demonstrates the `agents` subsystem in `@google/adk` without requiring an API
@@ -16,9 +16,7 @@
  * 2. `ParallelAgent`, `LoopAgent`, and `SequentialAgent` orchestrating a custom
  *    `BaseAgent` subclass (`QualityCheckAgent`) that saves a session artifact
  *    via `ctx.artifactService.saveArtifact` and escalates on completion.
- * 3. `LangGraphAgent` wrapping an in-memory `CompiledGraphLike` state graph and
- *    `RemoteAgent` forwarding a session with null-stripped schema fields over
- *    HTTP POST.
+ * 3. `LangGraphAgent` wrapping an in-memory `CompiledGraphLike` state graph.
  * 4. `RunConfig.maxLlmCalls` enforcement throwing `LlmCallsLimitExceededError`
  *    across a multi-iteration `LoopAgent`.
  *
@@ -52,8 +50,6 @@ import {
   LoopAgent,
   ParallelAgent,
   ReadonlyContext,
-  RemoteAgent,
-  RemoteAgentFetch,
   SequentialAgent,
   createEvent,
   isFinalResponse,
@@ -62,7 +58,6 @@ import {
   isLlmCallsLimitExceededError,
   isLoopAgent,
   isParallelAgent,
-  isRemoteAgent,
   isSequentialAgent,
   stringifyContent,
 } from '@google/adk';
@@ -194,39 +189,6 @@ const demoCompiledGraph: CompiledGraphLike = {
 };
 
 /**
- * In-memory `RemoteAgentFetch` implementation for `RemoteAgent` so the sample
- * runs deterministically without opening network sockets.
- */
-const mockRemoteFetch: RemoteAgentFetch = async (_input, init) => {
-  const rawBody = typeof init?.body === 'string' ? init.body : '{}';
-  const body: {
-    invocation_id?: string;
-    session?: {id?: string; state?: Record<string, unknown>};
-  } = JSON.parse(rawBody);
-  const rawSummary = body.session?.state?.['topic_summary'];
-  const summary = typeof rawSummary === 'string' ? rawSummary : 'no summary';
-  const responseEvents = [
-    {
-      invocation_id: body.invocation_id ?? 'remote-inv',
-      author: 'remote_backend_service',
-      content: {
-        role: 'model',
-        parts: [
-          {
-            text: `[RemoteAgent] Archived session "${body.session?.id ?? ''}" with summary: ${summary}`,
-          },
-        ],
-      },
-    },
-  ];
-
-  return new Response(JSON.stringify(responseEvents), {
-    status: 200,
-    headers: {'Content-Type': 'application/json'},
-  });
-};
-
-/**
  * Builds the multi-agent showcase pipeline using the provided model.
  */
 function createShowcasePipeline(model: string | BaseLlm): SequentialAgent {
@@ -275,18 +237,10 @@ function createShowcasePipeline(model: string | BaseLlm): SequentialAgent {
     ],
   });
 
-  const remoteArchiver = new RemoteAgent({
-    name: 'remote_archiver',
-    description: 'Delegates final archiving to a remote agent endpoint.',
-    url: 'https://agent-archiver.example.invalid/run',
-    fetchImpl: mockRemoteFetch,
-  });
-
   return new SequentialAgent({
     name: 'agents_showcase_pipeline',
-    description:
-      'Orchestrates parallel collection, loop verification, and remote archiving.',
-    subAgents: [parallelCollectors, qualityReviewLoop, remoteArchiver],
+    description: 'Orchestrates parallel collection and loop verification.',
+    subAgents: [parallelCollectors, qualityReviewLoop],
   });
 }
 
@@ -311,9 +265,6 @@ async function main(): Promise<void> {
   );
   process.stdout.write(
     `isLoopAgent(quality_review_loop): ${isLoopAgent(rootAgent.findAgent('quality_review_loop'))}\n`,
-  );
-  process.stdout.write(
-    `isRemoteAgent(remote_archiver): ${isRemoteAgent(rootAgent.findAgent('remote_archiver'))}\n`,
   );
 
   process.stdout.write('\n=== 2. Multi-Agent Pipeline Execution ===\n');

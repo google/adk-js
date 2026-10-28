@@ -166,9 +166,20 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
       const name = options.agentEngineId.startsWith('projects/')
         ? options.agentEngineId
         : `projects/${options.project}/locations/${options.region}/reasoningEngines/${options.agentEngineId}`;
+      // Without a mask the PATCH replaces the whole spec and drops fields the
+      // server manages, such as the telemetry flag in deploymentSpec.env.
+      const updateMask = [
+        'display_name',
+        ...(options.description !== undefined ? ['description'] : []),
+        'spec.container_spec',
+        'spec.deployment_spec.container_concurrency',
+        'spec.deployment_spec.min_instances',
+        'spec.deployment_spec.max_instances',
+        'spec.deployment_spec.resource_limits',
+      ].join(',');
       apiResponse = await client.agentEnginesInternal.updateInternal({
         name,
-        config,
+        config: {...config, updateMask},
       });
     } else {
       console.info('Creating Reasoning Engine resource in Vertex AI...');

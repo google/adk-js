@@ -27,6 +27,7 @@ import {
   upsertSessionEvent,
 } from './base_session_service.js';
 import {createSession, Session} from './session.js';
+import {StaleSessionError} from './stale_session_error.js';
 import {State} from './state.js';
 
 type SchemaModule = typeof import('./db/schema.js');
@@ -77,6 +78,32 @@ async function importMikroOrm(): Promise<void> {
   } = operations);
 }
 
+export {isStaleSessionError, StaleSessionError} from './stale_session_error.js';
+
+/**
+ * Formats a Date or timestamp into 'YYYY-MM-DD HH:mm:ss' in UTC.
+ */
+function formatDateTime(dateOrEpochMs: Date | number): string {
+  const date =
+    typeof dateOrEpochMs === 'number' ? new Date(dateOrEpochMs) : dateOrEpochMs;
+  return date.toISOString().replace('T', ' ').slice(0, 19);
+}
+
+/**
+ * Options for configuring {@link DatabaseSessionService}.
+ */
+export interface DatabaseSessionServiceOptions extends MikroDBOptions {
+  /**
+   * How to handle stale sessions in {@link DatabaseSessionService.appendEvent}.
+   *
+   * - `'reject'` (default): throws a {@link StaleSessionError} without persisting changes.
+   * - `'reload'`: reloads stored events and state into the session object after writing.
+   *
+   * @deprecated 'reload' is deprecated and will be removed in a future release. Use 'reject' (the default) and re-read the session with `getSession` to retry.
+   */
+  staleSession?: 'reject' | 'reload';
+}
+
 /**
  * Checks if a URI is a database connection URI.
  *
@@ -106,17 +133,24 @@ export class DatabaseSessionService extends BaseSessionService {
   private initialized = false;
   private options?: MikroDBOptions;
   private connectionString?: string;
+  private readonly staleSession: 'reject' | 'reload';
 
-  constructor(connectionStringOrOptions: MikroDBOptions | string) {
+  constructor(
+    connectionStringOrOptions: DatabaseSessionServiceOptions | string,
+    options?: DatabaseSessionServiceOptions,
+  ) {
     super();
     if (typeof connectionStringOrOptions === 'string') {
       this.connectionString = connectionStringOrOptions;
+      this.staleSession = options?.staleSession ?? 'reject';
     } else {
       if (!connectionStringOrOptions.driver) {
         throw new Error('Driver is required when passing options object.');
       }
 
-      this.options = connectionStringOrOptions;
+      const {staleSession, ...mikroOptions} = connectionStringOrOptions;
+      this.options = mikroOptions;
+      this.staleSession = staleSession ?? 'reject';
     }
   }
 
@@ -435,6 +469,15 @@ export class DatabaseSessionService extends BaseSessionService {
         throw new Error(`Session ${session.id} not found for appendEvent`);
       }
 
+      if (storageSession.updateTime.getTime() > session.lastUpdateTime) {
+        if (this.staleSession === 'reject') {
+          throw new StaleSessionError(
+            `The last_update_time provided in the session object ${formatDateTime(session.lastUpdateTime)} is earlier than the update_time in the storage_session ${formatDateTime(storageSession.updateTime)}. Please check if it is a stale session.`,
+          );
+        }
+        sessionWasStale = true;
+      }
+
       let appStateModel = await txEm.findOne(StorageAppState, {
         appName: session.appName,
       });
@@ -459,12 +502,6 @@ export class DatabaseSessionService extends BaseSessionService {
         });
         txEm.persist(userStateModel);
       }
-
-      // Reload after the transaction: this holds a PESSIMISTIC_WRITE lock on
-      // the session row, and the reload only refreshes the in-memory
-      // `session`.
-      sessionWasStale =
-        storageSession.updateTime.getTime() > session.lastUpdateTime;
 
       if (event.actions && event.actions.stateDelta) {
         const appDelta: Record<string, unknown> = {};

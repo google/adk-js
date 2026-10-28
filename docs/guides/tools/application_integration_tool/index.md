@@ -49,7 +49,7 @@ const issueTracker = new ApplicationIntegrationToolset({
   connection: 'my-issue-tracker',
   entityOperations: {Issues: ['LIST', 'GET']},
   actions: ['ExecuteCustomQuery'],
-  toolName: 'tracker',
+  toolNamePrefix: 'tracker',
 });
 
 export const rootAgent = new LlmAgent({
@@ -64,7 +64,7 @@ The agent sees `tracker_list_issues`, `tracker_get_issues`, and one tool for
 the custom query, named after the display name Integration Connectors reports
 for the action.
 
-For integration mode, name the integration and its API trigger instead of a
+For integration mode, name the integration and its API triggers instead of a
 connection:
 
 ```ts
@@ -72,15 +72,15 @@ const orders = new ApplicationIntegrationToolset({
   project: 'my-project',
   location: 'us-central1',
   integration: 'process-orders',
-  trigger: 'api_trigger/process-orders',
+  triggers: ['api_trigger/process-orders'],
 });
 ```
 
 ## How it works
 
 The constructor only validates the options. It throws
-`Either (integration and trigger) or (connection and (entityOperations or actions)) should be provided.`
-unless you set `integration` together with `trigger` or `triggers`, or set
+`Either integration or (connection and (entityOperations or actions)) should be provided.`
+unless you set `integration`, or set
 `connection` together with a non-empty `entityOperations` or `actions`. An empty
 object and an empty `actions` array count as not set. When both modes are
 configured, integration mode wins.
@@ -120,16 +120,16 @@ selects every supported operation. Each operation becomes one tool:
 
 | Operation | Tool name, before the parser normalizes it | What the tool does             |
 | :-------- | :----------------------------------------- | :----------------------------- |
-| `LIST`    | `{toolName}_list_{entity}`                 | Lists records, with paging     |
-| `GET`     | `{toolName}_get_{entity}`                  | Reads one record by `entityId` |
-| `CREATE`  | `{toolName}_create_{entity}`               | Creates a record               |
-| `UPDATE`  | `{toolName}_update_{entity}`               | Updates a record by `entityId` |
-| `DELETE`  | `{toolName}_delete_{entity}`               | Deletes a record by `entityId` |
+| `LIST`    | `{toolNamePrefix}_list_{entity}`           | Lists records, with paging     |
+| `GET`     | `{toolNamePrefix}_get_{entity}`            | Reads one record by `entityId` |
+| `CREATE`  | `{toolNamePrefix}_create_{entity}`         | Creates a record               |
+| `UPDATE`  | `{toolNamePrefix}_update_{entity}`         | Updates a record by `entityId` |
+| `DELETE`  | `{toolNamePrefix}_delete_{entity}`         | Deletes a record by `entityId` |
 
 The operation names are not case sensitive. Any other name rejects the load
 with `Invalid operation: {operation} for entity: {entity}`.
 
-Each action becomes one tool named `{toolName}_{displayName}`, where
+Each action becomes one tool named `{toolNamePrefix}_{displayName}`, where
 `displayName` is the display name Integration Connectors reports. The
 `ExecuteCustomQuery` action is different from the others: its tool takes a
 SQL `query`, a `timeout` and a `pageSize` rather than an input payload, and
@@ -138,7 +138,7 @@ into SQL.
 
 `OpenAPIToolset` turns each name into snake case and cuts it at 60
 characters, so `tracker_list_Issues` reaches the model as
-`tracker_list_issues`. With the default empty `toolName`, the name is
+`tracker_list_issues`. With the default empty `toolNamePrefix`, the name is
 `list_issues`.
 
 Each connection operation is wrapped in an `IntegrationConnectorTool`. Its
@@ -188,13 +188,11 @@ The options are the fields of `ApplicationIntegrationToolsetOptions`.
 | `project`            | `string`                    | Required | The Google Cloud project ID.                                                     |
 | `location`           | `string`                    | Required | The Google Cloud location, such as `us-central1`.                                |
 | `integration`        | `string`                    | None     | The integration name, for integration mode.                                      |
-| `trigger`            | `string`                    | None     | The API trigger ID, for integration mode.                                        |
-| `triggers`           | `string[]`                  | None     | The API trigger IDs, for integration mode. Takes precedence over `trigger`.      |
+| `triggers`           | `string[]`                  | None     | The API trigger IDs, for integration mode.                                       |
 | `connection`         | `string`                    | None     | The connection name, for connection mode.                                        |
 | `entityOperations`   | `Record<string, string[]>`  | None     | Operations to expose, keyed by entity name.                                      |
 | `actions`            | `string[]`                  | None     | Actions to expose.                                                               |
-| `toolName`           | `string`                    | `''`     | Prefix of every tool name, in connection mode.                                   |
-| `toolNamePrefix`     | `string`                    | `''`     | Prefix of every tool name, in connection mode. Takes precedence over `toolName`. |
+| `toolNamePrefix`     | `string`                    | `''`     | Prefix of every tool name, in connection mode.                                   |
 | `toolInstructions`   | `string`                    | `''`     | Text added to every tool description, in connection mode.                        |
 | `serviceAccountJson` | `string`                    | None     | A service-account key, as JSON. Without it, ADC is used.                         |
 | `authScheme`         | `AuthScheme`                | None     | Authentication scheme for dynamic end-user credentials, in connection mode.      |
@@ -205,10 +203,10 @@ The options are the fields of `ApplicationIntegrationToolsetOptions`.
 the `ExecuteConnection` integration must be in the same project and location
 as the connection, because the generated tools call it there.
 
-`integration` with `trigger` or `triggers` selects integration mode. Each
+`integration` selects integration mode. When `triggers` is provided, each
 trigger is the ID Application Integration shows for the API trigger, such as
-`api_trigger/process-orders`. When both `triggers` and `trigger` are set,
-`triggers` takes precedence.
+`api_trigger/process-orders`. When `triggers` is omitted, tools are generated
+for all triggers of the integration.
 
 `connection` selects connection mode, together with `entityOperations`,
 `actions`, or both. `entityOperations` maps an entity name to the operations
@@ -216,10 +214,10 @@ to expose. Give an empty list to expose every operation the entity supports,
 or name operations to expose fewer, because each one is a tool the model has
 to choose between.
 
-`toolNamePrefix`, `toolName` and `toolInstructions` shape the generated tools in
-connection mode. `toolNamePrefix` (or `toolName` when `toolNamePrefix` is not
-set) keeps the tool names of two connections apart when one agent holds both,
-because the operation part of the names would otherwise collide.
+`toolNamePrefix` and `toolInstructions` shape the generated tools in
+connection mode. `toolNamePrefix` keeps the tool names of two connections apart
+when one agent holds both, because the operation part of the names would
+otherwise collide.
 `toolInstructions` is the place for guidance that applies to every tool of
 the connection. Each operation description appends it at the end. Integration
 mode takes the names and descriptions from the generated spec and ignores these
@@ -236,7 +234,7 @@ connection tools when `authOverrideEnabled` is enabled on the connection. If
 `authOverrideEnabled` is not enabled, the toolset logs a warning and omits them.
 
 `toolFilter` accepts an array of tool names or a `ToolPredicate` function
-`(tool, readonlyContext) => boolean` and filters the tools returned by
+`(tool, readonlyContext?) => boolean` and filters the tools returned by
 `getTools` in both integration and connection modes.
 
 ## Advanced applications

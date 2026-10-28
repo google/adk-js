@@ -83,17 +83,19 @@ graph TD
 
 ## How To
 
-**Pick the mode with the options you set.** An integration and a trigger
-select integration mode. A connection with entity operations, actions, or
-both selects connection mode. The constructor throws for anything else, so a
-missing variable fails when the module loads, not in the middle of a turn.
+**Pick the mode with the options you set.** An integration or an integration
+with triggers selects integration mode. A connection with entity operations,
+actions, or both selects connection mode. The constructor throws for anything
+else, so a missing variable fails when the module loads, not in the middle of
+a turn.
 
 ```ts
+const trigger = process.env.INTEGRATION_TRIGGER;
 const applicationIntegrationToolset = new ApplicationIntegrationToolset({
   project,
   location: process.env.GOOGLE_CLOUD_LOCATION ?? 'us-central1',
   integration: process.env.INTEGRATION_NAME,
-  trigger: process.env.INTEGRATION_TRIGGER,
+  triggers: trigger ? [trigger] : undefined,
   connection: process.env.CONNECTION_NAME,
   entityOperations,
   actions: listFromEnv('CONNECTION_ACTIONS'),

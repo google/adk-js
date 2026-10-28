@@ -54,6 +54,8 @@ export function removeClientFunctionCallId(content: Content): void {
  * @param agentName: The name of the agent.
  * @param currentBranch: The current branch of the agent.
  * @param currentIsolationScope: The isolation scope of the current node, if any.
+ * @param preserveFunctionCallIds: Whether to preserve client-generated
+ *     `adk-*` function call and response IDs instead of stripping them.
  *
  * @returns A list of processed contents.
  */
@@ -62,6 +64,7 @@ export function getContents(
   agentName: string,
   currentBranch?: string,
   currentIsolationScope?: string,
+  preserveFunctionCallIds = false,
 ): Content[] {
   const filteredEvents: Event[] = [];
 
@@ -96,7 +99,9 @@ export function getContents(
   const contents = [];
   for (const event of resultEvents) {
     const content = cloneDeep(event.content!);
-    removeClientFunctionCallId(content);
+    if (!preserveFunctionCallIds) {
+      removeClientFunctionCallId(content);
+    }
     contents.push(content);
   }
   return contents;
@@ -184,6 +189,7 @@ export function getCurrentTurnContents(
   agentName: string,
   currentBranch?: string,
   currentIsolationScope?: string,
+  preserveFunctionCallIds = false,
 ): Content[] {
   // Find the latest event that starts the current turn and process from there.
   for (let i = events.length - 1; i >= 0; i--) {
@@ -203,6 +209,7 @@ export function getCurrentTurnContents(
         agentName,
         currentBranch,
         currentIsolationScope,
+        preserveFunctionCallIds,
       );
     }
   }

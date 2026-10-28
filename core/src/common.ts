@@ -89,11 +89,6 @@ export {
   InteractionsRequestProcessor,
 } from './agents/processors/interactions_request_processor.js';
 export {ReadonlyContext} from './agents/readonly_context.js';
-export {RemoteAgent, isRemoteAgent} from './agents/remote_agent.js';
-export type {
-  RemoteAgentConfig,
-  RemoteAgentFetch,
-} from './agents/remote_agent.js';
 export {RoutedAgent, isRoutedAgent} from './agents/routed_agent.js';
 export type {AgentRouter, RoutedAgentConfig} from './agents/routed_agent.js';
 export {StreamingMode, createRunConfig} from './agents/run_config.js';
@@ -599,16 +594,15 @@ export type {
   LangchainToolConfig,
   LangchainToolLike,
 } from './tools/langchain_tool.js';
-export type {LoadMemoryResponse} from './tools/load_memory_tool.js';
-export {isBaseRetrievalTool} from './tools/retrieval/base_retrieval_tool.js';
-export {ToolboxTool, isToolboxTool} from './tools/toolbox_tool.js';
 export type {
-  ToolboxClientLike,
-  ToolboxToolOptions,
-} from './tools/toolbox_tool.js';
+  LoadMemoryResponse,
+  LoadMemoryToolOptions,
+} from './tools/load_memory_tool.js';
+export {isBaseRetrievalTool} from './tools/retrieval/base_retrieval_tool.js';
 export {ToolboxToolset, isToolboxToolset} from './tools/toolbox_toolset.js';
 export type {
   ToolboxLoadOptions,
+  ToolboxToolLike,
   ToolboxToolsetClientLike,
   ToolboxToolsetOptions,
 } from './tools/toolbox_toolset.js';

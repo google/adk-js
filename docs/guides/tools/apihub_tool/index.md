@@ -108,12 +108,15 @@ an `OpenAPIToolset` from the parsed document:
 - `authScheme` and `authCredential` are passed to `OpenAPIToolset`, which
   applies them to every tool.
 
-`getTools(context)` and `getTool(name)` then delegate to that `OpenAPIToolset`.
-`getTool` returns a Promise, unlike `OpenAPIToolset.getTool`, because the spec
-may still be loading. Await it:
+`getTools(context)` then delegates to that `OpenAPIToolset`. To expose a subset
+of tools, configure `toolFilter` with tool names or a predicate:
 
 ```ts
-const tool = await toolset.getTool('get_pet');
+const toolset = new APIHubToolset({
+  apihubResourceName: 'projects/my-project/locations/us-central1/apis/my-api',
+  toolFilter: ['get_pet'],
+});
+const tools = await toolset.getTools();
 ```
 
 Invalid YAML rejects with the `YAMLException` that `js-yaml` throws.
@@ -122,14 +125,14 @@ Invalid YAML rejects with the `YAMLException` that `js-yaml` throws.
 
 The toolset starts fetching the spec in its constructor by default. A
 constructor cannot wait for a request, so the fetch runs in the background and
-a failure is reported by the first `getTools` or `getTool` call. Every later
-call reports the same failure. Construct a new toolset to try again.
+a failure is reported by the first `getTools` call. Every later call reports the
+same failure. Construct a new toolset to try again.
 
-With `lazyLoadSpec: true`, nothing is fetched until the first `getTools` or
-`getTool` call. A successful result is kept, including a spec that produced no
-tools. A failed fetch is not kept, so the next call fetches again. Lazy loading
-suits a module that builds agents at import time, because importing it then
-does no network I/O.
+With `lazyLoadSpec: true`, nothing is fetched until the first `getTools` call. A
+successful result is kept, including a spec that produced no tools. A failed
+fetch is not kept, so the next call fetches again. Lazy loading suits a module
+that builds agents at import time, because importing it then does no network
+I/O.
 
 In both modes, `name` and `description` are filled in only when the spec has
 loaded. Read them after awaiting `getTools()`.

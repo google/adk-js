@@ -46,7 +46,12 @@ export {
   DebugLoggingPlugin,
   isDebugLoggingPlugin,
 } from './plugins/debug_logging_plugin.js';
-export {DatabaseSessionService} from './sessions/database_session_service.js';
+export {
+  DatabaseSessionService,
+  isStaleSessionError,
+  StaleSessionError,
+} from './sessions/database_session_service.js';
+export type {DatabaseSessionServiceOptions} from './sessions/database_session_service.js';
 export {getSessionServiceFromUri} from './sessions/registry.js';
 export {VertexAiSessionService} from './sessions/vertex_ai_session_service.js';
 export type {
@@ -219,7 +224,6 @@ export type {
 export {loadDotenvForAgent, walkToRootUntilFound} from './cli/utils/envs.js';
 export {
   LOGGING_FORMAT,
-  logToStderr,
   logToTmpFolder,
   setupAdkLogger,
 } from './cli/utils/logs.js';
