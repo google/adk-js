@@ -10,9 +10,9 @@ This index is the only table of contents. A guide that is not listed here is unr
 
 ### Agents
 
-Model-backed, workflow, graph-backed, and remote agents (`BaseAgent`, `LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `LangGraphAgent`, and `RemoteAgent`), along with invocation contexts and `RunConfig`.
+Model-backed, workflow, and graph-backed agents (`BaseAgent`, `LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, and `LangGraphAgent`), along with invocation contexts and `RunConfig`.
 
-- [Agents](agents/index.md) - `BaseAgent`, `LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `LangGraphAgent`, `RemoteAgent`, `InvocationContext`, `CallbackContext`, `RunConfig`, and `LlmCallsLimitExceededError`.
+- [Agents](agents/index.md) - `BaseAgent`, `LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `LangGraphAgent`, `InvocationContext`, `CallbackContext`, `RunConfig`, and `LlmCallsLimitExceededError`.
 
 ### Artifacts
 

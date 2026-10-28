@@ -6,7 +6,6 @@ The `agents` subsystem defines the executable agent hierarchy, orchestration she
 - `LlmAgent`, `Agent`, and `isLlmAgent` - Language-model agent supporting instructions, tools, structured schemas, context compactors, planners, code executors, and agent transfer.
 - `SequentialAgent`, `ParallelAgent`, and `LoopAgent` - Deterministic orchestration agents that run `subAgents` in sequence, concurrently on isolated branches, or repeatedly until escalation.
 - `LangGraphAgent`, `isLangGraphAgent`, `getLastHumanMessages`, `LangGraphHumanMessage`, `LangGraphAIMessage`, and `LangGraphSystemMessage` - Adapter agent that wraps a compiled LangGraph state graph (`CompiledGraphLike`) for single-turn and multi-turn execution.
-- `RemoteAgent` and `isRemoteAgent` - Experimental agent that forwards invocation context and session state (with `null` and `undefined` schema fields stripped and timestamps converted between milliseconds and seconds) to an external HTTP endpoint and re-authors returned events.
 - `InvocationContext`, `ReadonlyContext`, `Context`, `CallbackContext`, `LlmCallsLimitExceededError`, and `isLlmCallsLimitExceededError` - Per-invocation state containers, callback and tool context wrappers, and shared LLM call budget enforcement.
 - `RunConfig`, `createRunConfig`, `StreamingMode`, `LiveRequestQueue`, `ActiveStreamingTool`, and `TranscriptionEntry` - Runtime configuration, bidirectional request queueing, live streaming tool tracking, and audio transcription buffering.
 
@@ -103,7 +102,7 @@ flowchart LR
   BeforeCb -->|returns undefined| Impl["Subclass runAsyncImpl"]
   Impl --> Llm["LlmAgent"]
   Impl --> Workflow["SequentialAgent / ParallelAgent / LoopAgent"]
-  Impl --> External["LangGraphAgent / RemoteAgent"]
+  Impl --> External["LangGraphAgent"]
   Llm --> AfterCb["afterAgentCallback"]
   Workflow --> AfterCb
   External --> AfterCb
@@ -123,7 +122,7 @@ flowchart LR
 
 ## Configuration options
 
-Agents and invocations are configured through `BaseAgentConfig`, `LlmAgentConfig`, `LoopAgentConfig`, `LangGraphAgentConfig`, `RemoteAgentConfig`, and `RunConfig`.
+Agents and invocations are configured through `BaseAgentConfig`, `LlmAgentConfig`, `LoopAgentConfig`, `LangGraphAgentConfig`, and `RunConfig`.
 
 ### `BaseAgentConfig`
 
@@ -168,18 +167,15 @@ The `LlmAgentConfig` interface extends `BaseAgentConfig` with model, instruction
 
 Setting `tools`, `systemInstruction`, or `responseSchema` inside `generateContentConfig` throws an error at construction time; configure those on `LlmAgentConfig` directly via `tools`, `instruction`, and `outputSchema`.
 
-### Workflow, LangGraph, and remote agent configurations
+### Workflow and LangGraph agent configurations
 
-`SequentialAgent` and `ParallelAgent` take `BaseAgentConfig` directly, while `LoopAgent`, `LangGraphAgent`, and `RemoteAgent` introduce dedicated configuration interfaces:
+`SequentialAgent` and `ParallelAgent` take `BaseAgentConfig` directly, while `LoopAgent` and `LangGraphAgent` introduce dedicated configuration interfaces:
 
 | Interface              | Option          | Type                | Default                   | Description                                                                                               |
 | :--------------------- | :-------------- | :------------------ | :------------------------ | :-------------------------------------------------------------------------------------------------------- |
 | `LoopAgentConfig`      | `maxIterations` | `number`            | `Number.MAX_SAFE_INTEGER` | Maximum loop passes over `subAgents` before stopping if no event sets `actions.escalate = true`.          |
 | `LangGraphAgentConfig` | `graph`         | `CompiledGraphLike` | Required                  | Compiled LangGraph object providing `invoke` and optional `getState`, `getGraph`, and `checkpointer`.     |
 | `LangGraphAgentConfig` | `instruction`   | `string`            | `''`                      | System instruction prepended as a `LangGraphSystemMessage` when the graph state has no existing messages. |
-| `RemoteAgentConfig`    | `url`           | `string`            | Required                  | HTTP endpoint URL that accepts `{invocation_id, session}` via POST and returns a JSON array of events.    |
-| `RemoteAgentConfig`    | `timeoutMs`     | `number`            | `120000`                  | Request timeout in milliseconds passed to `AbortSignal.timeout`.                                          |
-| `RemoteAgentConfig`    | `fetchImpl`     | `RemoteAgentFetch`  | `globalThis.fetch`        | Custom `fetch` function used to issue the HTTP POST request.                                              |
 
 `SequentialAgent` runs `subAgents` one after another in order, and in `runLive` mode appends a `task_completed` function tool to each `LlmAgent` child so the model can signal turn completion. `ParallelAgent` runs `subAgents` concurrently in `runAsync` mode, assigning each child an isolated `branch` suffix (`"{parent}.{child}"`) while sharing `session.state`.
 
@@ -210,7 +206,7 @@ Calling `createRunConfig` with `maxLlmCalls > Number.MAX_SAFE_INTEGER` throws an
 
 ## Advanced applications
 
-The examples below show how to combine workflow agents with custom `BaseAgent` subclasses, wrap a compiled LangGraph graph in `LangGraphAgent`, delegate to a remote HTTP service with `RemoteAgent`, and catch `LlmCallsLimitExceededError`.
+The examples below show how to combine workflow agents with custom `BaseAgent` subclasses, wrap a compiled LangGraph graph in `LangGraphAgent`, and catch `LlmCallsLimitExceededError`.
 
 ### Custom `BaseAgent` with `ParallelAgent`, `LoopAgent`, and `SequentialAgent`
 
@@ -324,18 +320,17 @@ export const graphAgent = new LangGraphAgent({
 });
 ```
 
-### Delegating execution over HTTP with `RemoteAgent`
+### Delegating execution with `RemoteA2AAgent`
 
-Configure `RemoteAgent` with an endpoint `url` and optional `timeoutMs` and `fetchImpl`. On each run, `RemoteAgent` serializes `{invocation_id, session}` in `snake_case` with `null` and `undefined` schema properties stripped (preserving `session.state`, tool arguments/responses, and `actions.state_delta`) and timestamps converted from milliseconds to seconds, sends an HTTP POST request, converts each returned JSON event object via `transformToCamelCaseEvent` (converting `timestamp` from seconds back to milliseconds), and yields it with `author` set to `this.name`:
+For remote agent delegation, use `RemoteA2AAgent` from `@google/adk/a2a` (or `@google/adk`). `RemoteA2AAgent` delegates execution to a remote agent using the Agent-to-Agent (A2A) protocol:
 
 ```ts
-import {RemoteAgent} from '@google/adk';
+import {RemoteA2AAgent} from '@google/adk/a2a';
 
-export const remoteSpecialist = new RemoteAgent({
+export const remoteSpecialist = new RemoteA2AAgent({
   name: 'remote_billing_agent',
-  description: 'Delegates billing questions to a remote ADK service.',
-  url: 'https://billing-agent.example.invalid/run',
-  timeoutMs: 30_000,
+  description: 'Delegates billing questions to a remote A2A service.',
+  agentCard: 'https://billing-agent.example.invalid/.well-known/agent.json',
 });
 ```
 
@@ -362,13 +357,12 @@ export function recordModelCallSafely(ctx: InvocationContext): boolean {
 ## Limitations
 
 - **Single parent per agent instance**: An agent instance can be registered in `subAgents` of only one parent agent. Call `agent.clone()` when reusing an agent configuration across multiple trees.
-- **No `runLive` support on `ParallelAgent`, `LangGraphAgent`, or `RemoteAgent`**: Calling `runLive` on `ParallelAgent`, `LangGraphAgent`, or `RemoteAgent` throws `This is not supported yet for <AgentClass>.`. Use those agents inside `runAsync` workflows.
-- **`RemoteAgent` disallows `subAgents` and trusts the remote endpoint**: Passing a non-empty `subAgents` array to `new RemoteAgent(config)` throws `subAgents is disabled in RemoteAgent.` at construction time. Returned event objects are converted with `transformToCamelCaseEvent` and passed to `createEvent` without filtering `id`, `timestamp`, or `actions` (`stateDelta`, `artifactDelta`, `transferToAgent`, `escalate`); only `author` is overwritten with `this.name`. Configure `url` only with trusted endpoints.
+- **No `runLive` support on `ParallelAgent` or `LangGraphAgent`**: Calling `runLive` on `ParallelAgent` or `LangGraphAgent` throws `This is not supported yet for <AgentClass>.`. Use those agents inside `runAsync` workflows.
 - **Deprecation of shell orchestrators in favor of `Workflow`**: `SequentialAgent`, `ParallelAgent`, and `LoopAgent` log a deprecation notice recommending `Workflow` for graph-based orchestration, though they remain supported as `LlmAgent` sub-agents.
 
 ## Related samples
 
-- [samples/agents/](../../../samples/agents/README.md) - Runnable offline sample demonstrating `LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `LangGraphAgent`, `RemoteAgent`, lifecycle callbacks, artifact saving, and `LlmCallsLimitExceededError`.
+- [samples/agents/](../../../samples/agents/README.md) - Runnable offline sample demonstrating `LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `LangGraphAgent`, lifecycle callbacks, artifact saving, and `LlmCallsLimitExceededError`.
 
 ## Related guides
 
