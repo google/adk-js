@@ -47,6 +47,7 @@ export class ApiServerSpanExporter implements SpanExporter {
     for (const span of spans) {
       if (
         span.name === 'call_llm' ||
+        span.name.startsWith('generate_content') ||
         span.name === 'send_data' ||
         span.name.startsWith('execute_tool')
       ) {

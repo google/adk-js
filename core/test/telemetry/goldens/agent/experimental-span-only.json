@@ -1,7 +1,11 @@
 {
   "root_span": {
-    "name": "invocation",
-    "attributes": {},
+    "name": "invoke_workflow some_root_agent",
+    "attributes": {
+      "gen_ai.conversation.id": "PRESENT",
+      "gen_ai.operation.name": "invoke_workflow",
+      "gen_ai.workflow.name": "some_root_agent"
+    },
     "status": "UNSET",
     "children": [
       {
@@ -15,67 +19,244 @@
         "status": "UNSET",
         "children": [
           {
-            "name": "call_llm",
+            "name": "generate_content gemini-2.5-flash",
             "attributes": {
               "gcp.vertex.agent.event_id": "PRESENT",
               "gcp.vertex.agent.invocation_id": "PRESENT",
-              "gcp.vertex.agent.llm_request": {},
-              "gcp.vertex.agent.llm_response": {},
-              "gcp.vertex.agent.session_id": "PRESENT",
               "gen_ai.agent.name": "some_root_agent",
+              "gen_ai.conversation.id": "PRESENT",
+              "gen_ai.input.messages": [
+                {
+                  "parts": [
+                    {
+                      "content": "hello",
+                      "type": "text"
+                    }
+                  ],
+                  "role": "user"
+                }
+              ],
+              "gen_ai.operation.name": "generate_content",
+              "gen_ai.output.messages": [
+                {
+                  "finish_reason": "stop",
+                  "parts": [
+                    {
+                      "arguments": {
+                        "arg1": "val1"
+                      },
+                      "id": "PRESENT",
+                      "name": "some_tool",
+                      "type": "tool_call"
+                    }
+                  ],
+                  "role": "assistant"
+                }
+              ],
+              "gen_ai.provider.name": "gcp.gemini",
               "gen_ai.request.model": "gemini-2.5-flash",
               "gen_ai.response.finish_reasons": [
                 "stop"
               ],
-              "gen_ai.system": "gcp.vertex.agent",
+              "gen_ai.system_instructions": [
+                {
+                  "content": "You are an agent. Your internal name is \"some_root_agent\".\n\nThe description about you is \"A sample root agent.\"\n\nyou are helpful",
+                  "type": "text"
+                }
+              ],
+              "gen_ai.tool.definitions": [
+                {
+                  "description": "A sample tool.",
+                  "name": "some_tool",
+                  "parameters": {
+                    "properties": {
+                      "arg1": {
+                        "type": "STRING"
+                      }
+                    },
+                    "required": [
+                      "arg1"
+                    ],
+                    "type": "OBJECT"
+                  },
+                  "type": "function"
+                }
+              ],
+              "gen_ai.usage.cache_read.input_tokens": 40,
               "gen_ai.usage.input_tokens": 100,
-              "gen_ai.usage.output_tokens": 20
+              "gen_ai.usage.output_tokens": 25,
+              "gen_ai.usage.reasoning.output_tokens": 5
             },
             "status": "UNSET",
-            "children": [
+            "children": [],
+            "logs": [
               {
-                "name": "execute_tool some_tool",
+                "event_name": "gen_ai.client.inference.operation.details",
+                "body": null,
                 "attributes": {
                   "gcp.vertex.agent.event_id": "PRESENT",
                   "gcp.vertex.agent.invocation_id": "PRESENT",
-                  "gcp.vertex.agent.llm_request": {},
-                  "gcp.vertex.agent.llm_response": {},
-                  "gcp.vertex.agent.tool_call_args": {},
-                  "gcp.vertex.agent.tool_response": {},
-                  "gen_ai.operation.name": "execute_tool",
-                  "gen_ai.system": "gcp.vertex.agent",
-                  "gen_ai.tool.call.id": "PRESENT",
-                  "gen_ai.tool.description": "A sample tool.",
-                  "gen_ai.tool.name": "some_tool",
-                  "gen_ai.tool.type": "FunctionTool"
-                },
-                "status": "UNSET",
-                "children": [],
-                "logs": []
+                  "gen_ai.agent.name": "some_root_agent",
+                  "gen_ai.conversation.id": "PRESENT",
+                  "gen_ai.provider.name": "gcp.gemini",
+                  "gen_ai.response.finish_reasons": [
+                    "stop"
+                  ],
+                  "gen_ai.tool.definitions": [
+                    {
+                      "description": "A sample tool.",
+                      "name": "some_tool",
+                      "type": "function"
+                    }
+                  ],
+                  "gen_ai.usage.cache_read.input_tokens": 40,
+                  "gen_ai.usage.input_tokens": 100,
+                  "gen_ai.usage.output_tokens": 25,
+                  "gen_ai.usage.reasoning.output_tokens": 5
+                }
               }
-            ],
-            "logs": []
+            ]
           },
           {
-            "name": "call_llm",
+            "name": "execute_tool some_tool",
             "attributes": {
               "gcp.vertex.agent.event_id": "PRESENT",
-              "gcp.vertex.agent.invocation_id": "PRESENT",
-              "gcp.vertex.agent.llm_request": {},
-              "gcp.vertex.agent.llm_response": {},
-              "gcp.vertex.agent.session_id": "PRESENT",
               "gen_ai.agent.name": "some_root_agent",
-              "gen_ai.request.model": "gemini-2.5-flash",
-              "gen_ai.response.finish_reasons": [
-                "stop"
-              ],
-              "gen_ai.system": "gcp.vertex.agent",
-              "gen_ai.usage.input_tokens": 150,
-              "gen_ai.usage.output_tokens": 35
+              "gen_ai.operation.name": "execute_tool",
+              "gen_ai.tool.call.arguments": {
+                "arg1": "val1"
+              },
+              "gen_ai.tool.call.id": "PRESENT",
+              "gen_ai.tool.call.result": {
+                "result": "processed val1"
+              },
+              "gen_ai.tool.description": "A sample tool.",
+              "gen_ai.tool.name": "some_tool",
+              "gen_ai.tool.type": "FunctionTool"
             },
             "status": "UNSET",
             "children": [],
             "logs": []
+          },
+          {
+            "name": "generate_content gemini-2.5-flash",
+            "attributes": {
+              "gcp.vertex.agent.event_id": "PRESENT",
+              "gcp.vertex.agent.invocation_id": "PRESENT",
+              "gen_ai.agent.name": "some_root_agent",
+              "gen_ai.conversation.id": "PRESENT",
+              "gen_ai.input.messages": [
+                {
+                  "parts": [
+                    {
+                      "content": "hello",
+                      "type": "text"
+                    }
+                  ],
+                  "role": "user"
+                },
+                {
+                  "parts": [
+                    {
+                      "arguments": {
+                        "arg1": "val1"
+                      },
+                      "id": "PRESENT",
+                      "name": "some_tool",
+                      "type": "tool_call"
+                    }
+                  ],
+                  "role": "assistant"
+                },
+                {
+                  "parts": [
+                    {
+                      "id": "PRESENT",
+                      "response": {
+                        "result": "processed val1"
+                      },
+                      "type": "tool_call_response"
+                    }
+                  ],
+                  "role": "user"
+                }
+              ],
+              "gen_ai.operation.name": "generate_content",
+              "gen_ai.output.messages": [
+                {
+                  "finish_reason": "stop",
+                  "parts": [
+                    {
+                      "content": "text response",
+                      "type": "text"
+                    }
+                  ],
+                  "role": "assistant"
+                }
+              ],
+              "gen_ai.provider.name": "gcp.gemini",
+              "gen_ai.request.model": "gemini-2.5-flash",
+              "gen_ai.response.finish_reasons": [
+                "stop"
+              ],
+              "gen_ai.system_instructions": [
+                {
+                  "content": "You are an agent. Your internal name is \"some_root_agent\".\n\nThe description about you is \"A sample root agent.\"\n\nyou are helpful",
+                  "type": "text"
+                }
+              ],
+              "gen_ai.tool.definitions": [
+                {
+                  "description": "A sample tool.",
+                  "name": "some_tool",
+                  "parameters": {
+                    "properties": {
+                      "arg1": {
+                        "type": "STRING"
+                      }
+                    },
+                    "required": [
+                      "arg1"
+                    ],
+                    "type": "OBJECT"
+                  },
+                  "type": "function"
+                }
+              ],
+              "gen_ai.usage.cache_read.input_tokens": 60,
+              "gen_ai.usage.input_tokens": 150,
+              "gen_ai.usage.output_tokens": 50,
+              "gen_ai.usage.reasoning.output_tokens": 15
+            },
+            "status": "UNSET",
+            "children": [],
+            "logs": [
+              {
+                "event_name": "gen_ai.client.inference.operation.details",
+                "body": null,
+                "attributes": {
+                  "gcp.vertex.agent.event_id": "PRESENT",
+                  "gcp.vertex.agent.invocation_id": "PRESENT",
+                  "gen_ai.agent.name": "some_root_agent",
+                  "gen_ai.conversation.id": "PRESENT",
+                  "gen_ai.provider.name": "gcp.gemini",
+                  "gen_ai.response.finish_reasons": [
+                    "stop"
+                  ],
+                  "gen_ai.tool.definitions": [
+                    {
+                      "description": "A sample tool.",
+                      "name": "some_tool",
+                      "type": "function"
+                    }
+                  ],
+                  "gen_ai.usage.cache_read.input_tokens": 60,
+                  "gen_ai.usage.input_tokens": 150,
+                  "gen_ai.usage.output_tokens": 50,
+                  "gen_ai.usage.reasoning.output_tokens": 15
+                }
+              }
+            ]
           }
         ],
         "logs": []

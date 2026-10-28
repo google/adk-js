@@ -1,7 +1,11 @@
 {
   "root_span": {
-    "name": "invocation",
-    "attributes": {},
+    "name": "invoke_workflow some_root_agent",
+    "attributes": {
+      "gen_ai.conversation.id": "PRESENT",
+      "gen_ai.operation.name": "invoke_workflow",
+      "gen_ai.workflow.name": "some_root_agent"
+    },
     "status": "UNSET",
     "children": [
       {
@@ -15,11 +19,45 @@
         "status": "UNSET",
         "children": [
           {
-            "name": "call_llm",
-            "attributes": {},
-            "status": "UNSET",
+            "name": "generate_content gemini-2.5-flash",
+            "attributes": {
+              "gcp.vertex.agent.event_id": "PRESENT",
+              "gcp.vertex.agent.invocation_id": "PRESENT",
+              "gen_ai.agent.name": "some_root_agent",
+              "gen_ai.conversation.id": "PRESENT",
+              "gen_ai.operation.name": "generate_content",
+              "gen_ai.provider.name": "gcp.gemini",
+              "gen_ai.request.model": "gemini-2.5-flash",
+              "gen_ai.tool.definitions": [
+                {
+                  "description": "A sample tool.",
+                  "name": "some_tool",
+                  "type": "function"
+                }
+              ]
+            },
+            "status": "ERROR",
             "children": [],
-            "logs": []
+            "logs": [
+              {
+                "event_name": "gen_ai.client.inference.operation.details",
+                "body": null,
+                "attributes": {
+                  "gcp.vertex.agent.event_id": "PRESENT",
+                  "gcp.vertex.agent.invocation_id": "PRESENT",
+                  "gen_ai.agent.name": "some_root_agent",
+                  "gen_ai.conversation.id": "PRESENT",
+                  "gen_ai.provider.name": "gcp.gemini",
+                  "gen_ai.tool.definitions": [
+                    {
+                      "description": "A sample tool.",
+                      "name": "some_tool",
+                      "type": "function"
+                    }
+                  ]
+                }
+              }
+            ]
           }
         ],
         "logs": []

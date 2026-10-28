@@ -6,6 +6,7 @@
 
 import {FunctionDeclaration, Type} from '@google/genai';
 import {requireAgent} from '../../agents/invocation_context.js';
+import {recordSkillActivity} from '../../telemetry/api/instrumentation.js';
 import {experimental} from '../../utils/experimental.js';
 import {BaseTool, RunAsyncToolRequest} from '../base_tool.js';
 import {SkillToolset} from './skill_toolset.js';
@@ -48,6 +49,7 @@ export class LoadSkillTool extends BaseTool {
       };
     }
 
+    const skillActivity = recordSkillActivity({kind: 'load', skillName});
     let skill;
     try {
       skill = await this.toolset.getOrFetchSkill(
@@ -67,6 +69,7 @@ export class LoadSkillTool extends BaseTool {
         error_code: 'SKILL_NOT_FOUND',
       };
     }
+    skillActivity.recordSkill(skill);
 
     // Record skill activation in agent state
     const agentName = requireAgent(toolContext.invocationContext).name;

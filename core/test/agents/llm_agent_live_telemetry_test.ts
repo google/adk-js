@@ -197,8 +197,8 @@ class FakeTextLlm extends BaseLlm {
   }
 }
 
-describe('call_llm span lifecycle', () => {
-  it('ends and exports the call_llm span when the consumer breaks early from runAsync', async () => {
+describe('generate_content span lifecycle', () => {
+  it('ends and exports the generate_content span when the consumer breaks early from runAsync', async () => {
     const sessionService = new InMemorySessionService();
     await sessionService.createSession({
       appName: APP_NAME,
@@ -223,6 +223,10 @@ describe('call_llm span lifecycle', () => {
       .getFinishedSpans()
       .map((s) => s.name)
       .sort();
-    expect(spanNames).toEqual(['call_llm', 'invocation', 'invoke_agent root']);
+    expect(spanNames).toEqual([
+      'generate_content fake-text-llm',
+      'invoke_agent root',
+      'invoke_workflow root',
+    ]);
   });
 });

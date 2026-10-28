@@ -205,30 +205,20 @@ async function callToolAsync(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any> {
   return recordToolExecution(
-    {
-      toolName: tool.name,
-      invocationContext: toolContext.invocationContext,
-    },
+    {tool, args, invocationContext: toolContext.invocationContext},
     async (scope) => {
-      try {
-        logger.debug(`callToolAsync ${tool.name}`);
-        const result = await tool.runAsync({args, toolContext});
-        scope.recordSuccess({
+      logger.debug(`callToolAsync ${tool.name}`);
+      const result = await tool.runAsync({args, toolContext});
+      scope.recordSuccess({
+        functionResponseEvent: buildResponseEvent(
           tool,
-          args,
-          functionResponseEvent: buildResponseEvent(
-            tool,
-            result,
-            toolContext,
-            toolContext.invocationContext,
-          ),
-          rawResult: result,
-        });
-        return result;
-      } catch (error: unknown) {
-        scope.recordError({tool, args, error});
-        throw error;
-      }
+          result,
+          toolContext,
+          toolContext.invocationContext,
+        ),
+        rawResult: result,
+      });
+      return result;
     },
   );
 }
@@ -450,18 +440,14 @@ async function answerUnresolvableCall({
   // The sibling path opens `execute_tool <name>` inside `callToolAsync`.
   // Without this an unresolvable call is the one tool interaction that
   // leaves no span, which is the worst case to be missing from a waterfall.
+  const toolName = functionCall.name || '<unnamed>';
+  const error = new Error(
+    `Function ${toolName} is not found in the toolsDict.`,
+  );
+  const tool = new ToolNotFoundPlaceholder(toolName, error);
   return recordToolExecution(
-    {
-      toolName: functionCall.name || '<unnamed>',
-      invocationContext,
-    },
+    {tool, args: functionCall.args ?? {}, invocationContext},
     async () => {
-      const toolName = functionCall.name || '<unnamed>';
-      const error = new Error(
-        `Function ${toolName} is not found in the toolsDict.`,
-      );
-      const tool = new ToolNotFoundPlaceholder(toolName, error);
-
       const onToolErrorResponse =
         await invocationContext.pluginManager.runOnToolErrorCallback({
           tool,
@@ -734,11 +720,7 @@ export async function handleFunctionCallList({
 
   if (functionResponseEvents.length > 1) {
     logger.debug('execute_tool (merged)');
-    recordMergedToolCalls({
-      responseEventId: mergedEvent.id,
-      functionResponseEvent: mergedEvent,
-      invocationContext,
-    });
+    recordMergedToolCalls({responseEventId: mergedEvent.id});
   }
   return mergedEvent;
 }

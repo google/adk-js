@@ -8,6 +8,7 @@ import {BaseContextCompactor} from '../../context/base_context_compactor.js';
 import {Event} from '../../events/event.js';
 import {LlmRequest} from '../../models/llm_request.js';
 import {ContextCompactionTrigger} from '../../plugins/base_plugin.js';
+import {recordCompaction} from '../../telemetry/api/instrumentation.js';
 import {InvocationContext} from '../invocation_context.js';
 import {BaseLlmRequestProcessor} from './base_llm_processor.js';
 
@@ -53,7 +54,9 @@ export class ContextCompactorRequestProcessor implements BaseLlmRequestProcessor
         });
 
         const oldEvents = new Set(invocationContext.session.events);
-        await Promise.resolve(compactor.compact(invocationContext));
+        await recordCompaction({invocationContext, trigger}, async () =>
+          compactor.compact(invocationContext),
+        );
 
         await invocationContext.pluginManager.runAfterContextCompaction({
           invocationContext,

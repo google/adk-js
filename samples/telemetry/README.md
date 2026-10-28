@@ -3,13 +3,25 @@
 ## Overview
 
 One prompt drives one tool call, and the sample exists to show what ADK records
-on the spans around it. The `execute_tool get_order_status` span carries
-`gen_ai.system = "gcp.vertex.agent"` and `gcp.vertex.agent.invocation_id`, the
-two attributes a trace backend uses to select ADK spans and to group the spans
-of one turn.
+around it. The sample installs a console span processor and a console log
+record processor with `maybeSetOtelProviders`, so running it from the CLI
+prints every span and log record with its attributes.
 
-The sample installs a console span processor with `maybeSetOtelProviders`, so
-running it from the CLI prints every span and its attributes.
+For `What is the status of order A-1042?` the console shows this span tree, each
+span printed when it ends:
+
+```text
+invoke_workflow telemetry
+└── invoke_agent telemetry
+    ├── generate_content gemini-flash-latest
+    ├── execute_tool get_order_status
+    └── generate_content gemini-flash-latest
+```
+
+and two log records named `gen_ai.client.inference.operation.details`, one per
+`generate_content` span and carrying that span's trace and span ids. Each record
+holds the model call's provider, finish reason and token counts. The prompt and
+the answer appear only when content capture is turned on (see How To).
 
 ## Running the Sample
 
@@ -56,13 +68,18 @@ graph TD
 
 ## How To
 
-**Install a span processor before the agent runs.** `maybeSetOtelProviders`
-runs at module scope, so every span of every later run goes through the
-processor.
+**Install a span processor and a log record processor before the agent
+runs.** `maybeSetOtelProviders` runs at module scope, so every span and log
+record of every later run goes through the processors.
 
 ```ts
 maybeSetOtelProviders([
-  {spanProcessors: [new SimpleSpanProcessor(new ConsoleSpanExporter())]},
+  {
+    spanProcessors: [new SimpleSpanProcessor(new ConsoleSpanExporter())],
+    logRecordProcessors: [
+      new SimpleLogRecordProcessor({exporter: new ConsoleLogRecordExporter()}),
+    ],
+  },
 ]);
 ```
 
@@ -89,10 +106,12 @@ the console exporter prints nothing there. Select the
 `execute_tool get_order_status` span in the Trace view to see the same
 attributes.
 
-**Turn off message content.** Set `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=false`
-and the argument, response and request payloads become `{}` while the
-identifying attributes stay.
+**Turn on message content.** Set
+`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=EVENT_ONLY` and each log
+record also carries the prompt, the system instruction, the answer and the
+session's `user.id`. `SPAN_ONLY` puts the messages and the tool arguments and
+result on the spans instead, and `SPAN_AND_EVENT` does both.
 
 ## Related Guides
 
-- [Telemetry](../../docs/guides/telemetry/index.md) - Every span and attribute ADK writes, the OTLP and Google Cloud exporters, and turning off message content.
+- [Telemetry](../../docs/guides/telemetry/index.md) - Every span, attribute and log record ADK writes, the OTLP and Google Cloud exporters, and message content capture.

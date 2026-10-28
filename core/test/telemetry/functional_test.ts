@@ -16,6 +16,13 @@ import {executeScenario} from './functional/scenarios/testcaseimpl.js';
 
 const CURRENT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const GOLDENS_DIR = path.join(CURRENT_DIR, 'goldens');
+const DIVERGENCES_PATH = path.join(CURRENT_DIR, 'functional_divergences.json');
+
+interface DivergenceEntry {
+  owner_name: string;
+  affected_tests: string[];
+  divergences: Array<{reason: string}>;
+}
 
 function getGoldenPath(tc: FunctionalTestCase): string {
   return path.join(GOLDENS_DIR, tc.scenario, `${tc.testId}.json`);
@@ -55,6 +62,24 @@ describe('functional telemetry goldens', () => {
       expect(digest).toEqual(expected);
     });
   }
+
+  it('lists only recorded cases, each with a reason, in the divergences file', async () => {
+    const entries = JSON.parse(
+      await fs.readFile(DIVERGENCES_PATH, 'utf8'),
+    ) as DivergenceEntry[];
+    const knownCases = new Set(
+      ALL_FUNCTIONAL_TEST_CASES.map((tc) => `${tc.scenario}/${tc.testId}`),
+    );
+
+    for (const entry of entries) {
+      for (const testCase of entry.affected_tests) {
+        expect(knownCases, entry.owner_name).toContain(testCase);
+      }
+      for (const divergence of entry.divergences) {
+        expect(divergence.reason, entry.owner_name).not.toBe('');
+      }
+    }
+  });
 
   it('has no orphaned golden files on disk', async () => {
     const actualFiles = await listJsonFilesRecursively(GOLDENS_DIR);

@@ -357,6 +357,29 @@ describe('buildTelemetryDigest', () => {
     );
   });
 
+  it('keeps siblings that start together in the order they were collected', () => {
+    const root = makeFakeSpan({name: 'root', spanId: 'span-root'});
+    const first = makeFakeSpan({
+      name: 'b_first_sibling',
+      spanId: 'span-first',
+      parentSpanId: 'span-root',
+      startTime: [1, 0],
+    });
+    const second = makeFakeSpan({
+      name: 'a_second_sibling',
+      spanId: 'span-second',
+      parentSpanId: 'span-root',
+      startTime: [1, 0],
+    });
+
+    const digest = buildTelemetryDigest([first, second, root]);
+
+    expect(digest.root_span.children.map((child) => child.name)).toEqual([
+      'b_first_sibling',
+      'a_second_sibling',
+    ]);
+  });
+
   it('throws when zero or multiple root spans are provided', () => {
     expect(() => buildTelemetryDigest([])).toThrow(/No root span found/);
 
