@@ -187,7 +187,8 @@ export abstract class BasePlugin {
    *
    * This is the final callback in the ADK lifecycle, suitable for cleanup,
    * final logging, or reporting tasks. It is skipped when execution fails;
-   * {@link onRunErrorCallback} is called instead.
+   * {@link onRunErrorCallback} is called instead. Receiving this callback does
+   * not imply success: recognized cancellation still propagates to the caller.
    *
    * @param _params.invocationContext The context for the entire invocation.
    * @returns undefined

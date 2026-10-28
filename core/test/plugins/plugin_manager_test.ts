@@ -175,6 +175,8 @@ describe('PluginManager', () => {
     plugin2 = new TestPlugin('plugin2');
   });
 
+  afterEach(() => vi.restoreAllMocks());
+
   it('should register and get a plugin', () => {
     service.registerPlugin(plugin1);
     expect(service.getPlugin('plugin1')).toBe(plugin1);
@@ -256,8 +258,6 @@ describe('PluginManager', () => {
     expect(error?.cause).toBe(originalException);
   });
 
-  afterEach(() => vi.restoreAllMocks());
-
   it.each([
     ['onAgentErrorCallback', 'runOnAgentErrorCallback'],
     ['onRunErrorCallback', 'runOnRunErrorCallback'],
@@ -267,8 +267,9 @@ describe('PluginManager', () => {
       const log = vi.spyOn(logger, 'error').mockImplementation(() => {});
       const order: string[] = [];
       const plugin3 = new TestPlugin('plugin3');
-      for (const plugin of [plugin1, plugin2, plugin3])
+      for (const plugin of [plugin1, plugin2, plugin3]) {
         service.registerPlugin(plugin);
+      }
       // Deliberately return a runtime value despite the notification-only API.
       vi.spyOn(plugin1, callback).mockImplementation(async () => {
         order.push('first');

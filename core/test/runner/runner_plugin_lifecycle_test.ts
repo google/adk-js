@@ -12,7 +12,6 @@ import {
   Context,
   createEvent,
   Event,
-  InMemoryRunner,
   InMemorySessionService,
   InvocationContext,
   LiveRequestQueue,
@@ -20,133 +19,7 @@ import {
 } from '@google/adk';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {logger} from '../../src/utils/logger.js';
-
-const cases = [
-  'complete',
-  'abort',
-  'abort-before',
-  'abort-event',
-  'break',
-  'return',
-  'error',
-] as const;
-
-describe.each(['runAsync', 'runLive'] as const)('issue #1132: %s', (mode) => {
-  it.each(cases)('%s notifies the recording plugin', async (outcome) => {
-    const calls: string[] = [];
-    const active = new Set<string>();
-    const failure = new Error('scripted agent failure');
-    const controller = new AbortController();
-
-    class RecordingPlugin extends BasePlugin {
-      override async beforeRunCallback({
-        invocationContext,
-      }: {
-        invocationContext: InvocationContext;
-      }) {
-        calls.push('before');
-        active.add(invocationContext.invocationId);
-        if (outcome === 'abort-before') controller.abort();
-        return undefined;
-      }
-
-      override async afterRunCallback({
-        invocationContext,
-      }: {
-        invocationContext: InvocationContext;
-      }) {
-        calls.push('after');
-        active.delete(invocationContext.invocationId);
-      }
-
-      override async onAgentErrorCallback() {
-        calls.push('agent-error');
-      }
-
-      override async onEventCallback({event}: {event: Event}) {
-        if (outcome === 'abort-event' && event.author === 'scripted') {
-          controller.abort();
-        }
-        return undefined;
-      }
-
-      override async onRunErrorCallback({
-        invocationContext,
-      }: {
-        invocationContext: InvocationContext;
-      }) {
-        calls.push('run-error');
-        active.delete(invocationContext.invocationId);
-      }
-    }
-
-    class ScriptedAgent extends BaseAgent {
-      protected override async *runAsyncImpl(ctx: InvocationContext) {
-        yield createEvent({
-          invocationId: ctx.invocationId,
-          author: this.name,
-          content: {role: 'model', parts: [{text: 'first event'}]},
-        });
-        if (outcome === 'error') throw failure;
-      }
-
-      protected override async *runLiveImpl(ctx: InvocationContext) {
-        yield* this.runAsyncImpl(ctx);
-      }
-    }
-
-    const runner = new InMemoryRunner({
-      appName: 'repro',
-      agent: new ScriptedAgent({name: 'scripted'}),
-      plugins: [new RecordingPlugin('recording')],
-    });
-    await runner.sessionService.createSession({
-      appName: 'repro',
-      userId: 'u',
-      sessionId: 's',
-    });
-    const params = {
-      userId: 'u',
-      sessionId: 's',
-      abortSignal: controller.signal,
-    };
-    const stream =
-      mode === 'runAsync'
-        ? runner.runAsync({...params, newMessage: {parts: [{text: 'go'}]}})
-        : runner.runLive({...params, liveRequestQueue: new LiveRequestQueue()});
-
-    let caught: unknown;
-    let yielded = 0;
-    try {
-      if (outcome === 'return') {
-        expect((await stream.next()).done).toBe(false);
-        yielded++;
-        await stream.return(undefined);
-      } else {
-        for await (const event of stream) {
-          yielded++;
-          if (outcome === 'break') break;
-          if (outcome === 'abort' && event.author === 'scripted') {
-            controller.abort();
-          }
-        }
-      }
-    } catch (error) {
-      caught = error;
-    }
-
-    if (outcome !== 'abort-before' && outcome !== 'abort-event') {
-      expect(yielded).toBeGreaterThan(0);
-    }
-    expect(caught).toBe(outcome === 'error' ? failure : undefined);
-    expect(calls).toEqual(
-      outcome === 'error'
-        ? ['before', 'agent-error', 'run-error']
-        : ['before', 'after'],
-    );
-    expect(active.size).toBe(0);
-  });
-});
+import {InvocationAbortedError} from '../../src/workflow/errors.js';
 
 type Mode = 'runAsync' | 'runLive';
 type Script = (ctx: InvocationContext) => AsyncGenerator<Event, void, void>;
@@ -216,7 +89,9 @@ async function setupLifecycle(
 
 async function collect(stream: AsyncGenerator<Event, void, void>) {
   const events: Event[] = [];
-  for await (const event of stream) events.push(event);
+  for await (const event of stream) {
+    events.push(event);
+  }
   return events;
 }
 
@@ -225,6 +100,81 @@ afterEach(() => vi.restoreAllMocks());
 describe.each(['runAsync', 'runLive'] as const)(
   '%s plugin lifecycle edge cases',
   (mode) => {
+    it.each([
+      'complete',
+      'abort',
+      'abort-before',
+      'abort-event',
+      'break',
+      'return',
+      'error',
+    ] as const)('releases invocation state after %s', async (outcome) => {
+      const active = new Set<string>();
+      const calls: string[] = [];
+      const failure = new Error('agent failure');
+      const h = await setupLifecycle(
+        mode,
+        new LifecycleAgent(async function* (ctx) {
+          yield* oneEvent(ctx);
+          if (outcome === 'error') throw failure;
+        }),
+      );
+      h.plugin.beforeRunCallback.mockImplementation(
+        async ({invocationContext}) => {
+          calls.push('before');
+          active.add(invocationContext.invocationId);
+          if (outcome === 'abort-before') h.controller.abort();
+          return undefined;
+        },
+      );
+      h.plugin.afterRunCallback.mockImplementation(
+        async ({invocationContext}) => {
+          calls.push('after');
+          active.delete(invocationContext.invocationId);
+        },
+      );
+      h.plugin.onAgentErrorCallback.mockImplementation(async () => {
+        calls.push('agent-error');
+      });
+      h.plugin.onRunErrorCallback.mockImplementation(
+        async ({invocationContext}) => {
+          calls.push('run-error');
+          active.delete(invocationContext.invocationId);
+        },
+      );
+      vi.spyOn(h.plugin, 'onEventCallback').mockImplementation(
+        async ({event}) => {
+          if (outcome === 'abort-event' && event.author === 'agent')
+            h.controller.abort();
+          return undefined;
+        },
+      );
+      let yielded = 0;
+      const consume = async () => {
+        if (outcome === 'return') {
+          expect((await h.stream.next()).done).toBe(false);
+          yielded++;
+          await h.stream.return();
+        } else {
+          for await (const _event of h.stream) {
+            yielded++;
+            if (outcome === 'break') break;
+            if (outcome === 'abort') h.controller.abort();
+          }
+        }
+      };
+      if (outcome === 'error') await expect(consume()).rejects.toBe(failure);
+      else await consume();
+      if (outcome !== 'abort-before' && outcome !== 'abort-event')
+        expect(yielded).toBeGreaterThan(0);
+      expect(calls).toEqual(
+        outcome === 'error'
+          ? ['before', 'agent-error', 'run-error']
+          : ['before', 'after'],
+      );
+      expect(active.size).toBe(0);
+    });
+
     it.each(['complete', 'close'] as const)(
       'finalizes a before-run response on %s',
       async (termination) => {
@@ -352,7 +302,9 @@ describe.each(['runAsync', 'runLive'] as const)(
             value: undefined,
           });
         } else if (termination === 'break') {
-          for await (const _event of h.stream) break;
+          for await (const _event of h.stream) {
+            break;
+          }
         } else {
           await expect(collect(h.stream)).rejects.toMatchObject({
             cause: failure,
@@ -405,8 +357,9 @@ describe.each(['runAsync', 'runLive'] as const)(
             ([args]) => args.agent.name,
           ),
         ).toEqual(handled ? ['child'] : ['child', 'parent']);
-        for (const [args] of h.plugin.onAgentErrorCallback.mock.calls)
+        for (const [args] of h.plugin.onAgentErrorCallback.mock.calls) {
           expect(args.error).toBe(failure);
+        }
       },
     );
 
@@ -466,8 +419,199 @@ it('reports workflow-root errors without inventing agent errors', async () => {
     }
   }
   const h = await setupLifecycle('runAsync', new FailingNode({name: 'node'}));
-  await expect(collect(h.stream)).rejects.toThrow();
+  await expect(collect(h.stream)).rejects.toBe(failure);
   expect(h.plugin.onRunErrorCallback).toHaveBeenCalledTimes(1);
+  expect(h.plugin.onRunErrorCallback.mock.calls[0][0].error).toBe(failure);
   expect(h.plugin.onAgentErrorCallback).not.toHaveBeenCalled();
   expect(h.plugin.afterRunCallback).not.toHaveBeenCalled();
 });
+
+describe.each(['runAsync', 'runLive'] as const)(
+  '%s thrown cancellation',
+  (mode) => {
+    it.each([
+      'default',
+      'AbortError',
+      'reason-error',
+      'reason-object',
+      'reason-string',
+      'reason-null',
+      'reason-zero',
+      'reason-false',
+      'reason-empty',
+      'wrapped',
+      'InvocationAbortedError',
+    ] as const)(
+      'finalizes %s cancellation without error notifications',
+      async (kind) => {
+        let cancellation: unknown;
+        const agent = new LifecycleAgent(async function* (ctx) {
+          yield* oneEvent(ctx);
+          if (kind === 'default') h.controller.abort();
+          else if (kind === 'reason-error')
+            h.controller.abort(new Error('cancelled'));
+          else if (kind === 'reason-object')
+            h.controller.abort({cancelled: true});
+          else if (kind === 'reason-string') h.controller.abort('cancelled');
+          else if (kind === 'reason-null') h.controller.abort(null);
+          else if (kind === 'reason-zero') h.controller.abort(0);
+          else if (kind === 'reason-false') h.controller.abort(false);
+          else if (kind === 'reason-empty') h.controller.abort('');
+          else h.controller.abort();
+          cancellation =
+            kind === 'AbortError'
+              ? new DOMException('cancelled', 'AbortError')
+              : kind === 'InvocationAbortedError'
+                ? new InvocationAbortedError('cancelled')
+                : kind === 'wrapped'
+                  ? new Error('wrapped cancellation', {
+                      cause: h.controller.signal.reason,
+                    })
+                  : h.controller.signal.reason;
+          throw cancellation;
+        });
+        const h = await setupLifecycle(mode, agent);
+        const order: string[] = [];
+        vi.spyOn(h.plugin, 'onEventCallback').mockImplementation(
+          async ({event}) => {
+            if (event.errorCode === 'INVOCATION_ABORTED') order.push('sealed');
+            return undefined;
+          },
+        );
+        h.plugin.afterRunCallback.mockImplementation(async () => {
+          order.push('after');
+        });
+        const result = await collect(h.stream).then(
+          () => ({failed: false}),
+          (error: unknown) => ({failed: true, error}),
+        );
+        expect(result).toEqual({failed: true, error: cancellation});
+        expect(h.plugin.afterRunCallback).toHaveBeenCalledTimes(1);
+        expect(h.plugin.onAgentErrorCallback).not.toHaveBeenCalled();
+        expect(h.plugin.onRunErrorCallback).not.toHaveBeenCalled();
+        expect(order).toEqual(
+          mode === 'runAsync' ? ['sealed', 'after'] : ['after'],
+        );
+      },
+    );
+
+    it.each(['before-run', 'before-agent', 'after-agent', 'event'] as const)(
+      'finalizes cancellation from %s, including plugin wrappers',
+      async (stage) => {
+        const cancellation = new DOMException('cancelled', 'AbortError');
+        const cancel = () => {
+          h.controller.abort();
+          throw cancellation;
+        };
+        const config =
+          stage === 'before-agent'
+            ? {beforeAgentCallback: cancel}
+            : stage === 'after-agent'
+              ? {afterAgentCallback: cancel}
+              : {};
+        const h = await setupLifecycle(
+          mode,
+          new LifecycleAgent(oneEvent, config),
+        );
+        if (stage === 'before-run')
+          h.plugin.beforeRunCallback.mockImplementation(async () => cancel());
+        else if (stage === 'event')
+          vi.spyOn(h.plugin, 'onEventCallback').mockImplementation(
+            async ({event}) => {
+              if (event.errorCode !== 'INVOCATION_ABORTED') cancel();
+              return undefined;
+            },
+          );
+        const error = await collect(h.stream).catch((error: unknown) => error);
+        expect(
+          stage === 'before-run' || stage === 'event'
+            ? (error as Error).cause
+            : error,
+        ).toBe(cancellation);
+        expect(h.plugin.afterRunCallback).toHaveBeenCalledTimes(1);
+        expect(h.plugin.onAgentErrorCallback).not.toHaveBeenCalled();
+        expect(h.plugin.onRunErrorCallback).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(['unrelated-after-abort', 'AbortError-without-abort'] as const)(
+      'continues to report %s as failure',
+      async (kind) => {
+        const failure =
+          kind === 'AbortError-without-abort'
+            ? new DOMException('failed', 'AbortError')
+            : new Error('unrelated failure');
+        const agent = new LifecycleAgent(async function* (ctx) {
+          yield* oneEvent(ctx);
+          if (kind === 'unrelated-after-abort') h.controller.abort();
+          throw failure;
+        });
+        const h = await setupLifecycle(mode, agent);
+        await expect(collect(h.stream)).rejects.toBe(failure);
+        expect(h.plugin.afterRunCallback).not.toHaveBeenCalled();
+        expect(h.plugin.onAgentErrorCallback).toHaveBeenCalledTimes(1);
+        expect(h.plugin.onAgentErrorCallback.mock.calls[0][0].error).toBe(
+          failure,
+        );
+        expect(h.plugin.onRunErrorCallback).toHaveBeenCalledTimes(1);
+        expect(h.plugin.onRunErrorCallback.mock.calls[0][0].error).toBe(
+          failure,
+        );
+      },
+    );
+
+    it('preserves cancellation when completion throws', async () => {
+      vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+      const cancellation = new DOMException('cancelled', 'AbortError');
+      const agent = new LifecycleAgent(async function* (ctx) {
+        yield* oneEvent(ctx);
+        h.controller.abort(cancellation);
+        throw cancellation;
+      });
+      const h = await setupLifecycle(mode, agent);
+      const completionFailure = new Error('completion failure');
+      h.plugin.afterRunCallback.mockRejectedValue(completionFailure);
+      await expect(collect(h.stream)).rejects.toBe(cancellation);
+      expect(h.plugin.afterRunCallback).toHaveBeenCalledTimes(1);
+      expect(h.plugin.onAgentErrorCallback).not.toHaveBeenCalled();
+      expect(h.plugin.onRunErrorCallback).toHaveBeenCalledTimes(1);
+      expect(h.plugin.onRunErrorCallback.mock.calls[0][0].error.cause).toBe(
+        completionFailure,
+      );
+    });
+  },
+);
+
+it.each(['cooperative', 'deadline'] as const)(
+  'finalizes %s workflow cancellation without inventing agent errors',
+  async (kind) => {
+    const cancellation = new DOMException('cancelled', 'AbortError');
+    class CancellingNode extends BaseNode {
+      protected override async *runImpl() {
+        yield* [];
+        h.controller.abort(cancellation);
+        throw cancellation;
+      }
+    }
+    const h = await setupLifecycle(
+      'runAsync',
+      new CancellingNode({
+        name: 'node',
+        ...(kind === 'deadline' ? {timeout: 60} : {}),
+      }),
+    );
+    const error = await collect(h.stream).catch((error: unknown) => error);
+    if (kind === 'cooperative') {
+      expect(error).toBe(cancellation);
+    } else {
+      expect(error).toBeInstanceOf(InvocationAbortedError);
+      expect((error as Error).message).toBe(
+        "Invocation aborted while running node 'node'.",
+      );
+    }
+    expect(h.plugin.afterRunCallback).toHaveBeenCalledTimes(1);
+    expect(h.plugin.onAgentErrorCallback).not.toHaveBeenCalled();
+    expect(h.plugin.onRunErrorCallback).not.toHaveBeenCalled();
+  },
+);

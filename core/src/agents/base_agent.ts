@@ -14,6 +14,7 @@ import {
   traceAgentInvocation,
   tracer,
 } from '../telemetry/tracing.js';
+import {isInvocationCancellation, toError} from '../utils/error_utils.js';
 import {logger} from '../utils/logger.js';
 import {BaseNode, BaseNodeConfig} from '../workflow/base_node.js';
 import type {NodeContext} from '../workflow/node_context.js';
@@ -290,7 +291,9 @@ export abstract class BaseAgent<
               yield afterAgentCallbackEvent;
             }
           } catch (error) {
-            await this.handleAgentErrorCallback(context, error);
+            if (!isInvocationCancellation(error, context.abortSignal)) {
+              await this.handleAgentErrorCallback(context, error);
+            }
             throw error;
           }
         },
@@ -373,7 +376,9 @@ export abstract class BaseAgent<
               yield afterAgentCallbackEvent;
             }
           } catch (error) {
-            await this.handleAgentErrorCallback(context, error);
+            if (!isInvocationCancellation(error, context.abortSignal)) {
+              await this.handleAgentErrorCallback(context, error);
+            }
             throw error;
           }
         },
@@ -392,12 +397,7 @@ export abstract class BaseAgent<
       await invocationContext.pluginManager.runOnAgentErrorCallback({
         agent: this,
         callbackContext: new Context({invocationContext}),
-        error:
-          error instanceof Error
-            ? error
-            : new Error('Agent execution threw a non-Error value.', {
-                cause: error,
-              }),
+        error: toError(error),
       });
     } catch (callbackError) {
       logger.error(
