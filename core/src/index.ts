@@ -120,6 +120,28 @@ export {
   IntegrationConnectorTool,
   type IntegrationConnectorToolOptions,
 } from './tools/application_integration_tool/integration_connector_tool.js';
+export {
+  DiscoveryEngineRestClient,
+  DiscoveryEngineSearchTool,
+  isDiscoveryEngineSearchTool,
+  SearchResultMode,
+  type BaseDiscoveryEngineSearchToolParams,
+  type DiscoveryEngineChunk,
+  type DiscoveryEngineChunkDocumentMetadata,
+  type DiscoveryEngineContentSearchSpec,
+  type DiscoveryEngineDataStoreParams,
+  type DiscoveryEngineDataStoreSpec,
+  type DiscoveryEngineDocument,
+  type DiscoveryEngineRestClientOptions,
+  type DiscoveryEngineSearchApiRequest,
+  type DiscoveryEngineSearchApiResponse,
+  type DiscoveryEngineSearchClient,
+  type DiscoveryEngineSearchEngineParams,
+  type DiscoveryEngineSearchResponse,
+  type DiscoveryEngineSearchResultItem,
+  type DiscoveryEngineSearchToolParams,
+  type NormalizedDataStoreSpec,
+} from './tools/discovery_engine_search_tool.js';
 export {LOAD_WEB_PAGE, loadWebPage} from './tools/load_web_page.js';
 export type {LoadWebPageOptions} from './tools/load_web_page.js';
 export {
