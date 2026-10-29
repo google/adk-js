@@ -345,6 +345,41 @@ Instructions`,
       await fs.rm(tempDir, {recursive: true, force: true});
     });
 
+    it('keys nested resources by forward-slash paths on every OS', async () => {
+      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-skill-test-'));
+      const skillDir = path.join(tempDir, 'test-skill');
+      await fs.mkdir(path.join(skillDir, 'references', 'api'), {
+        recursive: true,
+      });
+      await fs.mkdir(path.join(skillDir, 'scripts', 'lib'), {recursive: true});
+      await fs.writeFile(
+        path.join(skillDir, 'SKILL.md'),
+        `---
+name: test-skill
+description: A test skill
+---
+Instructions`,
+      );
+      await fs.writeFile(
+        path.join(skillDir, 'references', 'api', 'auth.md'),
+        'auth docs',
+      );
+      await fs.writeFile(
+        path.join(skillDir, 'scripts', 'lib', 'helper.py'),
+        'print(1)',
+      );
+
+      const skill = await loadSkillFromDir(skillDir);
+      expect(Object.keys(skill.resources?.references ?? {})).toEqual([
+        'api/auth.md',
+      ]);
+      expect(Object.keys(skill.resources?.scripts ?? {})).toEqual([
+        'lib/helper.py',
+      ]);
+
+      await fs.rm(tempDir, {recursive: true, force: true});
+    });
+
     it('keeps non-UTF-8 binary assets as Buffer', async () => {
       tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-skill-test-'));
       const skillDir = path.join(tempDir, 'test-skill');

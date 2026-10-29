@@ -71,8 +71,9 @@ function decodeSkillFileContent(data: Buffer): string | Buffer {
  * Recursively loads files from a directory into a dictionary.
  *
  * @param directoryPath - The absolute or relative path of the directory to load.
- * @returns A promise that resolves to a dictionary where keys are relative file paths
- * and values are the file contents (as string for UTF-8 or Buffer otherwise).
+ * @returns A promise that resolves to a dictionary where keys are forward-slash
+ * relative paths on every OS, matching zipped skills and adk-python, and values
+ * are the file contents (as string for UTF-8 or Buffer otherwise).
  */
 async function loadDir(
   directoryPath: string,
@@ -90,7 +91,10 @@ async function loadDir(
 
         await walk(fullPath);
       } else if (entry.isFile()) {
-        const relativePath = path.relative(directoryPath, fullPath);
+        const relativePath = path
+          .relative(directoryPath, fullPath)
+          .split(path.sep)
+          .join('/');
         if (IGNORED_EXTENSIONS.has(path.extname(entry.name))) {
           continue;
         }
