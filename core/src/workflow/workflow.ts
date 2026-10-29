@@ -191,8 +191,7 @@ export class Workflow extends BaseNode {
     );
 
     const telemetryScope = recordWorkflowInvocation({
-      workflowName: this.name,
-      nodePath: ctx.nodePath,
+      workflow: this,
       sessionId: ctx.invocationContext.session.id,
     });
     try {
@@ -202,6 +201,9 @@ export class Workflow extends BaseNode {
       await telemetryScope.run(() =>
         this.orchestrate(ctx, nodeInput, dynamicState, abort.controller),
       );
+    } catch (error: unknown) {
+      telemetryScope.end(error);
+      throw error;
     } finally {
       abort.dispose();
       telemetryScope.end();

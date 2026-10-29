@@ -249,35 +249,36 @@ export abstract class BaseAgent<
   async *runAsync(
     parentContext: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    yield* recordAgentInvocation({agent: this}, (scope) =>
-      async function* (this: BaseAgent) {
-        const context = this.createInvocationContext(parentContext);
+    yield* recordAgentInvocation(
+      {agent: this, invocationContext: parentContext},
+      () =>
+        async function* (this: BaseAgent) {
+          const context = this.createInvocationContext(parentContext);
 
-        const beforeAgentCallbackEvent =
-          await this.handleBeforeAgentCallback(context);
-        if (beforeAgentCallbackEvent) {
-          yield beforeAgentCallbackEvent;
-        }
+          const beforeAgentCallbackEvent =
+            await this.handleBeforeAgentCallback(context);
+          if (beforeAgentCallbackEvent) {
+            yield beforeAgentCallbackEvent;
+          }
 
-        if (context.endInvocation || parentContext.abortSignal?.aborted) {
-          return;
-        }
+          if (context.endInvocation || parentContext.abortSignal?.aborted) {
+            return;
+          }
 
-        scope.recordInvocation(context);
-        for await (const event of this.runAsyncImpl(context)) {
-          yield event;
-        }
+          for await (const event of this.runAsyncImpl(context)) {
+            yield event;
+          }
 
-        if (context.endInvocation || parentContext.abortSignal?.aborted) {
-          return;
-        }
+          if (context.endInvocation || parentContext.abortSignal?.aborted) {
+            return;
+          }
 
-        const afterAgentCallbackEvent =
-          await this.handleAfterAgentCallback(context);
-        if (afterAgentCallbackEvent) {
-          yield afterAgentCallbackEvent;
-        }
-      }.call(this),
+          const afterAgentCallbackEvent =
+            await this.handleAfterAgentCallback(context);
+          if (afterAgentCallbackEvent) {
+            yield afterAgentCallbackEvent;
+          }
+        }.call(this),
     );
   }
 
@@ -320,34 +321,36 @@ export abstract class BaseAgent<
   async *runLive(
     parentContext: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    yield* recordAgentInvocation({agent: this}, () =>
-      async function* (this: BaseAgent) {
-        const context = this.createInvocationContext(parentContext);
+    yield* recordAgentInvocation(
+      {agent: this, invocationContext: parentContext},
+      () =>
+        async function* (this: BaseAgent) {
+          const context = this.createInvocationContext(parentContext);
 
-        const beforeAgentCallbackEvent =
-          await this.handleBeforeAgentCallback(context);
-        if (beforeAgentCallbackEvent) {
-          yield beforeAgentCallbackEvent;
-        }
+          const beforeAgentCallbackEvent =
+            await this.handleBeforeAgentCallback(context);
+          if (beforeAgentCallbackEvent) {
+            yield beforeAgentCallbackEvent;
+          }
 
-        if (context.endInvocation || parentContext.abortSignal?.aborted) {
-          return;
-        }
+          if (context.endInvocation || parentContext.abortSignal?.aborted) {
+            return;
+          }
 
-        for await (const event of this.runLiveImpl(context)) {
-          yield event;
-        }
+          for await (const event of this.runLiveImpl(context)) {
+            yield event;
+          }
 
-        if (context.endInvocation || parentContext.abortSignal?.aborted) {
-          return;
-        }
+          if (context.endInvocation || parentContext.abortSignal?.aborted) {
+            return;
+          }
 
-        const afterAgentCallbackEvent =
-          await this.handleAfterAgentCallback(context);
-        if (afterAgentCallbackEvent) {
-          yield afterAgentCallbackEvent;
-        }
-      }.call(this),
+          const afterAgentCallbackEvent =
+            await this.handleAfterAgentCallback(context);
+          if (afterAgentCallbackEvent) {
+            yield afterAgentCallbackEvent;
+          }
+        }.call(this),
     );
   }
 

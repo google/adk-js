@@ -12,6 +12,7 @@ import {
   File,
 } from '../../code_executors/code_execution_utils.js';
 import {Script, Skill} from '../../skills/skill.js';
+import {recordSkillActivity} from '../../telemetry/api/instrumentation.js';
 import {experimental} from '../../utils/experimental.js';
 import {
   getMimeTypeAndEncoding,
@@ -79,6 +80,11 @@ export class RunSkillScriptTool extends BaseTool {
       };
     }
 
+    const skillActivity = recordSkillActivity({
+      kind: 'script',
+      skillName,
+      scriptPath,
+    });
     let skill;
     try {
       skill = await this.toolset.getOrFetchSkill(
@@ -98,6 +104,7 @@ export class RunSkillScriptTool extends BaseTool {
         errorCode: 'SKILL_NOT_FOUND',
       };
     }
+    skillActivity.recordSkill(skill);
 
     const relScriptPath = scriptPath.startsWith('scripts/')
       ? scriptPath.substring('scripts/'.length)

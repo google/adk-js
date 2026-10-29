@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {context, trace} from '@opentelemetry/api';
+import {context, SpanStatusCode, trace} from '@opentelemetry/api';
 import {AsyncLocalStorageContextManager} from '@opentelemetry/context-async-hooks';
 import {
   BasicTracerProvider,
@@ -67,26 +67,26 @@ describe('workflow telemetry — span tree', () => {
 
     const wfSpan = onlySpan('invoke_workflow seq');
     const nodeSpans = ['step_a', 'step_b', 'step_c'].map((name) =>
-      onlySpan(`execute_node ${name}`),
+      onlySpan(`invoke_node ${name}`),
     );
     for (const nodeSpan of nodeSpans) {
       expectChildOf(nodeSpan, wfSpan);
     }
 
-    expectChildOf(wfSpan, onlySpan('execute_node seq'));
+    // The workflow is a node too, but its own span stands for it.
+    expect(exporter.getFinishedSpans().map((span) => span.name)).not.toContain(
+      'invoke_node seq',
+    );
 
-    expect(wfSpan.attributes).toMatchObject({
+    expect(wfSpan.attributes).toEqual({
       'gen_ai.operation.name': 'invoke_workflow',
       'gen_ai.conversation.id': 's1',
-      'adk.workflow.name': 'seq',
-      'adk.node.path': 'seq',
+      'gen_ai.workflow.name': 'seq',
     });
-    expect(nodeSpans[0].attributes).toMatchObject({
-      'gen_ai.operation.name': 'execute_node',
-      'adk.node.path': 'seq.step_a',
-      'adk.node.attempt': 1,
-      'adk.node.status': 'completed',
-      'adk.node.interrupt_count': 0,
+    expect(nodeSpans[0].attributes).toEqual({
+      'gen_ai.operation.name': 'invoke_node',
+      'gen_ai.conversation.id': 's1',
+      'gcp.vertex.agent.associated_event_ids': [expect.any(String)],
     });
   });
 
@@ -120,8 +120,8 @@ describe('workflow telemetry — span tree', () => {
     await driveWorkflow(wf, 'x');
 
     const wfSpan = onlySpan('invoke_workflow fan');
-    const leftSpan = onlySpan('execute_node left');
-    const rightSpan = onlySpan('execute_node right');
+    const leftSpan = onlySpan('invoke_node left');
+    const rightSpan = onlySpan('invoke_node right');
 
     // Overlap is guaranteed structurally, not asserted on timestamps: neither
     // node can return until the other has started, so the run only completes
@@ -139,11 +139,11 @@ describe('workflow telemetry — span tree', () => {
     // The point of binding the context per node: work started inside one node
     // nests under that node, never under whichever sibling happens to be
     // running alongside it.
-    expectChildOf(onlySpan('execute_node inner_left'), leftSpan);
-    expectChildOf(onlySpan('execute_node inner_right'), rightSpan);
+    expectChildOf(onlySpan('invoke_node inner_left'), leftSpan);
+    expectChildOf(onlySpan('invoke_node inner_right'), rightSpan);
   });
 
-  it('emits one attempt span per try for a retried node', async () => {
+  it('covers every try of a retried node with one node span', async () => {
     let attempts = 0;
     const flaky = new FnNode(
       'flaky',
@@ -161,26 +161,10 @@ describe('workflow telemetry — span tree', () => {
     expect((await driveWorkflow(wf, 'x')).output).toBe('ok');
     expect(attempts).toBe(2);
 
-    const nodeSpan = onlySpan('execute_node flaky');
-    const attemptSpans = spansNamed('execute_node_attempt flaky');
-    expect(attemptSpans).toHaveLength(2);
-    for (const attemptSpan of attemptSpans) {
-      expectChildOf(attemptSpan, nodeSpan);
-    }
-
-    expect(attemptSpans[0].attributes).toMatchObject({
-      'adk.node.path': 'retry_wf.flaky',
-      'adk.node.attempt': 1,
-      'adk.node.status': 'failed',
-    });
-    expect(attemptSpans[1].attributes).toMatchObject({
-      'adk.node.attempt': 2,
-      'adk.node.status': 'completed',
-    });
-    expect(nodeSpan.attributes).toMatchObject({
-      'adk.node.attempt': 2,
-      'adk.node.status': 'completed',
-    });
+    const nodeSpan = onlySpan('invoke_node flaky');
+    expectChildOf(nodeSpan, onlySpan('invoke_workflow retry_wf'));
+    expect(nodeSpan.status.code).toBe(SpanStatusCode.UNSET);
+    expect(spansNamed('execute_node_attempt flaky')).toHaveLength(0);
   });
 
   it('does not emit attempt spans for a node without a retry config', async () => {
@@ -192,7 +176,7 @@ describe('workflow telemetry — span tree', () => {
     expect(spansNamed('execute_node_attempt plain')).toHaveLength(0);
   });
 
-  it('marks a failed node span as failed', async () => {
+  it('marks a failed node span and its workflow span as ERROR', async () => {
     const boom = new FnNode('boom', () => {
       throw new Error('kaboom');
     });
@@ -200,9 +184,10 @@ describe('workflow telemetry — span tree', () => {
 
     await expect(driveWorkflow(wf, 'x')).rejects.toThrow('kaboom');
 
-    expect(onlySpan('execute_node boom').attributes).toMatchObject({
-      'adk.node.status': 'failed',
-    });
+    expect(onlySpan('invoke_node boom').status.code).toBe(SpanStatusCode.ERROR);
+    expect(onlySpan('invoke_workflow fail_wf').status.code).toBe(
+      SpanStatusCode.ERROR,
+    );
   });
 });
 
@@ -234,8 +219,11 @@ describe('workflow telemetry — a workflow run as a runner root', () => {
       void _;
     }
 
+    // The runner's root span is the workflow's own span: one
+    // `invoke_workflow`, with the node directly under it.
     const workflowSpan = onlySpan('invoke_workflow traced_root');
-    const nodeSpan = onlySpan('execute_node step');
+    expect(workflowSpan.parentSpanContext).toBeUndefined();
+    const nodeSpan = onlySpan('invoke_node step');
     expectChildOf(nodeSpan, workflowSpan);
   });
 

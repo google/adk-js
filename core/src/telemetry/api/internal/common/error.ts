@@ -51,8 +51,8 @@ export function resolveErrorType(error: unknown): string {
  * Gets an explicitly reported error type from a tool response object.
  *
  * Tools may return an error payload instead of throwing. Only the dedicated
- * error type field is copied to telemetry; the payload itself is never used as
- * the error classification.
+ * error type or error code field is copied to telemetry; the payload itself is
+ * never used as the error classification.
  */
 export function getToolResponseErrorType(result: unknown): string | undefined {
   if (result === null || typeof result !== 'object' || Array.isArray(result)) {
@@ -64,7 +64,11 @@ export function getToolResponseErrorType(result: unknown): string | undefined {
       return undefined;
     }
     const response = result as Record<string, unknown>;
-    const errorType = response.errorType ?? response.error_type;
+    const errorType =
+      response.errorType ??
+      response.error_type ??
+      response.errorCode ??
+      response.error_code;
     return typeof errorType === 'string' ? errorType : undefined;
   } catch {
     // Telemetry should not change tool behavior if a custom response object

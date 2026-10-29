@@ -240,12 +240,14 @@ function buildSpanTree(
     owner.logs.push(buildLogDigest(log));
   }
 
+  // Span start times have millisecond resolution, so siblings can start in the
+  // same millisecond. Those keep the order they were collected in (the sort is
+  // stable), which is the order they ended. End times cannot break the tie:
+  // each one is the span's millisecond start plus a sub-millisecond elapsed
+  // time, so they do not compare across spans that share a start millisecond.
   const orderedSpans = [...spans].sort((a, b) => {
     const diff = hrTimeToNanos(a.startTime) - hrTimeToNanos(b.startTime);
-    if (diff !== 0n) {
-      return diff < 0n ? -1 : 1;
-    }
-    return a.name.localeCompare(b.name);
+    return diff < 0n ? -1 : diff > 0n ? 1 : 0;
   });
 
   let root: SpanDigest | undefined;

@@ -305,7 +305,7 @@ export class Runner {
     // Setup the session and invocation context
     // =========================================================================
     try {
-      yield* recordInvocation(() =>
+      yield* recordInvocation({entrypoint: this.agent, sessionId}, () =>
         async function* (this: Runner) {
           const session = await this.resolveSession(userId, sessionId);
 
@@ -754,6 +754,7 @@ export class Runner {
       throw new Error('runLive is only supported for agents.');
     }
     const agent = this.agent;
+    const {sessionId} = params;
 
     const runConfig = createRunConfig(params.runConfig);
     if (!runConfig.responseModalities?.length) {
@@ -768,7 +769,7 @@ export class Runner {
       runConfig.inputAudioTranscription ??= {};
     }
 
-    yield* recordInvocation(() =>
+    yield* recordInvocation({entrypoint: agent, sessionId}, () =>
       async function* (this: Runner) {
         const session = await this.sessionService.getOrCreateSession({
           appName: this.appName,

@@ -4,23 +4,30 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {context, type Context, trace, type Tracer} from '@opentelemetry/api';
+import {
+  context,
+  type Context,
+  type Span,
+  SpanStatusCode,
+  trace,
+  type Tracer,
+} from '@opentelemetry/api';
 
 import {version} from '../../../../version.js';
-import {GEN_AI_SYSTEM_VALUE} from '../common/attributes.js';
+import {GEN_AI_SYSTEM_VALUE, SCHEMA_URL} from '../common/attributes.js';
+import {resolveErrorType} from '../common/error.js';
 
 /**
- * Returns the OpenTelemetry tracer for ADK spans from the active global
- * tracer provider.
+ * Returns the ADK tracer from the global `TracerProvider`.
  *
- * Resolved on each call rather than cached at module load time so that
- * tests and callers that replace the global `TracerProvider` after import
- * (via `trace.disable()` and `trace.setGlobalTracerProvider(...)`) are
- * observed instead of latching onto the first provider's `ProxyTracer`
- * delegate.
+ * Resolved on every call rather than once at import, like the logger, so the
+ * tracer carries the schema URL whichever provider the application registers
+ * and whenever it registers it.
  */
 export function getTracer(): Tracer {
-  return trace.getTracer(GEN_AI_SYSTEM_VALUE, version);
+  return trace
+    .getTracerProvider()
+    .getTracer(GEN_AI_SYSTEM_VALUE, version, {schemaUrl: SCHEMA_URL});
 }
 
 /**
@@ -45,4 +52,26 @@ export function bindOtelContextToAsyncGenerator<T>(
       );
     },
   };
+}
+
+/**
+ * Records a failure on a span: the exception and an ERROR status.
+ *
+ * The status message is the error type rather than the error message, which
+ * can carry user data that the content capture setting does not gate. Only an
+ * `Error` instance is recorded as an exception; any other thrown value is
+ * recorded by its type alone.
+ */
+export function setSpanError(span: Span, error: unknown): void {
+  const errorType = resolveErrorType(error);
+  let exception: Error | string;
+  try {
+    exception = error instanceof Error ? error : errorType;
+  } catch {
+    // A hostile thrown value (for example, a Proxy with a throwing prototype
+    // trap) must not replace the original error with a telemetry error.
+    exception = errorType;
+  }
+  span.recordException(exception);
+  span.setStatus({code: SpanStatusCode.ERROR, message: errorType});
 }

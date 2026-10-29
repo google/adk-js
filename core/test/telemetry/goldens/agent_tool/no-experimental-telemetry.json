@@ -1,158 +1,151 @@
 {
   "root_span": {
-    "name": "invocation",
-    "attributes": {},
+    "name": "invoke_workflow my_agent_tool_workflow",
+    "attributes": {
+      "gen_ai.conversation.id": "PRESENT",
+      "gen_ai.operation.name": "invoke_workflow",
+      "gen_ai.workflow.name": "my_agent_tool_workflow"
+    },
     "status": "UNSET",
     "children": [
       {
-        "name": "execute_node my_agent_tool_workflow",
+        "name": "invoke_agent some_delegating_agent",
         "attributes": {
-          "adk.node.attempt": 1,
-          "adk.node.interrupt_count": 0,
-          "adk.node.path": "my_agent_tool_workflow",
-          "adk.node.run_id": "my_agent_tool_workflow",
-          "adk.node.status": "completed",
-          "gen_ai.operation.name": "execute_node"
+          "gen_ai.agent.description": "A sample agent that delegates.",
+          "gen_ai.agent.name": "some_delegating_agent",
+          "gen_ai.conversation.id": "PRESENT",
+          "gen_ai.operation.name": "invoke_agent"
         },
         "status": "UNSET",
         "children": [
           {
-            "name": "invoke_workflow my_agent_tool_workflow",
+            "name": "generate_content gemini-2.5-flash",
             "attributes": {
-              "adk.node.path": "my_agent_tool_workflow",
-              "adk.workflow.name": "my_agent_tool_workflow",
+              "gcp.vertex.agent.event_id": "PRESENT",
+              "gcp.vertex.agent.invocation_id": "PRESENT",
+              "gen_ai.agent.name": "some_delegating_agent",
               "gen_ai.conversation.id": "PRESENT",
-              "gen_ai.operation.name": "invoke_workflow"
+              "gen_ai.operation.name": "generate_content",
+              "gen_ai.provider.name": "gcp.gemini",
+              "gen_ai.request.model": "gemini-2.5-flash",
+              "gen_ai.response.finish_reasons": [
+                "stop"
+              ],
+              "gen_ai.tool.definitions": [
+                {
+                  "description": "A sample delegate agent.",
+                  "name": "some_delegate_agent",
+                  "type": "function"
+                }
+              ],
+              "gen_ai.usage.cache_read.input_tokens": 40,
+              "gen_ai.usage.input_tokens": 100,
+              "gen_ai.usage.output_tokens": 25,
+              "gen_ai.usage.reasoning.output_tokens": 5
+            },
+            "status": "UNSET",
+            "children": [],
+            "logs": [
+              {
+                "event_name": "gen_ai.client.inference.operation.details",
+                "body": null,
+                "attributes": {
+                  "gcp.vertex.agent.event_id": "PRESENT",
+                  "gcp.vertex.agent.invocation_id": "PRESENT",
+                  "gen_ai.agent.name": "some_delegating_agent",
+                  "gen_ai.conversation.id": "PRESENT",
+                  "gen_ai.provider.name": "gcp.gemini",
+                  "gen_ai.response.finish_reasons": [
+                    "stop"
+                  ],
+                  "gen_ai.tool.definitions": [
+                    {
+                      "description": "A sample delegate agent.",
+                      "name": "some_delegate_agent",
+                      "type": "function"
+                    }
+                  ],
+                  "gen_ai.usage.cache_read.input_tokens": 40,
+                  "gen_ai.usage.input_tokens": 100,
+                  "gen_ai.usage.output_tokens": 25,
+                  "gen_ai.usage.reasoning.output_tokens": 5
+                }
+              }
+            ]
+          },
+          {
+            "name": "execute_tool some_delegate_agent",
+            "attributes": {
+              "gcp.vertex.agent.event_id": "PRESENT",
+              "gen_ai.agent.name": "some_delegating_agent",
+              "gen_ai.operation.name": "execute_tool",
+              "gen_ai.tool.call.id": "PRESENT",
+              "gen_ai.tool.description": "A sample delegate agent.",
+              "gen_ai.tool.name": "some_delegate_agent",
+              "gen_ai.tool.type": "AgentTool"
             },
             "status": "UNSET",
             "children": [
               {
-                "name": "execute_node some_delegating_agent",
+                "name": "invoke_workflow some_delegate_agent",
                 "attributes": {
-                  "adk.node.attempt": 1,
-                  "adk.node.interrupt_count": 0,
-                  "adk.node.path": "my_agent_tool_workflow.some_delegating_agent",
-                  "adk.node.run_id": "1",
-                  "adk.node.status": "completed",
-                  "gen_ai.operation.name": "execute_node"
+                  "gen_ai.conversation.id": "PRESENT",
+                  "gen_ai.operation.name": "invoke_workflow",
+                  "gen_ai.workflow.name": "some_delegate_agent",
+                  "gen_ai.workflow.nested": true
                 },
                 "status": "UNSET",
                 "children": [
                   {
-                    "name": "invoke_agent some_delegating_agent",
+                    "name": "invoke_agent some_delegate_agent",
                     "attributes": {
-                      "gen_ai.agent.description": "A sample agent that delegates.",
-                      "gen_ai.agent.name": "some_delegating_agent",
+                      "gen_ai.agent.description": "A sample delegate agent.",
+                      "gen_ai.agent.name": "some_delegate_agent",
                       "gen_ai.conversation.id": "PRESENT",
                       "gen_ai.operation.name": "invoke_agent"
                     },
                     "status": "UNSET",
                     "children": [
                       {
-                        "name": "call_llm",
+                        "name": "generate_content gemini-2.5-flash",
                         "attributes": {
                           "gcp.vertex.agent.event_id": "PRESENT",
                           "gcp.vertex.agent.invocation_id": "PRESENT",
-                          "gcp.vertex.agent.llm_request": {},
-                          "gcp.vertex.agent.llm_response": {},
-                          "gcp.vertex.agent.session_id": "PRESENT",
-                          "gen_ai.agent.name": "some_delegating_agent",
+                          "gen_ai.agent.name": "some_delegate_agent",
+                          "gen_ai.conversation.id": "PRESENT",
+                          "gen_ai.operation.name": "generate_content",
+                          "gen_ai.provider.name": "gcp.gemini",
                           "gen_ai.request.model": "gemini-2.5-flash",
                           "gen_ai.response.finish_reasons": [
                             "stop"
                           ],
-                          "gen_ai.system": "gcp.vertex.agent",
-                          "gen_ai.usage.input_tokens": 100,
-                          "gen_ai.usage.output_tokens": 20
-                        },
-                        "status": "UNSET",
-                        "children": [
-                          {
-                            "name": "execute_tool some_delegate_agent",
-                            "attributes": {
-                              "gcp.vertex.agent.event_id": "PRESENT",
-                              "gcp.vertex.agent.invocation_id": "PRESENT",
-                              "gcp.vertex.agent.llm_request": {},
-                              "gcp.vertex.agent.llm_response": {},
-                              "gcp.vertex.agent.tool_call_args": {},
-                              "gcp.vertex.agent.tool_response": {},
-                              "gen_ai.operation.name": "execute_tool",
-                              "gen_ai.system": "gcp.vertex.agent",
-                              "gen_ai.tool.call.id": "PRESENT",
-                              "gen_ai.tool.description": "A sample delegate agent.",
-                              "gen_ai.tool.name": "some_delegate_agent",
-                              "gen_ai.tool.type": "AgentTool"
-                            },
-                            "status": "UNSET",
-                            "children": [
-                              {
-                                "name": "invocation",
-                                "attributes": {},
-                                "status": "UNSET",
-                                "children": [
-                                  {
-                                    "name": "invoke_agent some_delegate_agent",
-                                    "attributes": {
-                                      "gen_ai.agent.description": "A sample delegate agent.",
-                                      "gen_ai.agent.name": "some_delegate_agent",
-                                      "gen_ai.conversation.id": "PRESENT",
-                                      "gen_ai.operation.name": "invoke_agent"
-                                    },
-                                    "status": "UNSET",
-                                    "children": [
-                                      {
-                                        "name": "call_llm",
-                                        "attributes": {
-                                          "gcp.vertex.agent.event_id": "PRESENT",
-                                          "gcp.vertex.agent.invocation_id": "PRESENT",
-                                          "gcp.vertex.agent.llm_request": {},
-                                          "gcp.vertex.agent.llm_response": {},
-                                          "gcp.vertex.agent.session_id": "PRESENT",
-                                          "gen_ai.agent.name": "some_delegate_agent",
-                                          "gen_ai.request.model": "gemini-2.5-flash",
-                                          "gen_ai.response.finish_reasons": [
-                                            "stop"
-                                          ],
-                                          "gen_ai.system": "gcp.vertex.agent",
-                                          "gen_ai.usage.input_tokens": 70,
-                                          "gen_ai.usage.output_tokens": 10
-                                        },
-                                        "status": "UNSET",
-                                        "children": [],
-                                        "logs": []
-                                      }
-                                    ],
-                                    "logs": []
-                                  }
-                                ],
-                                "logs": []
-                              }
-                            ],
-                            "logs": []
-                          }
-                        ],
-                        "logs": []
-                      },
-                      {
-                        "name": "call_llm",
-                        "attributes": {
-                          "gcp.vertex.agent.event_id": "PRESENT",
-                          "gcp.vertex.agent.invocation_id": "PRESENT",
-                          "gcp.vertex.agent.llm_request": {},
-                          "gcp.vertex.agent.llm_response": {},
-                          "gcp.vertex.agent.session_id": "PRESENT",
-                          "gen_ai.agent.name": "some_delegating_agent",
-                          "gen_ai.request.model": "gemini-2.5-flash",
-                          "gen_ai.response.finish_reasons": [
-                            "stop"
-                          ],
-                          "gen_ai.system": "gcp.vertex.agent",
-                          "gen_ai.usage.input_tokens": 150,
-                          "gen_ai.usage.output_tokens": 35
+                          "gen_ai.usage.cache_read.input_tokens": 30,
+                          "gen_ai.usage.input_tokens": 70,
+                          "gen_ai.usage.output_tokens": 13,
+                          "gen_ai.usage.reasoning.output_tokens": 3
                         },
                         "status": "UNSET",
                         "children": [],
-                        "logs": []
+                        "logs": [
+                          {
+                            "event_name": "gen_ai.client.inference.operation.details",
+                            "body": null,
+                            "attributes": {
+                              "gcp.vertex.agent.event_id": "PRESENT",
+                              "gcp.vertex.agent.invocation_id": "PRESENT",
+                              "gen_ai.agent.name": "some_delegate_agent",
+                              "gen_ai.conversation.id": "PRESENT",
+                              "gen_ai.provider.name": "gcp.gemini",
+                              "gen_ai.response.finish_reasons": [
+                                "stop"
+                              ],
+                              "gen_ai.usage.cache_read.input_tokens": 30,
+                              "gen_ai.usage.input_tokens": 70,
+                              "gen_ai.usage.output_tokens": 13,
+                              "gen_ai.usage.reasoning.output_tokens": 3
+                            }
+                          }
+                        ]
                       }
                     ],
                     "logs": []
@@ -162,6 +155,61 @@
               }
             ],
             "logs": []
+          },
+          {
+            "name": "generate_content gemini-2.5-flash",
+            "attributes": {
+              "gcp.vertex.agent.event_id": "PRESENT",
+              "gcp.vertex.agent.invocation_id": "PRESENT",
+              "gen_ai.agent.name": "some_delegating_agent",
+              "gen_ai.conversation.id": "PRESENT",
+              "gen_ai.operation.name": "generate_content",
+              "gen_ai.provider.name": "gcp.gemini",
+              "gen_ai.request.model": "gemini-2.5-flash",
+              "gen_ai.response.finish_reasons": [
+                "stop"
+              ],
+              "gen_ai.tool.definitions": [
+                {
+                  "description": "A sample delegate agent.",
+                  "name": "some_delegate_agent",
+                  "type": "function"
+                }
+              ],
+              "gen_ai.usage.cache_read.input_tokens": 60,
+              "gen_ai.usage.input_tokens": 150,
+              "gen_ai.usage.output_tokens": 50,
+              "gen_ai.usage.reasoning.output_tokens": 15
+            },
+            "status": "UNSET",
+            "children": [],
+            "logs": [
+              {
+                "event_name": "gen_ai.client.inference.operation.details",
+                "body": null,
+                "attributes": {
+                  "gcp.vertex.agent.event_id": "PRESENT",
+                  "gcp.vertex.agent.invocation_id": "PRESENT",
+                  "gen_ai.agent.name": "some_delegating_agent",
+                  "gen_ai.conversation.id": "PRESENT",
+                  "gen_ai.provider.name": "gcp.gemini",
+                  "gen_ai.response.finish_reasons": [
+                    "stop"
+                  ],
+                  "gen_ai.tool.definitions": [
+                    {
+                      "description": "A sample delegate agent.",
+                      "name": "some_delegate_agent",
+                      "type": "function"
+                    }
+                  ],
+                  "gen_ai.usage.cache_read.input_tokens": 60,
+                  "gen_ai.usage.input_tokens": 150,
+                  "gen_ai.usage.output_tokens": 50,
+                  "gen_ai.usage.reasoning.output_tokens": 15
+                }
+              }
+            ]
           }
         ],
         "logs": []
