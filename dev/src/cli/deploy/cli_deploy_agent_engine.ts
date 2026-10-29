@@ -7,6 +7,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
 import {Client} from '@google-cloud/vertexai';
+import dotenv from 'dotenv';
 
 import {AgentLoader} from '../../utils/agent_loader.js';
 import {createTempDir, isFile, isFolderExists} from '../../utils/file_utils.js';
@@ -21,6 +22,18 @@ import {
 
 const DEFAULT_MAX_ATTEMPTS = 30;
 
+// Platform-managed variables injected by the Agent Engine runtime at container
+// startup. Forwarding them from a local .env or deploy config would overwrite
+// the runtime's own resource identity, location, or revision metadata.
+const PLATFORM_INJECTED_ENV_VARS = new Set([
+  'GOOGLE_CLOUD_AGENT_ENGINE_ID',
+  'GOOGLE_CLOUD_AGENT_ENGINE_LOCATION',
+  'GOOGLE_CLOUD_AGENT_ENGINE_REVISION_ID',
+  'GOOGLE_CLOUD_PROJECT',
+  'GOOGLE_CLOUD_LOCATION',
+  'K_REVISION',
+]);
+
 export interface DeployToAgentEngineOptions extends BaseDeployOptions {
   displayName?: string;
   description?: string;
@@ -29,6 +42,117 @@ export interface DeployToAgentEngineOptions extends BaseDeployOptions {
   agentEngineId?: string;
   minInstances?: number;
   maxInstances?: number;
+  /**
+   * Environment variables to set on the deployed container. They are merged
+   * over the variables read from the agent directory's `.env` file.
+   */
+  env?: DeploymentEnv;
+}
+
+/** Environment variables as a list of entries or as a name-to-value map. */
+export type DeploymentEnv =
+  Array<{name: string; value: string}> | Record<string, string>;
+
+const ENABLE_TELEMETRY_ENV_VAR = 'GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY';
+const CAPTURE_MESSAGE_CONTENT_ENV_VAR = 'ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS';
+
+async function readAgentDotenv(
+  envFilePath: string,
+): Promise<Record<string, string>> {
+  try {
+    const content = await fs.readFile(envFilePath, 'utf-8');
+    console.info(`Reading environment variables from ${envFilePath}`);
+    return dotenv.parse(content);
+  } catch (e: unknown) {
+    if ((e as {code?: string}).code === 'ENOENT') {
+      return {};
+    }
+    throw e;
+  }
+}
+
+function normalizeEnvMap(env?: DeploymentEnv): Record<string, string> {
+  if (!env) {
+    return {};
+  }
+  if (Array.isArray(env)) {
+    const result: Record<string, string> = {};
+    for (const entry of env) {
+      result[entry.name] = entry.value;
+    }
+    return result;
+  }
+  return {...env};
+}
+
+interface ResolveDeploymentEnvParams {
+  /** Variables read from the agent directory's `.env` file. */
+  dotenvVars: Record<string, string>;
+  /** Variables passed by the caller. They take precedence over `.env`. */
+  callerEnv?: DeploymentEnv;
+  /** Whether `--otel_to_cloud` was explicitly passed. */
+  otelToCloud: boolean;
+  /** Path of the `.env` file, used in notices. */
+  envFilePath: string;
+}
+
+interface ResolvedDeploymentEnv {
+  /** Environment variables for the Reasoning Engine deployment spec. */
+  env: Array<{name: string; value: string}>;
+  /** Whether the server exports telemetry to Google Cloud. */
+  otelToCloud: boolean;
+}
+
+/**
+ * Resolves the deployment environment variables and the telemetry setting.
+ *
+ * If `otelToCloud` is true, sets `GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY`
+ * to `true` and defaults `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS` to `false`
+ * unless it is already set. Otherwise, a value of `true` or `1` for
+ * `GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY` turns telemetry on. Variables
+ * that the Agent Engine runtime injects are dropped.
+ *
+ * Notices name variables only and never print their values.
+ */
+function resolveDeploymentEnv(
+  params: ResolveDeploymentEnvParams,
+): ResolvedDeploymentEnv {
+  const envVars = {
+    ...params.dotenvVars,
+    ...normalizeEnvMap(params.callerEnv),
+  };
+
+  for (const name of Object.keys(envVars)) {
+    if (PLATFORM_INJECTED_ENV_VARS.has(name)) {
+      console.warn(
+        `Ignoring ${name} in the deployment environment as the Agent Engine runtime sets it.`,
+      );
+      delete envVars[name];
+    }
+  }
+
+  let otelToCloud = params.otelToCloud;
+  if (otelToCloud) {
+    if (ENABLE_TELEMETRY_ENV_VAR in params.dotenvVars) {
+      console.warn(
+        `Ignoring ${ENABLE_TELEMETRY_ENV_VAR} in .env as \`--otel_to_cloud\` was explicitly passed and takes precedence`,
+      );
+    }
+    envVars[ENABLE_TELEMETRY_ENV_VAR] = 'true';
+    if (!(CAPTURE_MESSAGE_CONTENT_ENV_VAR in envVars)) {
+      envVars[CAPTURE_MESSAGE_CONTENT_ENV_VAR] = 'false';
+    }
+  } else if (['true', '1'].includes(envVars[ENABLE_TELEMETRY_ENV_VAR])) {
+    otelToCloud = true;
+    console.info(
+      `\`--otel_to_cloud\` is set to true by ${ENABLE_TELEMETRY_ENV_VAR} in ${params.envFilePath}`,
+    );
+  }
+
+  return {
+    env: Object.entries(envVars).map(([name, value]) => ({name, value})),
+    otelToCloud,
+  };
 }
 
 export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
@@ -78,6 +202,14 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
 
   const displayName = options.displayName || appName;
 
+  const envFilePath = path.join(agentDir, '.env');
+  const {env, otelToCloud} = resolveDeploymentEnv({
+    dotenvVars: await readAgentDotenv(envFilePath),
+    callerEnv: options.env,
+    otelToCloud: Boolean(options.otelToCloud),
+    envFilePath,
+  });
+
   console.info('Starting deployment to Agent Engine...');
 
   const tempFolder =
@@ -107,6 +239,7 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
       allowOrigins: options.allowOrigins,
       sessionServiceUri: options.sessionServiceUri,
       artifactServiceUri: options.artifactServiceUri,
+      otelToCloud,
       a2a: options.a2a,
       agentFileLoadOptions: options.agentFileLoadOptions,
     });
@@ -156,6 +289,9 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
             cpu: '1',
             memory: '2Gi',
           },
+          // Omitted when empty so a deployment without variables sends the
+          // same request as before.
+          ...(env.length > 0 ? {env} : {}),
         },
       },
     };

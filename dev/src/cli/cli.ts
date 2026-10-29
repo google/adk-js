@@ -680,6 +680,7 @@ export function createProgram(): Command {
       .addOption(LOG_LEVEL_OPTION)
       .addOption(SESSION_SERVICE_URI_OPTION)
       .addOption(ARTIFACT_SERVICE_URI_OPTION)
+      .addOption(OTEL_TO_CLOUD_OPTION)
       .addOption(COMPILE_AGENT_FILE)
       .addOption(BUNDLE_AGENT_FILE)
       .addOption(AGENT_FILE_MODULE_TYPE)
@@ -688,6 +689,7 @@ export function createProgram(): Command {
       .addOption(MIN_INSTANCES_OPTION)
       .addOption(MAX_INSTANCES_OPTION)
       .action(async (agentPath: string, options: Record<string, string>) => {
+        const otelToCloud = getBoolean(options['otel_to_cloud']);
         try {
           await deployToAgentEngine({
             agentPath: getAbsolutePath(agentPath),
@@ -705,6 +707,7 @@ export function createProgram(): Command {
             allowOrigins: options['allow_origins'],
             sessionServiceUri: options['session_service_uri'],
             artifactServiceUri: options['artifact_service_uri'],
+            ...(otelToCloud ? {otelToCloud: true} : {}),
             agentFileLoadOptions: getAgentFileOptions({
               ...options,
               minify: true,
