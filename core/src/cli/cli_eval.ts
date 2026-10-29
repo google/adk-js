@@ -18,9 +18,12 @@ import {
 } from '../agents/llm_agent.js';
 import {BaseArtifactService} from '../artifacts/base_artifact_service.js';
 import {InMemoryArtifactService} from '../artifacts/in_memory_artifact_service.js';
+import {InputValidationError} from '../errors/input_validation_error.js';
+import {NotFoundError} from '../errors/not_found_error.js';
 import {Runner} from '../runner/runner.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {InMemorySessionService} from '../sessions/in_memory_session_service.js';
+import {Session} from '../sessions/session.js';
 import {logger} from '../utils/logger.js';
 import {
   convertSessionToEvalFormat,
@@ -102,13 +105,36 @@ export interface InvocationEvalMetricResult {
  */
 export interface EvalResult {
   eval_set_file: string;
+  eval_set_id?: string;
   eval_id: string;
   final_eval_status: EvalStatus;
   eval_metric_results: Array<[EvalMetric, EvalMetricResult]>;
   overall_eval_metric_results: EvalMetricResult[];
   eval_metric_result_per_invocation: InvocationEvalMetricResult[];
   session_id: string;
+  session_details?: Session;
   user_id?: string;
+}
+
+/**
+ * Case-level evaluation result alias matching the persisted eval set schema.
+ */
+export type EvalCaseResult = EvalResult;
+
+/**
+ * Eval-set-level evaluation result persisted by {@link LocalEvalSetResultsManager}.
+ */
+export interface EvalSetResult {
+  evalSetResultId: string;
+  evalSetResultName: string;
+  evalSetId: string;
+  evalCaseResults: EvalCaseResult[];
+  creationTimestamp: number;
+  eval_set_result_id?: string;
+  eval_set_result_name?: string;
+  eval_set_id?: string;
+  eval_case_results?: EvalCaseResult[];
+  creation_timestamp?: number;
 }
 
 /**
@@ -523,6 +549,7 @@ async function generateActualInvocations(
   actualInvocations: EvaluationItem[];
   sessionId: string;
   userId: string;
+  recordedSession?: Session;
 }> {
   if (resetFunc) {
     await resetFunc();
@@ -618,7 +645,7 @@ async function generateActualInvocations(
     });
   }
 
-  return {actualInvocations, sessionId, userId};
+  return {actualInvocations, sessionId, userId, recordedSession};
 }
 
 function resolveEvalCasesForSet(
@@ -718,7 +745,7 @@ export async function* runEvals(
     const evalCases = resolveEvalCasesForSet(evalSetId, rawEntries);
     for (const evalCase of evalCases) {
       const evalName = evalCase.name;
-      const {actualInvocations, sessionId, userId} =
+      const {actualInvocations, sessionId, userId, recordedSession} =
         await generateActualInvocations(
           rootAgent,
           evalCase,
@@ -766,12 +793,14 @@ export async function* runEvals(
 
       const result: EvalResult = {
         eval_set_file: evalSetId,
+        eval_set_id: evalSetId,
         eval_id: evalName,
         final_eval_status: finalEvalStatus,
         eval_metric_results: evalMetricResultsPairs,
         overall_eval_metric_results: overallEvalMetricResults,
         eval_metric_result_per_invocation: perInvocationMap,
         session_id: sessionId,
+        session_details: recordedSession,
         user_id: userId,
       };
 
@@ -781,5 +810,221 @@ export async function* runEvals(
 
       yield result;
     }
+  }
+}
+
+const ADK_EVAL_HISTORY_DIR = '.adk/eval_history';
+const EVAL_SET_RESULT_FILE_EXTENSION = '.evalset_result.json';
+const WINDOWS_DRIVE_RE = /^[A-Za-z]:/;
+
+/**
+ * Validates that a caller-supplied identifier is a safe single path segment and
+ * cannot traverse directories.
+ *
+ * @param value The caller-supplied identifier.
+ * @param fieldName Human-readable field name used in error messages.
+ */
+export function validatePathSegment(value: string, fieldName: string): void {
+  if (!value) {
+    throw new InputValidationError(`${fieldName} must not be empty.`);
+  }
+  if (value.includes('\x00')) {
+    throw new InputValidationError(`${fieldName} must not contain null bytes.`);
+  }
+  if (value.includes('/') || value.includes('\\')) {
+    throw new InputValidationError(
+      `${fieldName} '${value}' must not contain path separators.`,
+    );
+  }
+  if (WINDOWS_DRIVE_RE.test(value)) {
+    throw new InputValidationError(
+      `${fieldName} '${value}' must not be drive-qualified.`,
+    );
+  }
+  if (value === '.' || value === '..') {
+    throw new InputValidationError(
+      `${fieldName} '${value}' must not contain traversal segments.`,
+    );
+  }
+}
+
+function sanitizeEvalSetResultName(evalSetResultName: string): string {
+  return evalSetResultName.replace(/\//g, '_');
+}
+
+/**
+ * Creates a new {@link EvalSetResult} for the given application, eval set ID,
+ * and case results.
+ */
+export function createEvalSetResult(
+  appName: string,
+  evalSetId: string,
+  evalCaseResults: EvalCaseResult[],
+  creationTimestamp = (performance.timeOrigin + performance.now()) / 1000,
+): EvalSetResult {
+  const evalSetResultId = `${appName}_${evalSetId}_${creationTimestamp}`;
+  const evalSetResultName = sanitizeEvalSetResultName(evalSetResultId);
+  return {
+    evalSetResultId,
+    evalSetResultName,
+    evalSetId,
+    evalCaseResults,
+    creationTimestamp,
+    eval_set_result_id: evalSetResultId,
+    eval_set_result_name: evalSetResultName,
+    eval_set_id: evalSetId,
+    eval_case_results: evalCaseResults,
+    creation_timestamp: creationTimestamp,
+  };
+}
+
+/**
+ * Parses an {@link EvalSetResult} from JSON text, supporting both standard JSON
+ * objects and legacy double-encoded JSON strings.
+ */
+export function parseEvalSetResultJson(
+  evalSetResultJson: string,
+): EvalSetResult {
+  const decoded: unknown = JSON.parse(evalSetResultJson);
+  const target: unknown =
+    typeof decoded === 'string' ? JSON.parse(decoded) : decoded;
+
+  if (typeof target !== 'object' || target === null || Array.isArray(target)) {
+    throw new Error('Invalid EvalSetResult JSON: expected an object.');
+  }
+
+  const record = target as Record<string, unknown>;
+  const evalSetResultId =
+    typeof record.evalSetResultId === 'string'
+      ? record.evalSetResultId
+      : typeof record.eval_set_result_id === 'string'
+        ? record.eval_set_result_id
+        : undefined;
+  const evalSetId =
+    typeof record.evalSetId === 'string'
+      ? record.evalSetId
+      : typeof record.eval_set_id === 'string'
+        ? record.eval_set_id
+        : undefined;
+
+  if (!evalSetResultId || !evalSetId) {
+    throw new Error(
+      'Invalid EvalSetResult JSON: missing evalSetResultId or evalSetId.',
+    );
+  }
+
+  const evalSetResultName =
+    typeof record.evalSetResultName === 'string'
+      ? record.evalSetResultName
+      : typeof record.eval_set_result_name === 'string'
+        ? record.eval_set_result_name
+        : sanitizeEvalSetResultName(evalSetResultId);
+
+  const rawCases = record.evalCaseResults ?? record.eval_case_results ?? [];
+  if (!Array.isArray(rawCases)) {
+    throw new Error(
+      'Invalid EvalSetResult JSON: evalCaseResults must be an array.',
+    );
+  }
+  const evalCaseResults = rawCases as EvalCaseResult[];
+
+  const creationTimestamp =
+    typeof record.creationTimestamp === 'number'
+      ? record.creationTimestamp
+      : typeof record.creation_timestamp === 'number'
+        ? record.creation_timestamp
+        : 0;
+
+  return {
+    evalSetResultId,
+    evalSetResultName,
+    evalSetId,
+    evalCaseResults,
+    creationTimestamp,
+    eval_set_result_id: evalSetResultId,
+    eval_set_result_name: evalSetResultName,
+    eval_set_id: evalSetId,
+    eval_case_results: evalCaseResults,
+    creation_timestamp: creationTimestamp,
+  };
+}
+
+/**
+ * Manages persistence of {@link EvalSetResult} objects on the local filesystem
+ * under `<agentsDir>/<appName>/.adk/eval_history/`.
+ */
+export class LocalEvalSetResultsManager {
+  constructor(private readonly agentsDir: string) {}
+
+  /**
+   * Creates and saves a new {@link EvalSetResult} for `evalCaseResults`.
+   */
+  saveEvalSetResult(
+    appName: string,
+    evalSetId: string,
+    evalCaseResults: EvalCaseResult[],
+  ): EvalSetResult {
+    validatePathSegment(appName, 'app_name');
+    validatePathSegment(evalSetId, 'eval_set_id');
+    const evalSetResult = createEvalSetResult(
+      appName,
+      evalSetId,
+      evalCaseResults,
+    );
+    const appEvalHistoryDir = this.getEvalHistoryDir(appName);
+    if (!fs.existsSync(appEvalHistoryDir)) {
+      fs.mkdirSync(appEvalHistoryDir, {recursive: true});
+    }
+    const evalSetResultFilePath = path.join(
+      appEvalHistoryDir,
+      `${evalSetResult.evalSetResultName}${EVAL_SET_RESULT_FILE_EXTENSION}`,
+    );
+    logger.info(`Writing eval result to file: ${evalSetResultFilePath}`);
+    fs.writeFileSync(
+      evalSetResultFilePath,
+      JSON.stringify(evalSetResult, null, 2),
+      'utf-8',
+    );
+    return evalSetResult;
+  }
+
+  /**
+   * Loads an {@link EvalSetResult} by `appName` and `evalSetResultId`.
+   *
+   * @throws {NotFoundError} If the result file does not exist.
+   */
+  getEvalSetResult(appName: string, evalSetResultId: string): EvalSetResult {
+    const appEvalHistoryDir = this.getEvalHistoryDir(appName);
+    validatePathSegment(evalSetResultId, 'eval_set_result_id');
+    const filePath = path.join(
+      appEvalHistoryDir,
+      `${evalSetResultId}${EVAL_SET_RESULT_FILE_EXTENSION}`,
+    );
+    if (!fs.existsSync(filePath)) {
+      throw new NotFoundError(
+        `Eval set result \`${evalSetResultId}\` not found.`,
+      );
+    }
+    const content = fs.readFileSync(filePath, 'utf-8');
+    return parseEvalSetResultJson(content);
+  }
+
+  /**
+   * Lists all saved eval set result IDs for `appName`.
+   */
+  listEvalSetResults(appName: string): string[] {
+    const appEvalHistoryDir = this.getEvalHistoryDir(appName);
+    if (!fs.existsSync(appEvalHistoryDir)) {
+      return [];
+    }
+    return fs
+      .readdirSync(appEvalHistoryDir)
+      .filter((file) => file.endsWith(EVAL_SET_RESULT_FILE_EXTENSION))
+      .map((file) => file.slice(0, -EVAL_SET_RESULT_FILE_EXTENSION.length));
+  }
+
+  private getEvalHistoryDir(appName: string): string {
+    validatePathSegment(appName, 'app_name');
+    return path.join(this.agentsDir, appName, ADK_EVAL_HISTORY_DIR);
   }
 }

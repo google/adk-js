@@ -4,8 +4,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {LogLevel, logToTmpFolder, setupAdkLogger} from '@google/adk';
+import {
+  LocalEvalSetResultsManager,
+  LogLevel,
+  logToTmpFolder,
+  setupAdkLogger,
+} from '@google/adk';
 import {Command, CommanderError} from 'commander';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 import {createProgram} from '../../src/cli/cli.js';
 import {createAgent} from '../../src/cli/cli_create.js';
@@ -649,6 +657,97 @@ describe('CLI Entrypoint', () => {
           otelToCloud: true,
         }),
       );
+    });
+
+    it('test_cli_eval_success_path: runs eval command, prints summary, and persists eval results via LocalEvalSetResultsManager', async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adk-cli-eval-'));
+      const agentDir = path.join(tempDir, 'my_eval_app');
+      fs.mkdirSync(agentDir, {recursive: true});
+
+      const agentFile = path.join(agentDir, 'agent.js');
+      fs.writeFileSync(
+        agentFile,
+        [
+          `import {BaseAgent, createEvent} from '@google/adk';`,
+          `class EvalAgent extends BaseAgent {`,
+          `  constructor() { super({name: 'my_eval_agent'}); }`,
+          `  async *runAsyncImpl(ctx) {`,
+          `    const text = ctx.userContent?.parts?.[0]?.text ?? '';`,
+          `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'Echo: ' + text}]}});`,
+          `  }`,
+          `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+          `}`,
+          `export const rootAgent = new EvalAgent();`,
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const evalSetFile = path.join(tempDir, 'sample_set.evalset.json');
+      fs.writeFileSync(
+        evalSetFile,
+        JSON.stringify([
+          {
+            name: 'pass_case',
+            data: [
+              {
+                query: 'ping',
+                expected_tool_use: [],
+                expected_intermediate_agent_responses: [],
+                reference: 'Echo: ping',
+              },
+            ],
+            initial_session: {
+              app_name: 'my_eval_app',
+              user_id: 'user_1',
+              state: {},
+            },
+          },
+          {
+            name: 'fail_case',
+            data: [
+              {
+                query: 'ping',
+                expected_tool_use: [{tool_name: 'missing', tool_input: {}}],
+                expected_intermediate_agent_responses: [],
+                reference: 'totally different response',
+              },
+            ],
+          },
+        ]),
+        'utf-8',
+      );
+
+      const stdoutChunks: string[] = [];
+      const stdoutSpy = vi
+        .spyOn(process.stdout, 'write')
+        .mockImplementation((chunk: string | Uint8Array) => {
+          stdoutChunks.push(String(chunk));
+          return true;
+        });
+
+      try {
+        await parse(['eval', agentDir, evalSetFile]);
+
+        const output = stdoutChunks.join('');
+        expect(output).toContain('Eval Run Summary');
+        expect(output).toContain('Tests passed: 1');
+        expect(output).toContain('Tests failed: 1');
+
+        const manager = new LocalEvalSetResultsManager(tempDir);
+        const resultIds = manager.listEvalSetResults('my_eval_app');
+        expect(resultIds).toHaveLength(1);
+
+        const storedResult = manager.getEvalSetResult(
+          'my_eval_app',
+          resultIds[0],
+        );
+        expect(storedResult.evalSetId).toBe('sample_set');
+        expect(storedResult.evalCaseResults).toHaveLength(2);
+        expect(storedResult.evalCaseResults[0].session_details).toBeDefined();
+      } finally {
+        stdoutSpy.mockRestore();
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
     });
   });
 });

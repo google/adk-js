@@ -302,6 +302,7 @@ async function runInteractively(
   });
 
   options.onAgentFileReloaded?.((newAgent: RunnableRoot) => {
+    const previousRunner = runner;
     currentAgent = newAgent;
     runner = new Runner({
       appName: newAgent.name,
@@ -310,39 +311,44 @@ async function runInteractively(
       sessionService: options.sessionService,
       memoryService: options.memoryService,
     });
+    void Promise.resolve(previousRunner.close?.()).catch(() => {});
     console.log(`Agent reloaded. New runner created with existing session.`);
   });
 
-  while (true) {
-    const query = await getUserInput('[user]: ');
-    const trimmed = query.trim();
+  try {
+    while (true) {
+      const query = await getUserInput('[user]: ');
+      const trimmed = query.trim();
 
-    if (!trimmed) {
-      continue;
-    }
-
-    if (trimmed === 'exit') {
-      break;
-    }
-
-    try {
-      for await (const event of runner.runAsync({
-        userId: options.session.userId,
-        sessionId: options.session.id,
-        newMessage: {role: 'user', parts: [{text: query}]},
-        // Interactive CLI: let a plain-text "yes"/"no" resolve a pending tool
-        // confirmation (opt-in; off by default on non-interactive surfaces).
-        runConfig: {plainTextToolConfirmation: true},
-      })) {
-        printEvent(event);
+      if (!trimmed) {
+        continue;
       }
-    } catch (error) {
-      console.error(
-        `[ADK CLI] Turn failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+
+      if (trimmed === 'exit') {
+        break;
+      }
+
+      try {
+        for await (const event of runner.runAsync({
+          userId: options.session.userId,
+          sessionId: options.session.id,
+          newMessage: {role: 'user', parts: [{text: query}]},
+          // Interactive CLI: let a plain-text "yes"/"no" resolve a pending tool
+          // confirmation (opt-in; off by default on non-interactive surfaces).
+          runConfig: {plainTextToolConfirmation: true},
+        })) {
+          printEvent(event);
+        }
+      } catch (error) {
+        console.error(
+          `[ADK CLI] Turn failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
     }
+  } finally {
+    await runner.close?.();
   }
 }
 
