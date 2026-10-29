@@ -25,11 +25,12 @@ Versioned binary and text storage (`Part` payloads) scoped to an individual sess
 Credentials for tools that call protected APIs: how a credential is described, how the agent asks the user for one, and how it is exchanged for the credential a request carries.
 
 - [Auth](auth/index.md) - `AuthCredential`, `AuthConfig`, `AuthHandler`, `AuthPreprocessor`, `AuthSchemeType`, and the OpenAPI credential exchangers.
+
 ### CLI
 
-Environment loading, session-to-eval conversion, instruction placeholder initialization, log routing, and batch evaluation utilities backing the ADK CLI and development server.
+Environment loading, session-to-eval conversion, instruction placeholder initialization, log routing, runner cleanup, and batch evaluation utilities backing the ADK CLI and development server.
 
-- [CLI and Evaluation Utilities](cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalFormat`, `setupAdkLogger`, `logToTmpFolder`, `runEvals`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun`.
+- [CLI and Evaluation Utilities](cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalFormat`, `setupAdkLogger`, `logToTmpFolder`, `closeRunners`, `runEvals`, `LocalEvalSetResultsManager`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun`.
 
 ### Code executors
 
@@ -43,16 +44,23 @@ The record of everything that happens during an invocation, and the side effects
 
 - [Event](events/event/index.md) - The `Event` and `EventActions` shapes, `isFinalResponse`, and the fields that diverge from adk-python.
 
+### Examples
+
+Few-shot example structures (`Example`), dynamic example providers (`BaseExampleProvider`), Vertex AI Example Store integration (`VertexAiExampleStore`), and the `ExampleTool`.
+
+- [Examples](examples/index.md) - `Example`, `BaseExampleProvider`, `isBaseExampleProvider`, `VertexAiExampleStore`, `ExampleTool`, and building few-shot prompt instructions.
+
 ### Flows
 
 The `LlmAgent` request/response processor pipeline, live streaming function-call dispatch (`handleFunctionCallsLive` and `stop_streaming`), and Compositional Function Calling (`supportCfc`).
 
-- [Flows](flows/index.md) - `BaseLlmRequestProcessor`, `BaseLlmResponseProcessor`, `CONTENT_REQUEST_PROCESSOR`, `AgentTransferLlmRequestProcessor`, `CodeExecutionResponseProcessor`, `handleFunctionCallsLive`, and `supportCfc`.
+- [Flows](flows/index.md) - `BaseLlmRequestProcessor`, `BaseLlmResponseProcessor`, `CONTENT_REQUEST_PROCESSOR`, `AgentTransferLlmRequestProcessor`, `CodeExecutionResponseProcessor`, `injectSessionState`, `handleFunctionCallsLive`, and `supportCfc`.
 
 ### Integrations
 
 Third-party model and ecosystem integrations packaged in `@google/adk-integrations`.
 
+- [BigQuery toolset](integrations/bigquery/index.md) - `BigQueryToolset`, `BigQueryTool`, `BigQueryCredentialsConfig`, `getBigQueryClient`, and the first-party BigQuery metadata and SQL query tools.
 - [Claude on Vertex AI](integrations/models/anthropic_llm/index.md) - `Claude`, `LLMRegistry` registration for `claude-*` models on Vertex AI, and Anthropic message and tool conversion helpers.
 - [CrewAI tool](integrations/crewai/index.md) - `CrewaiTool`, `isCrewaiTool`, and adapting CrewAI tools into ADK tools.
 - [LangChain tool](integrations/langchain/index.md) - `LangchainTool`, `isLangchainTool`, and adapting LangChain structured and simple tools into ADK tools.
@@ -77,17 +85,13 @@ Planning for an `LlmAgent` through its `planner` option: the model's built-in th
 
 ### Runners
 
-- [Runner](runners/index.md) - Running an agent for an application, the entry points, which agent answers a resumed conversation, and archiving a finished conversation into memory.
+- [Runner](runners/index.md) - Running an agent for an application, the entry points, which agent answers a resumed conversation, archiving a finished conversation into memory, and closing toolsets with `runner.close()`.
 
 ### Sessions
 
 Conversations and their state: the events of each session, and the `app:`, `user:` and `temp:` scopes that state keys can carry.
 
 - [Sessions](sessions/index.md) - `Session`, `State`, `BaseSessionService`, `InMemorySessionService`, `DatabaseSessionService`, `VertexAiSessionService`, and `getSessionServiceFromUri`.
-
-### Runners
-
-- [Runner](runners/index.md) - Running an agent for an application, the entry points, which agent answers a resumed conversation, and archiving a finished conversation into memory.
 
 ### Tools
 
@@ -114,8 +118,6 @@ Client-side retrieval tools. The agent calls a one-argument search function, you
 #### Google API Tool
 
 - [Google API tool](tools/google_api_tool/index.md) - Converting Google API Discovery documents into OpenAPI v3 tools, configuring OpenID Connect credentials, and using pre-configured Google API toolsets.
-
-- [Telemetry](telemetry/index.md) - The spans and attributes ADK writes, attaching exporters with `maybeSetOtelProviders`, and turning off message content in spans.
 
 #### API Hub Tool
 

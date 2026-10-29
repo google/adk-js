@@ -86,7 +86,9 @@ export const tracer = trace.getTracer(GEN_AI_SYSTEM_VALUE, version);
  */
 function safeJsonSerialize(obj: unknown): string {
   try {
-    return JSON.stringify(obj);
+    return JSON.stringify(obj, (_key, value: unknown) =>
+      typeof value === 'bigint' ? '<not serializable>' : value,
+    );
   } catch (_e: unknown) {
     return '<not serializable>';
   }

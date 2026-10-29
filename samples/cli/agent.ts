@@ -28,18 +28,24 @@
 
 import {
   BaseAgent,
+  closeRunners,
   convertSessionToEvalFormat,
   createEmptyState,
   createEvent,
+  EvalResult,
   EvalStatus,
   Event,
   InMemoryRunner,
   InvocationContext,
   LlmAgent,
+  LocalEvalSetResultsManager,
   parseAndGetEvalsToRun,
   runEvals,
   stringifyContent,
 } from '@google/adk';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 class OrderSupportAgent extends BaseAgent {
@@ -176,6 +182,7 @@ async function main() {
   ]);
   process.stdout.write(`Parsed eval spec: ${JSON.stringify(parsedSpecs)}\n`);
 
+  const evalResults: EvalResult[] = [];
   for await (const result of runEvals({
     evalCasesByEvalSetId: {
       'support.evalset.json': [
@@ -192,6 +199,7 @@ async function main() {
     },
     rootAgent,
   })) {
+    evalResults.push(result);
     process.stdout.write(
       `Eval ${result.eval_id}: ${EvalStatus[result.final_eval_status]}\n`,
     );
@@ -200,6 +208,29 @@ async function main() {
         `  ${metric.metric_name}: score=${metric.score} status=${EvalStatus[metric.eval_status]}\n`,
       );
     }
+  }
+
+  const tempAgentsDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'adk-cli-sample-'),
+  );
+  try {
+    const resultsManager = new LocalEvalSetResultsManager(tempAgentsDir);
+    const savedSetResult = resultsManager.saveEvalSetResult(
+      appName,
+      'support',
+      evalResults,
+    );
+    const listedIds = resultsManager.listEvalSetResults(appName);
+    const loadedSetResult = resultsManager.getEvalSetResult(
+      appName,
+      savedSetResult.evalSetResultName,
+    );
+    process.stdout.write(
+      `Saved eval set result: ${loadedSetResult.evalSetResultName} (total stored: ${listedIds.length})\n`,
+    );
+  } finally {
+    fs.rmSync(tempAgentsDir, {recursive: true, force: true});
+    await closeRunners([runner]);
   }
 }
 

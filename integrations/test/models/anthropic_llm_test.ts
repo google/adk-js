@@ -24,8 +24,6 @@ import {
   vi,
 } from 'vitest';
 
-import {MAX_TOKEN} from '../../src/models/anthropic_llm.js';
-
 const {mockMessagesCreate, mockAnthropicVertexCtor, mockImportState} =
   vi.hoisted(() => {
     const createFn =
@@ -122,6 +120,8 @@ describe('test_match_claude_family', () => {
     'claude-3-haiku@20240307',
     'claude-3-opus@20240229',
     'claude-3-sonnet@20240229',
+    'claude-sonnet-4@20250514',
+    'claude-opus-4@20250514',
     'claude-haiku-4-5',
     'claude-haiku-4-5@20251001',
     'claude-haiku-5-5@default',
@@ -156,11 +156,50 @@ describe('Claude', () => {
     vi.unstubAllEnvs();
   });
 
+  it('test_supported_models', () => {
+    expect(Claude.supportedModels).toEqual([/claude-.*/]);
+  });
+
   it('uses claude-sonnet-4-6@default and 8192 maxTokens when no options are specified', () => {
     const llm = new Claude();
     expect(llm.model).toBe('claude-sonnet-4-6@default');
     expect(llm.maxTokens).toBe(8192);
-    expect(MAX_TOKEN).toBe(1024);
+  });
+
+  it('test_generate_content_async', async () => {
+    mockMessagesCreate.mockResolvedValue(
+      createSampleAnthropicMessage({
+        content: [
+          {
+            type: 'text',
+            text: 'Hi! How can I help you today?',
+            citations: null,
+          },
+        ],
+      }),
+    );
+
+    const llm = new Claude({model: 'claude-sonnet-4-6@default'});
+    const request: LlmRequest = {
+      model: 'claude-sonnet-4-6@default',
+      contents: [{role: 'user', parts: [{text: 'Hello'}]}],
+      config: {
+        temperature: 0.1,
+        systemInstruction: 'You are a helpful assistant',
+      },
+      liveConnectConfig: {},
+      toolsDict: {},
+    };
+
+    const responses: LlmResponse[] = [];
+    for await (const response of llm.generateContentAsync(request, false)) {
+      responses.push(response);
+    }
+
+    expect(responses).toHaveLength(1);
+    expect(responses[0]?.content?.parts?.[0]?.text).toBe(
+      'Hi! How can I help you today?',
+    );
   });
 
   it('accepts a custom model identifier and custom maxTokens', () => {
@@ -329,7 +368,6 @@ describe('Claude', () => {
         ],
         tool_choice: {
           type: 'auto',
-          disable_parallel_tool_use: true,
         },
         max_tokens: 8192,
       },

@@ -230,7 +230,8 @@ export class FunctionTool<
    * @param options The configuration for the tool.
    */
   constructor(options: ToolOptions<TParameters>) {
-    const name = options.name ?? (options.execute as {name?: string}).name;
+    const executeMeta = options.execute as {name?: string; __name__?: string};
+    const name = options.name ?? (executeMeta.name || executeMeta.__name__);
     if (!name) {
       throw new Error(
         'Tool name cannot be empty. Either name the `execute` function or provide a `name`.',
@@ -455,6 +456,16 @@ function annotateNullableFields(schema: Record<string, unknown>): void {
     if (!isPlainRecord(propertySchema)) {
       continue;
     }
+    const propType = propertySchema['type'];
+    if (
+      propType === null ||
+      propType === 'None' ||
+      propType === 'null' ||
+      propType === Type.NULL
+    ) {
+      propertySchema['type'] = Type.OBJECT;
+      propertySchema['nullable'] = true;
+    }
     const anyOf = propertySchema['anyOf'];
     if (!Array.isArray(anyOf)) {
       continue;
@@ -570,9 +581,17 @@ function processParameterSchema(
 }
 
 function mapPropertySchemaType(propertySchema: Record<string, unknown>): void {
-  if (typeof propertySchema['type'] === 'string') {
-    propertySchema['type'] =
-      SCHEMA_TYPE_MAP[propertySchema['type']] ?? Type.TYPE_UNSPECIFIED;
+  const rawType = propertySchema['type'];
+  if (
+    rawType === null ||
+    rawType === 'None' ||
+    rawType === 'null' ||
+    rawType === Type.NULL
+  ) {
+    propertySchema['type'] = Type.OBJECT;
+    propertySchema['nullable'] = true;
+  } else if (typeof rawType === 'string') {
+    propertySchema['type'] = SCHEMA_TYPE_MAP[rawType] ?? Type.TYPE_UNSPECIFIED;
     if (
       propertySchema['type'] === Type.ARRAY &&
       isPlainRecord(propertySchema['items'])

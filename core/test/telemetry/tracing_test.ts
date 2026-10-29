@@ -460,5 +460,66 @@ describe('Telemetry Tracing Functions', () => {
       });
       expect(httpOptions.extraBody).toEqual({apiKey: 'sentinel-secret-token'});
     });
+
+    it('test_trace_call_llm_function_response_includes_part_from_bytes', () => {
+      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+      const llmRequest: LlmRequest = {
+        ...mockLlmRequest,
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                functionResponse: {
+                  name: 'test_function_1',
+                  response: {
+                    result: new Uint8Array([116, 101, 115, 116]),
+                    nonSerializableBigInt: BigInt(42),
+                  },
+                },
+              },
+            ],
+          },
+          {
+            role: 'user',
+            parts: [
+              {
+                functionResponse: {
+                  name: 'test_function_2',
+                  response: {
+                    result: {
+                      inlineData: {
+                        data: Buffer.from('test_data').toString('base64'),
+                        mimeType: 'application/octet-stream',
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      traceCallLlm({
+        invocationContext: mockInvocationContext,
+        eventId: 'test-event-id',
+        llmRequest,
+        llmResponse: mockLlmResponse,
+      });
+
+      const serialized: string =
+        mockSpan.setAttributes.mock.calls[0][0]['gcp.vertex.agent.llm_request'];
+      const traced = JSON.parse(serialized);
+      expect(traced.contents).toHaveLength(2);
+      expect(
+        traced.contents[0].parts[0].functionResponse.response
+          .nonSerializableBigInt,
+      ).toBe('<not serializable>');
+      expect(
+        traced.contents[1].parts[0].functionResponse.response.result.inlineData
+          .mimeType,
+      ).toBe('application/octet-stream');
+    });
   });
 });

@@ -11,7 +11,6 @@ import {
   type BaseLlmConnection,
   type LlmRequest,
   type LlmResponse,
-  logger,
 } from '@google/adk';
 
 import {
@@ -23,15 +22,6 @@ import {
   messageToGenerateContentResponse,
   ToolUseIdSanitizer,
 } from './anthropic_utils.js';
-
-/**
- * Legacy default maximum number of output tokens requested from Claude.
- *
- * @deprecated Configure {@link ClaudeParams.maxTokens} or
- *     `llmRequest.config.maxOutputTokens` instead. `Claude` defaults to `8192`
- *     output tokens.
- */
-export const MAX_TOKEN = 1024;
 
 const DEFAULT_MAX_TOKENS = 8192;
 const DEFAULT_CLAUDE_MODEL = 'claude-sonnet-4-6@default';
@@ -111,10 +101,7 @@ export class Claude extends BaseLlm {
 
     const hasTools = Object.keys(llmRequest.toolsDict ?? {}).length > 0;
     const toolChoice: Anthropic.ToolChoiceAuto | undefined = hasTools
-      ? {
-          type: 'auto',
-          disable_parallel_tool_use: true,
-        }
+      ? {type: 'auto'}
       : undefined;
 
     const client = await this.getAnthropicClient();
@@ -129,7 +116,6 @@ export class Claude extends BaseLlm {
       },
       abortSignal ? {signal: abortSignal} : undefined,
     );
-    logger.debug('Claude response:', JSON.stringify(message, null, 2));
     yield messageToGenerateContentResponse(message);
   }
 

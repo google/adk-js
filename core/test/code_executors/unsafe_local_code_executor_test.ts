@@ -234,6 +234,28 @@ describe('UnsafeLocalCodeExecutor', () => {
     expect(result.stderr).toBe('');
   });
 
+  it('executes python code with an if __name__ == "__main__" block', async () => {
+    const params: ExecuteCodeParams = {
+      invocationContext,
+      codeExecutionInput: {
+        code: [
+          'def main():',
+          '    print("Hello from main!")',
+          '',
+          'if __name__ == "__main__":',
+          '    main()',
+        ].join('\n'),
+        language: CodeExecutionLanguage.PYTHON,
+        inputFiles: [],
+      },
+    };
+
+    const result = await executor.executeCode(params);
+
+    expect(result.stdout).toContain('Hello from main!');
+    expect(result.stderr).toBe('');
+  });
+
   it('should execute shell code and return stdout', async () => {
     const params: ExecuteCodeParams = {
       invocationContext,

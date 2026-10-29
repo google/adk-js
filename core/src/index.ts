@@ -195,27 +195,33 @@ export * from './tools/google_api_tool/index.js';
 // Also available as `@google/adk/tools/mcp`, which does not evaluate the rest
 // of this barrel.
 export {
+  createEvalSetResult,
   DEFAULT_CRITERIA,
   EVAL_SESSION_ID_PREFIX,
   EvalStatus,
   getEvaluationCriteriaOrDefault,
   getRootAgent,
+  LocalEvalSetResultsManager,
   MISSING_EVAL_DEPENDENCIES_MESSAGE,
   parseAndGetEvalsToRun,
+  parseEvalSetResultJson,
   RESPONSE_EVALUATION_SCORE_KEY,
   RESPONSE_MATCH_SCORE_KEY,
   runEvals,
   TOOL_TRAJECTORY_SCORE_KEY,
   tryGetResetFunc,
+  validatePathSegment,
 } from './cli/cli_eval.js';
 export type {
   AddSessionToEvalSetRequest,
+  EvalCaseResult,
   EvalEntry,
   EvalInitialSession,
   EvalMetric,
   EvalMetricResult,
   EvalResult,
   EvalSetItem,
+  EvalSetResult,
   InvocationEvalMetricResult,
   RunEvalRequest,
   RunEvalResult,

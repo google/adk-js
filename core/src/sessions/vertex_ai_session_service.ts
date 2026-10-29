@@ -487,9 +487,14 @@ export class VertexAiSessionService extends BaseSessionService {
       return;
     }
 
-    await this.sessions.delete({
-      name: `reasoningEngines/${reasoningEngineId}/sessions/${sessionId}`,
-    });
+    try {
+      await this.sessions.delete({
+        name: `reasoningEngines/${reasoningEngineId}/sessions/${sessionId}`,
+      });
+    } catch (error: unknown) {
+      logger.error(`Error deleting session ${sessionId}: ${error}`);
+      throw error;
+    }
   }
 
   override async appendEvent({

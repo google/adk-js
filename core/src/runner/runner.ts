@@ -55,12 +55,20 @@ import {BaseToolset, isBaseToolset} from '../tools/base_toolset.js';
 import {logger} from '../utils/logger.js';
 import {isGemini2OrAbove} from '../utils/model_name.js';
 import {stringifyWithRedactedInlineData} from '../utils/redact_inline_data.js';
+import type {BaseNode} from '../workflow/base_node.js';
 import type {RunnableNode} from '../workflow/graph.js';
 import {
   asRunnableRoot,
   RunnableRoot,
   runNodeAsInvocation,
 } from '../workflow/run_node_as_invocation.js';
+import {isWorkflow} from '../workflow/workflow.js';
+
+const TOOLSET_CLEANUP_TIMEOUT_MS = 10_000;
+
+const TOOLSET_CLEANUP_TIMEOUT_SYMBOL = Symbol(
+  'google.adk.runner.toolsetCleanupTimeout',
+);
 
 /**
  * The configuration parameters for the Runner.
@@ -529,11 +537,16 @@ export class Runner {
       );
     } finally {
       span.end();
-      const toolsets = isBaseAgent(this.agent)
-        ? getAllToolsets(this.agent)
-        : [];
-      await Promise.allSettled(toolsets.map((t) => t.close()));
+      await this.close();
     }
+  }
+
+  /**
+   * Closes the runner and cleans up all toolsets reachable from the root agent
+   * or workflow.
+   */
+  async close(): Promise<void> {
+    await cleanupToolsets(collectToolsets(this.agent));
   }
 
   /**
@@ -1076,29 +1089,75 @@ export function findEventByLastFunctionResponseId(
   return findMatchingFunctionCall(events) ?? null;
 }
 
-function getAllToolsets(agent: BaseAgent): BaseToolset[] {
-  const toolsets: BaseToolset[] = [];
-  const visited = new Set<BaseAgent>();
+function collectToolsets(root: BaseNode): Set<BaseToolset> {
+  const toolsets = new Set<BaseToolset>();
+  const visited = new Set<BaseNode>();
 
-  function traverse(curr: BaseAgent) {
-    if (visited.has(curr)) return;
+  function traverse(curr: BaseNode): void {
+    if (visited.has(curr)) {
+      return;
+    }
     visited.add(curr);
 
     if (isLlmAgent(curr)) {
       for (const tool of curr.tools) {
         if (isBaseToolset(tool)) {
-          toolsets.push(tool);
+          toolsets.add(tool);
         }
       }
     }
 
-    for (const sub of curr.subAgents) {
-      traverse(sub);
+    if (isBaseAgent(curr)) {
+      for (const sub of curr.subAgents) {
+        traverse(sub);
+      }
+    }
+
+    if (isWorkflow(curr) && curr.graph) {
+      for (const node of curr.graph.nodes) {
+        traverse(node);
+      }
+    }
+
+    const inner = (curr as {inner?: unknown}).inner;
+    if (typeof inner === 'object' && inner !== null && 'name' in inner) {
+      traverse(inner as BaseNode);
     }
   }
 
-  traverse(agent);
+  traverse(root);
   return toolsets;
+}
+
+async function cleanupToolsets(toolsets: Set<BaseToolset>): Promise<void> {
+  for (const toolset of toolsets) {
+    const toolsetName = toolset.constructor?.name || 'BaseToolset';
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    try {
+      logger.info(`Closing toolset: ${toolsetName}`);
+      const result = await Promise.race([
+        toolset.close().then(() => undefined),
+        new Promise<typeof TOOLSET_CLEANUP_TIMEOUT_SYMBOL>((resolve) => {
+          timeoutId = setTimeout(
+            () => resolve(TOOLSET_CLEANUP_TIMEOUT_SYMBOL),
+            TOOLSET_CLEANUP_TIMEOUT_MS,
+          );
+        }),
+      ]);
+      if (result === TOOLSET_CLEANUP_TIMEOUT_SYMBOL) {
+        logger.warn(`Toolset ${toolsetName} cleanup timed out`);
+      } else {
+        logger.info(`Successfully closed toolset: ${toolsetName}`);
+      }
+    } catch (e: unknown) {
+      const reason = e instanceof Error ? e.message : String(e);
+      logger.error(`Error closing toolset ${toolsetName}: ${reason}`);
+    } finally {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+    }
+  }
 }
 
 /**
