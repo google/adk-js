@@ -667,4 +667,39 @@ describe('AgentGraph — retrieval tools', () => {
       expect(digraph.id).toBe('ragAgent');
     }
   });
+
+  // Ported from google/adk-python tests/unittests/cli/test_agent_graph.py.
+  it('test_build_graph_llm_tree_has_exactly_the_agent_and_tool_nodes', async () => {
+    const rollDice = new FunctionTool({
+      name: 'roll_dice',
+      description: 'Rolls a die',
+      execute: async () => 6,
+    });
+    const checkPrime = new FunctionTool({
+      name: 'check_prime',
+      description: 'Checks whether a number is prime',
+      execute: async () => true,
+    });
+    const child = new LlmAgent({
+      name: 'child',
+      model: 'gemini-flash-latest',
+      tools: [rollDice],
+    });
+    const root = new LlmAgent({
+      name: 'root',
+      model: 'gemini-flash-latest',
+      subAgents: [child],
+      tools: [checkPrime],
+    });
+
+    const dot = await renderDot(root);
+
+    expect(nodeBlock(dot, 'root')).toContain('label = "🤖 root"');
+    expect(nodeBlock(dot, 'child')).toContain('label = "🤖 child"');
+    expect(nodeBlock(dot, 'roll_dice')).toContain('label = "🔧 roll_dice"');
+    expect(nodeBlock(dot, 'check_prime')).toContain('label = "🔧 check_prime"');
+    expect(edgeBlock(dot, 'root', 'child')).toBeDefined();
+    expect(edgeBlock(dot, 'child', 'roll_dice')).toBeDefined();
+    expect(edgeBlock(dot, 'root', 'check_prime')).toBeDefined();
+  });
 });

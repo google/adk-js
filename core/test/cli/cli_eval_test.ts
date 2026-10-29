@@ -8,9 +8,11 @@ import {
   BaseAgent,
   BaseTool,
   Context,
+  createEvalSetResult,
   createEvent,
   DEFAULT_CRITERIA,
   EVAL_SESSION_ID_PREFIX,
+  EvalCaseResult,
   EvalEntry,
   EvalResult,
   EvalStatus,
@@ -18,14 +20,19 @@ import {
   getEvaluationCriteriaOrDefault,
   getRootAgent,
   InMemorySessionService,
+  InputValidationError,
   InvocationContext,
   LlmAgent,
+  LocalEvalSetResultsManager,
   MISSING_EVAL_DEPENDENCIES_MESSAGE,
+  NotFoundError,
   parseAndGetEvalsToRun,
+  parseEvalSetResultJson,
   RESPONSE_MATCH_SCORE_KEY,
   runEvals,
   TOOL_TRAJECTORY_SCORE_KEY,
   tryGetResetFunc,
+  validatePathSegment,
 } from '@google/adk';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -248,13 +255,19 @@ describe('cli/cli_eval', () => {
       expect(results).toHaveLength(2);
 
       expect(results[0].eval_id).toBe('passing_case');
+      expect(results[0].eval_set_id).toBe('sample.evalset.json');
       expect(results[0].final_eval_status).toBe(EvalStatus.PASSED);
       expect(results[0].session_id.startsWith(EVAL_SESSION_ID_PREFIX)).toBe(
         true,
       );
+      expect(results[0].session_details).toBeDefined();
+      expect(results[0].session_details?.id).toBe(results[0].session_id);
+      expect(results[0].session_details?.appName).toBe('eval_app');
 
       expect(results[1].eval_id).toBe('failing_case');
+      expect(results[1].eval_set_id).toBe('sample.evalset.json');
       expect(results[1].final_eval_status).toBe(EvalStatus.FAILED);
+      expect(results[1].session_details).toBeDefined();
     });
 
     it('intercepts mock_tool_output via beforeToolCallback and restores callbacks after run', async () => {
@@ -331,6 +344,155 @@ describe('cli/cli_eval', () => {
       expect(results).toHaveLength(1);
       expect(interceptedOutput).toEqual({result: 'mocked_value_42'});
       expect(subLlmAgent.beforeToolCallback).toBeUndefined();
+    });
+  });
+
+  // Ported from google/adk-python tests/unittests/evaluation/test_local_eval_set_results_manager.py,
+  // test__eval_set_results_manager_utils.py, and test__path_validation.py.
+  describe('LocalEvalSetResultsManager', () => {
+    const sampleCaseResult: EvalCaseResult = {
+      eval_set_file: 'test_file',
+      eval_set_id: 'test_eval_set',
+      eval_id: 'case1',
+      final_eval_status: EvalStatus.PASSED,
+      eval_metric_results: [],
+      overall_eval_metric_results: [],
+      eval_metric_result_per_invocation: [],
+      session_id: 'session1',
+      user_id: 'user1',
+    };
+
+    it('test_save_eval_set_result and test_get_eval_set_result', () => {
+      const agentsDir = path.join(tempDir, 'agents');
+      fs.mkdirSync(agentsDir, {recursive: true});
+      const manager = new LocalEvalSetResultsManager(agentsDir);
+
+      const saved = manager.saveEvalSetResult('test_app', 'test_eval_set', [
+        sampleCaseResult,
+      ]);
+
+      const expectedFile = path.join(
+        agentsDir,
+        'test_app',
+        '.adk',
+        'eval_history',
+        `${saved.evalSetResultName}.evalset_result.json`,
+      );
+      expect(fs.existsSync(expectedFile)).toBe(true);
+
+      const retrieved = manager.getEvalSetResult(
+        'test_app',
+        saved.evalSetResultName,
+      );
+      expect(retrieved.evalSetResultId).toBe(saved.evalSetResultId);
+      expect(retrieved.evalSetId).toBe('test_eval_set');
+      expect(retrieved.evalCaseResults).toHaveLength(1);
+      expect(retrieved.evalCaseResults[0].eval_id).toBe('case1');
+    });
+
+    it('test_get_eval_set_result_double_encoded_legacy', () => {
+      const agentsDir = path.join(tempDir, 'agents');
+      const historyDir = path.join(
+        agentsDir,
+        'test_app',
+        '.adk',
+        'eval_history',
+      );
+      fs.mkdirSync(historyDir, {recursive: true});
+      const manager = new LocalEvalSetResultsManager(agentsDir);
+
+      const resultObj = createEvalSetResult(
+        'test_app',
+        'test_eval_set',
+        [sampleCaseResult],
+        123.0,
+      );
+      const filePath = path.join(
+        historyDir,
+        `${resultObj.evalSetResultName}.evalset_result.json`,
+      );
+      const doubleEncoded = JSON.stringify(JSON.stringify(resultObj));
+      fs.writeFileSync(filePath, doubleEncoded, 'utf-8');
+
+      const retrieved = manager.getEvalSetResult(
+        'test_app',
+        resultObj.evalSetResultName,
+      );
+      expect(retrieved).toEqual(resultObj);
+    });
+
+    it('test_get_eval_set_result_not_found', () => {
+      const manager = new LocalEvalSetResultsManager(tempDir);
+      expect(() =>
+        manager.getEvalSetResult('test_app', 'non_existent_id'),
+      ).toThrow(NotFoundError);
+    });
+
+    it('test_list_eval_set_results and test_list_eval_set_results_empty', () => {
+      const agentsDir = path.join(tempDir, 'agents');
+      const manager = new LocalEvalSetResultsManager(agentsDir);
+
+      expect(manager.listEvalSetResults('test_app')).toEqual([]);
+
+      const first = manager.saveEvalSetResult('test_app', 'set_a', [
+        sampleCaseResult,
+      ]);
+      const second = manager.saveEvalSetResult('test_app', 'set_b', [
+        sampleCaseResult,
+      ]);
+      manager.saveEvalSetResult('other_app', 'set_c', [sampleCaseResult]);
+
+      const listed = manager.listEvalSetResults('test_app');
+      expect(new Set(listed)).toEqual(
+        new Set([first.evalSetResultName, second.evalSetResultName]),
+      );
+    });
+
+    it.each(['', '.', '..', 'foo/bar', 'foo\\bar', 'C:evil', 'foo\x00bar'])(
+      'rejects invalid path segment %j across save, get, and list',
+      (invalid) => {
+        const manager = new LocalEvalSetResultsManager(tempDir);
+        expect(() => validatePathSegment(invalid, 'test_field')).toThrow(
+          InputValidationError,
+        );
+        expect(() =>
+          manager.saveEvalSetResult(invalid, 'valid_set', [sampleCaseResult]),
+        ).toThrow(InputValidationError);
+        expect(() =>
+          manager.saveEvalSetResult('valid_app', invalid, [sampleCaseResult]),
+        ).toThrow(InputValidationError);
+        expect(() => manager.getEvalSetResult(invalid, 'valid_result')).toThrow(
+          InputValidationError,
+        );
+        expect(() => manager.getEvalSetResult('valid_app', invalid)).toThrow(
+          InputValidationError,
+        );
+        expect(() => manager.listEvalSetResults(invalid)).toThrow(
+          InputValidationError,
+        );
+      },
+    );
+
+    it('test_result_name_is_sanitized and parseEvalSetResultJson validation', () => {
+      const created = createEvalSetResult('my/app', 'my_set', [], 456);
+      expect(created.evalSetResultName).toBe('my_app_my_set_456');
+
+      const snakePayload = JSON.stringify({
+        eval_set_result_id: 'app_set_1',
+        eval_set_result_name: 'app_set_1',
+        eval_set_id: 'set_1',
+        eval_case_results: [sampleCaseResult],
+        creation_timestamp: 100,
+      });
+      const parsed = parseEvalSetResultJson(snakePayload);
+      expect(parsed.evalSetResultId).toBe('app_set_1');
+      expect(parsed.evalSetId).toBe('set_1');
+      expect(parsed.creationTimestamp).toBe(100);
+
+      expect(() =>
+        parseEvalSetResultJson('{"unexpected_field": "value"}'),
+      ).toThrow(/missing evalSetResultId or evalSetId/);
+      expect(() => parseEvalSetResultJson('not valid json {')).toThrow();
     });
   });
 });

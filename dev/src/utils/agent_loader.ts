@@ -4,7 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {App, isApp, isRunnableRoot, RunnableRoot} from '@google/adk';
+import {
+  App,
+  isApp,
+  isRunnableRoot,
+  loadDotenvForAgent,
+  RunnableRoot,
+} from '@google/adk';
 import esbuild from 'esbuild';
 import {shimPlugin} from 'esbuild-shim-plugin';
 import * as fs from 'node:fs';
@@ -360,6 +366,23 @@ export class AgentFile {
         return (this.agent = jsModule.rootAgent);
       }
 
+      if (isRunnableRoot(jsModule.root_agent)) {
+        return (this.agent = jsModule.root_agent);
+      }
+
+      const nestedAgentObj =
+        typeof jsModule.agent === 'object' && jsModule.agent !== null
+          ? (jsModule.agent as Record<string, unknown>)
+          : undefined;
+      if (nestedAgentObj) {
+        if (isRunnableRoot(nestedAgentObj.rootAgent)) {
+          return (this.agent = nestedAgentObj.rootAgent);
+        }
+        if (isRunnableRoot(nestedAgentObj.root_agent)) {
+          return (this.agent = nestedAgentObj.root_agent);
+        }
+      }
+
       const defaultAgent = [jsModule.default, jsModule.default?.default].find(
         isRunnableRoot,
       );
@@ -649,6 +672,11 @@ export class AgentLoader {
     return this.getAgentFile(appName);
   }
 
+  async loadAgent(agentName: string): Promise<RunnableRoot | App> {
+    const agentFile = await this.getAgentFile(agentName);
+    return agentFile.load();
+  }
+
   async disposeAll(): Promise<void> {
     this.watcher?.close();
     this.watcher = undefined;
@@ -708,6 +736,7 @@ export class AgentLoader {
 
   private async loadAgentFromFile(file: FileMetadata): Promise<void> {
     try {
+      loadDotenvForAgent(file.name, path.dirname(file.path));
       const agentFile = new AgentFile(file.path, this.options);
       await agentFile.load();
       this.preloadedAgents[file.name] = agentFile;
@@ -720,13 +749,15 @@ export class AgentLoader {
     const subFiles = await getDirFiles(dir.path);
     const possibleEntryFile =
       subFiles.find((f) => f.isFile && f.name === 'app' && isJsFile(f.ext)) ??
-      subFiles.find((f) => f.isFile && f.name === 'agent' && isJsFile(f.ext));
+      subFiles.find((f) => f.isFile && f.name === 'agent' && isJsFile(f.ext)) ??
+      subFiles.find((f) => f.isFile && f.name === 'index' && isJsFile(f.ext));
 
     if (!possibleEntryFile) {
       return;
     }
 
     try {
+      loadDotenvForAgent(dir.name, path.dirname(dir.path));
       const agentFile = new AgentFile(possibleEntryFile.path, this.options);
       await agentFile.load();
       this.preloadedAgents[dir.name] = agentFile;
