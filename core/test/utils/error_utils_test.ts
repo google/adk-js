@@ -5,7 +5,12 @@
  */
 
 import {describe, expect, it} from 'vitest';
-import {formatError, getErrorMessage} from '../../src/utils/error_utils.js';
+import {
+  formatError,
+  getErrorMessage,
+  isInvocationCancellation,
+  toError,
+} from '../../src/utils/error_utils.js';
 
 const TRUNCATION_MARKER = '... [truncated]';
 const MAX_RESPONSE_BODY_LENGTH = 1000;
@@ -227,4 +232,137 @@ describe('formatError', () => {
     });
     expect(formatError(err)).toContain('text body');
   });
+});
+
+describe('toError', () => {
+  it('preserves an existing Error object', () => {
+    const failure = new Error('original');
+    expect(toError(failure)).toBe(failure);
+  });
+  it.each([undefined, null, 0, false, '', 'failure', {failed: true}])(
+    'keeps %s as the cause without a shared cache',
+    (value) => {
+      const wrapped = toError(value);
+      expect(wrapped).toBeInstanceOf(Error);
+      expect(wrapped.cause).toBe(value);
+      expect(toError(value)).not.toBe(wrapped);
+    },
+  );
+});
+
+describe('isInvocationCancellation', () => {
+  it('requires an aborted invocation signal', () => {
+    const error = new DOMException('cancelled', 'AbortError');
+    expect(isInvocationCancellation(error)).toBe(false);
+    expect(isInvocationCancellation(error, new AbortController().signal)).toBe(
+      false,
+    );
+  });
+  it.each([undefined, null, 0, false, '', NaN, 'cancelled', {cancelled: true}])(
+    'recognizes the exact signal reason %s, including through wrappers',
+    (reason) => {
+      const controller = new AbortController();
+      controller.abort(reason);
+      expect(
+        isInvocationCancellation(controller.signal.reason, controller.signal),
+      ).toBe(true);
+      const wrapped = new Error('plugin wrapper', {
+        cause: new Error('inner', {cause: controller.signal.reason}),
+      });
+      expect(isInvocationCancellation(wrapped, controller.signal)).toBe(true);
+    },
+  );
+  it.each(['AbortError', 'InvocationAbortedError'])(
+    'recognizes %s after abort',
+    (name) => {
+      const controller = new AbortController();
+      controller.abort();
+      expect(
+        isInvocationCancellation(
+          Object.assign(new Error('cancelled'), {name}),
+          controller.signal,
+        ),
+      ).toBe(true);
+    },
+  );
+  it.each([
+    new Error('unrelated'),
+    undefined,
+    null,
+    0,
+    false,
+    '',
+    {},
+    {cause: undefined},
+  ])('does not classify unrelated %s as cancellation', (error) => {
+    const controller = new AbortController();
+    controller.abort();
+    expect(isInvocationCancellation(error, controller.signal)).toBe(false);
+  });
+  it('does not equate different reason objects', () => {
+    const controller = new AbortController();
+    controller.abort({cancelled: true});
+    expect(isInvocationCancellation({cancelled: true}, controller.signal)).toBe(
+      false,
+    );
+  });
+  it('terminates when a cause chain contains a cycle', () => {
+    const controller = new AbortController();
+    controller.abort();
+    const first = new Error('first');
+    const second = new Error('second', {cause: first});
+    first.cause = second;
+    expect(isInvocationCancellation(first, controller.signal)).toBe(false);
+  });
+  it('bounds a cause getter that keeps returning fresh objects', () => {
+    const controller = new AbortController();
+    controller.abort();
+    let reads = 0;
+    const freshCause = (): object => ({
+      get cause() {
+        // Fail safely if the classifier ever loses its bound.
+        if (++reads > 32) throw new Error('Cause walk exceeded its limit.');
+        return freshCause();
+      },
+    });
+    expect(isInvocationCancellation(freshCause(), controller.signal)).toBe(
+      false,
+    );
+    expect(reads).toBe(32);
+  });
+  it.each([
+    [31, true],
+    [32, false],
+  ] as const)('checks the reason under %s wrappers: %s', (depth, expected) => {
+    const controller = new AbortController();
+    controller.abort();
+    let error: unknown = controller.signal.reason;
+    for (let index = 0; index < depth; index++) {
+      error = new Error('wrapper', {cause: error});
+    }
+    expect(isInvocationCancellation(error, controller.signal)).toBe(expected);
+  });
+  it('accepts AbortError from a different controller once the invocation aborts', () => {
+    const invocation = new AbortController();
+    const nested = new AbortController();
+    invocation.abort(new Error('invocation cancelled'));
+    nested.abort();
+    expect(nested.signal.reason).not.toBe(invocation.signal.reason);
+    expect(
+      isInvocationCancellation(nested.signal.reason, invocation.signal),
+    ).toBe(true);
+  });
+  it.each(['name', 'cause'])(
+    'does not let a throwing %s getter replace the original failure',
+    (property) => {
+      const controller = new AbortController();
+      controller.abort();
+      const error = Object.defineProperty({}, property, {
+        get() {
+          throw new Error('getter');
+        },
+      });
+      expect(isInvocationCancellation(error, controller.signal)).toBe(false);
+    },
+  );
 });

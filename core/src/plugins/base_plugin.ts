@@ -183,10 +183,12 @@ export abstract class BasePlugin {
   }
 
   /**
-   * Callback executed after an ADK runner run has completed.
+   * Callback executed after successful completion, abort, or early iterator close.
    *
    * This is the final callback in the ADK lifecycle, suitable for cleanup,
-   * final logging, or reporting tasks.
+   * final logging, or reporting tasks. It is skipped when execution fails;
+   * {@link onRunErrorCallback} is called instead. Receiving this callback does
+   * not imply success: recognized cancellation still propagates to the caller.
    *
    * @param _params.invocationContext The context for the entire invocation.
    * @returns undefined
@@ -196,6 +198,30 @@ export abstract class BasePlugin {
   }): Promise<void> {
     return;
   }
+
+  /**
+   * Observes an error escaping an agent's execution or lifecycle callbacks.
+   *
+   * Notification-only: return values are ignored and callback failures are
+   * logged. The original execution error always propagates.
+   */
+  async onAgentErrorCallback(_params: {
+    agent: BaseAgent;
+    callbackContext: Context;
+    error: Error;
+  }): Promise<void> {}
+
+  /**
+   * Observes an error in the run lifecycle, including before/after-run callbacks.
+   *
+   * Notification-only: return values are ignored and callback failures are
+   * logged. The original execution error always propagates. A completion-hook
+   * failure during early iterator close is reported but does not prevent closing.
+   */
+  async onRunErrorCallback(_params: {
+    invocationContext: InvocationContext;
+    error: Error;
+  }): Promise<void> {}
 
   /**
    * Callback executed before an agent's primary logic is invoked.
