@@ -1,6 +1,6 @@
 {
   "name": "@google/adk-integrations",
-  "version": "2.4.0",
+  "version": "2.4.1",
   "description": "Google ADK JS Integrations",
   "author": "Google",
   "license": "Apache-2.0",
@@ -45,7 +45,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@google/adk": "^2.4.0",
+    "@google/adk": "^2.4.1",
     "@google/genai": "^2.29.1"
   },
   "devDependencies": {
