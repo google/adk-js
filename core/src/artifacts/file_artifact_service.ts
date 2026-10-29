@@ -505,7 +505,11 @@ function getArtifactDir(
 
   const artifactDir = path.resolve(scopeRoot, cleanFilename);
   const relative = path.relative(scopeRoot, artifactDir);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+  if (
+    relative === '..' ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
     throw new Error(`Artifact filename ${filename} escapes storage directory.`);
   }
   if (relative === '' || relative === '.') {
