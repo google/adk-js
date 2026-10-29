@@ -1019,6 +1019,49 @@ describe('DatabaseSessionService', () => {
       expect(loadedSession?.events[0].content?.parts?.[0]).toEqual(inlinePart);
     });
 
+    it('test_append_event_bytes', async () => {
+      const session = await service.createSession({
+        appName: 'my_app',
+        userId: 'user',
+      });
+      const testContent = {
+        role: 'user',
+        parts: [
+          {
+            inlineData: {
+              data: Buffer.from('test_image_data').toString('base64'),
+              mimeType: 'image/png',
+            },
+          },
+        ],
+      };
+      const testGroundingMetadata = {
+        searchEntryPoint: {
+          sdkBlob: Buffer.from('test_sdk_blob').toString('base64'),
+        },
+      };
+      const event = createEvent({
+        invocationId: 'invocation',
+        author: 'user',
+        content: testContent,
+        groundingMetadata: testGroundingMetadata,
+      });
+
+      await service.appendEvent({session, event});
+
+      expect(session.events[0].content).toEqual(testContent);
+
+      const loadedSession = await service.getSession({
+        appName: 'my_app',
+        userId: 'user',
+        sessionId: session.id,
+      });
+      const events = loadedSession?.events ?? [];
+      expect(events).toHaveLength(1);
+      expect(events[0].content).toEqual(testContent);
+      expect(events[0].groundingMetadata).toEqual(testGroundingMetadata);
+    });
+
     it('should persist and restore a complete event with all metadata and actions fields', async () => {
       const session = await service.createSession({
         appName: 'test-app',
@@ -1221,6 +1264,28 @@ describe('DatabaseSessionService with sqlite:///:memory:', () => {
       sessionId: 'memory-session',
     });
     expect(unseen).toBeUndefined();
+  });
+
+  it('forwards additional MikroORM options when constructed with a URI string', async () => {
+    const initSpy = vi.spyOn(MikroORM, 'init');
+    const customService = new DatabaseSessionService('sqlite:///:memory:', {
+      debug: false,
+      allowGlobalContext: true,
+      staleSession: 'reload',
+    });
+    services.push(customService);
+
+    await customService.init();
+
+    expect(initSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dbName: ':memory:',
+        debug: false,
+        allowGlobalContext: true,
+      }),
+    );
+    expect(initSpy.mock.calls[0]?.[0]).not.toHaveProperty('staleSession');
+    initSpy.mockRestore();
   });
 });
 

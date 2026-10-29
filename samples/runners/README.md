@@ -75,10 +75,12 @@ const archiveRunner = new Runner({
 
 **Archiving is one call on a session the caller already holds.** The transcript
 is replayed through `appendEvent` here, where a real caller would have run the
-conversation with `runAsync` instead.
+conversation with `runAsync` instead, and `await archiveRunner.close()` closes
+any toolsets attached to the runner when done.
 
 ```ts
 await memoryService.addSessionToMemory(session);
+await archiveRunner.close();
 ```
 
 **The tool searches the archive rather than the current session.** A memory

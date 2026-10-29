@@ -97,7 +97,9 @@ the same sentence repeatedly, so only the completed event reaches the session.
 
 The whole call runs inside an OpenTelemetry span named `invocation`. When the
 generator finishes, including the path where the caller abandons it, the runner
-closes every toolset in the agent tree.
+calls `await this.close()` to close every `BaseToolset` reachable across the
+root agent, sub-agents, and workflow nodes with a 10-second per-toolset
+timeout.
 
 ### The entry points
 
@@ -108,6 +110,7 @@ Each method answers a different question about where the conversation lives.
 | `runAsync({userId, sessionId, newMessage})`      | The conversation has a session, and you want the events appended to it.            |
 | `runEphemeral({userId, newMessage})`             | The turn is a one-off. The runner creates a session and deletes it in a `finally`. |
 | `runLive({userId, sessionId, liveRequestQueue})` | The conversation is bidirectional streaming audio or text. Experimental.           |
+| `close()`                                        | You want to explicitly close all toolsets reachable from the runner's root.        |
 
 `runAsync` also takes optional `stateDelta`, `runConfig`, `abortSignal` and
 `customMetadata`. `runEphemeral` takes the same options except `sessionId` and
