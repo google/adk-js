@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content} from '@google/genai';
+import {Content, GenerateContentResponseUsageMetadata} from '@google/genai';
 import {
   type Attributes,
   context,
@@ -24,8 +24,15 @@ import type {LlmResponse} from '../../models/llm_response.js';
 import type {ContextCompactionTrigger} from '../../plugins/base_plugin.js';
 import type {Skill} from '../../skills/skill.js';
 import type {BaseTool} from '../../tools/base_tool.js';
+import {logger} from '../../utils/logger.js';
 import type {BaseNode} from '../../workflow/base_node.js';
 
+import {
+  captureAccumulators,
+  claimEntrypointWorkflowFrame,
+  openAgentFrame,
+  openWorkflowFrame,
+} from './internal/common/accumulators.js';
 import {
   GcpAttr,
   GenAiAttr,
@@ -34,6 +41,7 @@ import {
 import {
   readTelemetryConfig,
   shouldAddContentToLogs,
+  type TelemetryConfig,
 } from './internal/common/config.js';
 import {
   getToolResponseErrorType,
@@ -47,7 +55,15 @@ import {
   withoutContent,
 } from './internal/common/genai_messages.js';
 import {resolveProviderName} from './internal/common/provider_name.js';
+import {TokenUsage} from './internal/common/token_usage.js';
 import {emitInferenceOperationDetails} from './internal/logs/inference.js';
+import {recordAgentMetrics} from './internal/metrics/agent.js';
+import {
+  recordSkillLoad,
+  recordSkillScriptExecution,
+  recordToolMetrics,
+} from './internal/metrics/tool.js';
+import {recordWorkflowMetrics} from './internal/metrics/workflow.js';
 import {buildAgentInvocationAttributes} from './internal/trace/agent.js';
 import {
   buildCompactionResultAttributes,
@@ -77,34 +93,118 @@ import {
   getTracer,
   setSpanError,
 } from './internal/trace/tracer.js';
-import {
-  claimEntrypointWorkflowSpan,
-  startWorkflowSpan,
-} from './internal/trace/workflow.js';
+import {startWorkflowSpan} from './internal/trace/workflow.js';
+
+/** Returns the seconds elapsed since `startTime`, a `performance.now()`. */
+function secondsSince(startTime: number): number {
+  return (performance.now() - startTime) / 1000;
+}
 
 /**
- * Drives a generator under a span that `start` opens on the first pull, with
- * the span's context bound to every step. The span ends when the generator
- * finishes, and records an ERROR status if an error escapes it.
+ * Records metrics without letting a failure to record them fail the run, or
+ * replace the error the run is already failing with.
  */
-function streamInSpan<T>(
-  start: () => {span: Span; context: Context},
+function recordMetricsSafely(record: () => void): void {
+  try {
+    record();
+  } catch (error: unknown) {
+    logger.warn(`Failed to record ADK metrics: ${resolveErrorType(error)}`);
+  }
+}
+
+/** Wraps `end` so that only its first call has an effect. */
+function once(end: (error?: unknown) => void): (error?: unknown) => void {
+  let ended = false;
+  return (error?: unknown): void => {
+    if (ended) {
+      return;
+    }
+    ended = true;
+    end(error);
+  };
+}
+
+/** A started scope whose work runs under `context`. */
+interface StartedScope {
+  readonly context: Context;
+  /**
+   * Ends the scope, as failed when `error` is given. Only the first call
+   * counts.
+   */
+  end(error?: unknown): void;
+}
+
+/**
+ * Drives a generator under a scope that `start` opens on the first pull, with
+ * the scope's context bound to every step. The scope ends when the generator
+ * finishes, with the error that escapes it, if any.
+ */
+function streamInScope<T>(
+  start: () => StartedScope,
   createGenerator: () => AsyncGenerator<T, void, void>,
 ): AsyncGenerator<T, void, void> {
   return (async function* () {
-    const {span, context: ctx} = start();
+    const scope = start();
     try {
       yield* bindOtelContextToAsyncGenerator(
-        ctx,
-        context.with(ctx, createGenerator),
+        scope.context,
+        context.with(scope.context, createGenerator),
       );
     } catch (error: unknown) {
-      setSpanError(span, error);
+      scope.end(error);
       throw error;
     } finally {
-      span.end();
+      scope.end();
     }
   })();
+}
+
+/** Parameters for {@link startWorkflowScope}. */
+interface StartWorkflowScopeParams {
+  readonly workflowName: string;
+  readonly sessionId: string;
+  /** The runner's entrypoint, when the scope is opened for it. */
+  readonly entrypoint?: object;
+}
+
+/**
+ * Opens an `invoke_workflow` span and the workflow frame that model, tool and
+ * skill calls inside it count against. Ending it records the workflow's
+ * duration and inclusive totals.
+ */
+function startWorkflowScope({
+  workflowName,
+  sessionId,
+  entrypoint,
+}: StartWorkflowScopeParams): StartedScope {
+  const startTime = performance.now();
+  const {frame, context: frameContext} = openWorkflowFrame(context.active(), {
+    workflowName,
+    config: readTelemetryConfig(),
+    entrypoint,
+  });
+  const nested = frame.parent !== undefined;
+  const span = startWorkflowSpan({workflowName, sessionId, nested});
+  return {
+    context: trace.setSpan(frameContext, span),
+    end: once((error?: unknown): void => {
+      if (error !== undefined) {
+        setSpanError(span, error);
+      }
+      span.end();
+      recordMetricsSafely(() =>
+        recordWorkflowMetrics({
+          workflowName,
+          rootAgentName: frame.rootAgentName,
+          nested,
+          elapsedSeconds: secondsSince(startTime),
+          errorType: error === undefined ? undefined : resolveErrorType(error),
+          totals: frame.totals,
+          config: frame.config,
+        }),
+      );
+    }),
+  };
 }
 
 /** Parameters for starting an invocation with {@link recordInvocation}. */
@@ -125,9 +225,13 @@ export function recordInvocation<T>(
   {entrypoint, sessionId}: RecordInvocationParams,
   createGenerator: () => AsyncGenerator<T, void, void>,
 ): AsyncGenerator<T, void, void> {
-  return streamInSpan(
+  return streamInScope(
     () =>
-      startWorkflowSpan({workflowName: entrypoint.name, sessionId, entrypoint}),
+      startWorkflowScope({
+        workflowName: entrypoint.name,
+        sessionId,
+        entrypoint,
+      }),
     createGenerator,
   );
 }
@@ -146,7 +250,9 @@ export function recordAgentInvocation<T>(
   {agent, invocationContext}: RecordAgentInvocationParams,
   createGenerator: () => AsyncGenerator<T, void, void>,
 ): AsyncGenerator<T, void, void> {
-  return streamInSpan(() => {
+  return streamInScope(() => {
+    const config = readTelemetryConfig();
+    const startTime = performance.now();
     const span = getTracer().startSpan(`invoke_agent ${agent.name}`, {
       attributes: buildAgentInvocationAttributes({
         agent,
@@ -155,7 +261,28 @@ export function recordAgentInvocation<T>(
         sessionId: invocationContext.session?.id,
       }),
     });
-    return {span, context: trace.setSpan(context.active(), span)};
+    const {frame, context: frameContext} = openAgentFrame(
+      trace.setSpan(context.active(), span),
+    );
+    return {
+      context: frameContext,
+      end: once((error?: unknown): void => {
+        if (error !== undefined) {
+          setSpanError(span, error);
+        }
+        span.end();
+        recordMetricsSafely(() =>
+          recordAgentMetrics({
+            agentName: agent.name,
+            elapsedSeconds: secondsSince(startTime),
+            errorType:
+              error === undefined ? undefined : resolveErrorType(error),
+            totals: frame.totals,
+            config,
+          }),
+        );
+      }),
+    };
   }, createGenerator);
 }
 
@@ -167,14 +294,20 @@ export interface RecordInferenceParams {
   readonly modelResponseEvent: Event;
 }
 
-/** The state of one model call while its `generate_content` span is open. */
+/** The state of one model call while its stream is being consumed. */
 interface Inference {
   /** The context carrying the `generate_content` span. */
   readonly context: Context;
-  /** Records a response; ends the call when it reports a finish reason. */
+  /**
+   * Records a response; ends the span when it reports a finish reason. Every
+   * response counts towards the call's token usage, including those after it.
+   */
   record(llmResponse: LlmResponse): void;
-  /** Ends the call, once: emits its log record, then ends its span. */
-  end(failure?: {error: unknown}): void;
+  /**
+   * Finishes the call, once: ends the span if it is still open, then counts
+   * the call and its newest token usage against its agent and workflows.
+   */
+  finish(failure?: {error: unknown}): void;
 }
 
 function startInference({
@@ -183,6 +316,7 @@ function startInference({
   modelResponseEvent,
 }: RecordInferenceParams): Inference {
   const config = readTelemetryConfig();
+  const accumulators = captureAccumulators(context.active());
   const agentName = invocationContext.agent?.name;
   const commonAttributes: Attributes = {
     ...(agentName ? {[GenAiAttr.AGENT_NAME]: agentName} : {}),
@@ -196,6 +330,8 @@ function startInference({
   const outputMessages: AnyValueMap[] = [];
   let responseAttributes: Attributes = {};
   let ended = false;
+  let finished = false;
+  let newestUsage: GenerateContentResponseUsageMetadata | undefined;
 
   const end = (failure?: {error: unknown}): void => {
     if (ended) {
@@ -225,6 +361,8 @@ function startInference({
   return {
     context: trace.setSpan(context.active(), span),
     record(llmResponse: LlmResponse): void {
+      // Usage reports are cumulative, so the newest one is the whole figure.
+      newestUsage = llmResponse.usageMetadata ?? newestUsage;
       if (ended) {
         return;
       }
@@ -245,7 +383,20 @@ function startInference({
         end();
       }
     },
-    end,
+    finish(failure?: {error: unknown}): void {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      end(failure);
+      accumulators.addInferenceCall();
+      if (newestUsage !== undefined) {
+        const usage = new TokenUsage(newestUsage);
+        if (usage.input !== undefined || usage.output !== undefined) {
+          accumulators.addTokens(usage);
+        }
+      }
+    },
   };
 }
 
@@ -275,10 +426,10 @@ export function recordInference(
         yield llmResponse;
       }
     } catch (error: unknown) {
-      inference.end({error});
+      inference.finish({error});
       throw error;
     } finally {
-      inference.end();
+      inference.finish();
     }
   })();
 }
@@ -311,13 +462,57 @@ export async function recordSendData<T>(
 
 const TOOL_SCOPE_KEY = createContextKey('adk_tool_scope');
 
-/** What a running tool reports back to its `execute_tool` span. */
+/** What a skill tool reported, and the skill it resolved, if any. */
+interface SkillActivityReport {
+  readonly activity: SkillActivity;
+  readonly skill?: Skill;
+}
+
+/** What a running tool reports back to its `execute_tool` scope. */
 interface ToolScopeState {
-  skill: SkillReport | undefined;
+  skillActivity: SkillActivityReport | undefined;
 }
 
 function isToolScopeState(value: unknown): value is ToolScopeState {
-  return typeof value === 'object' && value !== null && 'skill' in value;
+  return (
+    typeof value === 'object' && value !== null && 'skillActivity' in value
+  );
+}
+
+/** Parameters for {@link recordSkillMetrics}. */
+interface RecordSkillMetricsParams {
+  readonly report: SkillActivityReport;
+  readonly agentName: string;
+  readonly errorType: string | undefined;
+  readonly config: TelemetryConfig;
+}
+
+/** Records the skill load and script execution counters. */
+function recordSkillMetrics({
+  report: {activity, skill},
+  agentName,
+  errorType,
+  config,
+}: RecordSkillMetricsParams): void {
+  switch (activity.kind) {
+    case 'load':
+      recordSkillLoad({config, agentName, skill, errorType});
+      return;
+    case 'script':
+      recordSkillScriptExecution({
+        config,
+        agentName,
+        skill,
+        scriptPath: activity.scriptPath,
+      });
+      return;
+    case 'resource':
+      return;
+    default: {
+      const exhaustive: never = activity;
+      throw new Error(`Unknown skill activity: ${JSON.stringify(exhaustive)}`);
+    }
+  }
 }
 
 /** Parameters for starting an `execute_tool` instrumentation scope. */
@@ -358,7 +553,9 @@ export async function recordToolExecution<T>(
   fn: (scope: ToolExecutionScope) => Promise<T>,
 ): Promise<T> {
   const config = readTelemetryConfig();
-  const toolScope: ToolScopeState = {skill: undefined};
+  const accumulators = captureAccumulators(context.active());
+  const startTime = performance.now();
+  const toolScope: ToolScopeState = {skillActivity: undefined};
   return getTracer().startActiveSpan(
     `execute_tool ${tool.name}`,
     {},
@@ -398,10 +595,39 @@ export async function recordToolExecution<T>(
             message: outcome.errorType,
           });
         }
-        if (toolScope.skill) {
-          setSkillSpanAttributes(span, tool.name, toolScope.skill);
+        const {skillActivity} = toolScope;
+        if (skillActivity) {
+          setSkillSpanAttributes(
+            span,
+            tool.name,
+            toSkillReport(skillActivity.activity, skillActivity.skill),
+          );
         }
         span.end();
+        accumulators.addToolCall();
+        if (skillActivity?.activity.kind === 'load') {
+          accumulators.addSkillLoad();
+        }
+        const agentName = invocationContext.agent?.name;
+        recordMetricsSafely(() => {
+          if (agentName !== undefined) {
+            recordToolMetrics({
+              agentName,
+              toolName: tool.name,
+              toolType: tool.constructor.name,
+              elapsedSeconds: secondsSince(startTime),
+              errorType: outcome.errorType,
+            });
+          }
+          if (skillActivity && agentName !== undefined) {
+            recordSkillMetrics({
+              report: skillActivity,
+              agentName,
+              errorType: outcome.errorType,
+              config,
+            });
+          }
+        });
       }
     },
   );
@@ -431,21 +657,23 @@ const NO_OP_SKILL_ACTIVITY_SCOPE: SkillActivityScope = Object.freeze({
   recordSkill(): void {},
 });
 
-function toSkillReport(activity: SkillActivity): SkillReport {
+function toSkillReport(activity: SkillActivity, skill?: Skill): SkillReport {
   switch (activity.kind) {
     case 'load':
-      return {skillName: activity.skillName, isSkillLoad: true};
+      return {skillName: activity.skillName, isSkillLoad: true, skill};
     case 'resource':
       return {
         skillName: activity.skillName,
         resourceName: activity.resourcePath,
         isSkillLoad: false,
+        skill,
       };
     case 'script':
       return {
         skillName: activity.skillName,
         resourceName: activity.scriptPath,
         isSkillLoad: false,
+        skill,
       };
     default: {
       const exhaustive: never = activity;
@@ -469,11 +697,11 @@ export function recordSkillActivity(
   if (!isToolScopeState(toolScope)) {
     return NO_OP_SKILL_ACTIVITY_SCOPE;
   }
-  const report = toSkillReport(activity);
-  toolScope.skill = report;
+  const report: SkillActivityReport = {activity};
+  toolScope.skillActivity = report;
   return {
     recordSkill(skill: Skill): void {
-      toolScope.skill = {...report, skill};
+      toolScope.skillActivity = {...report, skill};
     },
   };
 }
@@ -566,15 +794,13 @@ export function recordWorkflowInvocation({
   workflow,
   sessionId,
 }: RecordWorkflowInvocationParams): SyncStartedScope {
-  const entrypointContext = claimEntrypointWorkflowSpan(workflow);
-  if (entrypointContext) {
-    return {run: (fn) => context.with(entrypointContext, fn), end(): void {}};
+  const parentContext = context.active();
+  if (claimEntrypointWorkflowFrame(parentContext, workflow)) {
+    // The runner's invocation scope records this workflow when it ends.
+    return {run: (fn) => context.with(parentContext, fn), end(): void {}};
   }
-  const {span, context: ctx} = startWorkflowSpan({
-    workflowName: workflow.name,
-    sessionId,
-  });
-  return startSyncScope(span, ctx);
+  const scope = startWorkflowScope({workflowName: workflow.name, sessionId});
+  return {run: (fn) => context.with(scope.context, fn), end: scope.end};
 }
 
 /** Parameters for starting a workflow node's instrumentation scope. */
@@ -643,13 +869,19 @@ export async function recordCompaction<T>(
 ): Promise<T> {
   const {session} = invocationContext;
   const eventsBefore = [...session.events];
+  const accumulators = captureAccumulators(context.active());
   const span = startCompactionSpan({sessionId: session.id, trigger});
   return context.with(trace.setSpan(context.active(), span), async () => {
     try {
       const result = await fn();
-      span.setAttributes(
-        buildCompactionResultAttributes(eventsBefore, session.events),
+      const resultAttributes = buildCompactionResultAttributes(
+        eventsBefore,
+        session.events,
       );
+      span.setAttributes(resultAttributes);
+      if (GenAiAttr.COMPACTION_RESULT_EVENT_ID in resultAttributes) {
+        accumulators.addCompaction();
+      }
       return result;
     } catch (error: unknown) {
       setSpanError(span, error);

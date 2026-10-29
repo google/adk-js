@@ -273,5 +273,171 @@
         "reason": "The error is derived from a non-zero exit code, which adk-js code executors do not report. The span status is UNSET for the same reason."
       }
     ]
+  },
+  {
+    "owner_type": "metric",
+    "owner_name": "gen_ai.client.operation.duration / gen_ai.client.token.usage",
+    "affected_tests": [
+      "agent/experimental-event-only",
+      "agent/experimental-no-content",
+      "agent/experimental-span-and-event",
+      "agent/experimental-span-only",
+      "agent/experimental-telemetry-no-capture",
+      "agent/grounding",
+      "agent/inference-error-resource-exhausted",
+      "agent/inference-error-valueerror",
+      "agent/inference-error-valueerror-span-and-event",
+      "agent/tool-error-valueerror",
+      "agent/tool-error-valueerror-span-only",
+      "agent_tool/experimental-telemetry",
+      "agent_tool/no-experimental-telemetry",
+      "conversational_agent_compaction/no-experimental-telemetry",
+      "conversational_agent_compaction/token-threshold",
+      "conversational_agent_compaction/untriggered",
+      "mcp/experimental-span-and-event",
+      "mcp/http-exchange",
+      "multi_agent/experimental-telemetry",
+      "multi_agent/no-experimental-telemetry",
+      "nested_agents_in_workflow/experimental-telemetry",
+      "nested_agents_in_workflow/no-experimental-telemetry",
+      "node/experimental-event-only",
+      "node/experimental-no-content",
+      "node/experimental-span-and-event",
+      "node/experimental-span-only",
+      "skill/invalid-skill",
+      "skill/invalid-skill-resource",
+      "skill/skill-resource-telemetry",
+      "skill/skill-script-telemetry",
+      "skill/skill-telemetry",
+      "skill/skill-telemetry-disabled",
+      "streaming/experimental-event-only",
+      "streaming/experimental-no-content",
+      "streaming/experimental-span-and-event",
+      "streaming/experimental-span-only"
+    ],
+    "divergences": [
+      {
+        "path": ["metric_points", "gen_ai.client.operation.duration"],
+        "example_adk_js_value": {"missing_on_this_side": true},
+        "example_adk_python_value": "one point per model call",
+        "reason": "gen_ai.client.operation.duration and gen_ai.client.token.usage were removed from the OpenTelemetry GenAI semantic conventions. adk-python retains them for backward compatibility, while adk-js omits them."
+      }
+    ]
+  },
+  {
+    "owner_type": "metric",
+    "owner_name": "gen_ai.invoke_agent.duration / gen_ai.invoke_workflow.duration",
+    "affected_tests": [
+      "agent/inference-error-resource-exhausted",
+      "agent/inference-error-valueerror",
+      "agent/inference-error-valueerror-span-and-event",
+      "agent/tool-error-valueerror",
+      "agent/tool-error-valueerror-span-only"
+    ],
+    "divergences": [
+      {
+        "path": ["attributes", "error.type"],
+        "example_adk_js_value": {"missing_on_this_side": true},
+        "example_adk_python_value": "ValueError",
+        "reason": "Same cause as the UNSET status on the invoke_agent and invoke_workflow spans: adk-js turns a failed model call into an error event and a failed tool call into an error response, so no error leaves the agent or the runner."
+      }
+    ]
+  },
+  {
+    "owner_type": "metric",
+    "owner_name": "gen_ai.execute_tool.duration",
+    "affected_tests": [
+      "agent/tool-error-valueerror",
+      "agent/tool-error-valueerror-span-only"
+    ],
+    "divergences": [
+      {
+        "path": ["attributes", "error.type"],
+        "example_adk_js_value": "Error",
+        "example_adk_python_value": "ValueError",
+        "reason": "Same cause as on the execute_tool span: the test tool throws a JavaScript Error where the Python one raises ValueError."
+      }
+    ]
+  },
+  {
+    "owner_type": "metric",
+    "owner_name": "gen_ai.invoke_agent.inference_calls",
+    "affected_tests": [
+      "agent/tool-error-valueerror",
+      "agent/tool-error-valueerror-span-only"
+    ],
+    "divergences": [
+      {
+        "path": ["value"],
+        "example_adk_js_value": 2,
+        "example_adk_python_value": 1,
+        "reason": "Same cause as the second generate_content span: adk-js sends the tool's error response back to the model, so the agent makes two model calls."
+      }
+    ]
+  },
+  {
+    "owner_type": "metric",
+    "owner_name": "gen_ai.execute_tool.duration",
+    "affected_tests": [
+      "multi_agent/experimental-telemetry",
+      "multi_agent/no-experimental-telemetry"
+    ],
+    "divergences": [
+      {
+        "path": ["attributes", "gen_ai.tool.type"],
+        "example_adk_js_value": "FunctionTool",
+        "example_adk_python_value": "TransferToAgentTool",
+        "reason": "Same cause as on the execute_tool transfer_to_agent span: adk-js implements transfer_to_agent as a FunctionTool, and the tool type is the tool's class name."
+      }
+    ]
+  },
+  {
+    "owner_type": "metric",
+    "owner_name": "gen_ai.execute_tool.duration",
+    "affected_tests": ["mcp/experimental-span-and-event", "mcp/http-exchange"],
+    "divergences": [
+      {
+        "path": ["attributes", "gen_ai.tool.type"],
+        "example_adk_js_value": "MCPTool",
+        "example_adk_python_value": "McpTool",
+        "reason": "The tool type is the tool's class name, and the adk-js MCP tool class is named MCPTool."
+      }
+    ]
+  },
+  {
+    "owner_type": "metric",
+    "owner_name": "gen_ai.invoke_workflow.duration / adk.experimental.invoke_workflow.*",
+    "affected_tests": [
+      "agent/grounding",
+      "mcp/experimental-span-and-event",
+      "mcp/http-exchange"
+    ],
+    "divergences": [
+      {
+        "path": ["metric_points", "gen_ai.invoke_workflow.duration"],
+        "example_adk_js_value": "one point for the runner's invoke_workflow scope",
+        "example_adk_python_value": {"missing_on_this_side": true},
+        "reason": "The legacy layout of the adk-python golden opens an invocation span instead of an invoke_workflow scope, so it records no workflow duration or workflow totals. The adk.experimental.invoke_workflow.* totals are missing on that side for the same reason."
+      }
+    ]
+  },
+  {
+    "owner_type": "metric",
+    "owner_name": "adk.experimental.skill.script.executions / gen_ai.execute_tool.duration",
+    "affected_tests": ["skill/skill-script-telemetry"],
+    "divergences": [
+      {
+        "path": ["attributes", "adk.experimental.skill.script.ended_with_error"],
+        "example_adk_js_value": {"missing_on_this_side": true},
+        "example_adk_python_value": true,
+        "reason": "Same cause as the missing process.exit.code on the span: adk-js code executors do not report the exit code of the script they ran."
+      },
+      {
+        "path": ["attributes", "error.type"],
+        "example_adk_js_value": {"missing_on_this_side": true},
+        "example_adk_python_value": "SKILL_SCRIPT_EXECUTION_ERROR",
+        "reason": "On gen_ai.execute_tool.duration, as on the span, the error is derived from a non-zero exit code, which adk-js code executors do not report."
+      }
+    ]
   }
 ]

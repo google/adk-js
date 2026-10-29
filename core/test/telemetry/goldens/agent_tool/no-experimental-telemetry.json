@@ -217,5 +217,75 @@
     ],
     "logs": []
   },
-  "metric_points": {}
+  "metric_points": {
+    "gen_ai.execute_tool.duration": [
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_delegating_agent",
+          "gen_ai.tool.name": "some_delegate_agent",
+          "gen_ai.tool.type": "AgentTool"
+        },
+        "value": "PRESENT"
+      }
+    ],
+    "gen_ai.invoke_agent.duration": [
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_delegate_agent"
+        },
+        "value": "PRESENT"
+      },
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_delegating_agent"
+        },
+        "value": "PRESENT"
+      }
+    ],
+    "gen_ai.invoke_agent.inference_calls": [
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_delegate_agent"
+        },
+        "value": 1
+      },
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_delegating_agent"
+        },
+        "value": 2
+      }
+    ],
+    "gen_ai.invoke_agent.tool_calls": [
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_delegate_agent"
+        },
+        "value": 0
+      },
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_delegating_agent"
+        },
+        "value": 1
+      }
+    ],
+    "gen_ai.invoke_workflow.duration": [
+      {
+        "attributes": {
+          "gen_ai.operation.name": "invoke_workflow",
+          "gen_ai.workflow.name": "my_agent_tool_workflow"
+        },
+        "value": "PRESENT"
+      },
+      {
+        "attributes": {
+          "gen_ai.operation.name": "invoke_workflow",
+          "gen_ai.workflow.name": "some_delegate_agent",
+          "gen_ai.workflow.nested": true
+        },
+        "value": "PRESENT"
+      }
+    ]
+  }
 }
