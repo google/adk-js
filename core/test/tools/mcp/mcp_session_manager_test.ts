@@ -11,6 +11,8 @@ import {
   runWithClientLabel,
   SseConnectionParams,
   SseServerParams,
+  StreamableHTTPConnectionParams,
+  StreamableHTTPServerParams,
 } from '@google/adk';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {SSEClientTransport} from '@modelcontextprotocol/sdk/client/sse.js';
@@ -131,6 +133,92 @@ describe('MCPSessionManager', () => {
         },
       },
     );
+  });
+
+  it('creates an http client with headers param merged into requestInit', async () => {
+    const params: StreamableHTTPServerParams = {
+      type: 'StreamableHTTPConnectionParams',
+      url: 'http://test-url',
+      headers: {
+        'x-streamable-header': 'streamable-value',
+      },
+      timeout: 10,
+      sseReadTimeout: 60,
+      terminateOnClose: true,
+    };
+    const manager = new MCPSessionManager(params);
+
+    await manager.createSession();
+
+    expect(StreamableHTTPClientTransport).toHaveBeenLastCalledWith(
+      new URL('http://test-url'),
+      {
+        requestInit: {
+          headers: {
+            'x-streamable-header': 'streamable-value',
+            ...trackingHeaders(),
+          },
+        },
+      },
+    );
+  });
+
+  it('prioritizes transportOptions.requestInit.headers over header and headers', async () => {
+    const params: StreamableHTTPConnectionParams = {
+      type: 'StreamableHTTPConnectionParams',
+      url: 'http://test-url',
+      transportOptions: {
+        requestInit: {
+          headers: {
+            'x-priority': 'transport-options',
+          },
+        },
+      },
+      header: {
+        'x-priority': 'header',
+      },
+      headers: {
+        'x-priority': 'headers',
+      },
+    };
+    const manager = new MCPSessionManager(params);
+
+    await manager.createSession();
+
+    expect(StreamableHTTPClientTransport).toHaveBeenLastCalledWith(
+      new URL('http://test-url'),
+      {
+        requestInit: {
+          headers: {'x-priority': 'transport-options', ...trackingHeaders()},
+        },
+      },
+    );
+  });
+
+  it('prioritizes transportOptions over headers when requestInit has no headers', async () => {
+    const manager = new MCPSessionManager({
+      type: 'StreamableHTTPConnectionParams',
+      url: 'http://test-url',
+      transportOptions: {
+        requestInit: {},
+      },
+      headers: {
+        'x-priority': 'headers',
+      },
+    });
+
+    await manager.createSession();
+
+    expect(StreamableHTTPClientTransport).toHaveBeenLastCalledWith(
+      new URL('http://test-url'),
+      {
+        requestInit: {headers: trackingHeaders()},
+      },
+    );
+    const options = vi
+      .mocked(StreamableHTTPClientTransport)
+      .mock.calls.at(-1)?.[1];
+    expect(options?.requestInit?.headers).not.toHaveProperty('x-priority');
   });
 
   it('prioritizes transportOptions headers over header', async () => {
