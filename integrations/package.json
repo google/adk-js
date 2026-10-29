@@ -27,9 +27,9 @@
       "require": "./dist/cjs/index.js",
       "default": "./dist/esm/index.js"
     },
-    "./dist/web/*": {
-      "types": "./dist/types/*",
-      "default": "./dist/web/*"
+    "./dist/web/index_web.js": {
+      "types": "./dist/types/index_web.d.ts",
+      "default": "./dist/web/index_web.js"
     }
   },
   "scripts": {
@@ -46,21 +46,37 @@
   },
   "dependencies": {
     "@google/adk": "^2.4.0",
-    "@google/genai": "^2.29.1"
+    "@google/genai": "^2.29.1",
+    "@opentelemetry/api": "^1.9.1"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^1.0.0",
-    "@anthropic-ai/vertex-sdk": "^1.0.0"
+    "@anthropic-ai/vertex-sdk": "^1.0.0",
+    "@google-cloud/bigquery": "^9.2.0",
+    "@google-cloud/bigquery-storage": "^6.1.0",
+    "@google-cloud/storage": "^7.17.1"
   },
   "peerDependencies": {
     "@anthropic-ai/sdk": "^1.0.0",
-    "@anthropic-ai/vertex-sdk": "^1.0.0"
+    "@anthropic-ai/vertex-sdk": "^1.0.0",
+    "@google-cloud/bigquery": "^9.2.0",
+    "@google-cloud/bigquery-storage": "^6.1.0",
+    "@google-cloud/storage": "^7.17.1"
   },
   "peerDependenciesMeta": {
     "@anthropic-ai/sdk": {
       "optional": true
     },
     "@anthropic-ai/vertex-sdk": {
+      "optional": true
+    },
+    "@google-cloud/bigquery": {
+      "optional": true
+    },
+    "@google-cloud/bigquery-storage": {
+      "optional": true
+    },
+    "@google-cloud/storage": {
       "optional": true
     }
   }
