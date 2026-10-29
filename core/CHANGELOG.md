@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.1](https://github.com/google/adk-js/compare/adk-v2.4.0...adk-v2.4.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* **workflow:** stop storing a node's input as a user turn ([#1169](https://github.com/google/adk-js/issues/1169)) ([22a244e](https://github.com/google/adk-js/commit/22a244e60dc3c6243fc4e49e50abff0f3140ccff)), closes [#720](https://github.com/google/adk-js/issues/720)
+
 ## [2.4.0](https://github.com/google/adk-js/compare/adk-v2.3.0...adk-v2.4.0) (2026-10-28)
 
 
