@@ -28,6 +28,35 @@ type LlmAgentInstance = typeof isLlmAgent extends (
   ? T
   : never;
 
+/** State deltas may already be empty after storage removes temporary keys. */
+function isStateOnlyEvent(event: Event): boolean {
+  if (
+    event.content !== undefined ||
+    event.errorCode !== undefined ||
+    event.errorMessage !== undefined ||
+    event.partial ||
+    event.interrupted ||
+    event.longRunningToolIds?.length ||
+    event.output !== undefined ||
+    event.route !== undefined ||
+    event.nodeInfo !== undefined
+  ) {
+    return false;
+  }
+
+  return Object.entries(event.actions).every(([key, value]) => {
+    if (key === 'stateDelta') return true;
+    if (
+      key === 'artifactDelta' ||
+      key === 'requestedAuthConfigs' ||
+      key === 'requestedToolConfirmations'
+    ) {
+      return Object.keys(value ?? {}).length === 0;
+    }
+    return value === undefined;
+  });
+}
+
 function excludeNone<T>(value: T): T {
   if (Array.isArray(value)) {
     return value.map((item) => excludeNone(item)) as unknown as T;
@@ -248,7 +277,11 @@ export class AgentTool extends BaseTool {
         }
       }
 
-      lastEvent = event;
+      // A state-only callback event commits changes without replacing the
+      // agent's answer. Explicit content and control/error events still win.
+      if (!isStateOnlyEvent(event)) {
+        lastEvent = event;
+      }
     }
 
     if (!lastEvent?.content?.parts?.length) {
