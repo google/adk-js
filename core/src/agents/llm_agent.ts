@@ -5,7 +5,6 @@
  */
 
 import {GenerateContentConfig, Modality, Schema} from '@google/genai';
-import {context, trace} from '@opentelemetry/api';
 import {FinishTaskTool} from '../tools/finish_task_tool.js';
 import {FunctionTool} from '../tools/function_tool.js';
 import {AsyncQueue} from '../utils/async_queue.js';
@@ -51,11 +50,10 @@ import {ActiveStreamingTool} from './active_streaming_tool.js';
 import {Context} from './context.js';
 
 import {
-  runAsyncGeneratorWithOtelContext,
-  traceCallLlm,
-  tracer,
-  traceSendData,
-} from '../telemetry/tracing.js';
+  recordCallLlm,
+  recordCallLlmResponse,
+  recordSendData,
+} from '../telemetry/api/instrumentation.js';
 import {parseWithSchema, SchemaLike} from '../utils/schema.js';
 import {isZodObject, zodObjectToSchema} from '../utils/simple_zod_to_json.js';
 import {BaseAgent, BaseAgentConfig} from './base_agent.js';
@@ -1101,18 +1099,14 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         llmRequest.contents.length > 0 &&
         !invocationContext.liveSessionResumptionHandle
       ) {
-        await tracer.startActiveSpan('send_data', async (span) => {
-          try {
-            await connection.sendHistory(llmRequest.contents);
-            traceSendData({
-              invocationContext,
-              eventId: createNewEventId(),
-              data: llmRequest.contents,
-            });
-          } finally {
-            span.end();
-          }
-        });
+        await recordSendData(
+          {
+            invocationContext,
+            eventId: createNewEventId(),
+            data: llmRequest.contents,
+          },
+          () => connection.sendHistory(llmRequest.contents),
+        );
       }
 
       let sendError: unknown;
@@ -1654,69 +1648,61 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // =========================================================================
     // Calls the LLM
     // =========================================================================
-    const span = tracer.startSpan('call_llm');
-    const ctx = trace.setSpan(context.active(), span);
-    try {
-      yield* runAsyncGeneratorWithOtelContext<LlmAgent, Event>(
-        ctx,
-        this,
-        async function* () {
-          const responsesGenerator = async function* (this: LlmAgent) {
-            for await (const llmResponse of this.callLlmAsync(
+    yield* recordCallLlm(() =>
+      async function* (this: LlmAgent) {
+        const responsesGenerator = async function* (this: LlmAgent) {
+          for await (const llmResponse of this.callLlmAsync(
+            invocationContext,
+            llmRequest,
+            modelResponseEvent,
+          )) {
+            if (invocationContext.abortSignal?.aborted) {
+              return;
+            }
+
+            if (
+              invocationContext.runConfig?.supportCfc &&
+              isEvent(llmResponse)
+            ) {
+              modelResponseEvent.id = createNewEventId();
+              modelResponseEvent.timestamp = new Date().getTime();
+              yield llmResponse;
+              continue;
+            }
+
+            // ======================================================================
+            // Postprocess after calling the LLM
+            // ======================================================================
+            for await (const event of this.postprocess(
               invocationContext,
               llmRequest,
+              llmResponse,
               modelResponseEvent,
             )) {
               if (invocationContext.abortSignal?.aborted) {
                 return;
               }
 
-              if (
-                invocationContext.runConfig?.supportCfc &&
-                isEvent(llmResponse)
-              ) {
+              // Partial chunks of one streaming response share the base id;
+              // mint a fresh id only after a complete event so distinct
+              // responses differ.
+              if (!event.partial) {
                 modelResponseEvent.id = createNewEventId();
                 modelResponseEvent.timestamp = new Date().getTime();
-                yield llmResponse;
-                continue;
               }
-
-              // ======================================================================
-              // Postprocess after calling the LLM
-              // ======================================================================
-              for await (const event of this.postprocess(
-                invocationContext,
-                llmRequest,
-                llmResponse,
-                modelResponseEvent,
-              )) {
-                if (invocationContext.abortSignal?.aborted) {
-                  return;
-                }
-
-                // Partial chunks of one streaming response share the base id;
-                // mint a fresh id only after a complete event so distinct
-                // responses differ.
-                if (!event.partial) {
-                  modelResponseEvent.id = createNewEventId();
-                  modelResponseEvent.timestamp = new Date().getTime();
-                }
-                yield event;
-              }
+              yield event;
             }
-          };
+          }
+        };
 
-          yield* this.runAndHandleError(
-            responsesGenerator.call(this),
-            invocationContext,
-            llmRequest,
-            modelResponseEvent,
-          );
-        },
-      );
-    } finally {
-      span.end();
-    }
+        yield* this.runAndHandleError(
+          responsesGenerator.call(this),
+          invocationContext,
+          llmRequest,
+          modelResponseEvent,
+        );
+      }.call(this),
+    );
   }
 
   private async *postprocess(
@@ -1986,7 +1972,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       );
 
       for await (const llmResponse of responsesGenerator) {
-        traceCallLlm({
+        recordCallLlmResponse({
           invocationContext,
           eventId: modelResponseEvent.id,
           llmRequest,

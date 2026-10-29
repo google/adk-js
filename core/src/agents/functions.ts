@@ -33,10 +33,9 @@ import {
 } from './framework_function_calls.js';
 
 import {
-  traceMergedToolCalls,
-  tracer,
-  traceToolCall,
-} from '../telemetry/tracing.js';
+  recordMergedToolCalls,
+  recordToolExecution,
+} from '../telemetry/api/instrumentation.js';
 
 import {
   SingleAfterToolCallback,
@@ -205,63 +204,33 @@ async function callToolAsync(
   toolContext: Context,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any> {
-  return tracer.startActiveSpan(`execute_tool ${tool.name}`, async (span) => {
-    try {
-      logger.debug(`callToolAsync ${tool.name}`);
-      const result = await tool.runAsync({args, toolContext});
-      traceToolCall({
-        tool,
-        args,
-        span,
-        functionResponseEvent: buildResponseEvent(
+  return recordToolExecution(
+    {
+      toolName: tool.name,
+      invocationContext: toolContext.invocationContext,
+    },
+    async (scope) => {
+      try {
+        logger.debug(`callToolAsync ${tool.name}`);
+        const result = await tool.runAsync({args, toolContext});
+        scope.recordSuccess({
           tool,
-          result,
-          toolContext,
-          toolContext.invocationContext,
-        ),
-        errorType: getToolResponseErrorType(result),
-        invocationContext: toolContext.invocationContext,
-      });
-      return result;
-    } catch (error: unknown) {
-      traceToolCall({
-        tool,
-        args,
-        span,
-        error,
-        invocationContext: toolContext.invocationContext,
-      });
-      throw error;
-    } finally {
-      span.end();
-    }
-  });
-}
-
-/**
- * Gets an explicitly reported error type from a tool response object.
- *
- * Tools may return an error payload instead of throwing. Only the dedicated
- * error type field is copied to telemetry; the payload itself is never used as
- * the error classification.
- */
-function getToolResponseErrorType(result: unknown): string | undefined {
-  if (result === null || typeof result !== 'object' || Array.isArray(result)) {
-    return undefined;
-  }
-
-  try {
-    if (!Object.hasOwn(result, 'error')) {
-      return undefined;
-    }
-    const response = result as Record<string, unknown>;
-    const errorType = response.errorType ?? response.error_type;
-    return typeof errorType === 'string' ? errorType : undefined;
-  } catch {
-    // Telemetry should not change tool behavior if a custom response object
-    // throws when its fields are inspected.
-    return undefined;
-  }
+          args,
+          functionResponseEvent: buildResponseEvent(
+            tool,
+            result,
+            toolContext,
+            toolContext.invocationContext,
+          ),
+          rawResult: result,
+        });
+        return result;
+      } catch (error: unknown) {
+        scope.recordError({tool, args, error});
+        throw error;
+      }
+    },
+  );
 }
 
 function buildResponseEvent(
@@ -481,48 +450,47 @@ async function answerUnresolvableCall({
   // The sibling path opens `execute_tool <name>` inside `callToolAsync`.
   // Without this an unresolvable call is the one tool interaction that
   // leaves no span, which is the worst case to be missing from a waterfall.
-  return tracer.startActiveSpan(
-    `execute_tool ${functionCall.name || '<unnamed>'}`,
-    async (span) => {
-      try {
-        const toolName = functionCall.name || '<unnamed>';
-        const error = new Error(
-          `Function ${toolName} is not found in the toolsDict.`,
-        );
-        const tool = new ToolNotFoundPlaceholder(toolName, error);
+  return recordToolExecution(
+    {
+      toolName: functionCall.name || '<unnamed>',
+      invocationContext,
+    },
+    async () => {
+      const toolName = functionCall.name || '<unnamed>';
+      const error = new Error(
+        `Function ${toolName} is not found in the toolsDict.`,
+      );
+      const tool = new ToolNotFoundPlaceholder(toolName, error);
 
-        const onToolErrorResponse =
-          await invocationContext.pluginManager.runOnToolErrorCallback({
-            tool,
-            toolArgs: functionCall.args ?? {},
-            toolContext,
-            error,
-          });
-
-        if (onToolErrorResponse == null) {
-          // Only an unhandled failure is the operator's problem; a plugin that
-          // answers these has made them an expected condition. The tool inventory
-          // belongs here rather than in the model's payload — the model already has
-          // its declarations, and a large toolset would cost kilobytes per
-          // occurrence.
-          const callableTools = Object.keys(toolsDict);
-          logger.warn(
-            `Could not resolve tool '${toolName}' for function call ` +
-              `'${functionCall.id ?? ''}'. Callable tools: ` +
-              `${callableTools.length ? callableTools.join(', ') : '(none)'}.\n` +
-              RESOLUTION_FAILURE_CAUSES,
-          );
-        }
-
-        return buildResponseEvent(
+      const onToolErrorResponse =
+        await invocationContext.pluginManager.runOnToolErrorCallback({
           tool,
-          onToolErrorResponse ?? {error: error.message},
+          toolArgs: functionCall.args ?? {},
           toolContext,
-          invocationContext,
+          error,
+        });
+
+      if (onToolErrorResponse == null) {
+        // Only an unhandled failure is the operator's problem; a plugin that
+        // answers these has made them an expected condition. The tool inventory
+        // belongs here rather than in the model's payload — the model already has
+        // its declarations, and a large toolset would cost kilobytes per
+        // occurrence.
+        const callableTools = Object.keys(toolsDict);
+        logger.warn(
+          `Could not resolve tool '${toolName}' for function call ` +
+            `'${functionCall.id ?? ''}'. Callable tools: ` +
+            `${callableTools.length ? callableTools.join(', ') : '(none)'}.\n` +
+            RESOLUTION_FAILURE_CAUSES,
         );
-      } finally {
-        span.end();
       }
+
+      return buildResponseEvent(
+        tool,
+        onToolErrorResponse ?? {error: error.message},
+        toolContext,
+        invocationContext,
+      );
     },
   );
 }
@@ -765,17 +733,11 @@ export async function handleFunctionCallList({
   );
 
   if (functionResponseEvents.length > 1) {
-    tracer.startActiveSpan('execute_tool (merged)', (span) => {
-      try {
-        logger.debug('execute_tool (merged)');
-        traceMergedToolCalls({
-          responseEventId: mergedEvent.id,
-          functionResponseEvent: mergedEvent,
-          invocationContext,
-        });
-      } finally {
-        span.end();
-      }
+    logger.debug('execute_tool (merged)');
+    recordMergedToolCalls({
+      responseEventId: mergedEvent.id,
+      functionResponseEvent: mergedEvent,
+      invocationContext,
     });
   }
   return mergedEvent;

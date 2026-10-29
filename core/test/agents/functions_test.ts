@@ -34,7 +34,13 @@ import {
   ToolConfirmation,
 } from '@google/adk';
 import {FunctionCall} from '@google/genai';
-import {Span, SpanStatusCode} from '@opentelemetry/api';
+import {context, SpanStatusCode, trace} from '@opentelemetry/api';
+import {AsyncLocalStorageContextManager} from '@opentelemetry/context-async-hooks';
+import {
+  BasicTracerProvider,
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+} from '@opentelemetry/sdk-trace-base';
 import type {MockInstance} from 'vitest';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
@@ -47,7 +53,6 @@ import {
   handleFunctionCallsAsync,
   mergeParallelFunctionResponseEvents,
 } from '../../src/agents/functions.js';
-import {tracer} from '../../src/telemetry/tracing.js';
 import {logger} from '../../src/utils/logger.js';
 import {Task} from '../../src/utils/task.js';
 
@@ -176,17 +181,33 @@ function createStartJobTool(mutate: (toolContext: Context) => void) {
 }
 
 describe('handleFunctionCallList', () => {
+  let spanExporter: InMemorySpanExporter;
+  let spanContextManager: AsyncLocalStorageContextManager;
+  let spanProvider: BasicTracerProvider;
   let invocationContext: InvocationContext;
   let pluginManager: PluginManager;
   let functionCall: FunctionCall;
   let toolsDict: Record<string, BaseTool>;
   let warnSpy: MockInstance<typeof logger.warn>;
 
-  afterEach(() => {
+  afterEach(async () => {
+    await spanProvider.shutdown();
+    trace.disable();
+    context.disable();
+    spanContextManager.disable();
     vi.restoreAllMocks();
   });
 
   beforeEach(() => {
+    trace.disable();
+    context.disable();
+    spanExporter = new InMemorySpanExporter();
+    spanContextManager = new AsyncLocalStorageContextManager().enable();
+    spanProvider = new BasicTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(spanExporter)],
+    });
+    context.setGlobalContextManager(spanContextManager);
+    trace.setGlobalTracerProvider(spanProvider);
     // These tests deliberately provoke resolution failures; keep the expected
     // diagnostics out of the suite output.
     warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
@@ -421,21 +442,6 @@ describe('handleFunctionCallList', () => {
   });
 
   it('records a thrown tool error on its execution span', async () => {
-    const executionSpan = {
-      setAttributes: vi.fn(),
-      setAttribute: vi.fn(),
-      setStatus: vi.fn(),
-      recordException: vi.fn(),
-      end: vi.fn(),
-    };
-    vi.spyOn(tracer, 'startActiveSpan').mockImplementation(((
-      _name: string,
-      callback: (span: Span) => unknown,
-    ) =>
-      callback(
-        executionSpan as unknown as Span,
-      )) as typeof tracer.startActiveSpan);
-
     await handleFunctionCallList({
       invocationContext,
       functionCalls: [{...functionCall, name: 'errorTool'}],
@@ -444,44 +450,30 @@ describe('handleFunctionCallList', () => {
       afterToolCallbacks: [],
     });
 
-    expect(executionSpan.recordException).toHaveBeenCalledWith(
+    const spans = spanExporter
+      .getFinishedSpans()
+      .filter((s) => s.name === 'execute_tool errorTool');
+    expect(spans).toHaveLength(1);
+    const executionSpan = spans[0];
+    expect(executionSpan.events).toEqual([
       expect.objectContaining({
-        message: expect.stringContaining('tool error message content'),
+        name: 'exception',
+        attributes: expect.objectContaining({
+          'exception.message': expect.stringContaining(
+            'tool error message content',
+          ),
+        }),
       }),
-    );
-    expect(executionSpan.setAttribute).toHaveBeenCalledWith(
-      'error.type',
-      'Error',
-    );
-    expect(executionSpan.setStatus).toHaveBeenCalledWith({
+    ]);
+    expect(executionSpan.attributes['error.type']).toBe('Error');
+    expect(executionSpan.status).toEqual({
       code: SpanStatusCode.ERROR,
       message: 'Error',
     });
-    expect(executionSpan.end).toHaveBeenCalledOnce();
-    expect(
-      executionSpan.recordException.mock.invocationCallOrder[0],
-    ).toBeLessThan(executionSpan.end.mock.invocationCallOrder[0]);
-    expect(executionSpan.setStatus.mock.invocationCallOrder[0]).toBeLessThan(
-      executionSpan.end.mock.invocationCallOrder[0],
-    );
+    expect(executionSpan.ended).toBe(true);
   });
 
   it('records an explicit error type returned by the tool', async () => {
-    const executionSpan = {
-      setAttributes: vi.fn(),
-      setAttribute: vi.fn(),
-      setStatus: vi.fn(),
-      recordException: vi.fn(),
-      end: vi.fn(),
-    };
-    vi.spyOn(tracer, 'startActiveSpan').mockImplementation(((
-      _name: string,
-      callback: (span: Span) => unknown,
-    ) =>
-      callback(
-        executionSpan as unknown as Span,
-      )) as typeof tracer.startActiveSpan);
-
     await handleFunctionCallList({
       invocationContext,
       functionCalls: [{...functionCall, name: 'typedErrorResponseTool'}],
@@ -490,16 +482,18 @@ describe('handleFunctionCallList', () => {
       afterToolCallbacks: [],
     });
 
-    expect(executionSpan.setAttribute).toHaveBeenCalledWith(
-      'error.type',
-      'MCP_TOOL_ERROR',
-    );
-    expect(executionSpan.setStatus).toHaveBeenCalledWith({
+    const spans = spanExporter
+      .getFinishedSpans()
+      .filter((s) => s.name === 'execute_tool typedErrorResponseTool');
+    expect(spans).toHaveLength(1);
+    const executionSpan = spans[0];
+    expect(executionSpan.attributes['error.type']).toBe('MCP_TOOL_ERROR');
+    expect(executionSpan.status).toEqual({
       code: SpanStatusCode.ERROR,
       message: 'MCP_TOOL_ERROR',
     });
-    expect(executionSpan.recordException).not.toHaveBeenCalled();
-    expect(executionSpan.end).toHaveBeenCalledOnce();
+    expect(executionSpan.events).toEqual([]);
+    expect(executionSpan.ended).toBe(true);
   });
 
   it('should return error message when error is thrown during tool execution, when no plugin onToolErrorCallback is provided', async () => {

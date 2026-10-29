@@ -5,12 +5,13 @@
  */
 
 import {ApiError, Type} from '@google/genai';
-import {SpanStatusCode, trace} from '@opentelemetry/api';
+import {type Context, SpanStatusCode, trace} from '@opentelemetry/api';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 import {
   BaseAgent,
   BaseTool,
+  createEventActions,
   Event,
   InvocationContext,
   LlmRequest,
@@ -18,24 +19,46 @@ import {
   Session,
   ToolErrorType,
   ToolExecutionError,
-  createEventActions,
 } from '@google/adk';
 import {
-  resolveErrorType,
-  traceAgentInvocation,
-  traceCallLlm,
-  traceMergedToolCalls,
-  traceToolCall,
-} from '../../src/telemetry/tracing.js';
+  recordAgentInvocation,
+  recordCallLlmResponse,
+  recordMergedToolCalls,
+  recordToolExecution,
+} from '../../src/telemetry/api/instrumentation.js';
 
 vi.hoisted(() => {
   vi.resetModules();
 });
-vi.mock('@opentelemetry/api');
+vi.mock('@opentelemetry/api', () => {
+  const mockTracer = {
+    startSpan: vi.fn(),
+    startActiveSpan: vi.fn(),
+  };
+  return {
+    SpanStatusCode: {
+      UNSET: 0,
+      OK: 1,
+      ERROR: 2,
+    },
+    context: {
+      active: vi.fn(() => ({})),
+      with: vi.fn((_ctx: Context, fn: () => unknown) => fn()),
+      bind: vi.fn((_ctx: Context, fn: unknown) => fn),
+    },
+    trace: {
+      getTracer: vi.fn(() => mockTracer),
+      getActiveSpan: vi.fn(),
+      setSpan: vi.fn((ctx: Context) => ctx),
+    },
+  };
+});
 
-describe('Telemetry Tracing Functions', () => {
+describe('Telemetry Instrumentation Functions', () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mockSpan: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let mockTracer: any;
   let mockAgent: BaseAgent;
   let mockInvocationContext: InvocationContext;
   let mockTool: BaseTool;
@@ -51,7 +74,15 @@ describe('Telemetry Tracing Functions', () => {
       setAttribute: vi.fn(),
       setStatus: vi.fn(),
       recordException: vi.fn(),
+      end: vi.fn(),
     };
+
+    mockTracer = trace.getTracer('gcp.vertex.agent');
+    vi.mocked(mockTracer.startSpan).mockReturnValue(mockSpan);
+    vi.mocked(mockTracer.startActiveSpan).mockImplementation(
+      (_name: string, fn: (span: unknown) => unknown) => fn(mockSpan),
+    );
+    vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
 
     mockAgent = {
       name: 'test-agent',
@@ -111,42 +142,44 @@ describe('Telemetry Tracing Functions', () => {
     vi.restoreAllMocks();
   });
 
-  describe('traceAgentInvocation', () => {
-    it('should set correct attributes for agent invocation', () => {
-      // Arrange
-      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+  describe('recordAgentInvocation', () => {
+    it('should set correct attributes for agent invocation', async () => {
+      for await (const _ of recordAgentInvocation(
+        {agent: mockAgent},
+        async function* (scope) {
+          scope.recordInvocation(mockInvocationContext);
+          yield mockEvent;
+        },
+      )) {
+        // drain
+      }
 
-      // Act
-      traceAgentInvocation({
-        agent: mockAgent,
-        invocationContext: mockInvocationContext,
-      });
-
-      // Assert
       expect(mockSpan.setAttributes).toHaveBeenCalledWith({
         'gen_ai.operation.name': 'invoke_agent',
         'gen_ai.agent.description': 'A test agent',
         'gen_ai.agent.name': 'test-agent',
         'gen_ai.conversation.id': 'test-session-id',
       });
+      expect(mockSpan.end).toHaveBeenCalledOnce();
     });
   });
 
-  describe('traceToolCall', () => {
-    it('should set correct attributes for tool call', () => {
-      // Arrange
-      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+  describe('recordToolExecution', () => {
+    it('should set correct attributes for tool call', async () => {
       const args = {param1: 'value1', param2: 123};
 
-      // Act
-      traceToolCall({
-        tool: mockTool,
-        args,
-        functionResponseEvent: mockEvent,
-        invocationContext: mockInvocationContext,
-      });
+      await recordToolExecution(
+        {toolName: mockTool.name, invocationContext: mockInvocationContext},
+        async (scope) => {
+          scope.recordSuccess({
+            tool: mockTool,
+            args,
+            functionResponseEvent: mockEvent,
+            rawResult: {result: 'test-result'},
+          });
+        },
+      );
 
-      // Assert
       expect(mockSpan.setAttributes).toHaveBeenCalledWith({
         'gen_ai.operation.name': 'execute_tool',
         'gen_ai.system': 'gcp.vertex.agent',
@@ -167,9 +200,7 @@ describe('Telemetry Tracing Functions', () => {
       });
     });
 
-    it('should handle tool call without function response', () => {
-      // Arrange
-      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+    it('should handle tool call without function response', async () => {
       const eventWithoutResponse = {
         id: 'test-event-id',
         invocationId: 'test-invocation-id',
@@ -178,15 +209,18 @@ describe('Telemetry Tracing Functions', () => {
         content: {parts: []},
       } as Event;
 
-      // Act
-      traceToolCall({
-        tool: mockTool,
-        args: {},
-        functionResponseEvent: eventWithoutResponse,
-        invocationContext: mockInvocationContext,
-      });
+      await recordToolExecution(
+        {toolName: mockTool.name, invocationContext: mockInvocationContext},
+        async (scope) => {
+          scope.recordSuccess({
+            tool: mockTool,
+            args: {},
+            functionResponseEvent: eventWithoutResponse,
+            rawResult: undefined,
+          });
+        },
+      );
 
-      // Assert
       expect(mockSpan.setAttributes).toHaveBeenCalledWith({
         'gen_ai.tool.call.id': '<not specified>',
         'gcp.vertex.agent.event_id': 'test-event-id',
@@ -195,19 +229,22 @@ describe('Telemetry Tracing Functions', () => {
       });
     });
 
-    it('records a thrown ADK error using its explicit error type', () => {
-      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+    it('records a thrown ADK error using its explicit error type', async () => {
       const error = new ToolExecutionError(
         'sensitive tool error details',
         ToolErrorType.BAD_REQUEST,
       );
 
-      traceToolCall({
-        tool: mockTool,
-        args: {},
-        error,
-        invocationContext: mockInvocationContext,
-      });
+      await recordToolExecution(
+        {toolName: mockTool.name, invocationContext: mockInvocationContext},
+        async (scope) => {
+          scope.recordError({
+            tool: mockTool,
+            args: {},
+            error,
+          });
+        },
+      );
 
       expect(mockSpan.setAttribute).toHaveBeenCalledWith(
         'error.type',
@@ -223,18 +260,20 @@ describe('Telemetry Tracing Functions', () => {
       );
     });
 
-    it('records a GenAI API error using its HTTP status', () => {
-      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+    it('records a GenAI API error using its HTTP status', async () => {
       const error = new ApiError({status: 429, message: 'rate limited'});
 
-      traceToolCall({
-        tool: mockTool,
-        args: {},
-        error,
-        invocationContext: mockInvocationContext,
-      });
+      await recordToolExecution(
+        {toolName: mockTool.name, invocationContext: mockInvocationContext},
+        async (scope) => {
+          scope.recordError({
+            tool: mockTool,
+            args: {},
+            error,
+          });
+        },
+      );
 
-      expect(resolveErrorType(error)).toBe('429');
       expect(mockSpan.setAttribute).toHaveBeenCalledWith('error.type', '429');
       expect(mockSpan.setStatus).toHaveBeenCalledWith({
         code: SpanStatusCode.ERROR,
@@ -242,34 +281,41 @@ describe('Telemetry Tracing Functions', () => {
       });
     });
 
-    it('uses the error class name as the fallback error type', () => {
-      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+    it('uses the error class name as the fallback error type', async () => {
       const error = new TypeError('invalid tool arguments');
 
-      traceToolCall({
-        tool: mockTool,
-        args: {},
-        error,
-        invocationContext: mockInvocationContext,
-      });
+      await recordToolExecution(
+        {toolName: mockTool.name, invocationContext: mockInvocationContext},
+        async (scope) => {
+          scope.recordError({
+            tool: mockTool,
+            args: {},
+            error,
+          });
+        },
+      );
 
-      expect(resolveErrorType(error)).toBe('TypeError');
       expect(mockSpan.setAttribute).toHaveBeenCalledWith(
         'error.type',
         'TypeError',
       );
     });
 
-    it('marks a typed error response without recording an exception', () => {
-      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
-
-      traceToolCall({
-        tool: mockTool,
-        args: {},
-        functionResponseEvent: mockEvent,
-        errorType: 'MCP_TOOL_ERROR',
-        invocationContext: mockInvocationContext,
-      });
+    it('marks a typed error response without recording an exception', async () => {
+      await recordToolExecution(
+        {toolName: mockTool.name, invocationContext: mockInvocationContext},
+        async (scope) => {
+          scope.recordSuccess({
+            tool: mockTool,
+            args: {},
+            functionResponseEvent: mockEvent,
+            rawResult: {
+              error: 'sensitive details',
+              errorType: 'MCP_TOOL_ERROR',
+            },
+          });
+        },
+      );
 
       expect(mockSpan.setAttribute).toHaveBeenCalledWith(
         'error.type',
@@ -283,10 +329,8 @@ describe('Telemetry Tracing Functions', () => {
     });
   });
 
-  describe('traceMergedToolCalls', () => {
+  describe('recordMergedToolCalls', () => {
     it('should set correct attributes for merged tool calls', () => {
-      // Arrange
-      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
       const mockEventWithJson = {
         id: 'merged-event-id',
         invocationId: 'test-invocation-id',
@@ -302,14 +346,12 @@ describe('Telemetry Tracing Functions', () => {
         model_dumps_json: vi.fn().mockReturnValue('{"merged": "data"}'),
       };
 
-      // Act
-      traceMergedToolCalls({
+      recordMergedToolCalls({
         responseEventId: 'merged-event-id',
         functionResponseEvent: mockEventWithJson as unknown as Event,
         invocationContext: mockInvocationContext,
       });
 
-      // Assert - setAttributes is called without tool_response
       expect(mockSpan.setAttributes).toHaveBeenCalledWith({
         'gen_ai.operation.name': 'execute_tool',
         'gen_ai.system': 'gcp.vertex.agent',
@@ -323,7 +365,6 @@ describe('Telemetry Tracing Functions', () => {
         'gcp.vertex.agent.llm_response': '{}',
       });
 
-      // tool_response is set separately via setAttribute
       expect(mockSpan.setAttribute).toHaveBeenCalledWith(
         'gcp.vertex.agent.tool_response',
         expect.any(String),
@@ -331,20 +372,15 @@ describe('Telemetry Tracing Functions', () => {
     });
   });
 
-  describe('traceCallLlm', () => {
+  describe('recordCallLlmResponse', () => {
     it('should set correct attributes for LLM call', () => {
-      // Arrange
-      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
-
-      // Act
-      traceCallLlm({
+      recordCallLlmResponse({
         invocationContext: mockInvocationContext,
         eventId: 'test-event-id',
         llmRequest: mockLlmRequest,
         llmResponse: mockLlmResponse,
       });
 
-      // Assert
       expect(mockSpan.setAttributes).toHaveBeenCalledWith({
         'gen_ai.system': 'gcp.vertex.agent',
         'gen_ai.request.model': 'test-model',
@@ -366,19 +402,15 @@ describe('Telemetry Tracing Functions', () => {
     });
 
     it('should handle LLM call without config', () => {
-      // Arrange
-      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
       const requestWithoutConfig = {...mockLlmRequest, config: undefined};
 
-      // Act
-      traceCallLlm({
+      recordCallLlmResponse({
         invocationContext: mockInvocationContext,
         eventId: 'test-event-id',
         llmRequest: requestWithoutConfig,
         llmResponse: mockLlmResponse,
       });
 
-      // Assert
       expect(mockSpan.setAttribute).not.toHaveBeenCalledWith(
         'gen_ai.request.top_p',
         expect.anything(),
@@ -390,8 +422,6 @@ describe('Telemetry Tracing Functions', () => {
     });
 
     it('should omit responseSchema from the traced request config', () => {
-      // Arrange
-      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
       const requestWithSchema = {
         ...mockLlmRequest,
         config: {
@@ -403,15 +433,13 @@ describe('Telemetry Tracing Functions', () => {
         },
       };
 
-      // Act
-      traceCallLlm({
+      recordCallLlmResponse({
         invocationContext: mockInvocationContext,
         eventId: 'test-event-id',
         llmRequest: requestWithSchema,
         llmResponse: mockLlmResponse,
       });
 
-      // Assert
       const attributes = mockSpan.setAttributes.mock.calls[0][0];
       const tracedRequest = JSON.parse(
         attributes['gcp.vertex.agent.llm_request'],
@@ -421,8 +449,6 @@ describe('Telemetry Tracing Functions', () => {
     });
 
     it('should not serialize credential-bearing httpOptions fields', () => {
-      // Arrange
-      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
       const httpOptions = {
         baseUrl: 'https://example.test',
         headers: {Authorization: 'Bearer sentinel-secret-token'},
@@ -433,15 +459,13 @@ describe('Telemetry Tracing Functions', () => {
         config: {temperature: 0.1, httpOptions},
       };
 
-      // Act
-      traceCallLlm({
+      recordCallLlmResponse({
         invocationContext: mockInvocationContext,
         eventId: 'test-event-id',
         llmRequest,
         llmResponse: mockLlmResponse,
       });
 
-      // Assert
       const serialized: string =
         mockSpan.setAttributes.mock.calls[0][0]['gcp.vertex.agent.llm_request'];
       expect(serialized).not.toContain('sentinel-secret-token');
@@ -453,7 +477,6 @@ describe('Telemetry Tracing Functions', () => {
       });
       expect(traced.config.temperature).toBe(0.1);
 
-      // The config the SDK will actually send must be untouched.
       expect(llmRequest.config.httpOptions).toBe(httpOptions);
       expect(httpOptions.headers).toEqual({
         Authorization: 'Bearer sentinel-secret-token',
