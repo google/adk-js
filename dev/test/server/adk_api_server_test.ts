@@ -1216,7 +1216,7 @@ describe('AdkWebServer', () => {
   });
 
   describe('Debug UI', () => {
-    it('should redirect to dev-ui when enabled', async () => {
+    it('should redirect / and /dev-ui to /dev-ui/ when enabled', async () => {
       const debugServer = new AdkApiServer({
         agentLoader,
         sessionService,
@@ -1225,11 +1225,22 @@ describe('AdkWebServer', () => {
         serveDebugUI: true,
       });
       await debugServer.start();
-      const debugClient = new HttpClient(debugServer.url);
 
-      const response = await debugClient.get('/');
-      expect(response.status).toBe(302);
-      await debugServer.stop();
+      try {
+        const rootRes = await fetch(`${debugServer.url}/`, {
+          redirect: 'manual',
+        });
+        expect(rootRes.status).toBe(302);
+        expect(rootRes.headers.get('location')).toBe('/dev-ui/');
+
+        const devUiRes = await fetch(`${debugServer.url}/dev-ui`, {
+          redirect: 'manual',
+        });
+        expect(devUiRes.status).toBe(302);
+        expect(devUiRes.headers.get('location')).toBe('/dev-ui/');
+      } finally {
+        await debugServer.stop();
+      }
     });
   });
 
@@ -2212,6 +2223,41 @@ describe('AdkWebServer', () => {
 
       await expect(failingServer.stop()).rejects.toThrow('close failed');
     });
+
+    it('closes cached runners when stop() is called', async () => {
+      const closeServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+      });
+      await closeServer.start();
+
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'cleanupSession',
+      });
+
+      const closeClient = new HttpClient(closeServer.url);
+      await closeClient.post<Event[]>('/run', {
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'cleanupSession',
+        newMessage: {
+          parts: [{text: 'Hello'}],
+          role: 'user',
+        },
+      });
+
+      const closeSpy = vi.spyOn(Runner.prototype, 'close');
+      try {
+        await closeServer.stop();
+        expect(closeSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        closeSpy.mockRestore();
+      }
+    });
   });
 
   describe('Internal caches keyed by request input', () => {
@@ -2473,6 +2519,46 @@ describe('AdkWebServer', () => {
         expect(runEvalRes.data).toHaveLength(1);
         expect(runEvalRes.data?.[0].evalId).toBe('case_1');
         expect(runEvalRes.data?.[0].finalEvalStatus).toBe(EvalStatus.PASSED);
+
+        // 8. List persisted eval results
+        const listResultsRes = await evalClient.get<string[]>(
+          '/apps/testApp/eval_results',
+        );
+        expect(listResultsRes.status).toBe(200);
+        expect(listResultsRes.data).toHaveLength(1);
+
+        // 9. Get persisted eval result by ID
+        const resultId = listResultsRes.data![0];
+        const getResultRes = await evalClient.get<{
+          evalSetResultId: string;
+          evalSetId: string;
+          evalCaseResults: Array<{eval_id: string}>;
+        }>(`/apps/testApp/eval_results/${resultId}`);
+        expect(getResultRes.status).toBe(200);
+        expect(getResultRes.data?.evalSetId).toBe('set_one');
+        expect(getResultRes.data?.evalCaseResults).toHaveLength(1);
+        expect(getResultRes.data?.evalCaseResults[0].eval_id).toBe('case_1');
+
+        // 10. Return 404 for missing or traversal eval result ID
+        await expect(
+          evalClient.get('/apps/testApp/eval_results/non_existent_result'),
+        ).rejects.toMatchObject({response: {status: 404}});
+
+        // 11. Return 500 when stored eval result JSON is corrupt
+        const historyDir = path.join(
+          tempAgentsDir,
+          'testApp',
+          '.adk',
+          'eval_history',
+        );
+        fs.writeFileSync(
+          path.join(historyDir, 'corrupt_result.evalset_result.json'),
+          '{not valid json',
+          'utf-8',
+        );
+        await expect(
+          evalClient.get('/apps/testApp/eval_results/corrupt_result'),
+        ).rejects.toMatchObject({response: {status: 500}});
       } finally {
         await evalServer.stop();
         fs.rmSync(tempAgentsDir, {recursive: true, force: true});
