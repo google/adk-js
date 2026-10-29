@@ -1008,6 +1008,68 @@ describe('FunctionTool', () => {
       expect(vertexDecl.response).toEqual({type: Type.TYPE_UNSPECIFIED});
       expect(GoogleLLMVariant.VERTEX_AI).toBe('VERTEX_AI');
     });
+
+    it('maps null and None parameter types to OBJECT with nullable true', () => {
+      const vertexUtilDecl = buildFunctionDeclarationUtil(
+        true,
+        'null_param_fn',
+        'Handles null parameter annotation',
+        function nullParamFn() {},
+        {
+          properties: {
+            none_param: {type: 'None'},
+            null_param: {type: null},
+          },
+        },
+      );
+      expect(vertexUtilDecl.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          none_param: {type: Type.OBJECT, nullable: true},
+          null_param: {type: Type.OBJECT, nullable: true},
+        },
+      });
+
+      const vertexLangchainDecl = buildFunctionDeclarationForLangchain(
+        true,
+        'lc_null_fn',
+        'LangChain null parameter',
+        function lcNullFn() {},
+        {
+          none_param: {type: 'None'},
+          required_str: {type: 'string'},
+        },
+      );
+      expect(vertexLangchainDecl.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          none_param: {type: Type.OBJECT, nullable: true},
+          required_str: {type: Type.STRING},
+        },
+        required: ['required_str'],
+      });
+
+      const geminiCrewaiDecl = buildFunctionDeclarationForParamsForCrewai(
+        false,
+        'crew_null_fn',
+        'CrewAI null parameter',
+        function crewNullFn() {},
+        {
+          properties: {
+            null_param: {type: null},
+            required_str: {type: 'string'},
+          },
+        },
+      );
+      expect(geminiCrewaiDecl.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          null_param: {type: Type.OBJECT},
+          required_str: {type: Type.STRING},
+        },
+        required: ['required_str'],
+      });
+    });
   });
 
   describe('execution and mandatory parameter validation', () => {
@@ -1190,13 +1252,17 @@ describe('FunctionTool', () => {
 
     it('test_run_async_without_tool_context_async_callable', async () => {
       const callable = new AsyncCallableWith2ArgsAndNoToolContext();
+      const executeFn = Object.assign(
+        [(args: {arg1: string; arg2: string}) => callable.execute(args)][0],
+        {__name__: 'Async callable name'},
+      );
       const tool = new FunctionTool({
-        name: 'AsyncCallableWith2ArgsAndNoToolContext',
-        description: 'Async callable with 2 args and no tool context.',
+        description: 'Async callable doc',
         parameters: twoArgSchema,
-        execute: callable.execute.bind(callable),
+        execute: executeFn,
       });
-      expect(tool.name).toBe('AsyncCallableWith2ArgsAndNoToolContext');
+      expect(tool.name).toBe('Async callable name');
+      expect(tool.description).toBe('Async callable doc');
       const result = await tool.runAsync({
         args: {arg1: 'test_value_1', arg2: 'test_value_2'},
         toolContext: emptyContext,

@@ -876,6 +876,16 @@ describe('ApplicationIntegrationToolset', () => {
             operations: ['LIST'],
           },
         },
+        [`${connectionUrl}/connectionSchemaMetadata:getAction?actionId=ExecuteCustomQuery`]:
+          {name: 'operations/action'},
+        'https://connectors.googleapis.com/v1/operations/action': {
+          done: true,
+          response: {
+            inputJsonSchema: {type: 'object'},
+            outputJsonSchema: {type: 'object'},
+            displayName: 'ExecuteCustomQuery',
+          },
+        },
       };
       fetchMock.mockImplementation(async (input) => {
         const url = String(input);
@@ -895,6 +905,7 @@ describe('ApplicationIntegrationToolset', () => {
       const tools = await toolset({
         connection: CONNECTION,
         entityOperations: {Issues: ['LIST']},
+        actions: ['ExecuteCustomQuery'],
         toolNamePrefix: 'tracker',
         authScheme: TEST_AUTH_SCHEME,
         authCredential: TEST_AUTH_CREDENTIAL,
@@ -903,6 +914,9 @@ describe('ApplicationIntegrationToolset', () => {
       expect(
         Object.keys(tools[0]._getDeclaration()?.parameters?.properties ?? {}),
       ).toEqual(['filter_clause', 'page_size', 'page_token']);
+      expect(
+        Object.keys(tools[1]._getDeclaration()?.parameters?.properties ?? {}),
+      ).toEqual(['query', 'timeout', 'page_size']);
 
       fetchMock.mockReset();
       fetchMock.mockResolvedValue(jsonResponse({connectorOutputPayload: []}));
@@ -916,6 +930,29 @@ describe('ApplicationIntegrationToolset', () => {
       expect(JSON.parse(String(init?.body))).toEqual({
         operation: 'LIST_ENTITIES',
         entity: 'Issues',
+        connectionName: `projects/${PROJECT}/locations/${LOCATION}/connections/${CONNECTION}`,
+        serviceName: 'test-service',
+        host: '',
+        dynamicAuthConfig: {
+          'oauth2_auth_code_flow.access_token': 'dynamic_user_token',
+        },
+      });
+
+      fetchMock.mockReset();
+      fetchMock.mockResolvedValue(jsonResponse({connectorOutputPayload: []}));
+      await tools[1].runAsync({
+        args: {query: 'SELECT 1', timeout: 120, page_size: 50},
+        toolContext: toolContext(),
+      });
+
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const [, queryInit] = fetchMock.mock.calls[0];
+      expect(JSON.parse(String(queryInit?.body))).toEqual({
+        operation: 'EXECUTE_QUERY',
+        action: 'ExecuteCustomQuery',
+        query: 'SELECT 1',
+        timeout: 120,
+        pageSize: 50,
         connectionName: `projects/${PROJECT}/locations/${LOCATION}/connections/${CONNECTION}`,
         serviceName: 'test-service',
         host: '',

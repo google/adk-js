@@ -800,6 +800,9 @@ describe('ConnectionsClient', () => {
       expect(actionRequest('TestAction', options).properties).toEqual(
         expect.objectContaining({dynamicAuthConfig: ref('dynamicAuthConfig')}),
       );
+      expect(executeCustomQueryRequest(options).properties).toEqual(
+        expect.objectContaining({dynamicAuthConfig: ref('dynamicAuthConfig')}),
+      );
     });
 
     it('builds the action response schema', () => {
