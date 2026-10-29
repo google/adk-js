@@ -29,7 +29,7 @@ Credentials for tools that call protected APIs: how a credential is described, h
 
 Environment loading, session-to-eval conversion, instruction placeholder initialization, log routing, and batch evaluation utilities backing the ADK CLI and development server.
 
-- [CLI and Evaluation Utilities](cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalFormat`, `setupAdkLogger`, `logToTmpFolder`, `runEvals`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun`.
+- [CLI and Evaluation Utilities](cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalFormat`, `setupAdkLogger`, `logToTmpFolder`, `runEvals`, `getEvaluationCriteriaOrDefault`, `parseAndGetEvalsToRun`, and the Vertex AI evaluation facades (`SingleTurnVertexAiEvalFacade`, `MultiTurnVertexAiEvalFacade`).
 
 ### Code executors
 

@@ -8,6 +8,9 @@ import {Part} from '@google/genai';
 
 import {BaseAgent} from '../../agents/base_agent.js';
 import {isLlmAgent} from '../../agents/llm_agent.js';
+import {AppDetails} from '../../evaluation/app_details.js';
+import {Invocation} from '../../evaluation/eval_case.js';
+import {Event, isFinalResponse} from '../../events/event.js';
 import {Session} from '../../sessions/session.js';
 
 /**
@@ -126,6 +129,80 @@ export function convertSessionToEvalFormat(
   }
 
   return evalCases;
+}
+
+/**
+ * Converts a session into invocations, one per invocation id.
+ *
+ * The last user event of an invocation is its user content. The last agent
+ * event that is a final response is its final response; the other agent events
+ * with content are its intermediate events.
+ *
+ * @param session The session whose events should be converted.
+ * @param appDetails Details of the app that produced the session, attached to
+ *   every invocation.
+ * @returns An array of invocations, in the order they started.
+ */
+export function convertSessionToInvocations(
+  session?: Session,
+  appDetails?: AppDetails,
+): Invocation[] {
+  const eventsByInvocationId = new Map<string, Event[]>();
+  for (const event of session?.events ?? []) {
+    const events = eventsByInvocationId.get(event.invocationId) ?? [];
+    events.push(event);
+    eventsByInvocationId.set(event.invocationId, events);
+  }
+  return [...eventsByInvocationId].map(([invocationId, events]) => {
+    const userEvent = [...events]
+      .reverse()
+      .find((event) => event.author === 'user' && event.content);
+    const agentEvents = events.filter(
+      (event) => event.author !== 'user' && event.content?.parts?.length,
+    );
+    const finalResponseEvent = [...agentEvents].reverse().find(isFinalResponse);
+    return {
+      invocationId,
+      userContent: userEvent?.content ?? {role: 'user', parts: []},
+      finalResponse: finalResponseEvent?.content,
+      intermediateData: {
+        invocationEvents: agentEvents
+          .filter((event) => event !== finalResponseEvent)
+          .map((event) => ({
+            author: event.author ?? '',
+            content: event.content,
+          })),
+      },
+      creationTimestamp: userEvent?.timestamp,
+      appDetails,
+    };
+  });
+}
+
+/**
+ * Converts an evalset turn into an invocation.
+ *
+ * @param item The evalset turn.
+ * @param appDetails Details of the app under evaluation.
+ * @returns The invocation that the turn describes.
+ */
+export function convertEvaluationItemToInvocation(
+  item: EvaluationItem,
+  appDetails?: AppDetails,
+): Invocation {
+  return {
+    userContent: {role: 'user', parts: [{text: item.query}]},
+    finalResponse: {role: 'model', parts: [{text: item.reference}]},
+    intermediateData: {
+      toolUses: (item.expected_tool_use ?? []).map((toolUse) => ({
+        name: toolUse.tool_name,
+        args: toolUse.tool_input,
+      })),
+      toolResponses: [],
+      intermediateResponses: item.expected_intermediate_agent_responses ?? [],
+    },
+    appDetails,
+  };
 }
 
 function populateEmptyState(

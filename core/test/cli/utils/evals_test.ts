@@ -14,6 +14,11 @@ import {
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
 
+import {
+  convertEvaluationItemToInvocation,
+  convertSessionToInvocations,
+} from '../../../src/cli/utils/evals.js';
+
 describe('cli/utils/evals', () => {
   describe('convertSessionToEvalFormat', () => {
     it('returns an empty list when session is undefined or has no events', () => {
@@ -379,6 +384,152 @@ describe('cli/utils/evals', () => {
           reference: 'Response 2',
         },
       ]);
+    });
+  });
+
+  describe('convertSessionToInvocations', () => {
+    it('returns an empty list when session is undefined', () => {
+      expect(convertSessionToInvocations(undefined)).toEqual([]);
+    });
+
+    it('keeps the full turn content, with the last final-response event as the final response', () => {
+      const appDetails = {agentDetails: {}};
+      const userEvent = createEvent({
+        invocationId: 'inv-1',
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'Roll a die'}]},
+      });
+      const routing = createEvent({
+        invocationId: 'inv-1',
+        author: 'router_agent',
+        content: {role: 'model', parts: [{text: 'Routing.'}]},
+      });
+      const call = createEvent({
+        invocationId: 'inv-1',
+        author: 'roll_agent',
+        content: {
+          role: 'model',
+          parts: [{functionCall: {name: 'roll_die', args: {sides: 6}}}],
+        },
+      });
+      const toolResponse = createEvent({
+        invocationId: 'inv-1',
+        author: 'roll_agent',
+        content: {
+          role: 'user',
+          parts: [{functionResponse: {name: 'roll_die', response: {r: 4}}}],
+        },
+      });
+      const answer = createEvent({
+        invocationId: 'inv-1',
+        author: 'roll_agent',
+        content: {role: 'model', parts: [{text: 'You rolled 4.'}]},
+      });
+      const secondUser = createEvent({
+        invocationId: 'inv-2',
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'Again'}]},
+      });
+      const session = createSession({
+        id: 's1',
+        appName: 'app',
+        userId: 'u1',
+        events: [
+          userEvent,
+          routing,
+          call,
+          createEvent({invocationId: 'inv-1', author: 'roll_agent'}),
+          toolResponse,
+          answer,
+          secondUser,
+        ],
+      });
+
+      expect(convertSessionToInvocations(session, appDetails)).toEqual([
+        {
+          invocationId: 'inv-1',
+          userContent: userEvent.content,
+          finalResponse: answer.content,
+          intermediateData: {
+            invocationEvents: [
+              {author: 'router_agent', content: routing.content},
+              {author: 'roll_agent', content: call.content},
+              {author: 'roll_agent', content: toolResponse.content},
+            ],
+          },
+          creationTimestamp: userEvent.timestamp,
+          appDetails,
+        },
+        {
+          invocationId: 'inv-2',
+          userContent: secondUser.content,
+          finalResponse: undefined,
+          intermediateData: {invocationEvents: []},
+          creationTimestamp: secondUser.timestamp,
+          appDetails,
+        },
+      ]);
+    });
+  });
+
+  describe('convertSessionToInvocations grouping', () => {
+    it('groups events by invocation id, not by user event', () => {
+      const firstUser = createEvent({
+        invocationId: 'inv-1',
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'Hello'}]},
+      });
+      const secondUser = createEvent({
+        invocationId: 'inv-1',
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'Roll a die'}]},
+      });
+      const answer = createEvent({
+        invocationId: 'inv-1',
+        author: 'roll_agent',
+        content: {role: 'model', parts: [{text: 'You rolled 4.'}]},
+      });
+      const session = createSession({
+        id: 's1',
+        appName: 'app',
+        userId: 'u1',
+        events: [firstUser, secondUser, answer],
+      });
+
+      expect(convertSessionToInvocations(session)).toEqual([
+        {
+          invocationId: 'inv-1',
+          userContent: secondUser.content,
+          finalResponse: answer.content,
+          intermediateData: {invocationEvents: []},
+          creationTimestamp: secondUser.timestamp,
+          appDetails: undefined,
+        },
+      ]);
+    });
+  });
+
+  describe('convertEvaluationItemToInvocation', () => {
+    it('maps the query, reference, expected tools and intermediate responses', () => {
+      expect(
+        convertEvaluationItemToInvocation({
+          query: 'Roll a die',
+          reference: 'You rolled 4.',
+          expected_tool_use: [{tool_name: 'roll_die', tool_input: {sides: 6}}],
+          expected_intermediate_agent_responses: [
+            ['router_agent', [{text: 'Routing.'}]],
+          ],
+        }),
+      ).toEqual({
+        userContent: {role: 'user', parts: [{text: 'Roll a die'}]},
+        finalResponse: {role: 'model', parts: [{text: 'You rolled 4.'}]},
+        intermediateData: {
+          toolUses: [{name: 'roll_die', args: {sides: 6}}],
+          toolResponses: [],
+          intermediateResponses: [['router_agent', [{text: 'Routing.'}]]],
+        },
+        appDetails: undefined,
+      });
     });
   });
 });
