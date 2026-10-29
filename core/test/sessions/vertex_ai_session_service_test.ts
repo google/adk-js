@@ -1180,6 +1180,25 @@ describe('VertexAiSessionService', () => {
 
       expect(mockClient.delete).not.toHaveBeenCalled();
     });
+
+    it('logs and rethrows when sessions.delete fails', async () => {
+      const deleteError = new Error('Delete failed');
+      mockClient.delete.mockRejectedValueOnce(deleteError);
+      const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+      await expect(
+        service.deleteSession({
+          appName: '12345',
+          userId: 'testUser',
+          sessionId: 'delete-session',
+        }),
+      ).rejects.toThrow('Delete failed');
+
+      expect(loggerSpy).toHaveBeenCalledWith(
+        'Error deleting session delete-session: Error: Delete failed',
+      );
+      loggerSpy.mockRestore();
+    });
   });
 
   describe('appendEvent', () => {

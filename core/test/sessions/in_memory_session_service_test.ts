@@ -11,8 +11,9 @@ import {
   createEvent,
   createEventActions,
 } from '@google/adk';
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {isInMemoryConnectionString} from '../../src/sessions/in_memory_session_service.js';
+import {logger} from '../../src/utils/logger.js';
 
 describe('isInMemoryConnectionString', () => {
   it('returns true for memory://', () => {
@@ -741,6 +742,64 @@ describe('InMemorySessionService', () => {
       // Should just log warnings and return event
       const returnedEvent = await service.appendEvent({session, event});
       expect(returnedEvent).toBe(event);
+    });
+
+    it('logs warnings when appending to an unknown appName, userId, or sessionId', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const event = createEvent({timestamp: Date.now()});
+
+      await service.appendEvent({
+        session: {
+          id: 'missing-session',
+          appName: 'missing-app',
+          userId: 'missing-user',
+          state: {},
+          events: [],
+          lastUpdateTime: 0,
+        },
+        event,
+      });
+      expect(warnSpy).toHaveBeenLastCalledWith(
+        'Failed to append event to session missing-session: appName missing-app not in sessions',
+      );
+
+      await service.createSession({
+        appName: 'existing-app',
+        userId: 'existing-user',
+        sessionId: 'existing-session',
+      });
+
+      await service.appendEvent({
+        session: {
+          id: 'missing-session',
+          appName: 'existing-app',
+          userId: 'missing-user',
+          state: {},
+          events: [],
+          lastUpdateTime: 0,
+        },
+        event,
+      });
+      expect(warnSpy).toHaveBeenLastCalledWith(
+        'Failed to append event to session missing-session: userId missing-user not in sessions[appName]',
+      );
+
+      await service.appendEvent({
+        session: {
+          id: 'missing-session',
+          appName: 'existing-app',
+          userId: 'existing-user',
+          state: {},
+          events: [],
+          lastUpdateTime: 0,
+        },
+        event,
+      });
+      expect(warnSpy).toHaveBeenLastCalledWith(
+        'Failed to append event to session missing-session: sessionId missing-session not in sessions[appName][userId]',
+      );
+
+      warnSpy.mockRestore();
     });
   });
 

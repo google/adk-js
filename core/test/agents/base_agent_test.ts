@@ -41,9 +41,14 @@ class MockAgent extends BaseAgent {
   }
 
   protected async *runLiveImpl(
-    _context: InvocationContext,
+    context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    // Not needed for this test
+    yield createEvent({
+      invocationId: context.invocationId,
+      author: this.name,
+      branch: context.branch,
+      content: {role: 'model', parts: [{text: `Live from ${this.name}`}]},
+    });
   }
 }
 
@@ -79,6 +84,60 @@ describe('BaseAgent', () => {
       expect(leafAgent.rootAgent).toBe(rootAgent);
       expect(middleAgent.rootAgent).toBe(rootAgent);
       expect(rootAgent.rootAgent).toBe(rootAgent);
+    });
+  });
+
+  describe('branch preservation', () => {
+    it('test_run_async_with_branch', async () => {
+      const agent = new MockAgent({name: 'test_agent'});
+      const parentContext = new InvocationContext({
+        invocationId: 'test_invocation',
+        branch: 'parent_branch',
+        agent,
+        session: createSession({
+          id: 'test-session',
+          appName: 'test-app',
+          userId: 'test-user',
+        }),
+        pluginManager: new PluginManager(),
+      });
+
+      const events: Event[] = [];
+      for await (const event of agent.runAsync(parentContext)) {
+        events.push(event);
+      }
+
+      expect(events).toHaveLength(1);
+      expect(events[0].author).toBe('test_agent');
+      expect(events[0].content?.parts?.[0]?.text).toBe(
+        'Response from test_agent',
+      );
+      expect(events[0].branch).toBe('parent_branch');
+    });
+
+    it('test_run_live_with_branch', async () => {
+      const agent = new MockAgent({name: 'test_agent'});
+      const parentContext = new InvocationContext({
+        invocationId: 'test_invocation',
+        branch: 'parent_branch',
+        agent,
+        session: createSession({
+          id: 'test-session',
+          appName: 'test-app',
+          userId: 'test-user',
+        }),
+        pluginManager: new PluginManager(),
+      });
+
+      const events: Event[] = [];
+      for await (const event of agent.runLive(parentContext)) {
+        events.push(event);
+      }
+
+      expect(events).toHaveLength(1);
+      expect(events[0].author).toBe('test_agent');
+      expect(events[0].content?.parts?.[0]?.text).toBe('Live from test_agent');
+      expect(events[0].branch).toBe('parent_branch');
     });
   });
 

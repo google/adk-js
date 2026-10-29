@@ -5,6 +5,7 @@
  */
 
 import type {Anthropic} from '@anthropic-ai/sdk';
+import {logger} from '@google/adk';
 import {FinishReason, Type} from '@google/genai';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
@@ -845,6 +846,7 @@ describe('Claude conversion helpers', () => {
 
   describe('messageToGenerateContentResponse', () => {
     it('converts an Anthropic Message into an LlmResponse with usage metadata', () => {
+      const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
       const message = createSampleAnthropicMessage({
         content: [
           {type: 'text', text: 'Let me check that.', citations: null},
@@ -891,6 +893,11 @@ describe('Claude conversion helpers', () => {
           totalTokenCount: 60,
         },
       });
+      expect(debugSpy).toHaveBeenCalledWith(
+        'Claude response:',
+        JSON.stringify(message, null, 2),
+      );
+      debugSpy.mockRestore();
     });
 
     it.each<[Anthropic.StopReason | null, FinishReason]>([
