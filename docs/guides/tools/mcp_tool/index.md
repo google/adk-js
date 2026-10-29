@@ -22,17 +22,17 @@ When the service is an ordinary HTTP API with an OpenAPI v3 specification, use
 server yourself and want to expose an existing ADK tool's parameter schema as
 JSON Schema, use `genaiSchemaToJsonSchema` or `toJsonSchema`.
 
-| Symbol                                     | You touch it when                                                                      |
-| :----------------------------------------- | :------------------------------------------------------------------------------------- |
-| `MCPToolset`                               | You want an agent to discover and call tools from an MCP server.                       |
-| `StdioConnectionParams`                    | The MCP server runs as a local child process over `stdin` and `stdout`.                |
-| `StreamableHTTPConnectionParams`           | The MCP server exposes a Streamable HTTP endpoint.                                     |
-| `SseConnectionParams` / `SseServerParams`  | The MCP server exposes an HTTP+SSE endpoint.                                           |
-| `LoadMcpResourceTool`                      | You want the agent to list and read MCP server resources into the prompt context.      |
-| `MCPTool`                                  | You are wrapping a single MCP `Tool` definition directly rather than listing a server. |
-| `MCPSessionManager`                        | You are managing MCP client sessions or building `MCPTool` instances yourself.         |
-| `genaiSchemaToJsonSchema` / `toJsonSchema` | You need the JSON Schema equivalent of a Gemini `Schema` or `SchemaLike`.              |
-| `toGeminiSchema`                           | You need the Gemini `Schema` equivalent of an MCP or JSON Schema object.               |
+| Symbol                                                            | You touch it when                                                                      |
+| :---------------------------------------------------------------- | :------------------------------------------------------------------------------------- |
+| `MCPToolset`                                                      | You want an agent to discover and call tools from an MCP server.                       |
+| `StdioConnectionParams`                                           | The MCP server runs as a local child process over `stdin` and `stdout`.                |
+| `StreamableHTTPConnectionParams` / `StreamableHTTPServerParams`   | The MCP server exposes a Streamable HTTP endpoint.                                     |
+| `SseConnectionParams` / `SseServerParams`                         | The MCP server exposes an HTTP+SSE endpoint.                                           |
+| `LoadMcpResourceTool`                                             | You want the agent to list and read MCP server resources into the prompt context.      |
+| `MCPTool`                                                         | You are wrapping a single MCP `Tool` definition directly rather than listing a server. |
+| `MCPSessionManager`                                               | You are managing MCP client sessions or building `MCPTool` instances yourself.         |
+| `genaiSchemaToJsonSchema` / `toJsonSchema`                        | You need the JSON Schema equivalent of a Gemini `Schema` or `SchemaLike`.              |
+| `toGeminiSchema`                                                  | You need the Gemini `Schema` equivalent of an MCP or JSON Schema object.               |
 
 ## Get started
 
@@ -78,6 +78,7 @@ import type {
 const streamableParams: StreamableHTTPConnectionParams = {
   type: 'StreamableHTTPConnectionParams',
   url: 'http://localhost:8788/mcp',
+  headers: {Authorization: 'Bearer demo-token'},
 };
 
 const sseParams: SseConnectionParams = {
@@ -162,24 +163,26 @@ without wrapper translation.
 
 ### StreamableHTTPConnectionParams
 
-Use `StreamableHTTPConnectionParams` for MCP servers that implement the
-Streamable HTTP transport.
+Use `StreamableHTTPConnectionParams`, also exported under the alias
+`StreamableHTTPServerParams`, for MCP servers that implement the Streamable HTTP
+transport.
 
 | Option             | Type                                   | Default     | Description                                                                                                            |
 | :----------------- | :------------------------------------- | :---------- | :--------------------------------------------------------------------------------------------------------------------- |
 | `type`             | `'StreamableHTTPConnectionParams'`     | required    | Selects `StreamableHTTPClientTransport`.                                                                               |
 | `url`              | `string`                               | required    | Endpoint URL of the Streamable HTTP MCP server.                                                                        |
+| `headers`          | `Record<string, unknown>`              | `undefined` | HTTP headers merged into `requestInit.headers` when `transportOptions.requestInit` is `undefined`.                     |
+| `header`           | `Record<string, unknown>`              | `undefined` | Deprecated alias for `headers`; takes precedence over `headers` when `transportOptions.requestInit` is `undefined`.    |
 | `transportOptions` | `StreamableHTTPClientTransportOptions` | `undefined` | Options forwarded to `StreamableHTTPClientTransport`, including `requestInit`, `reconnectionOptions`, and `sessionId`. |
-| `header`           | `Record<string, unknown>`              | `undefined` | Deprecated fallback headers used only when `transportOptions.requestInit` is `undefined`.                              |
 | `timeout`          | `number`                               | `undefined` | Optional connection timeout value carried on the parameter object.                                                     |
 | `sseReadTimeout`   | `number`                               | `undefined` | Optional stream read timeout value carried on the parameter object.                                                    |
 | `terminateOnClose` | `boolean`                              | `undefined` | Optional termination flag carried on the parameter object.                                                             |
 
 `MCPSessionManager` merges the ADK tracking headers, `x-goog-api-client` and
 `user-agent`, into `transportOptions.requestInit.headers` on a fresh copy so the
-caller's `transportOptions` object is never mutated. Prefer
-`transportOptions.requestInit.headers` over the deprecated `header` field: once
-`transportOptions.requestInit` is defined, `header` is ignored.
+caller's `transportOptions` object is never mutated. When
+`transportOptions.requestInit` is provided, its `headers` win over both `header`
+and `headers`.
 
 ### SseConnectionParams
 

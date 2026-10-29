@@ -1,17 +1,18 @@
 # CLI and Evaluation Utilities
 
-The CLI utilities in `@google/adk` prepare an agent's environment, state, logging, and evaluation datasets when running from the command line, the development server, or an automated test harness. This guide covers `.env` discovery (`walkToRootUntilFound`, `loadDotenvForAgent`), session-to-eval conversion and state initialization (`convertSessionToEvalFormat`, `createEmptyState`), CLI log routing (`setupAdkLogger`, `logToTmpFolder`), and batch evaluation (`runEvals`, `getEvaluationCriteriaOrDefault`, `parseAndGetEvalsToRun`).
+The CLI utilities in `@google/adk` prepare an agent's environment, state, logging, runner lifecycle, and evaluation datasets when running from the command line, the development server, or an automated test harness. This guide covers `.env` discovery (`walkToRootUntilFound`, `loadDotenvForAgent`), session-to-eval conversion and state initialization (`convertSessionToEvalFormat`, `createEmptyState`), CLI log routing (`setupAdkLogger`, `logToTmpFolder`), runner cleanup (`closeRunners`), and batch evaluation (`runEvals`, `LocalEvalSetResultsManager`, `getEvaluationCriteriaOrDefault`, `parseAndGetEvalsToRun`).
 
 - `walkToRootUntilFound` and `loadDotenvForAgent` - Locate a `.env` file by walking up from an agent directory to the filesystem root and load its variables into `process.env`.
 - `createEmptyState` and `convertSessionToEvalFormat` - Initialize `{var}` placeholders referenced in agent instructions and convert recorded `Session` events into `EvaluationItem` turns.
 - `setupAdkLogger` and `logToTmpFolder` - Route the global ADK logger to `stderr` or to a timestamped log file in the system temporary folder with a `.latest.log` symlink.
-- `runEvals`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun` - Run multi-turn evaluation cases against an agent and score tool trajectory accuracy and ROUGE-1 response match.
+- `closeRunners` - Close multiple `Runner` instances concurrently with a 30-second timeout (`RUNNER_CLEANUP_TIMEOUT_MS`).
+- `runEvals`, `LocalEvalSetResultsManager`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun` - Run multi-turn evaluation cases against an agent, score tool trajectory accuracy and ROUGE-1 response match, and persist `EvalSetResult` records on disk.
 
 ## Introduction
 
 An agent run through `adk run`, `adk web`, `adk api_server`, or `adk eval` needs surrounding setup before the first turn starts. Environment variables often live in a `.env` file several directories above the agent file, instruction templates such as `'Answer questions about {topic}'` expect every placeholder key to exist in `session.state`, and interactive sessions captured during development need a way to become repeatable regression tests.
 
-`@google/adk` exports these building blocks directly so your own scripts and test suites can call the same functions the `@google/adk-devtools` CLI uses. Browser-safe helpers (`convertSessionToEvalFormat`, `createEmptyState`, and `isBaseRetrievalTool`) are also available from the `@google/adk` web entrypoint.
+`@google/adk` exports these building blocks directly so your own scripts and test suites can call the same functions the `@google/adk-devtools` CLI uses. Browser-safe helpers (`closeRunners`, `convertSessionToEvalFormat`, `createEmptyState`, and `isBaseRetrievalTool`) are also available from the `@google/adk` web entrypoint.
 
 ## Get started
 
@@ -138,7 +139,13 @@ Each helper handles one stage of preparing, observing, or evaluating an agent ru
 4. Scores each requested `EvalMetric`:
    - `TOOL_TRAJECTORY_SCORE_KEY` (`'tool_trajectory_avg_score'`): `1.0` for a turn when the actual `expected_tool_use` list matches the expected list in length, `tool_name`, and deep `tool_input`; `0.0` otherwise.
    - `RESPONSE_MATCH_SCORE_KEY` (`'response_match_score'`): unigram ROUGE-1 F1 score between the expected `reference` and the actual `reference`.
-5. Yields an `EvalResult` with per-invocation and overall metric results and sets `final_eval_status` to `EvalStatus.PASSED`, `EvalStatus.FAILED`, or `EvalStatus.NOT_EVALUATED`.
+5. Yields an `EvalResult` (`EvalCaseResult`) with `eval_set_id`, `session_details`, per-invocation and overall metric results, and sets `final_eval_status` to `EvalStatus.PASSED`, `EvalStatus.FAILED`, or `EvalStatus.NOT_EVALUATED`.
+
+### Persisting evaluation results and closing runners
+
+`LocalEvalSetResultsManager(agentsDir)` persists, loads, and lists `EvalSetResult` records under `<agentsDir>/<appName>/.adk/eval_history/<evalSetResultName>.evalset_result.json`. It validates `appName`, `evalSetId`, and `evalSetResultId` via `validatePathSegment` to reject path separators and traversal segments, and parses both standard JSON and legacy double-encoded JSON strings via `parseEvalSetResultJson`.
+
+`closeRunners(runners)` invokes `runner.close()` concurrently across all provided `Runner` instances and waits up to `RUNNER_CLEANUP_TIMEOUT_MS` (`30000` ms), logging a warning if any runner close task does not complete in time.
 
 ## Configuration options
 

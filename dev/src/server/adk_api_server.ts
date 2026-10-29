@@ -11,9 +11,11 @@ import {
   BaseMemoryService,
   BaseSessionService,
   bearerTokenUserBuilder,
+  closeRunners,
   convertSessionToEvalFormat,
   createEmptyState,
   EVAL_SESSION_ID_PREFIX,
+  EvalCaseResult,
   EvalEntry,
   EvalMetric,
   Event,
@@ -22,12 +24,15 @@ import {
   InMemoryArtifactService,
   InMemoryMemoryService,
   InMemorySessionService,
+  InputValidationError,
   isApp,
   LiveRequest,
   LiveRequestQueue,
   loadDotenvForAgent,
+  LocalEvalSetResultsManager,
   Logger,
   LogLevel,
+  NotFoundError,
   publicEvent,
   publicSession,
   RunConfig,
@@ -162,6 +167,7 @@ export class AdkApiServer {
   private readonly sessionService: BaseSessionService;
   private readonly memoryService: BaseMemoryService;
   private readonly artifactService: BaseArtifactService;
+  private readonly evalSetResultsManager: LocalEvalSetResultsManager;
   private readonly serveDebugUI: boolean;
   private readonly allowedOrigins: string[];
   private readonly allowedHosts?: string[];
@@ -188,6 +194,9 @@ export class AdkApiServer {
     this.memoryService = options.memoryService ?? new InMemoryMemoryService();
     this.artifactService =
       options.artifactService ?? new InMemoryArtifactService();
+    this.evalSetResultsManager = new LocalEvalSetResultsManager(
+      options.agentsDir ?? process.cwd(),
+    );
     this.agentLoader =
       options.agentLoader ??
       new AgentLoader(
@@ -333,10 +342,13 @@ export class AdkApiServer {
 
     if (this.serveDebugUI) {
       app.get('/', (req: Request, res: Response) => {
-        res.redirect('/dev-ui');
+        res.redirect('/dev-ui/');
+      });
+      app.get('/dev-ui', (req: Request, res: Response) => {
+        res.redirect('/dev-ui/');
       });
       app.use(
-        '/dev-ui',
+        '/dev-ui/',
         express.static(path.join(__dirname, '../../browser'), {
           setHeaders: (res: Response, path: string) => {
             if (path.endsWith('.js')) {
@@ -1172,6 +1184,7 @@ export class AdkApiServer {
             : undefined;
 
           const runEvalResults: RunEvalResult[] = [];
+          const evalCaseResults: EvalCaseResult[] = [];
           for await (const evalResult of runEvals(
             {[evalSetId]: evalCases},
             rootAgent,
@@ -1194,7 +1207,14 @@ export class AdkApiServer {
               userId: evalResult.user_id,
               sessionId: evalResult.session_id,
             });
+            evalCaseResults.push(evalResult);
           }
+
+          this.evalSetResultsManager.saveEvalSetResult(
+            appName,
+            evalSetId,
+            evalCaseResults,
+          );
 
           return res.json(runEvalResults);
         } catch (e: unknown) {
@@ -1206,17 +1226,67 @@ export class AdkApiServer {
     );
 
     // ----------------------- Eval Results related endpoints ------------------
-    // TODO: Implement eval results related endpoints.
     app.get(
-      '/apps/:appName/eval_results/:evalResultId',
+      [
+        '/apps/:appName/eval_results/:evalResultId',
+        '/dev/apps/:appName/eval_results/:evalResultId',
+        '/dev/apps/:appName/eval-results/:evalResultId',
+      ],
       (req: Request, res: Response) => {
-        return res.status(501).json({error: 'Not implemented'});
+        try {
+          const appName = req.params['appName'];
+          const evalResultId = req.params['evalResultId'];
+          const evalSetResult = this.evalSetResultsManager.getEvalSetResult(
+            appName,
+            evalResultId,
+          );
+          return res.json(evalSetResult);
+        } catch (e: unknown) {
+          if (
+            e instanceof NotFoundError ||
+            e instanceof InputValidationError ||
+            (typeof e === 'object' &&
+              e !== null &&
+              'name' in e &&
+              (e.name === 'NotFoundError' || e.name === 'InputValidationError'))
+          ) {
+            return res
+              .status(404)
+              .json({error: e instanceof Error ? e.message : String(e)});
+          }
+          const error = `Failed to get eval result: ${e}`;
+          this.logger.error(error);
+          return res.status(500).json({error});
+        }
       },
     );
 
-    app.get('/apps/:appName/eval_results', (req: Request, res: Response) => {
-      return res.status(501).json({error: 'Not implemented'});
-    });
+    app.get(
+      ['/apps/:appName/eval_results', '/dev/apps/:appName/eval_results'],
+      (req: Request, res: Response) => {
+        try {
+          const appName = req.params['appName'];
+          return res.json(
+            this.evalSetResultsManager.listEvalSetResults(appName),
+          );
+        } catch (e: unknown) {
+          if (
+            e instanceof InputValidationError ||
+            (typeof e === 'object' &&
+              e !== null &&
+              'name' in e &&
+              e.name === 'InputValidationError')
+          ) {
+            return res
+              .status(404)
+              .json({error: e instanceof Error ? e.message : String(e)});
+          }
+          const error = `Failed to list eval results: ${e}`;
+          this.logger.error(error);
+          return res.status(500).json({error});
+        }
+      },
+    );
 
     app.get('/apps/:appName/eval_metrics', (req: Request, res: Response) => {
       return res.status(501).json({error: 'Not implemented'});
@@ -1686,13 +1756,19 @@ export class AdkApiServer {
     }
   }
 
-  stop(): Promise<void> {
+  async stop(): Promise<void> {
+    const runners = Object.values(this.runnerCache);
+    for (const key of Object.keys(this.runnerCache)) {
+      delete this.runnerCache[key];
+    }
+    await closeRunners(runners);
+
     const server = this.server;
     // A failed `start()` (EADDRINUSE) and an already-closed server both leave
     // `this.server` assigned, and `close()` on either rejects with
     // ERR_SERVER_NOT_RUNNING. Neither has a listener left, so both are stopped.
     if (!server?.listening) {
-      return Promise.resolve();
+      return;
     }
 
     return new Promise((resolve, reject) => {
