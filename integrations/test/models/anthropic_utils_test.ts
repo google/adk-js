@@ -13,6 +13,7 @@ import {
   contentBlockToPart,
   contentToMessageParam,
   createAnthropicClient,
+  createDirectAnthropicClient,
   functionDeclarationToToolParam,
   messageToGenerateContentResponse,
   partToMessageBlock,
@@ -31,6 +32,46 @@ const {mockAnthropicVertexCtor, mockImportState} = vi.hoisted(() => {
     mockImportState: importState,
   };
 });
+
+const {mockAnthropicCtor, mockAnthropicSdkState} = vi.hoisted(() => {
+  const anthropicSdkState: {
+    shouldFailImport: boolean;
+    ctorError?: Error;
+    credentials?: unknown;
+  } = {
+    shouldFailImport: false,
+  };
+  const anthropicCtorFn = vi.fn(function (
+    this: {
+      options?: unknown;
+      apiKey?: string | null;
+      authToken?: string | null;
+      credentials?: unknown;
+    },
+    options: unknown,
+  ) {
+    if (anthropicSdkState.ctorError) {
+      throw anthropicSdkState.ctorError;
+    }
+    this.options = options;
+    this.apiKey = process.env['ANTHROPIC_API_KEY'] || null;
+    this.authToken = process.env['ANTHROPIC_AUTH_TOKEN'] || null;
+    this.credentials = anthropicSdkState.credentials ?? null;
+  });
+  return {
+    mockAnthropicCtor: anthropicCtorFn,
+    mockAnthropicSdkState: anthropicSdkState,
+  };
+});
+
+vi.mock('@anthropic-ai/sdk', () => ({
+  get Anthropic() {
+    if (mockAnthropicSdkState.shouldFailImport) {
+      return undefined;
+    }
+    return mockAnthropicCtor;
+  },
+}));
 
 vi.mock('@anthropic-ai/vertex-sdk', () => ({
   get AnthropicVertex() {
@@ -1132,6 +1173,114 @@ describe('Claude conversion helpers', () => {
         message:
           "Claude requires the optional '@anthropic-ai/vertex-sdk' package. " +
           'Install it with: npm install @anthropic-ai/sdk @anthropic-ai/vertex-sdk',
+        cause: expect.any(Error),
+      });
+    });
+  });
+
+  describe('createDirectAnthropicClient', () => {
+    beforeEach(() => {
+      mockAnthropicCtor.mockClear();
+      mockAnthropicSdkState.shouldFailImport = false;
+      mockAnthropicSdkState.ctorError = undefined;
+      mockAnthropicSdkState.credentials = undefined;
+      vi.stubEnv('ANTHROPIC_API_KEY', '');
+      vi.stubEnv('ANTHROPIC_AUTH_TOKEN', '');
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('creates an Anthropic client when ANTHROPIC_API_KEY is set', async () => {
+      vi.stubEnv('ANTHROPIC_API_KEY', 'placeholder-api-key');
+
+      const client = await createDirectAnthropicClient();
+
+      expect(client.apiKey).toBe('placeholder-api-key');
+      expect(mockAnthropicCtor).toHaveBeenCalledTimes(1);
+      expect(mockAnthropicCtor).toHaveBeenCalledWith();
+    });
+
+    it('creates an Anthropic client when ANTHROPIC_AUTH_TOKEN is set', async () => {
+      vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'placeholder-auth-token');
+
+      const client = await createDirectAnthropicClient();
+
+      expect(client.authToken).toBe('placeholder-auth-token');
+      expect(mockAnthropicCtor).toHaveBeenCalledTimes(1);
+    });
+
+    it('creates an Anthropic client when the SDK resolves credentials without env vars', async () => {
+      const provider = {getAccessToken: vi.fn()};
+      mockAnthropicSdkState.credentials = provider;
+
+      const client = await createDirectAnthropicClient();
+
+      expect(client.apiKey).toBeNull();
+      expect(client.authToken).toBeNull();
+      expect(client.credentials).toBe(provider);
+      expect(mockAnthropicCtor).toHaveBeenCalledTimes(1);
+    });
+
+    it('throws a credential error naming ANTHROPIC_API_KEY and Claude when no credential is resolved', async () => {
+      await expect(createDirectAnthropicClient()).rejects.toThrow(
+        'No Anthropic credential was found for AnthropicLlm. ' +
+          'Set ANTHROPIC_API_KEY (for example, `export ANTHROPIC_API_KEY=<your-key>`), ' +
+          'or use Claude to call Claude models on Vertex AI.',
+      );
+      expect(mockAnthropicCtor).toHaveBeenCalledTimes(1);
+    });
+
+    it('throws a credential error that preserves cause when the Anthropic constructor throws', async () => {
+      const sdkError = new Error('SDK credential resolution failed');
+      mockAnthropicSdkState.ctorError = sdkError;
+
+      await expect(createDirectAnthropicClient()).rejects.toMatchObject({
+        message:
+          'No Anthropic credential was found for AnthropicLlm. ' +
+          'Set ANTHROPIC_API_KEY (for example, `export ANTHROPIC_API_KEY=<your-key>`), ' +
+          'or use Claude to call Claude models on Vertex AI.',
+        cause: sdkError,
+      });
+    });
+
+    it('throws an installation error that keeps the cause when the Anthropic export is missing', async () => {
+      mockAnthropicSdkState.shouldFailImport = true;
+
+      await expect(createDirectAnthropicClient()).rejects.toMatchObject({
+        message:
+          "AnthropicLlm requires the optional '@anthropic-ai/sdk' package. " +
+          'Install it with: npm install @anthropic-ai/sdk',
+        cause: expect.any(Error),
+      });
+    });
+  });
+
+  describe('createDirectAnthropicClient when @anthropic-ai/sdk cannot be imported', () => {
+    const moduleNotFound = new Error("Cannot find package '@anthropic-ai/sdk'");
+
+    beforeEach(() => {
+      vi.stubEnv('ANTHROPIC_API_KEY', 'placeholder-api-key');
+      vi.resetModules();
+      vi.doMock('@anthropic-ai/sdk', () => {
+        throw moduleNotFound;
+      });
+    });
+
+    afterEach(() => {
+      vi.doUnmock('@anthropic-ai/sdk');
+      vi.resetModules();
+      vi.unstubAllEnvs();
+    });
+
+    it('throws an installation error that keeps the import failure as its cause', async () => {
+      const utils = await import('../../src/models/anthropic_utils.js');
+
+      await expect(utils.createDirectAnthropicClient()).rejects.toMatchObject({
+        message:
+          "AnthropicLlm requires the optional '@anthropic-ai/sdk' package. " +
+          'Install it with: npm install @anthropic-ai/sdk',
         cause: expect.any(Error),
       });
     });

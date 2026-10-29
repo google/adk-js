@@ -16,6 +16,11 @@ export type {
   LangchainToolConfig,
   LangchainToolLike,
 } from './langchain/langchain_tool.js';
-export {Claude, isClaude} from './models/anthropic_llm.js';
-export type {ClaudeParams} from './models/anthropic_llm.js';
+export {
+  AnthropicLlm,
+  Claude,
+  isAnthropicLlm,
+  isClaude,
+} from './models/anthropic_llm.js';
+export type {AnthropicLlmParams, ClaudeParams} from './models/anthropic_llm.js';
 export {version} from './version.js';
