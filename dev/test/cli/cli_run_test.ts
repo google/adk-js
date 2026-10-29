@@ -54,6 +54,7 @@ vi.mock('@google/adk', async (importOriginal) => {
             yield event;
           }
         }),
+        close: vi.fn().mockResolvedValue(undefined),
       };
     }),
     InMemoryArtifactService: vi.fn(),
@@ -133,6 +134,7 @@ describe('cli_run', () => {
             yield event;
           }
         },
+        close: vi.fn().mockResolvedValue(undefined),
       };
     });
     (InMemorySessionService as unknown as Mock).mockImplementation(
@@ -297,8 +299,9 @@ describe('cli_run', () => {
   /** Replaces the mocked Runner with one whose runAsync the test can watch. */
   const watchRunner = () => {
     const runAsync = vi.fn(async function* () {});
+    const close = vi.fn().mockResolvedValue(undefined);
     vi.mocked(Runner).mockImplementation(function () {
-      return {runAsync} as unknown as Runner;
+      return {runAsync, close} as unknown as Runner;
     });
     return runAsync;
   };
@@ -1061,6 +1064,27 @@ describe('cli_run', () => {
         delete process.env['ADK_CLI_RUN_DOTENV_TEST'];
         fs.rmSync(tempDir, {recursive: true, force: true});
       }
+    });
+
+    it('closes the active runner when interactive execution exits', async () => {
+      const closeSpy = vi.fn().mockResolvedValue(undefined);
+      (Runner as unknown as Mock).mockImplementation(function () {
+        return {
+          runAsync: async function* () {
+            for (const event of runnerState.events) {
+              yield event;
+            }
+          },
+          close: closeSpy,
+        };
+      });
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        sessionService: createMockSessionService(),
+      });
+
+      expect(closeSpy).toHaveBeenCalledTimes(1);
     });
   });
 });

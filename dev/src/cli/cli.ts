@@ -12,6 +12,8 @@ import {
   EvalMetric,
   EvalResult,
   EvalStatus,
+  InMemorySessionService,
+  LocalEvalSetResultsManager,
   LogLevel,
   getArtifactServiceFromUri,
   getEvaluationCriteriaOrDefault,
@@ -523,6 +525,7 @@ export function createProgram(): Command {
                 : evalSetContent;
           }
 
+          const sessionService = new InMemorySessionService();
           const evalResults: EvalResult[] = [];
           for await (const result of runEvals(
             evalCasesByEvalSetId,
@@ -530,8 +533,57 @@ export function createProgram(): Command {
             resetFunc,
             evalMetrics,
             getBoolean(options['print_detailed_results']),
+            sessionService,
           )) {
+            if (!result.session_details && result.user_id) {
+              const evalCase = evalCasesByEvalSetId[result.eval_set_file]?.find(
+                (e) => e.name === result.eval_id,
+              );
+              const sessionAppName =
+                evalCase?.initial_session?.app_name ?? 'EvaluationGenerator';
+              result.session_details = await sessionService.getSession({
+                appName: sessionAppName,
+                userId: result.user_id,
+                sessionId: result.session_id,
+              });
+            }
             evalResults.push(result);
+          }
+
+          const isAgentFile =
+            fs.existsSync(absAgentPath) && fs.statSync(absAgentPath).isFile();
+          const appName = isAgentFile
+            ? path.basename(absAgentPath, path.extname(absAgentPath))
+            : path.basename(absAgentPath);
+          const agentsDir = path.dirname(absAgentPath);
+          const localEvalSetResultsManager = new LocalEvalSetResultsManager(
+            agentsDir,
+          );
+          const evalSetIdToEvalResults: Record<string, EvalResult[]> = {};
+          for (const evalResult of evalResults) {
+            const rawSetId = evalResult.eval_set_id ?? evalResult.eval_set_file;
+            const evalSetId = path
+              .basename(rawSetId)
+              .replace(/\.evalset\.json$/, '')
+              .replace(/\.json$/, '');
+            if (
+              !Object.prototype.hasOwnProperty.call(
+                evalSetIdToEvalResults,
+                evalSetId,
+              )
+            ) {
+              evalSetIdToEvalResults[evalSetId] = [];
+            }
+            evalSetIdToEvalResults[evalSetId].push(evalResult);
+          }
+          for (const [evalSetId, evalCaseResults] of Object.entries(
+            evalSetIdToEvalResults,
+          )) {
+            localEvalSetResultsManager.saveEvalSetResult(
+              appName,
+              evalSetId,
+              evalCaseResults,
+            );
           }
 
           process.stdout.write(
@@ -539,18 +591,17 @@ export function createProgram(): Command {
           );
           const evalRunSummary: Record<string, [number, number]> = {};
           for (const evalResult of evalResults) {
+            const summaryKey =
+              evalResult.eval_set_id ?? evalResult.eval_set_file;
             if (
-              !Object.prototype.hasOwnProperty.call(
-                evalRunSummary,
-                evalResult.eval_set_file,
-              )
+              !Object.prototype.hasOwnProperty.call(evalRunSummary, summaryKey)
             ) {
-              evalRunSummary[evalResult.eval_set_file] = [0, 0];
+              evalRunSummary[summaryKey] = [0, 0];
             }
             if (evalResult.final_eval_status === EvalStatus.PASSED) {
-              evalRunSummary[evalResult.eval_set_file][0] += 1;
+              evalRunSummary[summaryKey][0] += 1;
             } else {
-              evalRunSummary[evalResult.eval_set_file][1] += 1;
+              evalRunSummary[summaryKey][1] += 1;
             }
           }
 
