@@ -167,4 +167,30 @@ describe('maybeSetOtelProviders', () => {
     expect(metrics.setGlobalMeterProvider).toHaveBeenCalledTimes(1);
     expect(logs.setGlobalLoggerProvider).toHaveBeenCalledTimes(1);
   });
+
+  it('detects resource attributes from OTEL_SERVICE_NAME and OTEL_RESOURCE_ATTRIBUTES', async () => {
+    vi.stubEnv('OTEL_SERVICE_NAME', 'my-test-service');
+    vi.stubEnv('OTEL_RESOURCE_ATTRIBUTES', 'custom.key=custom-val,env=test');
+
+    const mockSpanProcessor = {
+      forceFlush: vi.fn(),
+      onStart: vi.fn(),
+      onEnd: vi.fn(),
+      shutdown: vi.fn(),
+    };
+
+    await maybeSetOtelProviders([{spanProcessors: [mockSpanProcessor]}]);
+
+    expect(NodeTracerProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resource: expect.objectContaining({
+          attributes: expect.objectContaining({
+            'service.name': 'my-test-service',
+            'custom.key': 'custom-val',
+            env: 'test',
+          }),
+        }),
+      }),
+    );
+  });
 });

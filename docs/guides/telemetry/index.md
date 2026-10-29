@@ -350,9 +350,9 @@ version and the schema URL `https://opentelemetry.io/schemas/1.44.0`.
 
 ## Advanced applications
 
-`getGcpExporters` builds hooks that send spans to Cloud Trace and metrics to
-Cloud Monitoring, and `getGcpResource` detects the Google Cloud resource labels
-that say where the process runs.
+`getGcpExporters` exports traces, metrics, and logs to Google Cloud via
+`https://telemetry.googleapis.com/v1/{traces,metrics,logs}` using OTLP over
+HTTP. `getGcpResource` detects Google Cloud resource labels for the deployment.
 
 ```ts
 import {
@@ -364,39 +364,80 @@ import {
 const gcpHooks = await getGcpExporters({
   enableTracing: true,
   enableMetrics: true,
+  enableLogging: true,
 });
-maybeSetOtelProviders([gcpHooks], getGcpResource());
+const gcpResource = await getGcpResource();
+maybeSetOtelProviders([gcpHooks], gcpResource);
 ```
 
-| `OtelExportersConfig` field | Default | Effect in `getGcpExporters`                            |
-| :-------------------------- | :------ | :----------------------------------------------------- |
-| `enableTracing`             | `false` | Adds a batched Cloud Trace span processor.             |
-| `enableMetrics`             | `false` | Adds a Cloud Monitoring reader that exports every 5 s. |
-| `enableLogging`             | `false` | Ignored. No Cloud Logging exporter is created.         |
+| `OtelExportersConfig` field | Default     | Effect in `getGcpExporters`                          |
+| :-------------------------- | :---------- | :--------------------------------------------------- |
+| `enableTracing`             | `false`     | Sends traces via OTLP to `telemetry.googleapis.com`. |
+| `enableMetrics`             | `false`     | Sends metrics via OTLP every 5 seconds.              |
+| `enableLogging`             | `false`     | Sends logs via `GCPBatchLogRecordProcessor`.         |
+| `projectId`                 | `undefined` | Project ID override for export.                      |
 
-`getGcpExporters` resolves the project through the ambient Google credentials.
-When no project resolves, it logs a warning and returns empty hooks, so a
-process without credentials starts and runs untraced rather than failing.
+`getGcpExporters` authenticates requests using `google-auth-library` with the
+`https://www.googleapis.com/auth/cloud-platform` scope. When project resolution
+fails, it logs a warning and returns empty hooks.
+
+### Cloud Logging and log names
+
+`GCPBatchLogRecordProcessor` keeps log names stable in Google Cloud Logging. By
+default, records write to the `adk-otel` log. You can override this name with a
+non-empty `GCP_DEFAULT_LOG_NAME` environment variable.
+
+On Vertex AI Agent Engine, records write to the single stdout log:
+`aiplatform.googleapis.com/reasoning_engine_stdout`. The processor sets the
+`event.name` attribute from the record event name, and clears `eventName` on
+Agent Engine. Monitored resource attributes are attached to the log record, and
+`service.version` is copied to record labels.
+
+### Endpoints and mTLS
+
+OTLP exporters send requests to `https://telemetry.googleapis.com`. You can
+configure mutual TLS (mTLS) endpoints with these environment variables:
+
+| Variable                            | Values                    | Description                                |
+| :---------------------------------- | :------------------------ | :----------------------------------------- |
+| `GOOGLE_API_USE_CLIENT_CERTIFICATE` | `true`, `false`           | Enables client certificate authentication. |
+| `GOOGLE_API_USE_MTLS_ENDPOINT`      | `auto`, `always`, `never` | Controls whether to use mTLS endpoints.    |
+
+When `GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY` is set, exporters add the
+`Vertex-Agent-Engine` User-Agent header.
+
+### Resource detection
+
+`getGcpResource(projectId?)` constructs an OpenTelemetry `Resource` by merging
+attributes in precedence order:
+
+1. Common deployment attributes: `service.instance.id`, `gcp.project_id`, and
+   `cloud.account.id`.
+2. Agent Engine attributes: `cloud.platform` (`gcp.agent_engine`),
+   `service.name`, and `cloud.resource_id`.
+3. OpenTelemetry environment detector attributes from `OTEL_SERVICE_NAME` and
+   `OTEL_RESOURCE_ATTRIBUTES`.
+4. Platform detector attributes for GKE and Cloud Run.
+5. Agent Registry Uniform Resource Name (URN) enrichment on `gen_ai.main_agent.id`.
+
+When resolving project numbers for URN reconstruction, ADK queries the Cloud
+Resource Manager API. This lookup requires the `resourcemanager.projects.get`
+permission. Successful lookups are cached in memory.
 
 ## Limitations
 
 `core/src/telemetry/api/instrumentation.ts` is not exported from `@google/adk`,
-so `recordInference`, `recordToolExecution` and the other scope functions cannot
-be imported. The framework calls them where it opens each span, and the
-attributes rather than the functions are the contract a caller observes.
+so `recordInference`, `recordToolExecution` and other scope functions cannot be
+imported. The framework calls them when opening spans, and the resulting
+attributes form the contract.
 
-`getGcpExporters` loads each exporter from an optional peer dependency when you
-enable its signal. Install the one you use:
-
-```bash
-npm install @google-cloud/opentelemetry-cloud-trace-exporter
-npm install @google-cloud/opentelemetry-cloud-monitoring-exporter
-```
+Google Cloud export uses built-in OTLP HTTP exporters. You do not need separate
+Cloud Trace or Cloud Monitoring exporter packages.
 
 A trace call never throws. A payload that `JSON.stringify` rejects, such as one
-holding a cycle, is recorded as `'<not serializable>'`, so an unserializable
-tool result costs one attribute rather than the run. A trace call made with no
-active span does nothing.
+holding a cycle, is recorded as `'<not serializable>'`. An unserializable tool
+result costs one attribute rather than the run. A trace call made with no active
+span does nothing.
 
 `maybeSetOtelProviders` is marked experimental in its documentation, so its
 signature may change.
