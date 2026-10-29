@@ -71,7 +71,7 @@ export const rootAgent = new LlmAgent({
 | `externalAccessTokenKey` | `string` | `undefined` | Key in `toolContext.state` holding an external OAuth2 access token. Mutually exclusive with `credentials`, `clientId`, `clientSecret`, and `scopes`. |
 | `clientId` | `string` | `undefined` | OAuth2 client ID for interactive user authorization. Required with `clientSecret` when `credentials` and `externalAccessTokenKey` are omitted. |
 | `clientSecret` | `string` | `undefined` | OAuth2 client secret for interactive user authorization. |
-| `scopes` | `string[]` | `BIGQUERY_SCOPES` | OAuth2 scopes requested during authorization. Defaults to `['https://www.googleapis.com/auth/bigquery', 'https://www.googleapis.com/auth/dataplex.read-write']` when omitted or empty. |
+| `scopes` | `string[]` | `BIGQUERY_SCOPES` | OAuth2 scopes requested during authorization. Defaults to `BIGQUERY_SCOPES` (`['https://www.googleapis.com/auth/bigquery', 'https://www.googleapis.com/auth/dataplex.read-write']`) when omitted or empty. `@google/adk-integrations` also exports `BIGQUERY_DEFAULT_SCOPE` (`['https://www.googleapis.com/auth/bigquery']`) for BigQuery-only scope configuration. |
 
 ### `BigQueryToolsetOptions`
 
