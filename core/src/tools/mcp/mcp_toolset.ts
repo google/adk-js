@@ -24,6 +24,8 @@ import {MCPTool} from './mcp_tool.js';
 export type {
   SseConnectionParams,
   SseServerParams,
+  StreamableHTTPConnectionParams,
+  StreamableHTTPServerParams,
 } from './mcp_session_manager.js';
 
 /**
