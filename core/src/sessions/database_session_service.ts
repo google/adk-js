@@ -12,7 +12,7 @@ import type {
 import type {MikroORMOptions as MikroDBOptions} from './db/operations.js';
 
 import {Event} from '../events/event.js';
-import {randomUUID} from '../utils/env_aware_utils.js';
+import {newId} from '../utils/id_provider.js';
 import {logger} from '../utils/logger.js';
 import {
   AppendEventRequest,
@@ -183,7 +183,7 @@ export class DatabaseSessionService extends BaseSessionService {
     await this.init();
     const em = this.orm!.em.fork();
 
-    const id = sessionId || randomUUID();
+    const id = sessionId || newId();
     const now = new Date();
     const existing = await em.findOne(StorageSession, {
       id,
