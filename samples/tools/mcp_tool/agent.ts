@@ -10,8 +10,9 @@
  *
  * `MCPToolset` connects to a Model Context Protocol server, discovers the tools
  * it advertises, and wraps each one in an `MCPTool`. This sample runs against
- * `mcp_server.mjs` in the same directory over stdio by default, or against an
- * HTTP+SSE MCP server when `MCP_SSE_URL` is set:
+ * `mcp_server.mjs` in the same directory over stdio by default, against a
+ * Streamable HTTP MCP server when `MCP_STREAMABLE_HTTP_URL` is set, or against
+ * an HTTP+SSE MCP server when `MCP_SSE_URL` is set:
  *
  *   - `mcp_server.mjs` defines an ADK `FunctionTool` (`lookup_service_status`)
  *     and converts its declaration parameters with `genaiSchemaToJsonSchema`,
@@ -38,6 +39,7 @@ import {
   type MCPConnectionParams,
   type SseConnectionParams,
   type StdioConnectionParams,
+  type StreamableHTTPConnectionParams,
 } from '@google/adk';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -55,6 +57,17 @@ const stdioParams: StdioConnectionParams = {
   },
 };
 
+const streamableHttpParams: StreamableHTTPConnectionParams | undefined = process
+  .env.MCP_STREAMABLE_HTTP_URL
+  ? {
+      type: 'StreamableHTTPConnectionParams',
+      url: process.env.MCP_STREAMABLE_HTTP_URL,
+      headers: process.env.MCP_STREAMABLE_HTTP_TOKEN
+        ? {Authorization: `Bearer ${process.env.MCP_STREAMABLE_HTTP_TOKEN}`}
+        : undefined,
+    }
+  : undefined;
+
 const sseParams: SseConnectionParams | undefined = process.env.MCP_SSE_URL
   ? {
       type: 'SseConnectionParams',
@@ -65,7 +78,8 @@ const sseParams: SseConnectionParams | undefined = process.env.MCP_SSE_URL
     }
   : undefined;
 
-const connectionParams: MCPConnectionParams = sseParams ?? stdioParams;
+const connectionParams: MCPConnectionParams =
+  streamableHttpParams ?? sseParams ?? stdioParams;
 
 const mcpToolset = new MCPToolset(connectionParams);
 const loadMcpResource = new LoadMcpResourceTool(mcpToolset);
