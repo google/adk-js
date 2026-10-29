@@ -300,12 +300,13 @@ export class Runner {
       newMessage.role = 'user';
     }
     rejectReservedFunctionCalls(newMessage);
+    const invocation = {entrypoint: this.agent, sessionId, runConfig};
 
     // =========================================================================
     // Setup the session and invocation context
     // =========================================================================
     try {
-      yield* recordInvocation({entrypoint: this.agent, sessionId}, () =>
+      yield* recordInvocation(invocation, () =>
         async function* (this: Runner) {
           const session = await this.resolveSession(userId, sessionId);
 
@@ -769,7 +770,7 @@ export class Runner {
       runConfig.inputAudioTranscription ??= {};
     }
 
-    yield* recordInvocation({entrypoint: agent, sessionId}, () =>
+    yield* recordInvocation({entrypoint: agent, sessionId, runConfig}, () =>
       async function* (this: Runner) {
         const session = await this.sessionService.getOrCreateSession({
           appName: this.appName,

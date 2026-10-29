@@ -9,6 +9,7 @@ import type {SSEClientTransportOptions} from '@modelcontextprotocol/sdk/client/s
 import type {StdioServerParameters} from '@modelcontextprotocol/sdk/client/stdio.js';
 import type {StreamableHTTPClientTransportOptions} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
+import {instrumentMcpFetch} from '../../telemetry/api/instrumentation.js';
 import {mergeTrackingHeaders} from '../../utils/client_labels.js';
 import {formatError} from '../../utils/error_utils.js';
 import {logger} from '../../utils/logger.js';
@@ -129,6 +130,7 @@ function buildTransportOptions(
       ...transportOptions?.requestInit,
       headers: mergeTrackingHeaders(callerHeaders),
     },
+    fetch: instrumentMcpFetch(transportOptions?.fetch),
   };
 }
 
@@ -150,6 +152,7 @@ function buildSseTransportOptions(
       ...transportOptions?.requestInit,
       headers: mergeTrackingHeaders(callerHeaders),
     },
+    fetch: instrumentMcpFetch(transportOptions?.fetch),
   };
 }
 
