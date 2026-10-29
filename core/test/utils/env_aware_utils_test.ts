@@ -18,6 +18,7 @@ import {
   base64Decode,
   base64Encode,
   getBooleanEnvVar,
+  getEnvVar,
   isBase64Encoded,
   randomUUID,
 } from '../../src/utils/env_aware_utils.js';
@@ -38,6 +39,42 @@ describe('env_aware_utils', () => {
     vi.stubGlobal('window', {atob, btoa});
     return {atob, btoa};
   };
+
+  // Browsers have no `process` global at all, so even `process?.env` throws a
+  // ReferenceError there. Stubbing it to undefined would not reproduce that,
+  // so the global is deleted, and restored before the caller asserts because
+  // vitest itself needs it.
+  const withoutProcess = <T>(fn: () => T): T => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'process')!;
+    delete (globalThis as {process?: unknown}).process;
+    try {
+      return fn();
+    } finally {
+      Object.defineProperty(globalThis, 'process', descriptor);
+    }
+  };
+
+  describe('getEnvVar', () => {
+    const originalEnv = process.env;
+
+    afterEach(() => {
+      process.env = originalEnv;
+    });
+
+    it('returns the value of a set variable', () => {
+      process.env = {...originalEnv, 'TEST_VAR': 'value'};
+      expect(getEnvVar('TEST_VAR')).toBe('value');
+    });
+
+    it('returns undefined for a variable that is not set', () => {
+      expect(getEnvVar('NON_EXISTENT_VAR')).toBeUndefined();
+    });
+
+    it('returns undefined without a process global', () => {
+      process.env = {...originalEnv, 'TEST_VAR': 'value'};
+      expect(withoutProcess(() => getEnvVar('TEST_VAR'))).toBeUndefined();
+    });
+  });
 
   describe('getBooleanEnvVar', () => {
     const originalEnv = process.env;
@@ -79,6 +116,11 @@ describe('env_aware_utils', () => {
 
     it('should return false for undefined', () => {
       expect(getBooleanEnvVar('NON_EXISTENT_VAR')).toBe(false);
+    });
+
+    it('should return false without a process global', () => {
+      process.env = {...originalEnv, 'TEST_VAR': 'true'};
+      expect(withoutProcess(() => getBooleanEnvVar('TEST_VAR'))).toBe(false);
     });
   });
 
@@ -248,6 +290,12 @@ describe('env_aware_utils', () => {
       expect(isEnterpriseModeEnabled()).toBe(true);
       expect(isEnterpriseModeEnabled()).toBe(true);
       expect(warnSpy).toHaveBeenCalledOnce();
+    });
+
+    it('should return false and not warn without a process global', () => {
+      process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'true';
+      expect(withoutProcess(() => isEnterpriseModeEnabled())).toBe(false);
+      expect(warnSpy).not.toHaveBeenCalled();
     });
   });
 
