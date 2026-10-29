@@ -142,7 +142,13 @@ export class DatabaseSessionService extends BaseSessionService {
     super();
     if (typeof connectionStringOrOptions === 'string') {
       this.connectionString = connectionStringOrOptions;
-      this.staleSession = options?.staleSession ?? 'reject';
+      if (options) {
+        const {staleSession, ...mikroOptions} = options;
+        this.options = mikroOptions;
+        this.staleSession = staleSession ?? 'reject';
+      } else {
+        this.staleSession = 'reject';
+      }
     } else {
       if (!connectionStringOrOptions.driver) {
         throw new Error('Driver is required when passing options object.');
@@ -164,7 +170,11 @@ export class DatabaseSessionService extends BaseSessionService {
     // ENTITIES overrides a caller-supplied `entities`, exactly as the
     // constructor did before the schema module became lazy.
     const options: MikroDBOptions = this.connectionString
-      ? await getConnectionOptionsFromUri(this.connectionString)
+      ? {
+          ...(await getConnectionOptionsFromUri(this.connectionString)),
+          ...this.options,
+          entities: ENTITIES,
+        }
       : {...this.options, entities: ENTITIES};
     this.options = options;
 

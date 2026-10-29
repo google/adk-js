@@ -300,7 +300,6 @@ function addDynamicAuthConfigToConnectionSchemas(
       schemaName.endsWith('_Request') &&
       isJsonObject(schema) &&
       isJsonObject(schema.properties) &&
-      !('query' in schema.properties) &&
       !('dynamicAuthConfig' in schema.properties)
     ) {
       schema.properties = {

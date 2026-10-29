@@ -46,7 +46,7 @@ class DummyToolset extends BaseToolset {
 }
 
 class FilteringToolset extends BaseToolset {
-  constructor(toolFilter: ToolPredicate | string[]) {
+  constructor(toolFilter?: ToolPredicate | string[]) {
     super(toolFilter);
   }
 
@@ -60,6 +60,13 @@ class FilteringToolset extends BaseToolset {
 
 describe('BaseToolset.isToolSelected', () => {
   const context = {} as unknown as ReadonlyContext;
+
+  it('selects all tools when super() is called with no arguments', async () => {
+    const toolset = new FilteringToolset();
+    expect(toolset.toolFilter).toEqual([]);
+    const tools = await toolset.getTools(context);
+    expect(tools.map((tool) => tool.name)).toEqual(['tool1', 'tool2']);
+  });
 
   it('selects all tools when the toolFilter is an empty array', async () => {
     const toolset = new FilteringToolset([]);
