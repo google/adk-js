@@ -60,6 +60,28 @@ function parseVersion(versionString: string): ParsedVersion {
 }
 
 /**
+ * Returns the major version of a `gemini-*` model.
+ *
+ * @param modelString Either a simple model name or path-based model name.
+ * @return The major version, or `undefined` when the model is not a Gemini
+ *     model or its version is not numeric (for example `gemini-flash-latest`).
+ */
+export function getGeminiMajorVersion(
+  modelString: string | undefined,
+): number | undefined {
+  if (!modelString) {
+    return undefined;
+  }
+  const modelName = extractModelName(modelString);
+  if (!modelName.startsWith('gemini-')) {
+    return undefined;
+  }
+  const versionString = modelName.slice('gemini-'.length).split('-', 1)[0];
+  const parsedVersion = parseVersion(versionString);
+  return parsedVersion.valid ? parsedVersion.major : undefined;
+}
+
+/**
  * Check if the model is a Gemini 1.x model using regex patterns.
  *
  * @param modelString Either a simple model name or path - based model name

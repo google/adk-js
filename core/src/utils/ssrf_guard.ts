@@ -13,10 +13,20 @@
  * time-of-check/time-of-use (DNS-rebinding) window exists between a caller's
  * pre-flight lookup and fetch's own lookup. Closing it needs connection-level
  * IP pinning (e.g. an `undici` Agent with a custom `lookup`).
+ *
+ * The module has no static Node.js imports, so the browser bundle can use the
+ * lexical and address checks. Only {@link resolveHostAddresses} needs Node.js,
+ * and it loads `node:dns/promises` when it is called.
  */
 
-import {lookup} from 'node:dns/promises';
-import {isIP} from 'node:net';
+/**
+ * The DNS module specifier. It is kept in a variable so that a bundler that
+ * targets a browser does not try to resolve a Node.js built-in.
+ */
+const DNS_MODULE = 'node:dns/promises';
+
+/** Characters that can appear in an IPv6 address literal. */
+const IPV6_CHARACTERS = /^[0-9a-f:.]+$/i;
 
 /** URL schemes that may be fetched (WHATWG `URL.protocol` form). */
 const HTTP_SCHEMES = new Set(['http:', 'https:']);
@@ -27,9 +37,9 @@ interface Ipv4Cidr {
   mask: number;
 }
 
-/** An IPv6 network: its base address and prefix length. */
+/** An IPv6 network: its base address as eight hextets and its prefix length. */
 interface Ipv6Cidr {
-  base: bigint;
+  base: number[];
   prefix: number;
 }
 
@@ -114,6 +124,11 @@ export function isLinkLocalAddress(address: string): boolean {
   return classifyAddress(address, isLinkLocalIpv4, isLinkLocalIpv6);
 }
 
+/** Returns `true` when `address` is an IPv4 or IPv6 literal (without brackets). */
+export function isIpAddress(address: string): boolean {
+  return parseIpv4(address) !== null || isIpv6Literal(address);
+}
+
 /**
  * Resolves `hostname` to a de-duplicated list of IP addresses. IP literals are
  * returned as-is; hostnames are resolved via DNS. Throws when resolution yields
@@ -122,9 +137,13 @@ export function isLinkLocalAddress(address: string): boolean {
 export async function resolveHostAddresses(
   hostname: string,
 ): Promise<string[]> {
-  if (isIP(hostname) !== 0) {
+  if (isIpAddress(hostname)) {
     return [hostname];
   }
+  // A non-literal specifier types the module as `any`; the cast restores it.
+  const {lookup} = (await import(
+    DNS_MODULE
+  )) as typeof import('node:dns/promises');
   const records = await lookup(hostname, {all: true});
   const addresses = [...new Set(records.map((record) => record.address))];
   if (addresses.length === 0) {
@@ -166,9 +185,28 @@ function parseIpv4(address: string): number[] | null {
   return octets;
 }
 
+/**
+ * Returns `true` when `address` is a valid IPv6 literal without brackets.
+ *
+ * The WHATWG URL parser validates the address, so the check works the same in
+ * Node.js and in a browser. The character check runs first, so `address`
+ * cannot end the bracketed host and smuggle in a path.
+ */
+function isIpv6Literal(address: string): boolean {
+  if (!address.includes(':') || !IPV6_CHARACTERS.test(address)) {
+    return false;
+  }
+  try {
+    new URL(`http://[${address}]/`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Expands a valid IPv6 address string into its eight 16-bit hextets, or `null`. */
 function parseIpv6(address: string): number[] | null {
-  if (isIP(address) !== 6) {
+  if (!isIpv6Literal(address)) {
     return null;
   }
   const [head, tail] = address.split('::');
@@ -204,15 +242,6 @@ function ipv4ToInt(octets: number[]): number {
   );
 }
 
-/** Packs eight IPv6 hextets into a 128-bit BigInt. */
-function hextetsToBigInt(hextets: number[]): bigint {
-  let value = 0n;
-  for (const hextet of hextets) {
-    value = (value << 16n) | BigInt(hextet);
-  }
-  return value;
-}
-
 /** Precomputes the network address and mask for an IPv4 CIDR string. */
 function parseIpv4Cidr(cidr: string): Ipv4Cidr {
   const [address, prefix] = cidr.split('/');
@@ -223,7 +252,7 @@ function parseIpv4Cidr(cidr: string): Ipv4Cidr {
 /** Precomputes the network address and prefix length for an IPv6 CIDR string. */
 function parseIpv6Cidr(cidr: string): Ipv6Cidr {
   const [address, prefix] = cidr.split('/');
-  return {base: hextetsToBigInt(parseIpv6(address)!), prefix: Number(prefix)};
+  return {base: parseIpv6(address)!, prefix: Number(prefix)};
 }
 
 /** Returns `true` when the IPv4 octets fall inside the network. */
@@ -231,10 +260,23 @@ function matchesIpv4Cidr(octets: number[], {base, mask}: Ipv4Cidr): boolean {
   return (ipv4ToInt(octets) & mask) >>> 0 === base;
 }
 
-/** Returns `true` when the IPv6 hextets fall inside the network. */
+/**
+ * Returns `true` when the IPv6 hextets fall inside the network. The prefix is
+ * compared one 16-bit hextet at a time, so the check needs no `BigInt`, which
+ * the browser build targets do not all support.
+ */
 function matchesIpv6Cidr(hextets: number[], {base, prefix}: Ipv6Cidr): boolean {
-  const shift = BigInt(128 - prefix);
-  return hextetsToBigInt(hextets) >> shift === base >> shift;
+  for (let i = 0; i < base.length; i++) {
+    const bits = Math.min(16, prefix - i * 16);
+    if (bits <= 0) {
+      return true;
+    }
+    const mask = (0xffff << (16 - bits)) & 0xffff;
+    if ((hextets[i] & mask) !== (base[i] & mask)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**

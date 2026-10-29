@@ -11,6 +11,7 @@ import {
   isGemini3xLive,
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
+import {getGeminiMajorVersion} from '../../src/utils/model_name.js';
 
 describe('isGemini2OrAbove', () => {
   describe('valid models', () => {
@@ -147,5 +148,28 @@ describe('isGemini35LiveTranslate', () => {
     expect(isGemini35LiveTranslate('gemini-3.5-flash-live')).toBe(false);
     expect(isGemini35LiveTranslate(undefined)).toBe(false);
     expect(isGemini35LiveTranslate('')).toBe(false);
+  });
+});
+
+describe('getGeminiMajorVersion', () => {
+  it.each([
+    ['gemini-2.5-flash', 2],
+    ['gemini-3-pro-preview', 3],
+    ['gemini-3.1-flash-live-preview', 3],
+    ['gemini-1.5-pro', 1],
+    ['projects/p/locations/l/publishers/google/models/gemini-2.0-flash-001', 2],
+  ])('returns the major version of %s', (model, major) => {
+    expect(getGeminiMajorVersion(model)).toBe(major);
+  });
+
+  it.each([
+    'gemini-flash-latest',
+    'gemini-live-2.5-flash-native-audio',
+    'projects/123/locations/us-central1/endpoints/456',
+    'claude-sonnet',
+    '',
+    undefined,
+  ])('returns undefined for %s', (model) => {
+    expect(getGeminiMajorVersion(model)).toBeUndefined();
   });
 });
