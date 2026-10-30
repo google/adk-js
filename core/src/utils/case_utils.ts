@@ -14,7 +14,12 @@ export function camelCaseKeys(val: unknown): unknown {
   if (Array.isArray(val)) {
     return val.map(camelCaseKeys);
   }
-  if (val !== null && typeof val === 'object' && val.constructor === Object) {
+  if (
+    val !== null &&
+    typeof val === 'object' &&
+    (Object.getPrototypeOf(val) === Object.prototype ||
+      Object.getPrototypeOf(val) === null)
+  ) {
     const obj = val as Record<string, unknown>;
     const newObj: Record<string, unknown> = {};
     for (const key of Object.keys(obj)) {
