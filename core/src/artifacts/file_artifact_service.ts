@@ -5,9 +5,9 @@
  */
 
 import {Part} from '@google/genai';
-import * as fs from 'fs/promises';
-import * as path from 'path';
-import {fileURLToPath, pathToFileURL} from 'url';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import {fileURLToPath, pathToFileURL} from 'node:url';
 
 import {logger} from '../utils/logger.js';
 
