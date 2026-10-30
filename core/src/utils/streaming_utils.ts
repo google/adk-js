@@ -377,7 +377,6 @@ export class GeminiStreamingResponseAggregator {
   private response?: GenerateContentResponse;
   private finishReason?: FinishReason;
 
-  private lastThoughtSignature: {value?: string | Uint8Array} = {};
   private readonly strategy: StreamingStrategy;
 
   constructor({
@@ -430,16 +429,6 @@ export class GeminiStreamingResponseAggregator {
     if (llmResponse.finishReason) {
       this.finishReason = llmResponse.finishReason;
     }
-    if (llmResponse.content && llmResponse.content.parts) {
-      for (const part of llmResponse.content.parts) {
-        if (part.thoughtSignature) {
-          this.lastThoughtSignature.value = part.thoughtSignature;
-        } else if (part.functionCall && this.lastThoughtSignature.value) {
-          part.thoughtSignature = this.lastThoughtSignature.value.toString();
-        }
-      }
-    }
-
     yield* this.strategy.processResponse(llmResponse);
   }
 
