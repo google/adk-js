@@ -13,7 +13,10 @@ import {
   SpeechConfig,
 } from '@google/genai';
 
+import {ServiceTier} from '../models/service_tier.js';
 import {logger} from '../utils/logger.js';
+
+export {ServiceTier};
 
 /**
  * The streaming mode for the run config.
@@ -42,6 +45,24 @@ export interface RunConfig {
    * Speech configuration for the live agent.
    */
   speechConfig?: SpeechConfig;
+
+  /**
+   * Serving tier for the model calls of this run.
+   *
+   * Reaches models that call the interactions API through `Gemini`, and nothing
+   * else. A model on the `generateContent` path has no serving tier of its own
+   * and ignores it. Leave unset to use the default tier.
+   *
+   * A plain string is accepted alongside the enum, so a tier the backend adds
+   * before ADK learns about it still works; unknown values are rejected by the
+   * backend.
+   *
+   * `ServiceTier.DEFERRED` queues each model call to run on off-peak capacity,
+   * so it waits for room instead of being turned away when capacity is tight.
+   * An agent that calls tools queues once per turn rather than once per run. It
+   * cannot be combined with `StreamingMode.SSE`.
+   */
+  serviceTier?: ServiceTier | string;
 
   /**
    * The output modalities. If not set, it's default to AUDIO.
@@ -184,14 +205,17 @@ export interface RunConfig {
  * @returns A merged {@link RunConfig} object.
  * @throws {Error} When `params.maxLlmCalls` exceeds `Number.MAX_SAFE_INTEGER`.
  * @throws {Error} When `params.streamingMode` is {@link StreamingMode.BIDI}.
+ * @throws {Error} When `params.serviceTier` is {@link ServiceTier.DEFERRED} and `params.streamingMode` is {@link StreamingMode.SSE}.
  */
 export function createRunConfig(params: Partial<RunConfig> = {}) {
   validateStreamingMode(params.streamingMode);
+  const streamingMode = params.streamingMode ?? StreamingMode.NONE;
+  validateServiceTierStreaming(params.serviceTier, streamingMode);
   return {
     saveInputBlobsAsArtifacts: false,
     supportCfc: false,
     enableAffectiveDialog: false,
-    streamingMode: StreamingMode.NONE,
+    streamingMode,
     pauseOnToolCalls: false,
     ...params,
     maxLlmCalls: validateMaxLlmCalls(params.maxLlmCalls ?? 500),
@@ -202,6 +226,20 @@ function validateStreamingMode(streamingMode?: StreamingMode): void {
   if (streamingMode === StreamingMode.BIDI) {
     throw new Error(
       'StreamingMode.BIDI is not supported; use StreamingMode.SSE.',
+    );
+  }
+}
+
+function validateServiceTierStreaming(
+  serviceTier?: ServiceTier | string,
+  streamingMode?: StreamingMode,
+): void {
+  if (
+    serviceTier === ServiceTier.DEFERRED &&
+    streamingMode === StreamingMode.SSE
+  ) {
+    throw new Error(
+      "serviceTier='deferred' cannot be used with StreamingMode.SSE. A deferred request is queued to run on off-peak capacity and returns an interaction id instead of a result, so there is nothing to stream.",
     );
   }
 }

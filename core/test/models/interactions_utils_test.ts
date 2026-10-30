@@ -2194,5 +2194,125 @@ describe('interactions_utils', () => {
       }
       expect(responses[0].interactionId).toBe('int-camel-case');
     });
+
+    it('should forward service_tier and set background=true for deferred tier', async () => {
+      const mockCreate = vi.fn().mockResolvedValue({
+        id: 'int-deferred-1',
+        status: 'completed',
+        steps: [
+          {
+            type: 'model_output',
+            content: [{type: 'text', text: 'Deferred result'}],
+          },
+        ],
+      });
+      const mockApiClient = {
+        interactions: {
+          create: mockCreate,
+        },
+      };
+      const llmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [{role: 'user', parts: [{text: 'Hello'}]}],
+        serviceTier: 'deferred',
+      };
+
+      const responses = [];
+      for await (const res of generateContentViaInteractions(
+        mockApiClient as any,
+        llmRequest as any,
+        false,
+      )) {
+        responses.push(res);
+      }
+
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          service_tier: 'deferred',
+          background: true,
+        }),
+      );
+      expect(responses).toHaveLength(1);
+      expect(responses[0].content?.parts?.[0]?.text).toBe('Deferred result');
+    });
+
+    it('should reject serviceTier=deferred when stream=true', async () => {
+      const mockApiClient = {
+        interactions: {
+          create: vi.fn(),
+        },
+      };
+      const llmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [{role: 'user', parts: [{text: 'Hello'}]}],
+        serviceTier: 'deferred',
+      };
+
+      const gen = generateContentViaInteractions(
+        mockApiClient as any,
+        llmRequest as any,
+        true,
+      );
+      await expect(gen.next()).rejects.toThrow(
+        "serviceTier='deferred' cannot be used with streaming.",
+      );
+    });
+
+    it('should poll pending (queued/in_progress) interactions until completed and tolerate transient read errors', async () => {
+      const mockCreate = vi.fn().mockResolvedValue({
+        id: 'int-queued-1',
+        status: 'queued',
+      });
+      const mockGet = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('transient network blip'))
+        .mockResolvedValueOnce({
+          id: 'int-queued-1',
+          status: 'in_progress',
+        })
+        .mockResolvedValueOnce({
+          id: 'int-queued-1',
+          status: 'completed',
+          steps: [
+            {
+              type: 'model_output',
+              content: [{type: 'text', text: 'Finished after polling'}],
+            },
+          ],
+        });
+      const mockApiClient = {
+        interactions: {
+          create: mockCreate,
+          get: mockGet,
+        },
+      };
+      const llmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [{role: 'user', parts: [{text: 'Hello'}]}],
+        serviceTier: 'deferred',
+      };
+      const recordedDelays: number[] = [];
+
+      const responses = [];
+      for await (const res of generateContentViaInteractions(
+        mockApiClient as any,
+        llmRequest as any,
+        false,
+        {
+          sleepFn: async (ms) => {
+            recordedDelays.push(ms);
+          },
+        },
+      )) {
+        responses.push(res);
+      }
+
+      expect(mockGet).toHaveBeenCalledTimes(3);
+      expect(recordedDelays).toEqual([5000, 10000, 20000]);
+      expect(responses).toHaveLength(1);
+      expect(responses[0].content?.parts?.[0]?.text).toBe(
+        'Finished after polling',
+      );
+    });
   });
 });
