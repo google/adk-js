@@ -163,7 +163,7 @@ describe('GoogleLlm', () => {
     );
   });
 
-  describe('generateContentAsync streaming thoughtSignature propagation', () => {
+  describe('generateContentAsync streaming thoughtSignature preservation', () => {
     function makeStreamingChunk(
       parts: Record<string, unknown>[],
     ): GenerateContentResponse {
@@ -204,7 +204,7 @@ describe('GoogleLlm', () => {
       }
     }
 
-    it('should propagate thoughtSignature to subsequent function call parts missing it', async () => {
+    it('should preserve thoughtSignature only on the function call that supplied it', async () => {
       const signature = 'test-thought-signature-abc123';
 
       // Chunk 1: function call WITH thoughtSignature
@@ -236,19 +236,16 @@ describe('GoogleLlm', () => {
         responses.push(response);
       }
 
-      // All function call parts should have the thoughtSignature
       const functionCallResponses = responses.filter((r) =>
         r.content?.parts?.some((p) => p.functionCall),
       );
 
       expect(functionCallResponses).toHaveLength(3);
-      for (const response of functionCallResponses) {
-        for (const part of response.content!.parts!) {
-          if (part.functionCall) {
-            expect(part.thoughtSignature).toBe(signature);
-          }
-        }
-      }
+      expect(
+        functionCallResponses.flatMap((response) =>
+          response.content!.parts!.map((part) => part.thoughtSignature),
+        ),
+      ).toEqual([signature, undefined, undefined]);
     });
 
     it('should not set thoughtSignature when no function call has one', async () => {
