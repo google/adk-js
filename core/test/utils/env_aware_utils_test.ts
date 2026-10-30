@@ -19,6 +19,7 @@ import {
   base64Encode,
   getBooleanEnvVar,
   isBase64Encoded,
+  isBrowser,
   randomUUID,
 } from '../../src/utils/env_aware_utils.js';
 import type {Logger} from '../../src/utils/logger.js';
@@ -28,16 +29,54 @@ describe('env_aware_utils', () => {
     vi.unstubAllGlobals();
   });
 
-  // isBrowser() only checks for a `window` global, and atob and btoa are the
-  // only members the browser branches touch. The spies are returned so a test
-  // can prove the browser branch ran, rather than the stub silently missing
-  // and the Node branch answering instead.
+  // isBrowser() checks for a `window` global or a `WorkerGlobalScope` instance,
+  // and atob and btoa are read from the global scope so both pages and workers
+  // share the same path. The spies are returned so a test can prove the browser
+  // branch ran, rather than the Node branch answering instead.
   const stubBrowser = () => {
     const atob = vi.fn(globalThis.atob.bind(globalThis));
     const btoa = vi.fn(globalThis.btoa.bind(globalThis));
-    vi.stubGlobal('window', {atob, btoa});
+    vi.stubGlobal('window', {});
+    vi.stubGlobal('atob', atob);
+    vi.stubGlobal('btoa', btoa);
     return {atob, btoa};
   };
+
+  const stubWorker = () => {
+    class WorkerGlobalScope {}
+    const atob = vi.fn(globalThis.atob.bind(globalThis));
+    const btoa = vi.fn(globalThis.btoa.bind(globalThis));
+    vi.stubGlobal('WorkerGlobalScope', WorkerGlobalScope);
+    vi.stubGlobal('self', new WorkerGlobalScope());
+    vi.stubGlobal('atob', atob);
+    vi.stubGlobal('btoa', btoa);
+    return {atob, btoa};
+  };
+
+  describe('isBrowser', () => {
+    it('returns false in Node', () => {
+      expect(isBrowser()).toBe(false);
+    });
+
+    it('returns true when window is defined', () => {
+      vi.stubGlobal('window', {});
+      expect(isBrowser()).toBe(true);
+    });
+
+    it('returns true in a WorkerGlobalScope without window', () => {
+      class WorkerGlobalScope {}
+      vi.stubGlobal('WorkerGlobalScope', WorkerGlobalScope);
+      vi.stubGlobal('self', new WorkerGlobalScope());
+      expect(isBrowser()).toBe(true);
+    });
+
+    it('returns false when self is not a WorkerGlobalScope instance', () => {
+      class WorkerGlobalScope {}
+      vi.stubGlobal('WorkerGlobalScope', WorkerGlobalScope);
+      vi.stubGlobal('self', {});
+      expect(isBrowser()).toBe(false);
+    });
+  });
 
   describe('getBooleanEnvVar', () => {
     const originalEnv = process.env;
@@ -338,6 +377,21 @@ describe('env_aware_utils', () => {
       expect(browserResult).toBe('\uFEFFcafé');
       expect(browserResult.length).toBe(5);
     });
+
+    it('decodes UTF-8 text in a web worker without window or Buffer', () => {
+      const {atob} = stubWorker();
+      const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'Buffer')!;
+      delete (globalThis as {Buffer?: unknown}).Buffer;
+      let decoded: string;
+      try {
+        decoded = base64Decode('Y2Fmw6kg4pyT');
+      } finally {
+        Object.defineProperty(globalThis, 'Buffer', descriptor);
+      }
+
+      expect(atob).toHaveBeenCalledOnce();
+      expect(decoded).toBe('café ✓');
+    });
   });
 
   describe('base64Encode', () => {
@@ -351,6 +405,23 @@ describe('env_aware_utils', () => {
       expect(btoa).toHaveBeenCalledOnce();
       expect(browserResult).toBe(nodeResult);
       expect(browserResult).toBe('Y2Fmw6kg4pyT');
+    });
+
+    it('encodes UTF-8 text in a web worker without window or Buffer', () => {
+      const nodeResult = base64Encode('café ✓');
+      const {btoa} = stubWorker();
+      const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'Buffer')!;
+      delete (globalThis as {Buffer?: unknown}).Buffer;
+      let workerResult: string;
+      try {
+        workerResult = base64Encode('café ✓');
+      } finally {
+        Object.defineProperty(globalThis, 'Buffer', descriptor);
+      }
+
+      expect(btoa).toHaveBeenCalledOnce();
+      expect(workerResult).toBe(nodeResult);
+      expect(workerResult).toBe('Y2Fmw6kg4pyT');
     });
 
     it('encodes a Uint8Array in the browser', () => {

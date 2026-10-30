@@ -53,8 +53,7 @@ function _getDefaultLabels(): string[] {
   }
 
   const languageLabelDetail = isBrowser()
-    ? // eslint-disable-next-line no-undef
-      parseUserAgent(window.navigator.userAgent)
+    ? parseUserAgent(navigator.userAgent)
     : process.version;
 
   const languageLabel = `${LANGUAGE_LABEL}/${languageLabelDetail}`;
