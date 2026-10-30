@@ -33,8 +33,10 @@ import {
   tryGetResetFunc,
 } from '@google/adk';
 import * as fs from 'node:fs';
+import {createRequire} from 'node:module';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import {fileURLToPath, pathToFileURL} from 'node:url';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 
 import {
@@ -42,6 +44,15 @@ import {
   parseEvalSetResultJson,
   validatePathSegment,
 } from '../../src/cli/cli_eval.js';
+
+const DIST_ESM_CLI_EVAL = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../dist/esm/cli/cli_eval.js',
+);
+const DIST_CJS_CLI_EVAL = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../dist/cjs/cli/cli_eval.js',
+);
 
 class DeterministicEvalAgent extends BaseAgent {
   constructor() {
@@ -207,6 +218,57 @@ describe('cli/cli_eval', () => {
       const resetFn = await tryGetResetFunc(tempDir);
       expect(typeof resetFn).toBe('function');
     });
+
+    it.skipIf(
+      !fs.existsSync(DIST_ESM_CLI_EVAL) || !fs.existsSync(DIST_CJS_CLI_EVAL),
+    )(
+      'loads an ESM agent with top-level await via dist/esm and dist/cjs using native import()',
+      async () => {
+        const mjsFile = path.join(tempDir, 'top_level_await_agent.mjs');
+        fs.writeFileSync(
+          mjsFile,
+          [
+            `const brand = Symbol.for('google.adk.baseAgent');`,
+            `const resolvedName = await Promise.resolve('top_level_await_mjs_agent');`,
+            `export const rootAgent = { [brand]: true, name: resolvedName, subAgents: [] };`,
+            `export function reset_data() { return 'built-mjs-reset'; }`,
+          ].join('\n'),
+        );
+
+        const cjsFile = path.join(tempDir, 'built_agent.cjs');
+        fs.writeFileSync(
+          cjsFile,
+          [
+            `const brand = Symbol.for('google.adk.baseAgent');`,
+            `exports.rootAgent = { [brand]: true, name: 'built_cjs_agent', subAgents: [] };`,
+            `exports.reset_data = function reset_data() { return 'built-cjs-reset'; };`,
+          ].join('\n'),
+        );
+
+        const distEsm = (await import(
+          pathToFileURL(DIST_ESM_CLI_EVAL).href
+        )) as {
+          getRootAgent: typeof getRootAgent;
+          tryGetResetFunc: typeof tryGetResetFunc;
+        };
+        const esmAgent = await distEsm.getRootAgent(mjsFile);
+        expect(esmAgent.name).toBe('top_level_await_mjs_agent');
+        const esmReset = await distEsm.tryGetResetFunc(mjsFile);
+        expect(esmReset?.()).toBe('built-mjs-reset');
+
+        const require = createRequire(import.meta.url);
+        const distCjs = require(DIST_CJS_CLI_EVAL) as {
+          getRootAgent: typeof getRootAgent;
+          tryGetResetFunc: typeof tryGetResetFunc;
+        };
+        const cjsEsmAgent = await distCjs.getRootAgent(mjsFile);
+        expect(cjsEsmAgent.name).toBe('top_level_await_mjs_agent');
+        const cjsAgent = await distCjs.getRootAgent(cjsFile);
+        expect(cjsAgent.name).toBe('built_cjs_agent');
+        const cjsReset = await distCjs.tryGetResetFunc(cjsFile);
+        expect(cjsReset?.()).toBe('built-cjs-reset');
+      },
+    );
 
     it('throws when module does not export a BaseAgent', async () => {
       const badFile = path.join(tempDir, 'empty_agent.js');
