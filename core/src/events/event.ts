@@ -178,7 +178,7 @@ export function createEvent(params: CreateEventParams = {}): Event {
     actions: createEventActions(params.actions),
     longRunningToolIds: params.longRunningToolIds || [],
     branch: params.branch,
-    timestamp: params.timestamp || Date.now(),
+    timestamp: params.timestamp ?? Date.now(),
   };
 }
 
