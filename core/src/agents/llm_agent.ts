@@ -854,6 +854,19 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       );
       return;
     }
+    // A final event with no answer text, such as a function response ending
+    // the turn through skipSummarization, has no output to save. Writing ''
+    // would overwrite whatever a tool already put under `outputKey`.
+    if (
+      !event.content.parts.some(
+        (part) => part.text !== undefined && !part.thought,
+      )
+    ) {
+      logger.debug(
+        `Skipping output save for agent ${this.name}: event has no text`,
+      );
+      return;
+    }
 
     const resultStr: string = event.content.parts
       .map((part) => (part.text ? part.text : ''))
