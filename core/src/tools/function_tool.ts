@@ -149,18 +149,13 @@ function toResponseSchema(response: SchemaLike): Schema {
     typeof (response as {safeParse?: unknown}).safeParse === 'function'
   ) {
     const jsonSchema = toJsonSchema(response);
-    const converted = toGeminiSchema(
-      jsonSchema as Parameters<typeof toGeminiSchema>[0],
-    ) ?? {type: Type.TYPE_UNSPECIFIED};
-    // The MCP converter omits array bounds. Keep these root response
-    // constraints using the string counts expected by the genai Schema.
-    if (converted.type === Type.ARRAY) {
-      for (const bound of ['minItems', 'maxItems'] as const) {
-        const value = jsonSchema[bound];
-        if (typeof value === 'number') converted[bound] = String(value);
+    // `toGeminiSchema` carries the schema constraints (bounds, lengths,
+    // patterns) at every depth, so nothing is restored here afterwards.
+    return (
+      toGeminiSchema(jsonSchema as Parameters<typeof toGeminiSchema>[0]) ?? {
+        type: Type.TYPE_UNSPECIFIED,
       }
-    }
-    return converted;
+    );
   }
   return response as Schema;
 }

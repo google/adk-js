@@ -47,6 +47,94 @@ const getTypeFromArrayItem = (
   return mcpType?.type?.toLowerCase?.();
 };
 
+/**
+ * Constraint keywords the genai `Schema` declares as strings while JSON Schema
+ * spells them as numbers. The Gemini backend rejects the numeric form.
+ */
+const STRINGIFIED_CONSTRAINT_FIELDS = [
+  'maxItems',
+  'maxLength',
+  'maxProperties',
+  'minItems',
+  'minLength',
+  'minProperties',
+] as const;
+
+/** Constraint keywords the genai `Schema` declares as numbers. */
+const NUMERIC_CONSTRAINT_FIELDS = ['maximum', 'minimum'] as const;
+
+/**
+ * Formats whose accompanying `pattern` is redundant: the Zod serializer emits
+ * a large generated regex next to the format, and `zodObjectToSchema` has
+ * always dropped it. The converter follows the same rule.
+ */
+const PATTERN_REDUNDANT_FORMATS: ReadonlySet<string> = new Set([
+  'email',
+  'uuid',
+]);
+
+/**
+ * Copies the constraint keywords a genai `Schema` declares from a JSON Schema
+ * node onto a `Schema` node, in the encoding the genai dialect expects.
+ *
+ * This is the one place that decides which constraints survive a conversion, so
+ * that both converters apply the same rules: `toGeminiSchema` for a JSON Schema
+ * (an MCP tool schema, or a serialized Zod response) and `zodObjectToSchema`
+ * for a Zod object. Without this, every nested `minItems`/`minLength`/`minimum`
+ * is silently dropped and the model is told an unconstrained schema.
+ *
+ * - `minItems`/`maxItems`, `minLength`/`maxLength` and
+ *   `minProperties`/`maxProperties` are counts and lengths, which the genai
+ *   `Schema` stores as strings.
+ * - `minimum`/`maximum` stay numbers, as `Schema` declares them.
+ * - `pattern` is already a string in both dialects, and survives unless it
+ *   merely restates an `email`/`uuid` format.
+ *
+ * Every other JSON Schema keyword (`title`, `default`, `example`, `format`,
+ * `exclusiveMinimum`, ...) has no `Schema` field the backend accepts, so it is
+ * still dropped.
+ *
+ * @param source The JSON Schema node to read the constraints from.
+ * @param target The `Schema` node to write them to; may be `source` itself.
+ */
+export function copySchemaConstraints(
+  source: Record<string, unknown>,
+  target: Record<string, unknown>,
+): void {
+  for (const field of STRINGIFIED_CONSTRAINT_FIELDS) {
+    const value = source[field];
+    if (typeof value === 'number' || typeof value === 'string') {
+      target[field] = String(value);
+    }
+  }
+
+  for (const field of NUMERIC_CONSTRAINT_FIELDS) {
+    const value = source[field];
+    if (typeof value === 'number') {
+      target[field] = value;
+    } else if (
+      typeof value === 'string' &&
+      value.trim() !== '' &&
+      !Number.isNaN(Number(value))
+    ) {
+      target[field] = Number(value);
+    }
+  }
+
+  const pattern = source['pattern'];
+  const format = source['format'];
+  if (typeof pattern === 'string') {
+    if (typeof format === 'string' && PATTERN_REDUNDANT_FORMATS.has(format)) {
+      // The source node may already carry the pattern (a `zodObjectToSchema`
+      // call passes the same node in and out), so remove it as well as not
+      // copying it.
+      delete target['pattern'];
+    } else {
+      target['pattern'] = pattern;
+    }
+  }
+}
+
 export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
   if (!mcpSchema) {
     return undefined;
@@ -180,6 +268,13 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
         geminiSchema.items = recursiveConvert(mcp.items);
       }
     }
+    // Constraints are copied from the node this call started with, which by now
+    // is the resolved branch: a nullable `anyOf` replaces `mcp` with its single
+    // non-null branch above, so the bounds that branch carries come along.
+    copySchemaConstraints(
+      mcp as Record<string, unknown>,
+      geminiSchema as Record<string, unknown>,
+    );
     return geminiSchema;
   }
   return recursiveConvert(mcpSchema);
