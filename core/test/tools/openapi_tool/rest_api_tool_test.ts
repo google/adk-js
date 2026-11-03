@@ -1407,6 +1407,12 @@ describe('RestApiTool Utilities', () => {
         content: {'multipart/form-data': {schema: {type: 'object'}}},
       };
 
+      const entriesOf = (form: FormData): Array<[string, string]> => {
+        const entries: Array<[string, string]> = [];
+        form.forEach((value, key) => entries.push([key, String(value)]));
+        return entries;
+      };
+
       it('should send an array as repeated keys in a urlencoded body', () => {
         const result = prepareRequestBody(
           urlencoded,
@@ -1483,7 +1489,7 @@ describe('RestApiTool Utilities', () => {
           {},
         ) as FormData;
 
-        expect([...result.entries()]).toEqual([
+        expect(entriesOf(result)).toEqual([
           ['tags', 'a'],
           ['tags', 'b'],
           ['n', '5'],
@@ -1498,7 +1504,7 @@ describe('RestApiTool Utilities', () => {
           {},
         ) as FormData;
 
-        expect([...result.entries()]).toEqual([
+        expect(entriesOf(result)).toEqual([
           ['filter', '{"k":1}'],
           ['items', '{"id":1}'],
         ]);
@@ -1512,7 +1518,7 @@ describe('RestApiTool Utilities', () => {
           {},
         ) as FormData;
 
-        expect([...result.entries()]).toEqual([
+        expect(entriesOf(result)).toEqual([
           ['c', '1'],
           ['c', '2'],
         ]);
