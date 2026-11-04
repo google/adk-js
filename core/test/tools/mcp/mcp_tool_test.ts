@@ -30,7 +30,7 @@ describe('MCPTool', () => {
     } as unknown as Client;
 
     const mockSessionManager = {
-      createSession: vi.fn().mockResolvedValue(mockClient),
+      getSession: vi.fn().mockResolvedValue(mockClient),
       closeSession: vi.fn().mockResolvedValue(undefined),
     } as unknown as MCPSessionManager;
 
@@ -48,11 +48,13 @@ describe('MCPTool', () => {
 
     await tool.runAsync({args: {}, toolContext});
 
+    expect(mockSessionManager.getSession).toHaveBeenCalledOnce();
     expect(mockClient.callTool).toHaveBeenCalledWith(
       {name: 'test-tool', arguments: {}},
       undefined,
       {signal: signal},
     );
+    expect(mockSessionManager.closeSession).not.toHaveBeenCalled();
   });
 
   it('uses originalName for callTool when provided', async () => {
@@ -68,7 +70,7 @@ describe('MCPTool', () => {
     } as unknown as Client;
 
     const mockSessionManager = {
-      createSession: vi.fn().mockResolvedValue(mockClient),
+      getSession: vi.fn().mockResolvedValue(mockClient),
       closeSession: vi.fn().mockResolvedValue(undefined),
     } as unknown as MCPSessionManager;
 
@@ -93,6 +95,43 @@ describe('MCPTool', () => {
     );
   });
 
+  it('reuses the shared session across sequential runAsync calls', async () => {
+    const mockTool: Tool = {
+      name: 'stateful-tool',
+      description: 'Stateful tool',
+      inputSchema: {type: 'object', properties: {}},
+    };
+
+    const mockClient = {
+      callTool: vi
+        .fn()
+        .mockResolvedValueOnce({content: [{type: 'text', text: 'step-1'}]})
+        .mockResolvedValueOnce({content: [{type: 'text', text: 'step-2'}]}),
+    } as unknown as Client;
+
+    const mockSessionManager = {
+      getSession: vi.fn().mockResolvedValue(mockClient),
+      closeSession: vi.fn().mockResolvedValue(undefined),
+    } as unknown as MCPSessionManager;
+
+    const tool = new MCPTool(mockTool, mockSessionManager);
+    const toolContext = new Context({
+      invocationContext: {
+        abortSignal: new AbortController().signal,
+        session: {state: {}},
+      } as unknown as InvocationContext,
+    });
+
+    const first = await tool.runAsync({args: {step: 1}, toolContext});
+    const second = await tool.runAsync({args: {step: 2}, toolContext});
+
+    expect(first).toEqual({content: [{type: 'text', text: 'step-1'}]});
+    expect(second).toEqual({content: [{type: 'text', text: 'step-2'}]});
+    expect(mockSessionManager.getSession).toHaveBeenCalledTimes(2);
+    expect(mockClient.callTool).toHaveBeenCalledTimes(2);
+    expect(mockSessionManager.closeSession).not.toHaveBeenCalled();
+  });
+
   it('respects abort signal when callTool rejects', async () => {
     const mockTool: Tool = {
       name: 'test-tool',
@@ -110,7 +149,7 @@ describe('MCPTool', () => {
     } as unknown as Client;
 
     const mockSessionManager = {
-      createSession: vi.fn().mockResolvedValue(mockClient),
+      getSession: vi.fn().mockResolvedValue(mockClient),
       closeSession: vi.fn().mockResolvedValue(undefined),
     } as unknown as MCPSessionManager;
 
@@ -132,7 +171,7 @@ describe('MCPTool', () => {
     );
   });
 
-  it('closes session even when callTool throws an error', async () => {
+  it('keeps the shared session open when callTool throws a regular error', async () => {
     const mockTool: Tool = {
       name: 'test-tool',
       description: 'A test tool',
@@ -144,7 +183,7 @@ describe('MCPTool', () => {
     } as unknown as Client;
 
     const mockSessionManager = {
-      createSession: vi.fn().mockResolvedValue(mockClient),
+      getSession: vi.fn().mockResolvedValue(mockClient),
       closeSession: vi.fn().mockResolvedValue(undefined),
     } as unknown as MCPSessionManager;
 
@@ -161,8 +200,86 @@ describe('MCPTool', () => {
       'Call failed',
     );
 
-    // Assert that closeSession was still called despite the error
+    expect(mockSessionManager.closeSession).not.toHaveBeenCalled();
+  });
+
+  it('closes the stale session when callTool throws a disconnected session error', async () => {
+    const mockTool: Tool = {
+      name: 'test-tool',
+      description: 'A test tool',
+      inputSchema: {type: 'object', properties: {}},
+    };
+
+    const disconnectedError = Object.assign(
+      new Error('MCP error -32000: Connection closed'),
+      {code: -32000},
+    );
+    const mockClient = {
+      callTool: vi.fn().mockRejectedValue(disconnectedError),
+    } as unknown as Client;
+
+    const mockSessionManager = {
+      getSession: vi.fn().mockResolvedValue(mockClient),
+      closeSession: vi.fn().mockRejectedValue(new Error('already closed')),
+    } as unknown as MCPSessionManager;
+
+    const tool = new MCPTool(mockTool, mockSessionManager);
+    const toolContext = new Context({
+      invocationContext: {
+        abortSignal: new AbortController().signal,
+        session: {state: {}},
+      } as unknown as InvocationContext,
+    });
+
+    await expect(tool.runAsync({args: {}, toolContext})).rejects.toBe(
+      disconnectedError,
+    );
     expect(mockSessionManager.closeSession).toHaveBeenCalledWith(mockClient);
+  });
+
+  it('retries once on a fresh session when callTool throws a session-terminated error', async () => {
+    const mockTool: Tool = {
+      name: 'test-tool',
+      description: 'A test tool',
+      inputSchema: {type: 'object', properties: {}},
+    };
+
+    const expiredError = Object.assign(new Error('Session not found'), {
+      code: 404,
+    });
+    const staleClient = {
+      callTool: vi.fn().mockRejectedValue(expiredError),
+    } as unknown as Client;
+    const freshClient = {
+      callTool: vi
+        .fn()
+        .mockResolvedValue({content: [{type: 'text', text: 'recovered'}]}),
+    } as unknown as Client;
+
+    const mockSessionManager = {
+      getSession: vi
+        .fn()
+        .mockResolvedValueOnce(staleClient)
+        .mockResolvedValueOnce(freshClient),
+      closeSession: vi.fn().mockResolvedValue(undefined),
+      retainSession: vi.fn(),
+      releaseSession: vi.fn().mockResolvedValue(undefined),
+    } as unknown as MCPSessionManager;
+
+    const tool = new MCPTool(mockTool, mockSessionManager);
+    const toolContext = new Context({
+      invocationContext: {
+        abortSignal: new AbortController().signal,
+        session: {state: {}},
+      } as unknown as InvocationContext,
+    });
+
+    const result = await tool.runAsync({args: {x: 1}, toolContext});
+    expect(result).toEqual({content: [{type: 'text', text: 'recovered'}]});
+    expect(mockSessionManager.closeSession).toHaveBeenCalledOnce();
+    expect(mockSessionManager.closeSession).toHaveBeenCalledWith(staleClient);
+    expect(mockSessionManager.getSession).toHaveBeenCalledTimes(2);
+    expect(freshClient.callTool).toHaveBeenCalledOnce();
   });
 
   describe('initialization and declaration', () => {

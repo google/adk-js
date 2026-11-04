@@ -14,7 +14,11 @@ import type {
 import {toGeminiSchema} from '../../utils/gemini_schema_util.js';
 import {BaseTool, RunAsyncToolRequest} from '../base_tool.js';
 
-import {MCPSessionManager} from './mcp_session_manager.js';
+import {
+  isDisconnectedSessionError,
+  isSessionTerminatedError,
+  MCPSessionManager,
+} from './mcp_session_manager.js';
 
 /**
  * Represents a tool exposed via the Model Context Protocol (MCP).
@@ -26,7 +30,7 @@ import {MCPSessionManager} from './mcp_session_manager.js';
  * {@link MCPSessionManager}.
  *
  * When an LLM decides to call this tool, the `runAsync` method will be
- * invoked, which in turn establishes an MCP session, sends a `callTool`
+ * invoked, which in turn acquires a shared MCP session, sends a `callTool`
  * request with the provided arguments, and returns the result from the
  * remote tool.
  *
@@ -62,8 +66,11 @@ export class MCPTool extends BaseTool {
     };
   }
 
-  override async runAsync(request: RunAsyncToolRequest): Promise<unknown> {
-    const session = await this.mcpSessionManager.createSession();
+  private async callToolOnce(
+    request: RunAsyncToolRequest,
+  ): Promise<CallToolResult> {
+    const session = await this.mcpSessionManager.getSession();
+    this.mcpSessionManager.retainSession?.(session);
 
     try {
       const callRequest: CallToolRequest = {} as CallToolRequest;
@@ -72,8 +79,24 @@ export class MCPTool extends BaseTool {
         signal: request.toolContext.abortSignal,
       });
       return result as CallToolResult;
+    } catch (err) {
+      if (isDisconnectedSessionError(err)) {
+        await this.mcpSessionManager.closeSession(session).catch(() => {});
+      }
+      throw err;
     } finally {
-      await this.mcpSessionManager.closeSession(session);
+      await this.mcpSessionManager.releaseSession?.(session);
+    }
+  }
+
+  override async runAsync(request: RunAsyncToolRequest): Promise<unknown> {
+    try {
+      return await this.callToolOnce(request);
+    } catch (err) {
+      if (isSessionTerminatedError(err)) {
+        return await this.callToolOnce(request);
+      }
+      throw err;
     }
   }
 }

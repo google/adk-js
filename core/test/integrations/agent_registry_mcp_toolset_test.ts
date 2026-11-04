@@ -7,7 +7,9 @@
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {
   AgentRegistrySingleMCPToolset,
+  Context,
   GCP_MCP_SERVER_DESTINATION_ID,
+  InvocationContext,
 } from '../../src/index.js';
 import {StreamableHTTPConnectionParams} from '../../src/tools/mcp/mcp_session_manager.js';
 import {logger} from '../../src/utils/logger.js';
@@ -19,6 +21,7 @@ const mockListTools = vi.fn().mockResolvedValue({
   ],
 });
 
+const mockCallTool = vi.fn().mockResolvedValue({content: []});
 const mockConnect = vi.fn().mockResolvedValue(undefined);
 const mockClose = vi.fn().mockResolvedValue(undefined);
 
@@ -28,6 +31,7 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
       connect: mockConnect,
       close: mockClose,
       listTools: mockListTools,
+      callTool: mockCallTool,
     };
   }),
 }));
@@ -244,6 +248,109 @@ describe('AgentRegistrySingleMCPToolset', () => {
         connectionParams: BASE_PARAMS,
       });
       await expect(toolset.close()).resolves.toBeUndefined();
+    });
+
+    it('reuses a shared session across returned MCPTools and closes it on close()', async () => {
+      const toolset = new AgentRegistrySingleMCPToolset({
+        connectionParams: BASE_PARAMS,
+      });
+      const tools = await toolset.getTools();
+      // Discovery opened and closed one session.
+      expect(mockConnect).toHaveBeenCalledTimes(1);
+      expect(mockClose).toHaveBeenCalledTimes(1);
+
+      const toolContext = new Context({
+        invocationContext: {
+          abortSignal: new AbortController().signal,
+          session: {state: {}},
+        } as unknown as InvocationContext,
+      });
+      await tools[0].runAsync({args: {q: 'adk'}, toolContext});
+      await tools[1].runAsync({
+        args: {url: 'https://example.com'},
+        toolContext,
+      });
+
+      // Both tool calls shared one execution session that remains open until close().
+      expect(mockConnect).toHaveBeenCalledTimes(2);
+      expect(mockCallTool).toHaveBeenCalledTimes(2);
+      expect(mockClose).toHaveBeenCalledTimes(1);
+
+      await toolset.close();
+      expect(mockClose).toHaveBeenCalledTimes(2);
+
+      // Calling close() again is a safe no-op.
+      await toolset.close();
+      expect(mockClose).toHaveBeenCalledTimes(2);
+    });
+
+    it('reuses the same MCPSessionManager across repeated getTools() calls when headers do not change', async () => {
+      const toolset = new AgentRegistrySingleMCPToolset({
+        connectionParams: BASE_PARAMS,
+        headerProvider: async () => ({Authorization: 'Bearer stable-token'}),
+      });
+
+      const toolsStep1 = await toolset.getTools();
+      const toolContext = new Context({
+        invocationContext: {
+          abortSignal: new AbortController().signal,
+          session: {state: {}},
+        } as unknown as InvocationContext,
+      });
+      await toolsStep1[0].runAsync({args: {q: 'step-1'}, toolContext});
+
+      // Discovery (1 connect, 1 close) + shared execution session (1 connect, 0 close).
+      expect(mockConnect).toHaveBeenCalledTimes(2);
+      expect(mockClose).toHaveBeenCalledTimes(1);
+
+      const toolsStep2 = await toolset.getTools();
+      // Second discovery opened and closed 1 session, while the shared execution session stayed open.
+      expect(mockConnect).toHaveBeenCalledTimes(3);
+      expect(mockClose).toHaveBeenCalledTimes(2);
+
+      // Tool from the second getTools() call reuses the same execution session from step 1.
+      await toolsStep2[1].runAsync({
+        args: {url: 'https://example.com'},
+        toolContext,
+      });
+      expect(mockConnect).toHaveBeenCalledTimes(3);
+      expect(mockClose).toHaveBeenCalledTimes(2);
+
+      await toolset.close();
+      expect(mockClose).toHaveBeenCalledTimes(3);
+    });
+
+    it('replaces and closes the previous MCPSessionManager when resolved headers change', async () => {
+      let token = 'Bearer token-1';
+      const toolset = new AgentRegistrySingleMCPToolset({
+        connectionParams: BASE_PARAMS,
+        headerProvider: async () => ({Authorization: token}),
+      });
+      const toolContext = new Context({
+        invocationContext: {
+          abortSignal: new AbortController().signal,
+          session: {state: {}},
+        } as unknown as InvocationContext,
+      });
+
+      const tools1 = await toolset.getTools();
+      await tools1[0].runAsync({args: {q: 'with-token-1'}, toolContext});
+      // 1 discovery session (closed) + 1 execution session (open).
+      expect(mockConnect).toHaveBeenCalledTimes(2);
+      expect(mockClose).toHaveBeenCalledTimes(1);
+
+      token = 'Bearer token-2';
+      const tools2 = await toolset.getTools();
+      // Previous manager's execution session was closed (close #2) and new discovery session closed (close #3).
+      expect(mockConnect).toHaveBeenCalledTimes(3);
+      expect(mockClose).toHaveBeenCalledTimes(3);
+
+      await tools2[0].runAsync({args: {q: 'with-token-2'}, toolContext});
+      expect(mockConnect).toHaveBeenCalledTimes(4);
+      expect(mockClose).toHaveBeenCalledTimes(3);
+
+      await toolset.close();
+      expect(mockClose).toHaveBeenCalledTimes(4);
     });
   });
 });
