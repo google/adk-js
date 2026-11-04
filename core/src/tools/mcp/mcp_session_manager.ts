@@ -153,25 +153,105 @@ function buildSseTransportOptions(
   };
 }
 
+const CONNECTION_CLOSED_ERROR_CODE = -32000;
+const INVALID_REQUEST_ERROR_CODE = -32600;
+const LEGACY_SESSION_TERMINATED_ERROR_CODE = 32600;
+const HTTP_NOT_FOUND_STATUS = 404;
+
+/**
+ * Returns whether an MCP call error indicates that the underlying transport
+ * disconnected or that a Streamable HTTP server no longer recognizes the
+ * session ID, meaning the cached client should be discarded so the next call
+ * reconnects cleanly.
+ */
+export function isDisconnectedSessionError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) {
+    return false;
+  }
+  const code = (err as {code?: unknown}).code;
+  const message = (err as {message?: unknown}).message;
+  if (
+    code === CONNECTION_CLOSED_ERROR_CODE ||
+    code === HTTP_NOT_FOUND_STATUS ||
+    code === LEGACY_SESSION_TERMINATED_ERROR_CODE
+  ) {
+    return true;
+  }
+  if (
+    code === INVALID_REQUEST_ERROR_CODE &&
+    typeof message === 'string' &&
+    message.includes('Session terminated')
+  ) {
+    return true;
+  }
+  return message === 'Not connected';
+}
+
 /**
  * Manages Model Context Protocol (MCP) client sessions.
  *
- * This class is responsible for establishing and managing connections to MCP
- * servers. It supports different transport protocols like Standard I/O (Stdio)
- * and Server-Sent Events (SSE) over HTTP, determined by the provided
- * connection parameters.
- *
- * The primary purpose of this manager is to abstract away the details of
- * session creation and connection handling, providing a simple interface for
- * creating new MCP client instances that can be used to interact with
- * remote tools.
+ * This class establishes and manages connections to MCP servers across stdio,
+ * Streamable HTTP, and HTTP+SSE transports. Call {@link getSession} to reuse a
+ * single shared session across tool discovery, resource reads, and tool calls
+ * until {@link close} shuts it down, or {@link createSession} when an isolated
+ * client instance is explicitly needed.
  */
 export class MCPSessionManager {
   private readonly connectionParams: MCPConnectionParams;
   private readonly activeSessions = new Set<Client>();
+  private sharedSession?: Client;
+  private sharedSessionHadTransport = false;
+  private pendingSession?: Promise<Client>;
+  private closeGeneration = 0;
 
   constructor(connectionParams: MCPConnectionParams) {
     this.connectionParams = connectionParams;
+  }
+
+  /**
+   * Returns a shared MCP client session, connecting lazily on first use,
+   * de-duplicating concurrent connection attempts, and reconnecting if the
+   * previous session closed.
+   */
+  async getSession(): Promise<Client> {
+    if (
+      this.sharedSession &&
+      this.activeSessions.has(this.sharedSession) &&
+      (!this.sharedSessionHadTransport ||
+        this.sharedSession.transport !== undefined)
+    ) {
+      return this.sharedSession;
+    }
+    this.sharedSession = undefined;
+    this.sharedSessionHadTransport = false;
+
+    if (this.pendingSession) {
+      return this.pendingSession;
+    }
+
+    const generation = this.closeGeneration;
+    const connectPromise: Promise<Client> = this.createSession()
+      .then(async (client) => {
+        if (this.closeGeneration !== generation) {
+          await this.closeSession(client).catch((err) => {
+            logger.warn(
+              'Failed to close canceled MCP session: ' + formatError(err),
+            );
+          });
+          throw new Error('MCP session manager was closed while connecting.');
+        }
+        this.sharedSession = client;
+        this.sharedSessionHadTransport = client.transport !== undefined;
+        return client;
+      })
+      .finally(() => {
+        if (this.pendingSession === connectPromise) {
+          this.pendingSession = undefined;
+        }
+      });
+
+    this.pendingSession = connectPromise;
+    return connectPromise;
   }
 
   async createSession(): Promise<Client> {
@@ -180,6 +260,14 @@ export class MCPSessionManager {
       () => import('@modelcontextprotocol/sdk/client/index.js'),
     );
     const client = new Client({name: 'MCPClient', version: '1.0.0'});
+    const onDisconnect = () => {
+      this.activeSessions.delete(client);
+      if (this.sharedSession === client) {
+        this.sharedSession = undefined;
+        this.sharedSessionHadTransport = false;
+      }
+    };
+    client.onclose = onDisconnect;
 
     try {
       switch (this.connectionParams.type) {
@@ -192,6 +280,7 @@ export class MCPSessionManager {
             this.connectionParams.serverParams,
           );
           transport.onerror = logTransportError;
+          transport.onclose = onDisconnect;
           await client.connect(transport);
           break;
         }
@@ -205,6 +294,7 @@ export class MCPSessionManager {
             buildTransportOptions(this.connectionParams),
           );
           transport.onerror = logTransportError;
+          transport.onclose = onDisconnect;
           await client.connect(transport);
           break;
         }
@@ -218,6 +308,7 @@ export class MCPSessionManager {
             buildSseTransportOptions(this.connectionParams),
           );
           transport.onerror = logTransportError;
+          transport.onclose = onDisconnect;
           await client.connect(transport);
           break;
         }
@@ -238,10 +329,30 @@ export class MCPSessionManager {
   }
 
   async closeSession(client: Client): Promise<void> {
-    if (this.activeSessions.has(client)) {
-      this.activeSessions.delete(client);
+    const wasActive = this.activeSessions.delete(client);
+    if (this.sharedSession === client) {
+      this.sharedSession = undefined;
+      this.sharedSessionHadTransport = false;
+    }
+    if (wasActive) {
       await client.close();
     }
+  }
+
+  /**
+   * Closes all active and in-flight MCP sessions managed by this instance.
+   */
+  async close(): Promise<void> {
+    this.closeGeneration++;
+    this.sharedSession = undefined;
+    this.sharedSessionHadTransport = false;
+    const inFlight = this.pendingSession;
+    this.pendingSession = undefined;
+    const sessions = this.getActiveSessions();
+    await Promise.allSettled([
+      ...sessions.map((session) => this.closeSession(session)),
+      ...(inFlight ? [inFlight] : []),
+    ]);
   }
 
   getActiveSessions(): Client[] {

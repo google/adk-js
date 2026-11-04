@@ -7,7 +7,9 @@
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {
   AgentRegistrySingleMCPToolset,
+  Context,
   GCP_MCP_SERVER_DESTINATION_ID,
+  InvocationContext,
 } from '../../src/index.js';
 import {StreamableHTTPConnectionParams} from '../../src/tools/mcp/mcp_session_manager.js';
 import {logger} from '../../src/utils/logger.js';
@@ -19,6 +21,7 @@ const mockListTools = vi.fn().mockResolvedValue({
   ],
 });
 
+const mockCallTool = vi.fn().mockResolvedValue({content: []});
 const mockConnect = vi.fn().mockResolvedValue(undefined);
 const mockClose = vi.fn().mockResolvedValue(undefined);
 
@@ -28,6 +31,7 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
       connect: mockConnect,
       close: mockClose,
       listTools: mockListTools,
+      callTool: mockCallTool,
     };
   }),
 }));
@@ -244,6 +248,40 @@ describe('AgentRegistrySingleMCPToolset', () => {
         connectionParams: BASE_PARAMS,
       });
       await expect(toolset.close()).resolves.toBeUndefined();
+    });
+
+    it('reuses a shared session across returned MCPTools and closes it on close()', async () => {
+      const toolset = new AgentRegistrySingleMCPToolset({
+        connectionParams: BASE_PARAMS,
+      });
+      const tools = await toolset.getTools();
+      // Discovery opened and closed one session.
+      expect(mockConnect).toHaveBeenCalledTimes(1);
+      expect(mockClose).toHaveBeenCalledTimes(1);
+
+      const toolContext = new Context({
+        invocationContext: {
+          abortSignal: new AbortController().signal,
+          session: {state: {}},
+        } as unknown as InvocationContext,
+      });
+      await tools[0].runAsync({args: {q: 'adk'}, toolContext});
+      await tools[1].runAsync({
+        args: {url: 'https://example.com'},
+        toolContext,
+      });
+
+      // Both tool calls shared one execution session that remains open until close().
+      expect(mockConnect).toHaveBeenCalledTimes(2);
+      expect(mockCallTool).toHaveBeenCalledTimes(2);
+      expect(mockClose).toHaveBeenCalledTimes(1);
+
+      await toolset.close();
+      expect(mockClose).toHaveBeenCalledTimes(2);
+
+      // Calling close() again is a safe no-op.
+      await toolset.close();
+      expect(mockClose).toHaveBeenCalledTimes(2);
     });
   });
 });

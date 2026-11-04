@@ -17,6 +17,7 @@ import {SSEClientTransport} from '@modelcontextprotocol/sdk/client/sse.js';
 import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {describe, expect, it, vi} from 'vitest';
+import {isDisconnectedSessionError} from '../../../src/tools/mcp/mcp_session_manager.js';
 // The logger singleton is internal (not part of the public API), so it is
 // imported via a relative path to spy on the exact instance the manager uses.
 import {logger} from '../../../src/utils/logger.js';
@@ -609,6 +610,243 @@ describe('MCPSessionManager', () => {
       );
       expect((error as Error).message).toContain('SSE endpoint unreachable');
       expect((error as Error).cause).toBe(cause);
+    });
+  });
+
+  describe('shared session lifecycle', () => {
+    it('reuses a single cached session across repeated getSession calls', async () => {
+      vi.mocked(Client).mockClear();
+      const manager = new MCPSessionManager({
+        type: 'StdioConnectionParams',
+        serverParams: {command: 'test-command'},
+      });
+
+      const session1 = await manager.getSession();
+      const session2 = await manager.getSession();
+
+      expect(session1).toBe(session2);
+      expect(Client).toHaveBeenCalledTimes(1);
+      expect(manager.getActiveSessions()).toEqual([session1]);
+    });
+
+    it('deduplicates concurrent getSession calls while connecting', async () => {
+      vi.mocked(Client).mockClear();
+      let resolveConnect: () => void = () => {};
+      const connectGate = new Promise<void>((resolve) => {
+        resolveConnect = resolve;
+      });
+      vi.mocked(Client).mockImplementationOnce(function () {
+        return {
+          connect: vi.fn().mockImplementation(() => connectGate),
+          close: vi.fn().mockResolvedValue(undefined),
+        } as unknown as Client;
+      });
+
+      const manager = new MCPSessionManager({
+        type: 'StdioConnectionParams',
+        serverParams: {command: 'test-command'},
+      });
+
+      const call1 = manager.getSession();
+      const call2 = manager.getSession();
+      const call3 = manager.getSession();
+      resolveConnect();
+
+      const [session1, session2, session3] = await Promise.all([
+        call1,
+        call2,
+        call3,
+      ]);
+
+      expect(session1).toBe(session2);
+      expect(session2).toBe(session3);
+      expect(Client).toHaveBeenCalledTimes(1);
+      expect(manager.getActiveSessions()).toEqual([session1]);
+    });
+
+    it('reconnects on the next getSession call after closeSession', async () => {
+      const manager = new MCPSessionManager({
+        type: 'StdioConnectionParams',
+        serverParams: {command: 'test-command'},
+      });
+
+      const session1 = await manager.getSession();
+      await manager.closeSession(session1);
+      expect(session1.close).toHaveBeenCalledTimes(1);
+      expect(manager.getActiveSessions()).toEqual([]);
+
+      const session2 = await manager.getSession();
+      expect(session2).not.toBe(session1);
+      expect(manager.getActiveSessions()).toEqual([session2]);
+    });
+
+    it('reconnects automatically when client.onclose fires', async () => {
+      const manager = new MCPSessionManager({
+        type: 'StdioConnectionParams',
+        serverParams: {command: 'test-command'},
+      });
+
+      const session1 = await manager.getSession();
+      expect(session1.onclose).toBeTypeOf('function');
+      session1.onclose?.();
+      expect(manager.getActiveSessions()).toEqual([]);
+
+      const session2 = await manager.getSession();
+      expect(session2).not.toBe(session1);
+      expect(manager.getActiveSessions()).toEqual([session2]);
+    });
+
+    it('reconnects automatically when transport.onclose fires', async () => {
+      const manager = new MCPSessionManager({
+        type: 'StdioConnectionParams',
+        serverParams: {command: 'test-command'},
+      });
+
+      const session1 = await manager.getSession();
+      const transport = vi.mocked(StdioClientTransport).mock.instances.at(-1);
+      expect(transport?.onclose).toBeTypeOf('function');
+      transport?.onclose?.();
+      expect(manager.getActiveSessions()).toEqual([]);
+
+      const session2 = await manager.getSession();
+      expect(session2).not.toBe(session1);
+      expect(manager.getActiveSessions()).toEqual([session2]);
+    });
+
+    it('reconnects when an attached client.transport detaches cleanly', async () => {
+      vi.mocked(Client).mockImplementationOnce(function () {
+        const instance: {
+          transport?: unknown;
+          connect: ReturnType<typeof vi.fn>;
+          close: ReturnType<typeof vi.fn>;
+        } = {
+          connect: vi.fn().mockImplementation(async (transport: unknown) => {
+            instance.transport = transport;
+          }),
+          close: vi.fn().mockResolvedValue(undefined),
+        };
+        return instance as unknown as Client;
+      });
+
+      const manager = new MCPSessionManager({
+        type: 'StdioConnectionParams',
+        serverParams: {command: 'test-command'},
+      });
+
+      const session1 = await manager.getSession();
+      (session1 as unknown as {transport?: unknown}).transport = undefined;
+
+      const session2 = await manager.getSession();
+      expect(session2).not.toBe(session1);
+    });
+
+    it('clears pendingSession after a connect failure so retry succeeds', async () => {
+      vi.mocked(Client).mockImplementationOnce(function () {
+        return {
+          connect: vi.fn().mockRejectedValue(new Error('temporary failure')),
+          close: vi.fn().mockResolvedValue(undefined),
+        } as unknown as Client;
+      });
+
+      const manager = new MCPSessionManager({
+        type: 'StdioConnectionParams',
+        serverParams: {command: 'test-command'},
+      });
+
+      await expect(manager.getSession()).rejects.toThrow('temporary failure');
+
+      const recovered = await manager.getSession();
+      expect(recovered).toBeDefined();
+      expect(manager.getActiveSessions()).toEqual([recovered]);
+    });
+
+    it('closes shared and standalone sessions cleanly and allows reopening', async () => {
+      vi.mocked(Client).mockImplementationOnce(function () {
+        return {
+          connect: vi.fn().mockResolvedValue(undefined),
+          close: vi.fn().mockRejectedValue(new Error('close error')),
+        } as unknown as Client;
+      });
+
+      const manager = new MCPSessionManager({
+        type: 'StdioConnectionParams',
+        serverParams: {command: 'test-command'},
+      });
+
+      const shared = await manager.getSession();
+      const standalone = await manager.createSession();
+
+      await expect(manager.close()).resolves.toBeUndefined();
+      expect(shared.close).toHaveBeenCalledTimes(1);
+      expect(standalone.close).toHaveBeenCalledTimes(1);
+      expect(manager.getActiveSessions()).toEqual([]);
+
+      const reopened = await manager.getSession();
+      expect(reopened).not.toBe(shared);
+      expect(manager.getActiveSessions()).toEqual([reopened]);
+    });
+
+    it('cancels and closes an in-flight getSession when close() runs concurrently', async () => {
+      let resolveConnect: () => void = () => {};
+      const connectGate = new Promise<void>((resolve) => {
+        resolveConnect = resolve;
+      });
+      const lateClose = vi.fn().mockResolvedValue(undefined);
+      vi.mocked(Client).mockImplementationOnce(function () {
+        return {
+          connect: vi.fn().mockImplementation(() => connectGate),
+          close: lateClose,
+        } as unknown as Client;
+      });
+
+      const manager = new MCPSessionManager({
+        type: 'StdioConnectionParams',
+        serverParams: {command: 'test-command'},
+      });
+
+      const inFlight = manager.getSession();
+      // Prevent unhandled rejection before our assertion runs after connect resolves.
+      const captured = inFlight.catch((err: unknown) => err);
+      const closing = manager.close();
+      resolveConnect();
+
+      await expect(closing).resolves.toBeUndefined();
+      const error = await captured;
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe(
+        'MCP session manager was closed while connecting.',
+      );
+      expect(lateClose).toHaveBeenCalledTimes(1);
+      expect(manager.getActiveSessions()).toEqual([]);
+    });
+  });
+
+  describe('isDisconnectedSessionError', () => {
+    it('detects transport close and terminated Streamable HTTP session errors', () => {
+      expect(isDisconnectedSessionError({code: -32000})).toBe(true);
+      expect(isDisconnectedSessionError({code: 404})).toBe(true);
+      expect(isDisconnectedSessionError({code: 32600})).toBe(true);
+      expect(
+        isDisconnectedSessionError({
+          code: -32600,
+          message: 'MCP error -32600: Session terminated',
+        }),
+      ).toBe(true);
+      expect(isDisconnectedSessionError(new Error('Not connected'))).toBe(true);
+    });
+
+    it('ignores non-disconnect tool and validation errors', () => {
+      expect(isDisconnectedSessionError(null)).toBe(false);
+      expect(isDisconnectedSessionError('closed')).toBe(false);
+      expect(isDisconnectedSessionError(new Error('Invalid tool args'))).toBe(
+        false,
+      );
+      expect(
+        isDisconnectedSessionError({code: -32602, message: 'Invalid params'}),
+      ).toBe(false);
+      expect(
+        isDisconnectedSessionError({code: -32600, message: 'Invalid Request'}),
+      ).toBe(false);
     });
   });
 });

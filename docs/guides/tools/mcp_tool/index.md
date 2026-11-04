@@ -93,14 +93,14 @@ const sseToolset = new MCPToolset(sseParams);
 ## How it works
 
 Unlike a static specification parser, `MCPToolset` does no network or process
-I/O in its constructor. Discovery and execution happen on demand across short
-sessions managed by `MCPSessionManager`.
+I/O in its constructor. Discovery and execution happen lazily over a shared
+client session managed by `MCPSessionManager`.
 
-**1. Discovery opens a session and lists the server's tools.** When the runner
-or caller invokes `mcpToolset.getTools(context)`, `MCPSessionManager` lazily
+**1. Discovery opens and caches a shared session.** When the runner or caller
+invokes `mcpToolset.getTools(context)`, `MCPSessionManager.getSession()` lazily
 imports `@modelcontextprotocol/sdk`, opens a client connection using the
-configured transport, calls `listTools()`, and closes the discovery session in a
-`finally` block.
+configured transport, caches the connected session on the toolset, and calls
+`listTools()`.
 
 **2. Each remote definition becomes an `MCPTool`.** `MCPToolset` wraps each
 entry from `listTools()` in an `MCPTool`. If the toolset was constructed with a
@@ -116,12 +116,17 @@ strings become Gemini `Type` enum values, and nullable unions such as
 `['string', 'null']` or `anyOf` branches containing `{type: 'null'}` become
 `nullable: true`.
 
-**4. Each tool call runs in its own session.** When the model invokes an
-`MCPTool`, `runAsync` opens a session through `MCPSessionManager.createSession()`,
-calls `session.callTool` with the unprefixed `originalName`, the model's
-arguments, and `toolContext.abortSignal`, returns the `CallToolResult`, and
-closes the session in `finally`. Calling `mcpToolset.close()` closes any sessions
-that are still active on the session manager.
+**4. Tool and resource calls reuse the shared session.** When the model invokes
+an `MCPTool`, `runAsync` acquires the cached session through
+`MCPSessionManager.getSession()`, calls `session.callTool` with the unprefixed
+`originalName`, the model's arguments, and `toolContext.abortSignal`, and
+returns the `CallToolResult` while keeping the session open for subsequent tool
+and resource calls. If the transport disconnects, the stale session is dropped
+and the next call reconnects automatically. `Runner.runAsync` calls
+`mcpToolset.close()` in a `finally` block when an invocation finishes, and
+callers using `MCPToolset` directly outside `Runner` should call
+`await mcpToolset.close()` when done so stdio subprocesses and HTTP streams
+terminate cleanly.
 
 ## Configuration options
 
@@ -303,13 +308,16 @@ throws an error naming the missing package. Schema helpers such as
 `genaiSchemaToJsonSchema`, `toJsonSchema`, and `toGeminiSchema` run without the
 MCP SDK package installed at runtime.
 
-**Per-operation sessions.** `MCPToolset.getTools()`, `listResources()`,
-`getResourceInfo()`, `readResource()`, and `MCPTool.runAsync()` each open a
-client session and close it in a `finally` block. In `readResource(name)`,
-resolving the resource name to a URI via `getResourceInfo(name)` and reading the
-resource contents open two sequential sessions. A stdio MCP server therefore
-starts a fresh subprocess for each discovery or tool call unless the server is
-hosted externally over Streamable HTTP or SSE.
+**Session lifecycle and cleanup.** `MCPToolset.getTools()`, `listResources()`,
+`getResourceInfo()`, `readResource()`, and `MCPTool.runAsync()` reuse one shared
+client session per `MCPToolset` until `mcpToolset.close()` runs. Because
+`Runner.runAsync` calls `close()` on agent toolsets when an invocation ends,
+in-memory state held inside a stdio subprocess persists across all tool and
+resource calls within an invocation and resets on the next `Runner.runAsync`
+call unless the server runs externally over Streamable HTTP or SSE or persists
+its state. Callers that invoke `MCPToolset` methods directly outside `Runner`
+should call `await mcpToolset.close()` when done so child processes and open
+transports do not keep the Node event loop alive.
 
 **Predicate filter evaluates with optional context.** Passing a `ToolPredicate` function as
 `toolFilter` evaluates the predicate for every discovered tool. When `getTools()` is called without
