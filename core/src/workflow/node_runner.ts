@@ -9,7 +9,7 @@ import {InvocationContext} from '../agents/invocation_context.js';
 import {createEvent, Event} from '../events/event.js';
 import {traceNodeExecution, tracer} from '../telemetry/tracing.js';
 import {formatError} from '../utils/error_utils.js';
-import {BaseNode} from './base_node.js';
+import {BaseNode, toContent} from './base_node.js';
 import {createSubBranch} from './branch_path.js';
 import {
   InvocationAbortedError,
@@ -224,6 +224,15 @@ async function runChildNode({
       });
       if (skipOutput !== undefined) {
         child.output = skipOutput;
+        const event = createEvent({
+          author: nodeName,
+          output: skipOutput,
+          content: toContent(skipOutput),
+          route: child.route,
+          actions: child.actions,
+        });
+        enrichEvent({event, child, nodeName, branch, isolationScope});
+        child.channel.push(event);
         // A skipped node still fills its slot in the trace, so record it as
         // completed rather than leaving an attribute-less span behind.
         traceNodeExecution({
@@ -236,6 +245,7 @@ async function runChildNode({
         if (options.useAsOutput) {
           parent.output = child.output;
           parent.route = child.route;
+          parent.outputDelegated = true;
         }
         return child;
       }
