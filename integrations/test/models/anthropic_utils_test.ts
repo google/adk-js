@@ -5,10 +5,12 @@
  */
 
 import type {Anthropic} from '@anthropic-ai/sdk';
+import {logger} from '@google/adk';
 import {FinishReason, Type} from '@google/genai';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 import {
+  buildAnthropicThinkingParam,
   ClaudeRole,
   contentBlockToPart,
   contentToMessageParam,
@@ -113,6 +115,74 @@ function createSampleAnthropicMessage(
 }
 
 describe('Claude conversion helpers', () => {
+  describe('buildAnthropicThinkingParam', () => {
+    it('test_build_anthropic_thinking_param_with_config', () => {
+      expect(
+        buildAnthropicThinkingParam({
+          thinkingConfig: {thinkingBudget: 5000},
+        }),
+      ).toEqual({
+        type: 'enabled',
+        budget_tokens: 5000,
+      });
+    });
+
+    it('test_build_anthropic_thinking_param_zero_budget_disabled', () => {
+      expect(
+        buildAnthropicThinkingParam({
+          thinkingConfig: {thinkingBudget: 0},
+        }),
+      ).toEqual({
+        type: 'disabled',
+      });
+    });
+
+    it('test_build_anthropic_thinking_param_none_budget_raises', () => {
+      expect(() =>
+        buildAnthropicThinkingParam({
+          thinkingConfig: {},
+        }),
+      ).toThrow('thinkingBudget must be set explicitly');
+    });
+
+    it('test_build_anthropic_thinking_param_automatic_budget_uses_adaptive', () => {
+      expect(
+        buildAnthropicThinkingParam({
+          thinkingConfig: {thinkingBudget: -1},
+        }),
+      ).toEqual({
+        type: 'adaptive',
+        display: 'summarized',
+      });
+    });
+
+    it('test_build_anthropic_thinking_param_other_negative_uses_adaptive', () => {
+      expect(
+        buildAnthropicThinkingParam({
+          thinkingConfig: {thinkingBudget: -5},
+        }),
+      ).toEqual({
+        type: 'adaptive',
+        display: 'summarized',
+      });
+    });
+
+    it('test_build_anthropic_thinking_param_manual_budget_omits_display', () => {
+      const result = buildAnthropicThinkingParam({
+        thinkingConfig: {thinkingBudget: 2048},
+      });
+      expect(result).toBeDefined();
+      expect('display' in (result ?? {})).toBe(false);
+    });
+
+    it('test_build_anthropic_thinking_param_no_config', () => {
+      expect(buildAnthropicThinkingParam(undefined)).toBeUndefined();
+      expect(
+        buildAnthropicThinkingParam({systemInstruction: 'test'}),
+      ).toBeUndefined();
+    });
+  });
+
   describe('toClaudeRole', () => {
     it('maps model and assistant roles to assistant', () => {
       expect(toClaudeRole('model')).toBe('assistant');
@@ -663,6 +733,42 @@ describe('Claude conversion helpers', () => {
       });
     });
 
+    it('converts a thought part with text and no signature into a ThinkingBlockParam with an empty signature', () => {
+      expect(
+        partToMessageBlock({thought: true, text: 'internal reasoning'}),
+      ).toEqual({
+        type: 'thinking',
+        thinking: 'internal reasoning',
+        signature: '',
+      });
+    });
+
+    it('test_part_to_message_block_thinking_roundtrip', () => {
+      expect(
+        partToMessageBlock({
+          text: 'My reasoning steps.',
+          thought: true,
+          thoughtSignature: 'roundtrip_sig',
+        }),
+      ).toEqual({
+        type: 'thinking',
+        thinking: 'My reasoning steps.',
+        signature: 'roundtrip_sig',
+      });
+    });
+
+    it('test_part_to_message_block_redacted_thinking_roundtrip', () => {
+      expect(
+        partToMessageBlock({
+          thought: true,
+          thoughtSignature: 'encrypted_blob',
+        }),
+      ).toEqual({
+        type: 'redacted_thinking',
+        data: 'encrypted_blob',
+      });
+    });
+
     it('throws for a part that carries only a thoughtSignature', () => {
       expect(() => partToMessageBlock({thoughtSignature: 'sig'})).toThrow(
         'Part kind "thoughtSignature" is not supported by Claude.',
@@ -670,9 +776,9 @@ describe('Claude conversion helpers', () => {
     });
 
     it('throws a descriptive error for unsupported part kinds', () => {
-      expect(() =>
-        partToMessageBlock({thought: true, text: 'internal reasoning'}),
-      ).toThrow('Part kind "thought" is not supported by Claude.');
+      expect(() => partToMessageBlock({thought: true})).toThrow(
+        'Part kind "thought" is not supported by Claude.',
+      );
 
       expect(() =>
         partToMessageBlock({
@@ -744,6 +850,134 @@ describe('Claude conversion helpers', () => {
     it('handles a Content object without parts', () => {
       expect(contentToMessageParam({role: 'user'})).toEqual({
         role: 'user',
+        content: [],
+      });
+    });
+
+    it('test_content_to_message_param_drops_content_free_signature', () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        const message = contentToMessageParam({
+          role: 'model',
+          parts: [
+            {text: '', thoughtSignature: 'sig_bin'},
+            {thoughtSignature: 'AY89a18D'},
+            {text: 'hello'},
+          ],
+        });
+
+        expect(message).toEqual({
+          role: 'assistant',
+          content: [{type: 'text', text: 'hello'}],
+        });
+        expect(warnSpy).toHaveBeenCalledTimes(2);
+        expect(warnSpy).toHaveBeenCalledWith(
+          'Dropping a thought signature from another model.',
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('test_content_to_message_param_keeps_signature_on_real_content', () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        const message = contentToMessageParam({
+          role: 'model',
+          parts: [
+            {
+              functionCall: {id: 'c1', name: 'do_it', args: {}},
+              thoughtSignature: 'sig_1',
+            },
+            {text: 'hi', thought: true, thoughtSignature: 'sig'},
+            {thought: true, thoughtSignature: 'opaque'},
+            {thoughtSignature: 'gone', partMetadata: {a: 1}},
+          ],
+        });
+
+        expect(message).toEqual({
+          role: 'assistant',
+          content: [
+            {type: 'tool_use', id: 'c1', name: 'do_it', input: {}},
+            {type: 'thinking', thinking: 'hi', signature: 'sig'},
+            {type: 'redacted_thinking', data: 'opaque'},
+          ],
+        });
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('test_content_to_message_param_skips_empty_text_part', () => {
+      const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+      try {
+        const result = contentToMessageParam({
+          role: 'user',
+          parts: [{text: 'run it'}, {text: ''}],
+        });
+
+        expect(result).toEqual({
+          role: 'user',
+          content: [{type: 'text', text: 'run it'}],
+        });
+        expect(debugSpy).toHaveBeenCalledWith(
+          'Skipping empty text part for Claude request.',
+        );
+      } finally {
+        debugSpy.mockRestore();
+      }
+    });
+
+    it('test_content_to_message_param_skips_empty_text_part_with_metadata', () => {
+      const result = contentToMessageParam({
+        role: 'user',
+        parts: [{text: 'run it'}, {text: '', partMetadata: {key: 'value'}}],
+      });
+
+      expect(result).toEqual({
+        role: 'user',
+        content: [{type: 'text', text: 'run it'}],
+      });
+    });
+
+    it('test_content_to_message_param_keeps_non_text_payload_with_empty_text', () => {
+      const result = contentToMessageParam({
+        role: 'model',
+        parts: [
+          {
+            text: '',
+            functionCall: {id: 'call_1', name: 'tool', args: {}},
+          },
+        ],
+      });
+
+      expect(result).toEqual({
+        role: 'assistant',
+        content: [{type: 'tool_use', id: 'call_1', name: 'tool', input: {}}],
+      });
+    });
+
+    it('test_content_to_message_param_lone_empty_text_emits_placeholder_block', () => {
+      const result = contentToMessageParam({
+        role: 'user',
+        parts: [{text: ''}],
+      });
+
+      expect(result).toEqual({
+        role: 'user',
+        content: [{type: 'text', text: '.'}],
+      });
+    });
+
+    it('test_content_to_message_param_model_empty_text_emits_no_placeholder', () => {
+      const result = contentToMessageParam({
+        role: 'model',
+        parts: [{text: ''}],
+      });
+
+      expect(result).toEqual({
+        role: 'assistant',
         content: [],
       });
     });
@@ -831,6 +1065,44 @@ describe('Claude conversion helpers', () => {
   });
 
   describe('contentBlockToPart', () => {
+    it('test_content_block_to_part_thinking_block', () => {
+      expect(
+        contentBlockToPart({
+          type: 'thinking',
+          thinking: 'Let me reason about this.',
+          signature: 'sig_abc123',
+        }),
+      ).toEqual({
+        text: 'Let me reason about this.',
+        thought: true,
+        thoughtSignature: 'sig_abc123',
+      });
+    });
+
+    it('omits thoughtSignature when a thinking ContentBlock has an empty signature', () => {
+      expect(
+        contentBlockToPart({
+          type: 'thinking',
+          thinking: 'Let me reason about this.',
+          signature: '',
+        }),
+      ).toEqual({
+        text: 'Let me reason about this.',
+        thought: true,
+      });
+    });
+
+    it('test_content_block_to_part_redacted_thinking', () => {
+      const part = contentBlockToPart({
+        type: 'redacted_thinking',
+        data: 'redacted_data',
+      });
+
+      expect(part.thought).toBe(true);
+      expect(part.text).toBeUndefined();
+      expect(part.thoughtSignature).toBe('redacted_data');
+    });
+
     it('converts a text ContentBlock to a text Part', () => {
       expect(
         contentBlockToPart({
@@ -876,11 +1148,12 @@ describe('Claude conversion helpers', () => {
     it('throws for unsupported ContentBlock types', () => {
       expect(() =>
         contentBlockToPart({
-          type: 'thinking',
-          thinking: 'step by step',
-          signature: 'sig_1',
+          type: 'container_upload',
+          file_id: 'file_01',
         }),
-      ).toThrow('Content block type "thinking" is not supported by Claude.');
+      ).toThrow(
+        'Content block type "container_upload" is not supported by Claude.',
+      );
     });
   });
 
@@ -932,6 +1205,159 @@ describe('Claude conversion helpers', () => {
           totalTokenCount: 60,
         },
       });
+    });
+
+    it('test_message_to_generate_content_response_with_thinking', () => {
+      const message = createSampleAnthropicMessage({
+        id: 'msg_test_thinking',
+        content: [
+          {
+            type: 'thinking',
+            thinking: 'I need to think about this.',
+            signature: 'sig_xyz',
+          },
+          {
+            type: 'redacted_thinking',
+            data: 'hidden',
+          },
+          {
+            type: 'text',
+            text: 'Here is my answer.',
+            citations: null,
+          },
+        ],
+        usage: {
+          input_tokens: 10,
+          output_tokens: 20,
+          cache_creation_input_tokens: null,
+          cache_read_input_tokens: null,
+          cache_creation: null,
+          inference_geo: null,
+          output_tokens_details: null,
+          server_tool_use: null,
+          service_tier: null,
+          speed: null,
+        },
+      });
+
+      const response = messageToGenerateContentResponse(message);
+      const parts = response.content?.parts ?? [];
+      expect(parts).toHaveLength(3);
+      expect(parts[0]).toEqual({
+        text: 'I need to think about this.',
+        thought: true,
+        thoughtSignature: 'sig_xyz',
+      });
+      expect(parts[1]).toEqual({
+        thought: true,
+        thoughtSignature: 'hidden',
+      });
+      expect(parts[2]).toEqual({
+        text: 'Here is my answer.',
+      });
+    });
+
+    it('skips empty and whitespace-only text blocks when converting an Anthropic Message', () => {
+      const message = createSampleAnthropicMessage({
+        content: [
+          {
+            type: 'thinking',
+            thinking: 'Reasoning step.',
+            signature: 'sig_1',
+          },
+          {
+            type: 'text',
+            text: '\n\n',
+            citations: null,
+          },
+          {
+            type: 'text',
+            text: '',
+            citations: null,
+          },
+          {
+            type: 'text',
+            text: 'Final answer.',
+            citations: null,
+          },
+        ],
+      });
+
+      const response = messageToGenerateContentResponse(message);
+      expect(response.content?.parts).toEqual([
+        {
+          text: 'Reasoning step.',
+          thought: true,
+          thoughtSignature: 'sig_1',
+        },
+        {
+          text: 'Final answer.',
+        },
+      ]);
+    });
+
+    it.each<[number, number | null, number, number | undefined]>([
+      [100, 60, 40, 60],
+      [20, 0, 20, 0],
+      [20, null, 20, undefined],
+      [20, 50, 0, 20],
+    ])(
+      'test_message_to_generate_content_response_splits_thinking_tokens (output=%d, thinking=%s)',
+      (outputTokens, thinkingTokens, expectedCandidates, expectedThoughts) => {
+        const message = createSampleAnthropicMessage({
+          usage: {
+            input_tokens: 10,
+            output_tokens: outputTokens,
+            cache_creation_input_tokens: null,
+            cache_read_input_tokens: null,
+            cache_creation: null,
+            inference_geo: null,
+            output_tokens_details:
+              thinkingTokens === null
+                ? null
+                : {thinking_tokens: thinkingTokens},
+            server_tool_use: null,
+            service_tier: null,
+            speed: null,
+          },
+        });
+
+        const response = messageToGenerateContentResponse(message);
+        expect(response.usageMetadata?.candidatesTokenCount).toBe(
+          expectedCandidates,
+        );
+        expect(response.usageMetadata?.thoughtsTokenCount).toBe(
+          expectedThoughts,
+        );
+      },
+    );
+
+    it('test_message_to_generate_content_response_thinking_tokens_not_double_counted', () => {
+      const message = createSampleAnthropicMessage({
+        usage: {
+          input_tokens: 10,
+          output_tokens: 100,
+          cache_creation_input_tokens: null,
+          cache_read_input_tokens: null,
+          cache_creation: null,
+          inference_geo: null,
+          output_tokens_details: {thinking_tokens: 60},
+          server_tool_use: null,
+          service_tier: null,
+          speed: null,
+        },
+      });
+
+      const usageMetadata =
+        messageToGenerateContentResponse(message).usageMetadata;
+      expect(usageMetadata?.thoughtsTokenCount).toBe(60);
+      expect(usageMetadata?.candidatesTokenCount).toBe(40);
+      expect(usageMetadata?.totalTokenCount).toBe(110);
+      expect(usageMetadata?.promptTokenCount).toBe(10);
+      expect(
+        (usageMetadata?.candidatesTokenCount ?? 0) +
+          (usageMetadata?.thoughtsTokenCount ?? 0),
+      ).toBe(100);
     });
 
     it.each<[Anthropic.StopReason | null, FinishReason]>([

@@ -152,12 +152,66 @@ When an `LlmAgent` is configured with tools, `AnthropicLlm` and `Claude` transla
    - When `'result' in response`, string values of `response.result` are sent unchanged, non-null structured values (`object`, `array`, `number`, `boolean`) are serialized with `JSON.stringify(response.result)`, and `null` or `undefined` becomes `''`.
    - When `'result'` is not a key in `response`, a non-empty `response` object is serialized with `JSON.stringify(response)`.
 
+## Extended thinking
+
+`AnthropicLlm` and `Claude` translate `llmRequest.config?.thinkingConfig` into the Anthropic `thinking` request parameter via `buildAnthropicThinkingParam`:
+
+| `thinkingConfig.thinkingBudget` | Anthropic `thinking` parameter                     |
+| :------------------------------ | :------------------------------------------------- |
+| `undefined` or `null`           | Throws `Error` (`thinkingBudget must be set`)      |
+| `0`                             | `{type: 'disabled'}`                               |
+| `< 0` (for example, `-1`)       | `{type: 'adaptive', display: 'summarized'}`        |
+| `> 0`                           | `{type: 'enabled', budget_tokens: thinkingBudget}` |
+
+When `llmRequest.config` or `llmRequest.config.thinkingConfig` is unset, `thinking` is omitted from `client.messages.create`.
+
+Adaptive thinking (`thinkingBudget: -1`) is required on the newest Claude models (such as Claude Opus 4.7+, which reject `{type: 'enabled'}`) and recommended for Claude 4.6 models. `display: 'summarized'` requests thinking text in the response because recent Claude models omit it by default.
+
+```ts
+import {LlmAgent} from '@google/adk';
+import {AnthropicLlm} from '@google/adk-integrations';
+
+export const rootAgent = new LlmAgent({
+  name: 'thinking_assistant',
+  model: new AnthropicLlm({model: 'claude-opus-4-7'}),
+  instruction: 'Reason step by step before answering.',
+  generateContentConfig: {
+    thinkingConfig: {
+      thinkingBudget: -1,
+    },
+  },
+});
+```
+
+### Thinking blocks and multi-turn history
+
+- **Response conversion**:
+  - `thinking` blocks convert to `Part` objects with `{thought: true, text: block.thinking}` (plus `thoughtSignature: block.signature` when `block.signature` is non-empty).
+  - `redacted_thinking` blocks convert to `Part` objects with `{thought: true, thoughtSignature: block.data}` (with `text` omitted).
+  - Empty or whitespace-only `text` blocks in the Anthropic response are skipped when building `LlmResponse.content.parts`.
+- **Request conversion and round-tripping**:
+  - `Part` objects with `thought: true` and non-empty `text` convert back to `{type: 'thinking', thinking: part.text, signature: part.thoughtSignature ?? ''}`.
+  - `Part` objects with `thought: true`, no `text`, and a non-empty `thoughtSignature` convert back to `{type: 'redacted_thinking', data: part.thoughtSignature}`.
+  - Bare `{thought: true}` parts with neither non-empty `text` nor a non-empty `thoughtSignature` throw an error.
+  - Content-free `thoughtSignature` parts (for example, trailing signature parts produced by another model in a shared session) are dropped with a warning. When a `thoughtSignature` is attached alongside real content (`text`, `functionCall`, or `functionResponse`), the content block is kept and `thoughtSignature` is ignored.
+  - Empty text parts (`text: ''` with no other payload) are skipped. If skipping empty text parts leaves a `user` turn with no content blocks, a single `{type: 'text', text: '.'}` placeholder block is emitted so user/assistant alternation stays intact. Any turn whose parts are all dropped is omitted from `messages`.
+
+### Thinking token usage
+
+When the Anthropic response reports `usage.output_tokens_details.thinking_tokens` as a number, `messageToGenerateContentResponse` splits `output_tokens` into `thoughtsTokenCount` and `candidatesTokenCount` on `LlmResponse.usageMetadata`:
+
+- `thoughtsTokenCount` is set to `Math.min(thinking_tokens, output_tokens)`.
+- `candidatesTokenCount` is set to `output_tokens - thoughtsTokenCount` so thinking tokens are not double-counted.
+- `totalTokenCount` remains `input_tokens + output_tokens`.
+
+When `thinking_tokens` is `null` or `undefined`, `thoughtsTokenCount` is omitted and `candidatesTokenCount` equals `output_tokens`. When `thinking_tokens` is `0`, `thoughtsTokenCount` is `0` and `candidatesTokenCount` equals `output_tokens`.
+
 ## Limitations
 
 - **Streaming**: `generateContentAsync` accepts the `_stream` parameter required by `BaseLlm`, but always calls `client.messages.create` without `stream: true` and yields a single non-partial `LlmResponse`.
 - **Live connections**: `connect()` is not supported and rejects with an `Error`.
-- **Extended thinking**: `ThinkingBlock` and `RedactedThinkingBlock` response blocks, `thinking` request configuration, and parts with `thought: true` are not supported. A `thoughtSignature` on a text, function call, or function response part (for example, from Gemini earlier in the session) is dropped.
-- **Images, PDFs, and inline data**: Only `text`, `functionCall`, and `functionResponse` parts are converted. `inlineData` and `fileData` parts throw an unsupported part error.
+- **Thinking level and effort**: `thinkingConfig.thinkingBudget` is mapped to Anthropic's `thinking` parameter, but `thinkingConfig.thinkingLevel` and Anthropic's `output_config.effort` parameter are not mapped.
+- **Images, PDFs, and inline data**: Only `text`, `functionCall`, `functionResponse`, and thinking parts are converted. `inlineData` and `fileData` parts throw an unsupported part error.
 - **Prompt caching**: `cache_control` markers and `cache_creation_input_tokens` / `cache_read_input_tokens` usage fields are not mapped.
 - **Generation parameters**: `temperature`, `topP`, `topK`, and `stopSequences` from `llmRequest.config` are not forwarded to `client.messages.create` (`maxOutputTokens` is forwarded as `max_tokens`).
 - **Tracking headers**: `BaseLlm.trackingHeaders` is not passed to `Anthropic` or `AnthropicVertex`.
