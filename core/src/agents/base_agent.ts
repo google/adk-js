@@ -468,16 +468,35 @@ export abstract class BaseAgent<
   protected async handleBeforeAgentCallback(
     invocationContext: InvocationContext,
   ): Promise<Event | undefined> {
-    if (this.canonicalBeforeAgentCallbacks.length === 0) {
+    const callbackContext = new Context({invocationContext});
+
+    const pluginContent =
+      await invocationContext.pluginManager?.runBeforeAgentCallback({
+        agent: this,
+        callbackContext,
+      });
+
+    if (invocationContext.abortSignal?.aborted) {
       return undefined;
     }
 
-    const callbackContext = new Context({invocationContext});
+    if (pluginContent) {
+      invocationContext.endInvocation = true;
+
+      return createEvent({
+        invocationId: invocationContext.invocationId,
+        author: this.name,
+        branch: invocationContext.branch,
+        content: pluginContent,
+        actions: callbackContext.eventActions,
+      });
+    }
+
     for (const callback of this.canonicalBeforeAgentCallbacks) {
       const content = await callback(callbackContext);
 
       if (invocationContext.abortSignal?.aborted) {
-        return;
+        return undefined;
       }
 
       if (content) {
@@ -515,16 +534,33 @@ export abstract class BaseAgent<
   protected async handleAfterAgentCallback(
     invocationContext: InvocationContext,
   ): Promise<Event | undefined> {
-    if (this.canonicalAfterAgentCallbacks.length === 0) {
+    const callbackContext = new Context({invocationContext});
+
+    const pluginContent =
+      await invocationContext.pluginManager?.runAfterAgentCallback({
+        agent: this,
+        callbackContext,
+      });
+
+    if (invocationContext.abortSignal?.aborted) {
       return undefined;
     }
 
-    const callbackContext = new Context({invocationContext});
+    if (pluginContent) {
+      return createEvent({
+        invocationId: invocationContext.invocationId,
+        author: this.name,
+        branch: invocationContext.branch,
+        content: pluginContent,
+        actions: callbackContext.eventActions,
+      });
+    }
+
     for (const callback of this.canonicalAfterAgentCallbacks) {
       const content = await callback(callbackContext);
 
       if (invocationContext.abortSignal?.aborted) {
-        return;
+        return undefined;
       }
 
       if (content) {
