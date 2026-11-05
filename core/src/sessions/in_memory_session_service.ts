@@ -122,17 +122,11 @@ export class InMemorySessionService extends BaseSessionService {
           -config.numRecentEvents,
         );
       }
-      if (config.afterTimestamp) {
-        let i = copiedSession.events.length - 1;
-        while (i >= 0) {
-          if (copiedSession.events[i].timestamp < config.afterTimestamp) {
-            break;
-          }
-          i--;
-        }
-        if (i >= 0) {
-          copiedSession.events = copiedSession.events.slice(i + 1);
-        }
+      const afterTimestamp = config.afterTimestamp;
+      if (afterTimestamp !== undefined) {
+        copiedSession.events = copiedSession.events.filter(
+          (event) => event.timestamp >= afterTimestamp,
+        );
       }
     }
 

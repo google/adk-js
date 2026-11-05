@@ -14,6 +14,41 @@ import {
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {isInMemoryConnectionString} from '../../src/sessions/in_memory_session_service.js';
 
+describe('InMemorySessionService timestamp filtering', () => {
+  it.each([
+    {timestamps: [3000, 1000, 4000], cutoff: 2000, expected: [3000, 4000]},
+    {timestamps: [3000, 4000, 1000], cutoff: 3000, expected: [3000, 4000]},
+    {timestamps: [-1000, 1000], cutoff: 0, expected: [1000]},
+  ])(
+    'filters $timestamps at $cutoff without reordering',
+    async ({timestamps, cutoff, expected}) => {
+      const service = new InMemorySessionService();
+      const session = await service.createSession({
+        appName: 'app',
+        userId: 'user',
+      });
+      for (const timestamp of timestamps) {
+        await service.appendEvent({
+          session,
+          event: createEvent({author: 'user', timestamp}),
+        });
+      }
+      const request = {appName: 'app', userId: 'user', sessionId: session.id};
+      const filtered = await service.getSession({
+        ...request,
+        config: {afterTimestamp: cutoff},
+      });
+      expect(filtered?.events.map((event) => event.timestamp)).toEqual(
+        expected,
+      );
+      const original = await service.getSession(request);
+      expect(original?.events.map((event) => event.timestamp)).toEqual(
+        timestamps,
+      );
+    },
+  );
+});
+
 describe('isInMemoryConnectionString', () => {
   it('returns true for memory://', () => {
     expect(isInMemoryConnectionString('memory://')).toBe(true);
@@ -159,7 +194,7 @@ describe('InMemorySessionService', () => {
       for (let i = 0; i < 5; i++) {
         await service.appendEvent({
           session,
-          event: createEvent({timestamp: i * 1000}),
+          event: {...createEvent(), timestamp: i * 1000},
         });
       }
 
