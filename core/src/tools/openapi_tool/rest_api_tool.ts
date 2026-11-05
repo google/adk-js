@@ -295,25 +295,27 @@ function serializeQueryValue(value: unknown): string {
 }
 
 /**
- * Appends a model-supplied query parameter value to `queryParams`.
+ * Appends a model-supplied value to `target`, a `URLSearchParams` or a
+ * `FormData`.
  *
- * OpenAPI query parameters default to `style: form` and `explode: true`, so an
- * array is sent as one `name=value` pair per element (`id=1&id=2&id=3`), the
- * same as adk-python, which hands the list to httpx. `null` and `undefined`
- * elements are skipped and an empty array sends nothing.
+ * OpenAPI query parameters and form fields default to `style: form` and
+ * `explode: true`, so an array is sent as one `name=value` pair per element
+ * (`id=1&id=2&id=3`), the same as adk-python, which hands the list to httpx.
+ * `null` and `undefined` elements are skipped and an empty array sends
+ * nothing.
  */
-function appendQueryParam(
-  queryParams: URLSearchParams,
+function appendParamValue(
+  target: Pick<URLSearchParams, 'append'>,
   name: string,
   value: unknown,
 ): void {
   if (!Array.isArray(value)) {
-    queryParams.append(name, serializeQueryValue(value));
+    target.append(name, serializeQueryValue(value));
     return;
   }
   for (const item of value) {
     if (item !== undefined && item !== null) {
-      queryParams.append(name, serializeQueryValue(item));
+      target.append(name, serializeQueryValue(item));
     }
   }
 }
@@ -349,7 +351,7 @@ export function prepareRequestParams(
       // the reference implementation, which drops every falsy value and so
       // loses `?count=0` and `?flag=false`.
       if (argValue !== undefined && argValue !== null && argValue !== '') {
-        appendQueryParam(queryParams, originalName, argValue);
+        appendParamValue(queryParams, originalName, argValue);
       }
     } else if (location === 'header') {
       headers[originalName] = String(argValue);
@@ -415,6 +417,26 @@ function isRawBody(value: unknown): boolean {
   );
 }
 
+function isFormFields(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Appends each field of a form request body to `target`. An array becomes one
+ * entry per element and an object is JSON-encoded, as for query parameters. A
+ * `null` or `undefined` field is omitted.
+ */
+function appendFormFields(
+  target: Pick<URLSearchParams, 'append'>,
+  fields: Record<string, unknown>,
+): void {
+  for (const [name, value] of Object.entries(fields)) {
+    if (value !== undefined && value !== null) {
+      appendParamValue(target, name, value);
+    }
+  }
+}
+
 export function prepareRequestBody(
   requestBody:
     OpenAPIV3.RequestBodyObject | OpenAPIV3.ReferenceObject | undefined,
@@ -440,13 +462,16 @@ export function prepareRequestBody(
           ? finalData
           : JSON.stringify(finalData);
       } else if (mimeType === 'application/x-www-form-urlencoded') {
+        if (isFormFields(finalData)) {
+          const formParams = new URLSearchParams();
+          appendFormFields(formParams, finalData);
+          return formParams;
+        }
         return new URLSearchParams(finalData as Record<string, string>);
       } else if (mimeType === 'multipart/form-data') {
         const formData = new FormData();
         if (typeof finalData === 'object' && finalData !== null) {
-          for (const [key, value] of Object.entries(finalData)) {
-            formData.append(key, String(value));
-          }
+          appendFormFields(formData, finalData as Record<string, unknown>);
         }
         return formData;
       } else if (mimeType === 'application/octet-stream') {
