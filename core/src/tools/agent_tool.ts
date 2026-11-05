@@ -5,6 +5,7 @@
  */
 
 import {Content, FunctionDeclaration, Type} from '@google/genai';
+import {isEqual} from 'lodash-es';
 
 import {BaseAgent} from '../agents/base_agent.js';
 import {isLlmAgent} from '../agents/llm_agent.js';
@@ -215,12 +216,23 @@ export class AgentTool extends BaseTool {
       credentialService: toolContext.invocationContext.credentialService,
     });
 
+    const parentState = toolContext.state.toRecord();
     const session = await runner.sessionService.getOrCreateSession({
       appName: this.agent.name,
       userId: toolContext.invocationContext.userId,
       sessionId: toolContext.invocationContext.session.id,
-      state: toolContext.state.toRecord(),
+      state: parentState,
     });
+
+    // A reused session still holds the state from the previous call, so carry
+    // over whatever the parent changed since then.
+    const stateDelta = Object.fromEntries(
+      Object.entries(parentState).filter(
+        ([key, value]) =>
+          !key.startsWith(State.TEMP_PREFIX) &&
+          !isEqual(session.state[key], value),
+      ),
+    );
 
     if (toolContext.abortSignal?.aborted) {
       return '';
@@ -231,6 +243,7 @@ export class AgentTool extends BaseTool {
       userId: session.userId,
       sessionId: session.id,
       newMessage: content,
+      stateDelta: Object.keys(stateDelta).length > 0 ? stateDelta : undefined,
       abortSignal: toolContext.abortSignal,
     })) {
       if (toolContext.abortSignal?.aborted) {
