@@ -25,6 +25,7 @@ Versioned binary and text storage (`Part` payloads) scoped to an individual sess
 Credentials for tools that call protected APIs: how a credential is described, how the agent asks the user for one, and how it is exchanged for the credential a request carries.
 
 - [Auth](auth/index.md) - `AuthCredential`, `AuthConfig`, `AuthHandler`, `AuthPreprocessor`, `AuthSchemeType`, and the OpenAPI credential exchangers.
+
 ### CLI
 
 Environment loading, session-to-eval conversion, instruction placeholder initialization, log routing, and batch evaluation utilities backing the ADK CLI and development server.

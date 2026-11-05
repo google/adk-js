@@ -13,6 +13,7 @@ import {
 } from '@google/genai';
 
 import {BaseTool} from '../tools/base_tool.js';
+import {ServiceTier} from './service_tier.js';
 
 /**
  * LLM request class that allows passing in tools, output schema and system
@@ -51,6 +52,15 @@ export interface LlmRequest {
    * The interaction ID from the previous turn, if any.
    */
   previousInteractionId?: string;
+
+  /**
+   * Serving tier for this request, copied from `RunConfig.serviceTier`.
+   *
+   * Set only for models on the interactions API, which is the only path with a
+   * serving tier. `undefined` means the run asked for no tier, so the default
+   * applies.
+   */
+  serviceTier?: ServiceTier | string;
 }
 
 /**
