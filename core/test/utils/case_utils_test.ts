@@ -81,6 +81,25 @@ describe('case_utils', () => {
       expect(camelCaseKeys(input)).toEqual(expected);
     });
 
+    it('converts plain objects with an own constructor property', () => {
+      const input = {
+        constructor: 'metadata',
+        nested_value: {constructor: null, foo_bar: 'value'},
+      };
+
+      expect(camelCaseKeys(input)).toEqual({
+        constructor: 'metadata',
+        nestedValue: {constructor: null, fooBar: 'value'},
+      });
+      expect(input.nested_value.foo_bar).toBe('value');
+    });
+
+    it('converts dictionaries with a null prototype', () => {
+      const input = Object.assign(Object.create(null), {foo_bar: 'value'});
+
+      expect(camelCaseKeys(input)).toEqual({fooBar: 'value'});
+    });
+
     it('should handle null and undefined', () => {
       expect(camelCaseKeys(null)).toBeNull();
       expect(camelCaseKeys(undefined)).toBeUndefined();
