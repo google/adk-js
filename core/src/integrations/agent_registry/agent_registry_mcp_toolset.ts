@@ -36,6 +36,7 @@ export class AgentRegistrySingleMCPToolset extends BaseToolset {
   ) => Promise<Record<string, string>> | Record<string, string>;
   readonly authScheme?: AuthScheme;
   readonly authCredential?: AuthCredential;
+  private readonly sessionManagers = new Set<MCPSessionManager>();
 
   /**
    * @param options - Configuration for the MCP toolset.
@@ -117,6 +118,8 @@ export class AgentRegistrySingleMCPToolset extends BaseToolset {
       });
     }
 
+    this.sessionManagers.add(sessionManager);
+
     // Map tool definitions to MCPTools
     const tools = listResult.tools.map((tool) => {
       const prefixedName = this.prefix
@@ -151,5 +154,9 @@ export class AgentRegistrySingleMCPToolset extends BaseToolset {
     return tools.filter((t) => this.isToolSelected(t, context));
   }
 
-  async close(): Promise<void> {}
+  async close(): Promise<void> {
+    const managers = Array.from(this.sessionManagers);
+    this.sessionManagers.clear();
+    await Promise.allSettled(managers.map((manager) => manager.close()));
+  }
 }

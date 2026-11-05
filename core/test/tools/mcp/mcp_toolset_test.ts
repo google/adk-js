@@ -4,10 +4,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type {SseConnectionParams, SseServerParams} from '@google/adk';
+import type {
+  InvocationContext,
+  SseConnectionParams,
+  SseServerParams,
+} from '@google/adk';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {SSEClientTransport} from '@modelcontextprotocol/sdk/client/sse.js';
 import {describe, expect, it, vi} from 'vitest';
+import {Context} from '../../../src/agents/context.js';
 import {ReadonlyContext} from '../../../src/agents/readonly_context.js';
 import {isBaseToolset} from '../../../src/tools/base_toolset.js';
 import {MCPConnectionParams} from '../../../src/tools/mcp/mcp_session_manager.js';
@@ -23,6 +28,7 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
       return {
         connect: vi.fn().mockResolvedValue(undefined),
         close: vi.fn().mockResolvedValue(undefined),
+        callTool: vi.fn().mockResolvedValue({content: []}),
         listTools: vi.fn().mockResolvedValue({
           tools: [
             {name: 'test-tool', description: 'A test tool', inputSchema: {}},
@@ -155,18 +161,40 @@ describe('MCPToolset', () => {
     });
   });
 
-  describe('cleanup', () => {
-    it('closes the session and leaves activeSessions empty after getTools success', async () => {
+  describe('session reuse and cleanup', () => {
+    it('reuses a single session across getTools, resources, and tool calls until close()', async () => {
+      vi.mocked(Client).mockClear();
       const toolset = new MCPToolset(stdioParams);
-      const spy = vi.spyOn(toolset['mcpSessionManager'], 'closeSession');
+      const closeSpy = vi.spyOn(toolset['mcpSessionManager'], 'closeSession');
+
       const tools = await toolset.getTools();
+      const resourceNames = await toolset.listResources();
+      const resourceInfo = await toolset.getResourceInfo('res1');
+      const resourceContents = await toolset.readResource('res1');
+      const toolContext = new Context({
+        invocationContext: {
+          abortSignal: new AbortController().signal,
+          session: {state: {}},
+        } as unknown as InvocationContext,
+      });
+      await tools[0].runAsync({args: {}, toolContext});
+      await tools[1].runAsync({args: {}, toolContext});
 
       expect(tools).toHaveLength(2);
-      expect(spy).toHaveBeenCalledOnce();
+      expect(resourceNames).toEqual(['res1', 'res2']);
+      expect(resourceInfo.uri).toBe('file:///res1');
+      expect(resourceContents).toHaveLength(1);
+      expect(Client).toHaveBeenCalledTimes(1);
+      expect(closeSpy).not.toHaveBeenCalled();
+      expect(toolset['mcpSessionManager'].getActiveSessions()).toHaveLength(1);
+
+      await toolset.close();
+
+      expect(closeSpy).toHaveBeenCalledOnce();
       expect(toolset['mcpSessionManager'].getActiveSessions()).toHaveLength(0);
     });
 
-    it('closes the session and leaves activeSessions empty even if listTools throws an error', async () => {
+    it('keeps the shared session active when listTools throws a regular error and closes on close()', async () => {
       const toolset = new MCPToolset(stdioParams);
 
       const {Client} =
@@ -183,8 +211,40 @@ describe('MCPToolset', () => {
       const spy = vi.spyOn(toolset['mcpSessionManager'], 'closeSession');
 
       await expect(toolset.getTools()).rejects.toThrow('List tools failed');
+      expect(spy).not.toHaveBeenCalled();
+      expect(toolset['mcpSessionManager'].getActiveSessions()).toHaveLength(1);
+
+      await toolset.close();
       expect(spy).toHaveBeenCalledOnce();
       expect(toolset['mcpSessionManager'].getActiveSessions()).toHaveLength(0);
+    });
+
+    it('evicts the session when listTools throws a disconnected error so the next getTools reconnects', async () => {
+      const toolset = new MCPToolset(stdioParams);
+
+      const {Client} =
+        await import('@modelcontextprotocol/sdk/client/index.js');
+      vi.mocked(Client).mockImplementationOnce(function () {
+        return {
+          connect: noop(),
+          close: noop(),
+          listTools: vi
+            .fn()
+            .mockRejectedValue(
+              Object.assign(new Error('Connection closed'), {code: -32000}),
+            ),
+        } as unknown as Client;
+      });
+
+      const spy = vi.spyOn(toolset['mcpSessionManager'], 'closeSession');
+
+      await expect(toolset.getTools()).rejects.toThrow('Connection closed');
+      expect(spy).toHaveBeenCalledOnce();
+      expect(toolset['mcpSessionManager'].getActiveSessions()).toHaveLength(0);
+
+      const recoveredTools = await toolset.getTools();
+      expect(recoveredTools).toHaveLength(2);
+      await toolset.close();
     });
   });
 
@@ -214,35 +274,33 @@ describe('MCPToolset', () => {
       );
     });
 
-    it('readResource resolves the URI and returns the contents', async () => {
+    it('readResource resolves the URI and returns the contents on the same session', async () => {
       const {Client} =
         await import('@modelcontextprotocol/sdk/client/index.js');
+      vi.mocked(Client).mockClear();
+      const listResources = vi.fn().mockResolvedValue({
+        resources: [{uri: 'file:///res1', name: 'res1'}],
+      });
       const readResource = vi.fn().mockResolvedValue({
         contents: [{uri: 'file:///res1', text: 'hello'}],
       });
-      vi.mocked(Client)
-        .mockImplementationOnce(function () {
-          return {
-            connect: noop(),
-            close: noop(),
-            listResources: vi.fn().mockResolvedValue({
-              resources: [{uri: 'file:///res1', name: 'res1'}],
-            }),
-          } as unknown as Client;
-        })
-        .mockImplementationOnce(function () {
-          return {
-            connect: noop(),
-            close: noop(),
-            readResource,
-          } as unknown as Client;
-        });
+      vi.mocked(Client).mockImplementationOnce(function () {
+        return {
+          connect: noop(),
+          close: noop(),
+          listResources,
+          readResource,
+        } as unknown as Client;
+      });
 
       const toolset = new MCPToolset(stdioParams);
       const contents = await toolset.readResource('res1');
 
+      expect(Client).toHaveBeenCalledTimes(1);
+      expect(listResources).toHaveBeenCalledOnce();
       expect(readResource).toHaveBeenCalledWith({uri: 'file:///res1'});
       expect(contents).toEqual([{uri: 'file:///res1', text: 'hello'}]);
+      await toolset.close();
     });
 
     it('readResource rejects when the name is unknown', async () => {
@@ -274,11 +332,19 @@ describe('MCPToolset', () => {
     });
 
     describe('cleanup', () => {
-      it('closes the session after listResources succeeds', async () => {
+      it('keeps the session open across listResources and readResource until close()', async () => {
         const toolset = new MCPToolset(stdioParams);
         const spy = vi.spyOn(toolset['mcpSessionManager'], 'closeSession');
 
         await toolset.listResources();
+        await toolset.readResource('res1');
+
+        expect(spy).not.toHaveBeenCalled();
+        expect(toolset['mcpSessionManager'].getActiveSessions()).toHaveLength(
+          1,
+        );
+
+        await toolset.close();
 
         expect(spy).toHaveBeenCalledOnce();
         expect(toolset['mcpSessionManager'].getActiveSessions()).toHaveLength(
@@ -286,7 +352,7 @@ describe('MCPToolset', () => {
         );
       });
 
-      it('closes the session even if the client listResources rejects', async () => {
+      it('keeps the session open when listResources rejects with an application error', async () => {
         const {Client} =
           await import('@modelcontextprotocol/sdk/client/index.js');
         vi.mocked(Client).mockImplementationOnce(function () {
@@ -301,50 +367,40 @@ describe('MCPToolset', () => {
         const spy = vi.spyOn(toolset['mcpSessionManager'], 'closeSession');
 
         await expect(toolset.listResources()).rejects.toThrow('list boom');
+        expect(spy).not.toHaveBeenCalled();
+        expect(toolset['mcpSessionManager'].getActiveSessions()).toHaveLength(
+          1,
+        );
+
+        await toolset.close();
         expect(spy).toHaveBeenCalledOnce();
-        expect(toolset['mcpSessionManager'].getActiveSessions()).toHaveLength(
-          0,
-        );
       });
 
-      it('closes both sessions after readResource succeeds', async () => {
-        const toolset = new MCPToolset(stdioParams);
-        const spy = vi.spyOn(toolset['mcpSessionManager'], 'closeSession');
-
-        await toolset.readResource('res1');
-
-        expect(spy).toHaveBeenCalledTimes(2);
-        expect(toolset['mcpSessionManager'].getActiveSessions()).toHaveLength(
-          0,
-        );
-      });
-
-      it('closes both sessions even if the client readResource rejects', async () => {
+      it('evicts the session when readResource rejects with a disconnected HTTP 404 error', async () => {
         const {Client} =
           await import('@modelcontextprotocol/sdk/client/index.js');
-        vi.mocked(Client)
-          .mockImplementationOnce(function () {
-            return {
-              connect: noop(),
-              close: noop(),
-              listResources: vi.fn().mockResolvedValue({
-                resources: [{uri: 'file:///res1', name: 'res1'}],
-              }),
-            } as unknown as Client;
-          })
-          .mockImplementationOnce(function () {
-            return {
-              connect: noop(),
-              close: noop(),
-              readResource: vi.fn().mockRejectedValue(new Error('read boom')),
-            } as unknown as Client;
-          });
+        vi.mocked(Client).mockImplementationOnce(function () {
+          return {
+            connect: noop(),
+            close: noop(),
+            listResources: vi.fn().mockResolvedValue({
+              resources: [{uri: 'file:///res1', name: 'res1'}],
+            }),
+            readResource: vi
+              .fn()
+              .mockRejectedValue(
+                Object.assign(new Error('Session not found'), {code: 404}),
+              ),
+          } as unknown as Client;
+        });
 
         const toolset = new MCPToolset(stdioParams);
         const spy = vi.spyOn(toolset['mcpSessionManager'], 'closeSession');
 
-        await expect(toolset.readResource('res1')).rejects.toThrow('read boom');
-        expect(spy).toHaveBeenCalledTimes(2);
+        await expect(toolset.readResource('res1')).rejects.toThrow(
+          'Session not found',
+        );
+        expect(spy).toHaveBeenCalledOnce();
         expect(toolset['mcpSessionManager'].getActiveSessions()).toHaveLength(
           0,
         );
@@ -407,61 +463,43 @@ describe('MCPToolset', () => {
       await expect(toolset.close()).resolves.toBeUndefined();
     });
 
-    it('closes all active sessions', async () => {
+    it('deduplicates concurrent getTools calls onto one session and closes it cleanly', async () => {
       const {Client} =
         await import('@modelcontextprotocol/sdk/client/index.js');
-      const ready1 = createDeferred<void>();
-      const ready2 = createDeferred<void>();
+      vi.mocked(Client).mockClear();
+      const ready = createDeferred<void>();
       const finishListTools = createDeferred<{tools: never[]}>();
       const close1 = vi.fn().mockResolvedValue(undefined);
-      const close2 = vi.fn().mockResolvedValue(undefined);
 
-      vi.mocked(Client)
-        .mockImplementationOnce(function () {
-          return {
-            connect: noop(),
-            close: close1,
-            listTools: vi.fn().mockImplementation(() => {
-              ready1.resolve();
-              return finishListTools.promise;
-            }),
-          } as unknown as Client;
-        })
-        .mockImplementationOnce(function () {
-          return {
-            connect: noop(),
-            close: close2,
-            listTools: vi.fn().mockImplementation(() => {
-              ready2.resolve();
-              return finishListTools.promise;
-            }),
-          } as unknown as Client;
-        });
+      vi.mocked(Client).mockImplementationOnce(function () {
+        return {
+          connect: noop(),
+          close: close1,
+          listTools: vi.fn().mockImplementation(() => {
+            ready.resolve();
+            return finishListTools.promise;
+          }),
+        } as unknown as Client;
+      });
 
       const toolset = new MCPToolset(stdioParams);
       const pendingTools1 = toolset.getTools();
-      await ready1.promise;
       const pendingTools2 = toolset.getTools();
-      await ready2.promise;
+      await ready.promise;
+
+      expect(Client).toHaveBeenCalledTimes(1);
 
       await toolset.close();
-
       expect(close1).toHaveBeenCalledOnce();
-      expect(close2).toHaveBeenCalledOnce();
 
       finishListTools.resolve({tools: []});
       await Promise.all([pendingTools1, pendingTools2]);
-
       expect(close1).toHaveBeenCalledOnce();
-      expect(close2).toHaveBeenCalledOnce();
     });
 
-    it('resolves and closes remaining sessions when one session close rejects', async () => {
+    it('closes all active sessions and suppresses individual close rejections', async () => {
       const {Client} =
         await import('@modelcontextprotocol/sdk/client/index.js');
-      const ready1 = createDeferred<void>();
-      const ready2 = createDeferred<void>();
-      const finishListTools = createDeferred<{tools: never[]}>();
       const close1 = vi.fn().mockRejectedValue(new Error('close failed'));
       const close2 = vi.fn().mockResolvedValue(undefined);
 
@@ -470,36 +508,31 @@ describe('MCPToolset', () => {
           return {
             connect: noop(),
             close: close1,
-            listTools: vi.fn().mockImplementation(() => {
-              ready1.resolve();
-              return finishListTools.promise;
-            }),
+            listTools: vi.fn().mockResolvedValue({tools: []}),
           } as unknown as Client;
         })
         .mockImplementationOnce(function () {
           return {
             connect: noop(),
             close: close2,
-            listTools: vi.fn().mockImplementation(() => {
-              ready2.resolve();
-              return finishListTools.promise;
-            }),
           } as unknown as Client;
         });
 
       const toolset = new MCPToolset(stdioParams);
-      const pendingTools1 = toolset.getTools();
-      await ready1.promise;
-      const pendingTools2 = toolset.getTools();
-      await ready2.promise;
+      await toolset.getTools();
+      await toolset['mcpSessionManager'].createSession();
+      expect(toolset['mcpSessionManager'].getActiveSessions()).toHaveLength(2);
 
       await expect(toolset.close()).resolves.toBeUndefined();
 
       expect(close1).toHaveBeenCalledOnce();
       expect(close2).toHaveBeenCalledOnce();
+      expect(toolset['mcpSessionManager'].getActiveSessions()).toHaveLength(0);
 
-      finishListTools.resolve({tools: []});
-      await Promise.all([pendingTools1, pendingTools2]);
+      // Reusing the toolset after close() opens a fresh session cleanly.
+      const reopenedTools = await toolset.getTools();
+      expect(reopenedTools).toHaveLength(2);
+      await toolset.close();
     });
   });
 });

@@ -14,7 +14,10 @@ import type {
 import {toGeminiSchema} from '../../utils/gemini_schema_util.js';
 import {BaseTool, RunAsyncToolRequest} from '../base_tool.js';
 
-import {MCPSessionManager} from './mcp_session_manager.js';
+import {
+  isDisconnectedSessionError,
+  MCPSessionManager,
+} from './mcp_session_manager.js';
 
 /**
  * Represents a tool exposed via the Model Context Protocol (MCP).
@@ -26,7 +29,7 @@ import {MCPSessionManager} from './mcp_session_manager.js';
  * {@link MCPSessionManager}.
  *
  * When an LLM decides to call this tool, the `runAsync` method will be
- * invoked, which in turn establishes an MCP session, sends a `callTool`
+ * invoked, which in turn acquires a shared MCP session, sends a `callTool`
  * request with the provided arguments, and returns the result from the
  * remote tool.
  *
@@ -63,7 +66,7 @@ export class MCPTool extends BaseTool {
   }
 
   override async runAsync(request: RunAsyncToolRequest): Promise<unknown> {
-    const session = await this.mcpSessionManager.createSession();
+    const session = await this.mcpSessionManager.getSession();
 
     try {
       const callRequest: CallToolRequest = {} as CallToolRequest;
@@ -72,8 +75,11 @@ export class MCPTool extends BaseTool {
         signal: request.toolContext.abortSignal,
       });
       return result as CallToolResult;
-    } finally {
-      await this.mcpSessionManager.closeSession(session);
+    } catch (err) {
+      if (isDisconnectedSessionError(err)) {
+        await this.mcpSessionManager.closeSession(session).catch(() => {});
+      }
+      throw err;
     }
   }
 }

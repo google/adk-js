@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import type {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import type {
   BlobResourceContents,
   ListResourcesResult,
@@ -18,7 +19,11 @@ import {logger} from '../../utils/logger.js';
 import {BaseTool} from '../base_tool.js';
 import {BaseToolset, ToolPredicate} from '../base_toolset.js';
 
-import {MCPConnectionParams, MCPSessionManager} from './mcp_session_manager.js';
+import {
+  isDisconnectedSessionError,
+  MCPConnectionParams,
+  MCPSessionManager,
+} from './mcp_session_manager.js';
 import {MCPTool} from './mcp_tool.js';
 
 export type {
@@ -82,15 +87,24 @@ export class MCPToolset extends BaseToolset {
     this.mcpSessionManager = new MCPSessionManager(connectionParams);
   }
 
-  async getTools(context?: ReadonlyContext): Promise<BaseTool[]> {
-    const session = await this.mcpSessionManager.createSession();
-
-    let listResult: ListToolsResult;
+  private async withSession<T>(
+    operation: (session: Client) => Promise<T>,
+  ): Promise<T> {
+    const session = await this.mcpSessionManager.getSession();
     try {
-      listResult = (await session.listTools()) as ListToolsResult;
-    } finally {
-      await this.mcpSessionManager.closeSession(session);
+      return await operation(session);
+    } catch (err) {
+      if (isDisconnectedSessionError(err)) {
+        await this.mcpSessionManager.closeSession(session).catch(() => {});
+      }
+      throw err;
     }
+  }
+
+  async getTools(context?: ReadonlyContext): Promise<BaseTool[]> {
+    const listResult = await this.withSession(
+      async (session) => (await session.listTools()) as ListToolsResult,
+    );
     logger.debug(`number of tools: ${listResult.tools.length}`);
     for (const tool of listResult.tools) {
       logger.debug(`tool: ${tool.name}`);
@@ -114,13 +128,10 @@ export class MCPToolset extends BaseToolset {
    * @return The resource names available on the server.
    */
   async listResources(): Promise<string[]> {
-    const session = await this.mcpSessionManager.createSession();
-    try {
-      const result = (await session.listResources()) as ListResourcesResult;
-      return result.resources.map((resource) => resource.name);
-    } finally {
-      await this.mcpSessionManager.closeSession(session);
-    }
+    const result = await this.withSession(
+      async (session) => (await session.listResources()) as ListResourcesResult,
+    );
+    return result.resources.map((resource) => resource.name);
   }
 
   /**
@@ -131,13 +142,9 @@ export class MCPToolset extends BaseToolset {
    * @throws If no resource with the given name is advertised by the server.
    */
   async getResourceInfo(name: string): Promise<Resource> {
-    const session = await this.mcpSessionManager.createSession();
-    let result: ListResourcesResult;
-    try {
-      result = (await session.listResources()) as ListResourcesResult;
-    } finally {
-      await this.mcpSessionManager.closeSession(session);
-    }
+    const result = await this.withSession(
+      async (session) => (await session.listResources()) as ListResourcesResult,
+    );
 
     const resource = result.resources.find(
       (candidate) => candidate.name === name,
@@ -167,21 +174,16 @@ export class MCPToolset extends BaseToolset {
       throw new Error(`Resource '${name}' has no URI.`);
     }
 
-    const session = await this.mcpSessionManager.createSession();
-    try {
-      const result = (await session.readResource({
-        uri: resourceInfo.uri,
-      })) as ReadResourceResult;
-      return result.contents;
-    } finally {
-      await this.mcpSessionManager.closeSession(session);
-    }
+    const result = await this.withSession(
+      async (session) =>
+        (await session.readResource({
+          uri: resourceInfo.uri,
+        })) as ReadResourceResult,
+    );
+    return result.contents;
   }
 
   async close(): Promise<void> {
-    const sessions = this.mcpSessionManager.getActiveSessions();
-    await Promise.allSettled(
-      sessions.map((session) => this.mcpSessionManager.closeSession(session)),
-    );
+    await this.mcpSessionManager.close();
   }
 }
