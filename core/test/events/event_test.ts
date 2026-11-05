@@ -28,6 +28,12 @@ import {
 
 describe('Event Utils', () => {
   describe('createEvent', () => {
+    it('preserves an explicitly supplied epoch timestamp', () => {
+      const event = createEvent({timestamp: 0});
+
+      expect(event.timestamp).toBe(0);
+    });
+
     it('creates an event with default values', () => {
       const event = createEvent();
       expect(event.id).toBeDefined();
