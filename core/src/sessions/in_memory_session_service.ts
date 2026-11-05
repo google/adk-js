@@ -89,6 +89,25 @@ export class InMemorySessionService extends BaseSessionService {
 
     this.sessions[appName][userId][session.id] = session;
 
+    for (const [key, value] of Object.entries(session.state)) {
+      let sharedState: Record<string, unknown>;
+      let sharedKey: string;
+      if (key.startsWith(State.APP_PREFIX)) {
+        sharedState = this.appState[appName] ??= Object.create(null);
+        sharedKey = key.slice(State.APP_PREFIX.length);
+      } else if (key.startsWith(State.USER_PREFIX)) {
+        this.userState[appName] ??= Object.create(null);
+        sharedState = this.userState[appName][userId] ??= Object.create(null);
+        sharedKey = key.slice(State.USER_PREFIX.length);
+      } else {
+        continue;
+      }
+      // Shared state already takes precedence over initial session values.
+      if (!Object.hasOwn(sharedState, sharedKey)) {
+        sharedState[sharedKey] = value;
+      }
+    }
+
     const copiedSession = cloneDeep(session);
     copiedSession.state = mergeStates(
       this.appState[appName],
