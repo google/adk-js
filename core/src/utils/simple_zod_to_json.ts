@@ -6,16 +6,16 @@
 
 import {Schema, Type} from '@google/genai';
 import {
-  JsonSchema7ArrayType,
   JsonSchema7BigintType,
   JsonSchema7EnumType,
   JsonSchema7NumberType,
   JsonSchema7ObjectType,
-  JsonSchema7StringType,
   zodToJsonSchema as toJSONSchemaV3,
 } from 'zod-to-json-schema';
 import {z as z3} from 'zod/v3';
 import {toJSONSchema as toJSONSchemaV4, z as z4} from 'zod/v4';
+
+import {copySchemaConstraints} from './gemini_schema_util.js';
 
 export type ZodSchema<T = unknown> = z3.ZodType<T> | z4.ZodType<T>;
 
@@ -89,25 +89,13 @@ export function zodObjectToSchema(
           delete jsonSchema.readOnly;
         }
 
-        if (jsonSchema.maxItems !== undefined) {
-          (jsonSchema as Schema).maxItems = jsonSchema.maxItems.toString();
-        }
-
-        if (jsonSchema.format === 'email' || jsonSchema.format === 'uuid') {
-          delete jsonSchema.pattern;
-        }
-
-        if (jsonSchema.minItems !== undefined) {
-          (jsonSchema as Schema).minItems = jsonSchema.minItems.toString();
-        }
-
-        if (jsonSchema.minLength !== undefined) {
-          (jsonSchema as Schema).minLength = jsonSchema.minLength.toString();
-        }
-
-        if (jsonSchema.maxLength !== undefined) {
-          (jsonSchema as Schema).maxLength = jsonSchema.maxLength.toString();
-        }
+        // Counts, lengths, patterns and numeric bounds are carried by the same
+        // rules `toGeminiSchema` applies, so a Zod object and a serialized Zod
+        // response declare the same constraints for the same Zod schema.
+        copySchemaConstraints(
+          jsonSchema as unknown as Record<string, unknown>,
+          jsonSchema as unknown as Record<string, unknown>,
+        );
 
         if (jsonSchema.enum?.length === 1 && jsonSchema.enum[0] === null) {
           (jsonSchema as Schema).type = Type.NULL;
@@ -144,29 +132,13 @@ export function zodObjectToSchema(
           delete (jsonSchema as JsonSchema7ObjectType).additionalProperties;
         }
 
-        if ((jsonSchema as JsonSchema7ArrayType).maxItems !== undefined) {
-          (jsonSchema as Schema).maxItems = (
-            jsonSchema as JsonSchema7ArrayType
-          ).maxItems?.toString();
-        }
-
-        if ((jsonSchema as JsonSchema7ArrayType).minItems !== undefined) {
-          (jsonSchema as Schema).minItems = (
-            jsonSchema as JsonSchema7ArrayType
-          ).minItems?.toString();
-        }
-
-        if ((jsonSchema as JsonSchema7StringType).minLength !== undefined) {
-          (jsonSchema as Schema).minLength = (
-            jsonSchema as JsonSchema7StringType
-          ).minLength?.toString();
-        }
-
-        if ((jsonSchema as JsonSchema7StringType).maxLength !== undefined) {
-          (jsonSchema as Schema).maxLength = (
-            jsonSchema as JsonSchema7StringType
-          ).maxLength?.toString();
-        }
+        // Counts, lengths, patterns and numeric bounds are carried by the same
+        // rules `toGeminiSchema` applies, so a Zod object and a serialized Zod
+        // response declare the same constraints for the same Zod schema.
+        copySchemaConstraints(
+          jsonSchema as unknown as Record<string, unknown>,
+          jsonSchema as unknown as Record<string, unknown>,
+        );
 
         if (
           (jsonSchema as JsonSchema7EnumType).enum?.length === 1 &&

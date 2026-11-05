@@ -148,10 +148,13 @@ function toResponseSchema(response: SchemaLike): Schema {
     'safeParse' in response &&
     typeof (response as {safeParse?: unknown}).safeParse === 'function'
   ) {
+    const jsonSchema = toJsonSchema(response);
+    // `toGeminiSchema` carries the schema constraints (bounds, lengths,
+    // patterns) at every depth, so nothing is restored here afterwards.
     return (
-      toGeminiSchema(
-        toJsonSchema(response) as Parameters<typeof toGeminiSchema>[0],
-      ) ?? {type: Type.TYPE_UNSPECIFIED}
+      toGeminiSchema(jsonSchema as Parameters<typeof toGeminiSchema>[0]) ?? {
+        type: Type.TYPE_UNSPECIFIED,
+      }
     );
   }
   return response as Schema;
