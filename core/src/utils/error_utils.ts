@@ -38,6 +38,41 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+/** Normalizes a plugin notification without changing the caller's thrown value. */
+export function toError(error: unknown): Error {
+  return error instanceof Error
+    ? error
+    : new Error('Execution threw a non-Error value.', {cause: error});
+}
+
+/** Recognizes cancellation within 32 cause levels, only after signal abort. */
+export function isInvocationCancellation(
+  error: unknown,
+  signal?: AbortSignal,
+): boolean {
+  if (!signal?.aborted) return false;
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 32 && !seen.has(error); depth++) {
+    if (Object.is(error, signal.reason)) return true;
+    seen.add(error);
+    const record = asRecord(error);
+    if (!record) return false;
+    // Custom thrown objects can have getters that fail. Inspection must not
+    // replace the original execution failure.
+    try {
+      const name = record['name'];
+      if (name === 'AbortError' || name === 'InvocationAbortedError') {
+        return true;
+      }
+      if (!('cause' in record)) return false;
+      error = record['cause'];
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 /** Returns the first argument that is a string, or `undefined` if none are. */
 function firstString(...values: unknown[]): string | undefined {
   for (const value of values) {
