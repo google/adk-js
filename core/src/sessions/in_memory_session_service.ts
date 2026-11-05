@@ -6,7 +6,7 @@
 import {cloneDeep} from 'lodash-es';
 
 import {Event} from '../events/event.js';
-import {randomUUID} from '../utils/env_aware_utils.js';
+import {newId} from '../utils/id_provider.js';
 import {logger} from '../utils/logger.js';
 
 import {
@@ -72,7 +72,7 @@ export class InMemorySessionService extends BaseSessionService {
     const session = createSession({
       // Surrounding whitespace is dropped so that a later lookup by the bare
       // id finds the session, and a blank id gets a generated one.
-      id: sessionId?.trim() || randomUUID(),
+      id: sessionId?.trim() || newId(),
       appName,
       userId,
       state: filteredState,

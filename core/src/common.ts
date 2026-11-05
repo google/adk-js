@@ -452,6 +452,8 @@ export {getClientLabels, runWithClientLabel} from './utils/client_labels.js';
 export {toGeminiSchema} from './utils/gemini_schema_util.js';
 export type {MCPToolSchema} from './utils/gemini_schema_util.js';
 export {genaiSchemaToJsonSchema} from './utils/genai_schema_to_json.js';
+export {newId, resetIdProvider, setIdProvider} from './utils/id_provider.js';
+export type {IdProvider} from './utils/id_provider.js';
 export {
   LogLevel,
   getLogger,
