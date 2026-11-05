@@ -79,6 +79,59 @@ const stdioParams = {
 } as unknown as MCPConnectionParams;
 
 describe('MCPToolset', () => {
+  it.each(['getTools', 'listResources', 'getResourceInfo'] as const)(
+    '%s propagates a later-page error and closes the session',
+    async (method) => {
+      const error = new Error('next page failed');
+      const list = vi
+        .fn()
+        .mockResolvedValueOnce({
+          tools: [],
+          resources: [],
+          nextCursor: 'opaque cursor',
+        })
+        .mockRejectedValueOnce(error);
+      const close = noop();
+      vi.mocked(Client).mockImplementationOnce(function () {
+        return {
+          connect: noop(),
+          close,
+          listTools: list,
+          listResources: list,
+        } as unknown as Client;
+      });
+      const toolset = new MCPToolset(stdioParams);
+
+      await expect(
+        method === 'getResourceInfo'
+          ? toolset.getResourceInfo('last')
+          : toolset[method](),
+      ).rejects.toBe(error);
+
+      expect(list).toHaveBeenNthCalledWith(1, undefined);
+      expect(list).toHaveBeenNthCalledWith(2, {cursor: 'opaque cursor'});
+      expect(close).toHaveBeenCalledOnce();
+      expect(toolset['mcpSessionManager'].getActiveSessions()).toHaveLength(0);
+    },
+  );
+
+  it('stops resource lookup once the named resource is found', async () => {
+    const resource = {uri: 'file:///first', name: 'first'};
+    const listResources = vi.fn().mockResolvedValue({
+      resources: [resource],
+      nextCursor: 'more',
+    });
+    const close = noop();
+    vi.mocked(Client).mockImplementationOnce(function () {
+      return {connect: noop(), close, listResources} as unknown as Client;
+    });
+    const toolset = new MCPToolset(stdioParams);
+
+    expect(await toolset.getResourceInfo('first')).toEqual(resource);
+    expect(listResources).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledOnce();
+  });
+
   it('discovers tools without prefix', async () => {
     const toolset = new MCPToolset(stdioParams);
     const tools = await toolset.getTools();

@@ -6,7 +6,6 @@
 
 import type {
   BlobResourceContents,
-  ListResourcesResult,
   ListToolsResult,
   ReadResourceResult,
   Resource,
@@ -85,18 +84,25 @@ export class MCPToolset extends BaseToolset {
   async getTools(context?: ReadonlyContext): Promise<BaseTool[]> {
     const session = await this.mcpSessionManager.createSession();
 
-    let listResult: ListToolsResult;
+    const toolDefinitions: ListToolsResult['tools'] = [];
     try {
-      listResult = (await session.listTools()) as ListToolsResult;
+      let cursor: string | undefined;
+      do {
+        const result = await session.listTools(
+          cursor === undefined ? undefined : {cursor},
+        );
+        toolDefinitions.push(...result.tools);
+        cursor = result.nextCursor;
+      } while (cursor !== undefined);
     } finally {
       await this.mcpSessionManager.closeSession(session);
     }
-    logger.debug(`number of tools: ${listResult.tools.length}`);
-    for (const tool of listResult.tools) {
+    logger.debug(`number of tools: ${toolDefinitions.length}`);
+    for (const tool of toolDefinitions) {
       logger.debug(`tool: ${tool.name}`);
     }
 
-    const tools = listResult.tools.map((tool) => {
+    const tools = toolDefinitions.map((tool) => {
       // Create a cloned tool definition with the prefixed name
       const toolWithPrefix = {
         ...tool,
@@ -116,8 +122,16 @@ export class MCPToolset extends BaseToolset {
   async listResources(): Promise<string[]> {
     const session = await this.mcpSessionManager.createSession();
     try {
-      const result = (await session.listResources()) as ListResourcesResult;
-      return result.resources.map((resource) => resource.name);
+      const names: string[] = [];
+      let cursor: string | undefined;
+      do {
+        const result = await session.listResources(
+          cursor === undefined ? undefined : {cursor},
+        );
+        names.push(...result.resources.map((resource) => resource.name));
+        cursor = result.nextCursor;
+      } while (cursor !== undefined);
+      return names;
     } finally {
       await this.mcpSessionManager.closeSession(session);
     }
@@ -132,20 +146,25 @@ export class MCPToolset extends BaseToolset {
    */
   async getResourceInfo(name: string): Promise<Resource> {
     const session = await this.mcpSessionManager.createSession();
-    let result: ListResourcesResult;
     try {
-      result = (await session.listResources()) as ListResourcesResult;
+      let cursor: string | undefined;
+      do {
+        const result = await session.listResources(
+          cursor === undefined ? undefined : {cursor},
+        );
+        const resource = result.resources.find(
+          (candidate) => candidate.name === name,
+        );
+        if (resource) {
+          return resource;
+        }
+        cursor = result.nextCursor;
+      } while (cursor !== undefined);
     } finally {
       await this.mcpSessionManager.closeSession(session);
     }
 
-    const resource = result.resources.find(
-      (candidate) => candidate.name === name,
-    );
-    if (!resource) {
-      throw new Error(`Resource with name '${name}' not found.`);
-    }
-    return resource;
+    throw new Error(`Resource with name '${name}' not found.`);
   }
 
   /**
