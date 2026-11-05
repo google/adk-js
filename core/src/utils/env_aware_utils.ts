@@ -10,11 +10,20 @@ import {logger} from './logger.js';
 const ENTERPRISE_MODE_ENV_VAR = 'GOOGLE_GENAI_USE_ENTERPRISE';
 const DEPRECATED_ENTERPRISE_MODE_ENV_VAR = 'GOOGLE_GENAI_USE_VERTEXAI';
 
+declare const WorkerGlobalScope: abstract new () => unknown;
+
 /**
- * Returns true if the environment is a browser.
+ * Returns true if the environment is a browser, including a web worker or
+ * service worker.
  */
 export function isBrowser() {
-  return typeof window !== 'undefined';
+  return (
+    typeof window !== 'undefined' ||
+    (typeof WorkerGlobalScope !== 'undefined' &&
+      typeof self !== 'undefined' &&
+      // eslint-disable-next-line no-undef
+      self instanceof WorkerGlobalScope)
+  );
 }
 
 /**
@@ -70,7 +79,7 @@ export function randomUUID(): string {
 /**
  * Encodes the given string or Uint8Array to base64.
  *
- * `window.btoa` is byte-oriented and throws on any code unit above `U+00FF`,
+ * `btoa` is byte-oriented and throws on any code unit above `U+00FF`,
  * so a string is first encoded to UTF-8 bytes. Node's `Buffer` encodes a
  * string as UTF-8 too, which keeps both environments on one contract and lets
  * `base64Decode` round-trip its output.
@@ -86,8 +95,7 @@ export function base64Encode(data: string | Uint8Array): string {
     for (let i = 0; i < bytes.length; i++) {
       strData += String.fromCharCode(bytes[i]);
     }
-    // eslint-disable-next-line no-undef
-    return window.btoa(strData);
+    return btoa(strData);
   }
 
   return Buffer.from(data).toString('base64');
@@ -96,7 +104,7 @@ export function base64Encode(data: string | Uint8Array): string {
 /**
  * Decodes the given base64 string to UTF-8 text.
  *
- * `window.atob` is byte-oriented: it returns a latin1 "binary string" with one
+ * `atob` is byte-oriented: it returns a latin1 "binary string" with one
  * code unit per decoded byte, so a multi-byte UTF-8 sequence surfaces as
  * mojibake. Node's `Buffer` decodes the same bytes as UTF-8, so the browser
  * branch recovers the bytes from `atob` and decodes them explicitly. That keeps
@@ -112,8 +120,7 @@ export function base64Encode(data: string | Uint8Array): string {
  */
 export function base64Decode(data: string): string {
   if (isBrowser()) {
-    // eslint-disable-next-line no-undef
-    const binary = window.atob(data);
+    const binary = atob(data);
     const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
     return new TextDecoder('utf-8', {ignoreBOM: true}).decode(bytes);
   }

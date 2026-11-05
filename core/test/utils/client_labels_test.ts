@@ -353,14 +353,44 @@ describe('client_labels', () => {
 
     it('builds the headers in a browser without throwing or warning', () => {
       const warnSpy = vi.spyOn(logger, 'warn');
-      vi.stubGlobal('window', {
-        navigator: {
-          userAgent:
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-        },
+      vi.stubGlobal('window', {});
+      vi.stubGlobal('navigator', {
+        userAgent:
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
       });
 
       const merged = mergeTrackingHeaders({'User-Agent': 'my-app/1.0'});
+
+      expect(merged['x-goog-api-client']).toContain(
+        'gl-typescript/Chrome/123.0.0.0',
+      );
+      expect(merged['user-agent']).toBe(
+        `${merged['x-goog-api-client']} my-app/1.0`,
+      );
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('builds the headers in a web worker without window or process', () => {
+      const warnSpy = vi.spyOn(logger, 'warn');
+      class WorkerGlobalScope {}
+      vi.stubGlobal('WorkerGlobalScope', WorkerGlobalScope);
+      vi.stubGlobal('self', new WorkerGlobalScope());
+      vi.stubGlobal('navigator', {
+        userAgent:
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+      });
+
+      const descriptor = Object.getOwnPropertyDescriptor(
+        globalThis,
+        'process',
+      )!;
+      delete (globalThis as {process?: unknown}).process;
+      let merged: Record<string, string>;
+      try {
+        merged = mergeTrackingHeaders({'User-Agent': 'my-app/1.0'});
+      } finally {
+        Object.defineProperty(globalThis, 'process', descriptor);
+      }
 
       expect(merged['x-goog-api-client']).toContain(
         'gl-typescript/Chrome/123.0.0.0',
