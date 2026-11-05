@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+export * from './bigquery_analytics/index.js';
 export {CrewaiTool, isCrewaiTool} from './crewai/crewai_tool.js';
 export type {
   CrewaiSchemaLike,
