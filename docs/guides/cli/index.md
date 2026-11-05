@@ -138,6 +138,7 @@ Each helper handles one stage of preparing, observing, or evaluating an agent ru
 4. Scores each requested `EvalMetric`:
    - `TOOL_TRAJECTORY_SCORE_KEY` (`'tool_trajectory_avg_score'`): `1.0` for a turn when the actual `expected_tool_use` list matches the expected list in length, `tool_name`, and deep `tool_input`; `0.0` otherwise.
    - `RESPONSE_MATCH_SCORE_KEY` (`'response_match_score'`): unigram ROUGE-1 F1 score between the expected `reference` and the actual `reference`.
+   - The metrics in [Vertex AI evaluation metrics](#vertex-ai-evaluation-metrics): the turns are sent to the Vertex AI evaluation service.
 5. Yields an `EvalResult` with per-invocation and overall metric results and sets `final_eval_status` to `EvalStatus.PASSED`, `EvalStatus.FAILED`, or `EvalStatus.NOT_EVALUATED`.
 
 ## Configuration options
@@ -170,6 +171,7 @@ Each helper handles one stage of preparing, observing, or evaluating an agent ru
 | `printDetailedResults` | `boolean`                     | `false`                   | When `true`, prints per-case metric scores to stdout.                                   |
 | `sessionService`       | `BaseSessionService`          | `InMemorySessionService`  | Session service used to store the `___eval___session___` runs.                          |
 | `artifactService`      | `BaseArtifactService`         | `InMemoryArtifactService` | Artifact service passed to the evaluation `Runner`.                                     |
+| `evalClient`           | `VertexAiEvaluationClient`    | created on first use      | Client for the Vertex AI metrics. Defaults to a `v1beta1.EvaluationServiceClient`.      |
 
 ## Advanced applications
 
@@ -190,6 +192,47 @@ const mapping = parseAndGetEvalsToRun([
 // }
 ```
 
+### Vertex AI evaluation metrics
+
+The Vertex AI evaluation service scores some metrics, not ADK. Select them like any other metric: in the `criteria` of the `test_config.json` file that `adk eval` reads, or in `evalMetrics` for `runEvals`.
+
+| Metric key                         | Constant                               | Vertex AI metric spec              | What it judges                                                 |
+| :--------------------------------- | :------------------------------------- | :--------------------------------- | :------------------------------------------------------------- |
+| `safety_v1`                        | `SAFETY_V1_KEY`                        | `safety_v1`                        | Harmlessness of each final response. 1.0 is safe.              |
+| `multi_turn_task_success_v1`       | `MULTI_TURN_TASK_SUCCESS_V1_KEY`       | `multi_turn_task_success_v1`       | Whether the agent achieved the goal of the whole conversation. |
+| `multi_turn_trajectory_quality_v1` | `MULTI_TURN_TRAJECTORY_QUALITY_V1_KEY` | `multi_turn_trajectory_quality_v1` | The path that the agent took through the conversation.         |
+| `multi_turn_tool_use_quality_v1`   | `MULTI_TURN_TOOL_USE_QUALITY_V1_KEY`   | `multi_turn_tool_use_quality_v1`   | How well the agent used its tools in the conversation.         |
+
+```json
+{
+  "criteria": {
+    "safety_v1": 1.0,
+    "multi_turn_task_success_v1": 0.8
+  }
+}
+```
+
+These metrics need a Google Cloud project, a location, and Google Cloud credentials. Set `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`, for example in the agent's `.env` file. When you select a Vertex AI metric and either value is missing, `runEvals` throws before it runs a case.
+
+Single-turn metrics send one request per turn and average the valid scores. Multi-turn metrics send the whole conversation as one request, with the instructions and tool declarations of every agent in the tree. The score goes on the last turn, and the earlier turns are `EvalStatus.NOT_EVALUATED`. When Vertex AI returns rubric verdicts, an explanation, or an error, `runEvals` puts them in `rubric_scores` on the metric result. A missing or `NaN` score makes the metric `EvalStatus.NOT_EVALUATED`.
+
+To call the metrics from your own code, use the facades. `SingleTurnVertexAiEvalFacade` and `MultiTurnVertexAiEvalFacade` take a threshold, a Vertex AI metric spec name, an optional project and location, and an optional `client`. Their `evaluateInvocations` method takes `Invocation` objects and returns an `EvaluationResult`:
+
+```ts
+import {MultiTurnVertexAiEvalFacade} from '@google/adk';
+
+const facade = new MultiTurnVertexAiEvalFacade({
+  threshold: 0.8,
+  metricName: 'multi_turn_task_success_v1',
+  projectId: 'my-project',
+  location: 'us-central1',
+});
+const result = await facade.evaluateInvocations(invocations);
+console.log(result.overallScore, result.overallRubricScores);
+```
+
+Multi-turn metrics send the `agents` map from the `appDetails` of the invocations. `buildAppDetailsFromAgent(rootAgent)` builds it from an agent tree, and `runEvals` attaches it for you. An invocation without `appDetails` adds no agents; the request is still sent. Each turn holds the user message, the steps in `InvocationEvents` (the form `runEvals` records), and one agent event with the final response. The steps in an `IntermediateData` object (the form that eval set turns use) are not sent.
+
 ### Identifying retrieval tools in custom graph renderers
 
 `BaseRetrievalTool` instances carry a cross-bundle symbol brand checked by `isBaseRetrievalTool(obj)`. The development server's agent graph renderer uses `isBaseRetrievalTool` to label retrieval tools with `🔎` and draw them with a `'cylinder'` shape instead of the `'box'` shape used for regular function tools.
@@ -198,6 +241,9 @@ const mapping = parseAndGetEvalsToRun([
 
 - `createEmptyState` only inspects `LlmAgent` instances whose `instruction` is a static `string`. Placeholders inside an `InstructionProvider` function are not extracted statically.
 - `loadDotenvForAgent`, `logToTmpFolder`, `setupAdkLogger`, and `runEvals` use Node.js filesystem and process modules (`node:fs`, `node:os`, `node:path`) and are exported from the Node `@google/adk` entrypoint, not the browser bundle.
+- The Vertex AI facades load `@google-cloud/aiplatform` on first use. They are exported from the Node `@google/adk` entrypoint only. The evaluation types (`Invocation`, `EvaluationResult`, `RubricScore`, `AppDetails`) and `Evaluator` are also in the browser bundle.
+- `response_evaluation_score` stays an offline ROUGE-1 score, as before. It is not sent to the Vertex AI coherence metric.
+- There is no conversation scenario generator. The Node.js `@google-cloud/aiplatform` client has no RPC that generates conversation scenarios.
 - `getAgentGraph(rootAgent, highlightsPairs, true)` requires the Graphviz `dot` binary to be installed on `PATH` when rendering a PNG buffer.
 
 ## Related samples
