@@ -28,9 +28,20 @@ import {
   tryGetResetFunc,
 } from '@google/adk';
 import * as fs from 'node:fs';
+import {createRequire} from 'node:module';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import {fileURLToPath, pathToFileURL} from 'node:url';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+
+const DIST_ESM_CLI_EVAL = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../dist/esm/cli/cli_eval.js',
+);
+const DIST_CJS_CLI_EVAL = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../dist/cjs/cli/cli_eval.js',
+);
 
 class DeterministicEvalAgent extends BaseAgent {
   constructor() {
@@ -178,6 +189,96 @@ describe('cli/cli_eval', () => {
       const resetFn = await tryGetResetFunc(tempDir);
       expect(typeof resetFn).toBe('function');
     });
+
+    it('resolves agent.mjs and agent.cjs inside a directory and supports nested agent exports', async () => {
+      const mjsDir = path.join(tempDir, 'mjs_agent');
+      fs.mkdirSync(mjsDir, {recursive: true});
+      fs.writeFileSync(
+        path.join(mjsDir, 'agent.mjs'),
+        [
+          `const brand = Symbol.for('google.adk.baseAgent');`,
+          `export const agent = {`,
+          `  rootAgent: { [brand]: true, name: 'nested_mjs_agent', subAgents: [] },`,
+          `  resetData() { return 'nested-reset'; },`,
+          `};`,
+        ].join('\n'),
+      );
+
+      const loadedMjs = await getRootAgent(mjsDir);
+      expect(loadedMjs.name).toBe('nested_mjs_agent');
+      const mjsReset = await tryGetResetFunc(mjsDir);
+      expect(mjsReset?.()).toBe('nested-reset');
+
+      const cjsDir = path.join(tempDir, 'cjs_agent');
+      fs.mkdirSync(cjsDir, {recursive: true});
+      fs.writeFileSync(
+        path.join(cjsDir, 'index.cjs'),
+        [
+          `const brand = Symbol.for('google.adk.baseAgent');`,
+          `module.exports = {`,
+          `  root_agent: { [brand]: true, name: 'cjs_index_agent', subAgents: [] },`,
+          `  reset_data() { return 'cjs-reset'; },`,
+          `};`,
+        ].join('\n'),
+      );
+
+      const loadedCjs = await getRootAgent(cjsDir);
+      expect(loadedCjs.name).toBe('cjs_index_agent');
+      const cjsReset = await tryGetResetFunc(cjsDir);
+      expect(cjsReset?.()).toBe('cjs-reset');
+    });
+
+    it.skipIf(
+      !fs.existsSync(DIST_ESM_CLI_EVAL) || !fs.existsSync(DIST_CJS_CLI_EVAL),
+    )(
+      'loads .mjs and .cjs agent modules through the built ESM and CJS packages where import() is lowered to require()',
+      async () => {
+        const mjsFile = path.join(tempDir, 'built_agent.mjs');
+        fs.writeFileSync(
+          mjsFile,
+          [
+            `const brand = Symbol.for('google.adk.baseAgent');`,
+            `export const rootAgent = { [brand]: true, name: 'built_mjs_agent', subAgents: [] };`,
+            `export function reset_data() { return 'built-mjs-reset'; }`,
+          ].join('\n'),
+        );
+
+        const cjsFile = path.join(tempDir, 'built_agent.cjs');
+        fs.writeFileSync(
+          cjsFile,
+          [
+            `const brand = Symbol.for('google.adk.baseAgent');`,
+            `module.exports = {`,
+            `  agent: {`,
+            `    rootAgent: { [brand]: true, name: 'built_cjs_agent', subAgents: [] },`,
+            `    reset_data() { return 'built-cjs-reset'; },`,
+            `  },`,
+            `};`,
+          ].join('\n'),
+        );
+
+        const distEsm = (await import(
+          pathToFileURL(DIST_ESM_CLI_EVAL).href
+        )) as {
+          getRootAgent: typeof getRootAgent;
+          tryGetResetFunc: typeof tryGetResetFunc;
+        };
+        const esmAgent = await distEsm.getRootAgent(mjsFile);
+        expect(esmAgent.name).toBe('built_mjs_agent');
+        const esmReset = await distEsm.tryGetResetFunc(mjsFile);
+        expect(esmReset?.()).toBe('built-mjs-reset');
+
+        const require = createRequire(import.meta.url);
+        const distCjs = require(DIST_CJS_CLI_EVAL) as {
+          getRootAgent: typeof getRootAgent;
+          tryGetResetFunc: typeof tryGetResetFunc;
+        };
+        const cjsAgent = await distCjs.getRootAgent(cjsFile);
+        expect(cjsAgent.name).toBe('built_cjs_agent');
+        const cjsReset = await distCjs.tryGetResetFunc(cjsFile);
+        expect(cjsReset?.()).toBe('built-cjs-reset');
+      },
+    );
 
     it('throws when module does not export a BaseAgent', async () => {
       const badFile = path.join(tempDir, 'empty_agent.js');

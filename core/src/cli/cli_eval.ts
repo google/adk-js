@@ -214,7 +214,20 @@ export function getEvaluationCriteriaOrDefault(
 function resolveAgentModulePath(agentModuleFilePath: string): string {
   const resolved = path.resolve(agentModuleFilePath);
   if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
-    const candidates = ['agent.js', 'agent.ts', 'index.js', 'index.ts'];
+    const candidates = [
+      'agent.js',
+      'agent.mjs',
+      'agent.cjs',
+      'agent.ts',
+      'agent.mts',
+      'agent.cts',
+      'index.js',
+      'index.mjs',
+      'index.cjs',
+      'index.ts',
+      'index.mts',
+      'index.cts',
+    ];
     for (const candidate of candidates) {
       const candidatePath = path.join(resolved, candidate);
       if (fs.existsSync(candidatePath) && fs.statSync(candidatePath).isFile()) {
@@ -223,6 +236,27 @@ function resolveAgentModulePath(agentModuleFilePath: string): string {
     }
   }
   return resolved;
+}
+
+async function importAgentModule(
+  resolvedPath: string,
+): Promise<Record<string, unknown>> {
+  const moduleUrl = pathToFileURL(resolvedPath).href;
+  try {
+    return (await import(moduleUrl)) as Record<string, unknown>;
+  } catch (error: unknown) {
+    // Core's Node builds target `node10.4` so esbuild lowers `import(...)` to
+    // `require(...)`, which rejects `file:` URLs with `MODULE_NOT_FOUND`.
+    // Fall back to the resolved filesystem path when that happens.
+    if (
+      error instanceof Error &&
+      (error as {code?: string}).code === 'MODULE_NOT_FOUND' &&
+      error.message.includes(moduleUrl)
+    ) {
+      return (await import(resolvedPath)) as Record<string, unknown>;
+    }
+    throw error;
+  }
 }
 
 /**
@@ -235,21 +269,30 @@ export async function getRootAgent(
   agentModuleFilePath: string,
 ): Promise<BaseAgent> {
   const resolvedPath = resolveAgentModulePath(agentModuleFilePath);
-  const moduleUrl = pathToFileURL(resolvedPath).href;
-  const mod = (await import(moduleUrl)) as Record<string, unknown>;
+  const mod = await importAgentModule(resolvedPath);
+  const defaultExport =
+    typeof mod.default === 'object' && mod.default !== null
+      ? (mod.default as Record<string, unknown>)
+      : undefined;
   const nestedAgent =
     typeof mod.agent === 'object' && mod.agent !== null
       ? (mod.agent as Record<string, unknown>)
-      : undefined;
+      : typeof defaultExport?.agent === 'object' && defaultExport.agent !== null
+        ? (defaultExport.agent as Record<string, unknown>)
+        : undefined;
 
-  const candidate =
-    mod.rootAgent ??
-    mod.root_agent ??
-    mod.default ??
-    nestedAgent?.rootAgent ??
-    nestedAgent?.root_agent;
+  const candidates = [
+    mod.rootAgent,
+    mod.root_agent,
+    mod.default,
+    defaultExport?.rootAgent,
+    defaultExport?.root_agent,
+    nestedAgent?.rootAgent,
+    nestedAgent?.root_agent,
+  ];
+  const candidate = candidates.find(isBaseAgent);
 
-  if (isBaseAgent(candidate)) {
+  if (candidate) {
     return candidate;
   }
 
@@ -270,16 +313,24 @@ export async function tryGetResetFunc(
 ): Promise<(() => void | Promise<void>) | undefined> {
   try {
     const resolvedPath = resolveAgentModulePath(agentModuleFilePath);
-    const moduleUrl = pathToFileURL(resolvedPath).href;
-    const mod = (await import(moduleUrl)) as Record<string, unknown>;
+    const mod = await importAgentModule(resolvedPath);
+    const defaultExport =
+      typeof mod.default === 'object' && mod.default !== null
+        ? (mod.default as Record<string, unknown>)
+        : undefined;
     const nestedAgent =
       typeof mod.agent === 'object' && mod.agent !== null
         ? (mod.agent as Record<string, unknown>)
-        : undefined;
+        : typeof defaultExport?.agent === 'object' &&
+            defaultExport.agent !== null
+          ? (defaultExport.agent as Record<string, unknown>)
+          : undefined;
 
     const resetCandidate =
       mod.reset_data ??
       mod.resetData ??
+      defaultExport?.reset_data ??
+      defaultExport?.resetData ??
       nestedAgent?.reset_data ??
       nestedAgent?.resetData;
 
