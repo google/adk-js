@@ -1476,4 +1476,189 @@ describe('AnthropicLlm', () => {
     expect(mockAnthropicCtor).toHaveBeenCalledTimes(1);
     expect(mockAnthropicVertexCtor).not.toHaveBeenCalled();
   });
+
+  it('test_non_streaming_passes_thinking_param', async () => {
+    mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
+
+    const llm = new AnthropicLlm({model: 'claude-sonnet-4-6'});
+    const request: LlmRequest = {
+      contents: [{role: 'user', parts: [{text: 'Think carefully'}]}],
+      config: {
+        thinkingConfig: {
+          thinkingBudget: 8000,
+        },
+      },
+      liveConnectConfig: {},
+      toolsDict: {},
+    };
+
+    const responses: LlmResponse[] = [];
+    for await (const response of llm.generateContentAsync(request)) {
+      responses.push(response);
+    }
+
+    expect(responses).toHaveLength(1);
+    expect(mockMessagesCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        thinking: {
+          type: 'enabled',
+          budget_tokens: 8000,
+        },
+      }),
+      undefined,
+    );
+  });
+
+  it('test_non_streaming_no_thinking_param_without_config', async () => {
+    mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
+
+    const llm = new AnthropicLlm({model: 'claude-sonnet-4-6'});
+    const request: LlmRequest = {
+      contents: [{role: 'user', parts: [{text: 'Hello'}]}],
+      config: {},
+      liveConnectConfig: {},
+      toolsDict: {},
+    };
+
+    for await (const _ of llm.generateContentAsync(request)) {
+      // consume generator
+    }
+
+    expect(mockMessagesCreate).toHaveBeenCalledTimes(1);
+    const callPayload = mockMessagesCreate.mock.calls[0]?.[0];
+    expect(callPayload).toBeDefined();
+    expect(callPayload !== undefined && 'thinking' in callPayload).toBe(false);
+  });
+
+  it('test_turn_of_only_dropped_parts_is_not_sent_as_empty_message', async () => {
+    mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
+
+    const llm = new AnthropicLlm({model: 'claude-sonnet-4-6'});
+    const request: LlmRequest = {
+      contents: [
+        {role: 'user', parts: [{text: 'Question'}]},
+        {role: 'model', parts: [{thoughtSignature: 'foreign_sig'}]},
+      ],
+      liveConnectConfig: {},
+      toolsDict: {},
+    };
+
+    const responses: LlmResponse[] = [];
+    for await (const response of llm.generateContentAsync(request)) {
+      responses.push(response);
+    }
+
+    expect(responses).toHaveLength(1);
+    expect(mockMessagesCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          {
+            role: 'user',
+            content: [{type: 'text', text: 'Question'}],
+          },
+        ],
+      }),
+      undefined,
+    );
+  });
+
+  it('test_generate_content_async_retains_turn_with_lone_empty_text_part', async () => {
+    mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
+
+    const llm = new AnthropicLlm({model: 'claude-sonnet-4-6'});
+    const request: LlmRequest = {
+      contents: [
+        {role: 'user', parts: [{text: 'run it'}]},
+        {role: 'model', parts: [{text: 'running'}]},
+        {role: 'user', parts: [{text: ''}]},
+      ],
+      liveConnectConfig: {},
+      toolsDict: {},
+    };
+
+    const responses: LlmResponse[] = [];
+    for await (const response of llm.generateContentAsync(request)) {
+      responses.push(response);
+    }
+
+    expect(responses).toHaveLength(1);
+    expect(mockMessagesCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          {
+            role: 'user',
+            content: [{type: 'text', text: 'run it'}],
+          },
+          {
+            role: 'assistant',
+            content: [{type: 'text', text: 'running'}],
+          },
+          {
+            role: 'user',
+            content: [{type: 'text', text: '.'}],
+          },
+        ],
+      }),
+      undefined,
+    );
+  });
+
+  it('converts thought parts with text and drops bare thought signatures in history', async () => {
+    mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
+
+    const llm = new AnthropicLlm({model: 'claude-sonnet-4-6'});
+    const request: LlmRequest = {
+      contents: [
+        {role: 'user', parts: [{text: 'First question'}]},
+        {
+          role: 'model',
+          parts: [
+            {
+              thought: true,
+              text: 'Earlier reasoning',
+              thoughtSignature: 'sig_1',
+            },
+            {thoughtSignature: 'sig_2'},
+            {text: 'First answer', thoughtSignature: 'sig_3'},
+          ],
+        },
+        {role: 'user', parts: [{text: 'Follow-up question'}]},
+      ],
+      liveConnectConfig: {},
+      toolsDict: {},
+    };
+
+    const responses: LlmResponse[] = [];
+    for await (const response of llm.generateContentAsync(request)) {
+      responses.push(response);
+    }
+
+    expect(responses).toHaveLength(1);
+    expect(mockMessagesCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          {
+            role: 'user',
+            content: [{type: 'text', text: 'First question'}],
+          },
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'thinking',
+                thinking: 'Earlier reasoning',
+                signature: 'sig_1',
+              },
+              {type: 'text', text: 'First answer'},
+            ],
+          },
+          {
+            role: 'user',
+            content: [{type: 'text', text: 'Follow-up question'}],
+          },
+        ],
+      }),
+      undefined,
+    );
+  });
 });

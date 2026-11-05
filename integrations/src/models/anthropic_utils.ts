@@ -10,11 +10,13 @@ import {
   genaiSchemaToJsonSchema,
   type LlmRequest,
   type LlmResponse,
+  logger,
 } from '@google/adk';
 import {
   type Content,
   FinishReason,
   type FunctionDeclaration,
+  type GenerateContentConfig,
   type Part,
 } from '@google/genai';
 
@@ -31,9 +33,85 @@ export enum ClaudeRole {
  */
 export type ClaudeMessageBlockParam =
   | Anthropic.TextBlockParam
+  | Anthropic.ThinkingBlockParam
+  | Anthropic.RedactedThinkingBlockParam
   | Anthropic.ImageBlockParam
   | Anthropic.ToolUseBlockParam
   | Anthropic.ToolResultBlockParam;
+
+const PART_CONTENT_PAYLOAD_FIELDS = [
+  'audioTranscription',
+  'codeExecutionResult',
+  'executableCode',
+  'fileData',
+  'functionCall',
+  'functionResponse',
+  'inlineData',
+  'toolCall',
+  'toolResponse',
+] as const satisfies ReadonlyArray<keyof Part>;
+
+function hasPartContentPayload(part: Part): boolean {
+  return PART_CONTENT_PAYLOAD_FIELDS.some((field) => Boolean(part[field]));
+}
+
+function isEmptyTextPart(part: Part): boolean {
+  if (part.text !== '' || part.thoughtSignature) {
+    return false;
+  }
+  return !hasPartContentPayload(part);
+}
+
+function isContentFreeSignature(part: Part): boolean {
+  if (!part.thoughtSignature || part.thought || part.text) {
+    return false;
+  }
+  return !hasPartContentPayload(part);
+}
+
+function isEmptyOrWhitespaceTextBlock(block: Anthropic.ContentBlock): boolean {
+  return block.type === 'text' && block.text.trim().length === 0;
+}
+
+/**
+ * Maps `config.thinkingConfig` to an Anthropic `thinking` request parameter.
+ */
+export function buildAnthropicThinkingParam(
+  config?: GenerateContentConfig,
+):
+  | Anthropic.ThinkingConfigEnabled
+  | Anthropic.ThinkingConfigDisabled
+  | Anthropic.ThinkingConfigAdaptive
+  | undefined {
+  if (!config?.thinkingConfig) {
+    return undefined;
+  }
+
+  const thinkingBudget = config.thinkingConfig.thinkingBudget;
+  if (thinkingBudget === undefined || thinkingBudget === null) {
+    throw new Error(
+      'thinkingBudget must be set explicitly when thinkingConfig is provided for Claude models. ' +
+        'Use 0 to disable thinking, a negative number (such as -1) for adaptive thinking, ' +
+        'or a positive integer (>= 1024) for a manual token budget.',
+    );
+  }
+
+  if (thinkingBudget === 0) {
+    return {type: 'disabled'};
+  }
+
+  if (thinkingBudget < 0) {
+    return {
+      type: 'adaptive',
+      display: 'summarized',
+    };
+  }
+
+  return {
+    type: 'enabled',
+    budget_tokens: thinkingBudget,
+  };
+}
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -272,14 +350,28 @@ export class ToolUseIdSanitizer {
 /**
  * Converts an ADK `Part` into an Anthropic content block parameter.
  *
- * A `thoughtSignature` on a text, function call or function response part is
- * dropped, because other models (such as Gemini) attach signatures to those
- * parts and Claude cannot verify them.
+ * Parts with `thought: true` become `thinking` or `redacted_thinking` blocks.
+ * A `thoughtSignature` on a non-thought text, function call or function
+ * response part is dropped, because other models (such as Gemini) attach
+ * signatures to those parts and Claude cannot verify them.
  */
 export function partToMessageBlock(
   part: Part,
   sanitizer: ToolUseIdSanitizer = new ToolUseIdSanitizer(),
 ): ClaudeMessageBlockParam {
+  if (part.thought && part.text) {
+    return {
+      type: 'thinking',
+      thinking: part.text,
+      signature: part.thoughtSignature ?? '',
+    };
+  }
+  if (part.thought && part.thoughtSignature) {
+    return {
+      type: 'redacted_thinking',
+      data: part.thoughtSignature,
+    };
+  }
   if (part.thought) {
     throw new Error('Part kind "thought" is not supported by Claude.');
   }
@@ -328,11 +420,32 @@ export function contentToMessageParam(
   content: Content,
   sanitizer: ToolUseIdSanitizer = new ToolUseIdSanitizer(),
 ): Anthropic.MessageParam {
+  const messageBlocks: ClaudeMessageBlockParam[] = [];
+  let hadEmptyText = false;
+
+  for (const part of content.parts ?? []) {
+    if (isContentFreeSignature(part)) {
+      logger.warn('Dropping a thought signature from another model.');
+      continue;
+    }
+
+    if (isEmptyTextPart(part)) {
+      logger.debug('Skipping empty text part for Claude request.');
+      hadEmptyText = true;
+      continue;
+    }
+
+    messageBlocks.push(partToMessageBlock(part, sanitizer));
+  }
+
+  const role = toClaudeRole(content.role);
+  if (messageBlocks.length === 0 && hadEmptyText && role === ClaudeRole.USER) {
+    messageBlocks.push({type: 'text', text: '.'});
+  }
+
   return {
-    role: toClaudeRole(content.role),
-    content: (content.parts ?? []).map((part) =>
-      partToMessageBlock(part, sanitizer),
-    ),
+    role,
+    content: messageBlocks,
   };
 }
 
@@ -340,6 +453,22 @@ export function contentToMessageParam(
  * Converts an Anthropic response `ContentBlock` into an ADK `Part`.
  */
 export function contentBlockToPart(contentBlock: Anthropic.ContentBlock): Part {
+  if (contentBlock.type === 'thinking') {
+    const part: Part = {
+      text: contentBlock.thinking,
+      thought: true,
+    };
+    if (contentBlock.signature) {
+      part.thoughtSignature = contentBlock.signature;
+    }
+    return part;
+  }
+  if (contentBlock.type === 'redacted_thinking') {
+    return {
+      thought: true,
+      thoughtSignature: contentBlock.data,
+    };
+  }
   if (contentBlock.type === 'text') {
     return {text: contentBlock.text};
   }
@@ -362,22 +491,42 @@ export function contentBlockToPart(contentBlock: Anthropic.ContentBlock): Part {
   );
 }
 
+function extractThinkingTokenCount(
+  usage?: Anthropic.Usage | null,
+): number | undefined {
+  const thinkingTokens = usage?.output_tokens_details?.thinking_tokens;
+  if (typeof thinkingTokens !== 'number') {
+    return undefined;
+  }
+  const outputTokens = usage?.output_tokens;
+  if (typeof outputTokens !== 'number') {
+    return thinkingTokens;
+  }
+  return Math.min(thinkingTokens, outputTokens);
+}
+
 /**
  * Converts an Anthropic `Message` into an {@link LlmResponse}.
  */
 export function messageToGenerateContentResponse(
   message: Anthropic.Message,
 ): LlmResponse {
+  const thinkingTokens = extractThinkingTokenCount(message.usage);
   return {
     content: {
       role: 'model',
-      parts: message.content.map(contentBlockToPart),
+      parts: message.content
+        .filter((block) => !isEmptyOrWhitespaceTextBlock(block))
+        .map(contentBlockToPart),
     },
     finishReason: toGoogleGenaiFinishReason(message.stop_reason),
     usageMetadata: {
       promptTokenCount: message.usage.input_tokens,
-      candidatesTokenCount: message.usage.output_tokens,
+      candidatesTokenCount: message.usage.output_tokens - (thinkingTokens ?? 0),
       totalTokenCount: message.usage.input_tokens + message.usage.output_tokens,
+      ...(thinkingTokens !== undefined
+        ? {thoughtsTokenCount: thinkingTokens}
+        : {}),
     },
   };
 }
