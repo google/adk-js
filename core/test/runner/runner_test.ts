@@ -1037,6 +1037,29 @@ describe('Runner with plugins', () => {
     expect(event.author).toEqual('model');
   });
 
+  it('should run onEventCallback on the beforeRunCallback early exit', async () => {
+    plugin.enableBeforeRunCallback = true;
+    plugin.enableEventCallback = true;
+
+    const events = await runTest();
+    expect(events.length).toBe(1);
+    expect(events[0].content?.parts?.[0].text).toEqual(
+      MockPlugin.ON_EVENT_CALLBACK_MSG,
+    );
+    expect(events[0].author).toEqual('model');
+
+    const session = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    const persistedEvent = session!.events[1];
+    expect(persistedEvent.id).toEqual(events[0].id);
+    expect(persistedEvent.content!.parts![0].text).toEqual(
+      MockPlugin.ON_EVENT_CALLBACK_MSG,
+    );
+  });
+
   it('should call afterRunCallback', async () => {
     await runTest();
     expect(plugin.afterRunCallbackCalled).toBe(true);
