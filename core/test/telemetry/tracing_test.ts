@@ -281,6 +281,41 @@ describe('Telemetry Tracing Functions', () => {
       });
       expect(mockSpan.recordException).not.toHaveBeenCalled();
     });
+
+    // A browser has no `process` global. A throw here, after the tool had run,
+    // replaced the tool's result with an error response. The global is deleted
+    // rather than stubbed to undefined, which would not throw.
+    it('traces a tool call without a process global', () => {
+      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+
+      const descriptor = Object.getOwnPropertyDescriptor(
+        globalThis,
+        'process',
+      )!;
+      delete (globalThis as {process?: unknown}).process;
+      try {
+        traceToolCall({
+          tool: mockTool,
+          args: {param1: 'value1'},
+          functionResponseEvent: mockEvent,
+          invocationContext: mockInvocationContext,
+        });
+      } finally {
+        Object.defineProperty(globalThis, 'process', descriptor);
+      }
+
+      expect(mockSpan.setAttributes).toHaveBeenCalledWith(
+        expect.objectContaining({
+          'gcp.vertex.agent.tool_call_args': expect.stringContaining('param1'),
+        }),
+      );
+      expect(mockSpan.setAttributes).toHaveBeenCalledWith(
+        expect.objectContaining({
+          'gcp.vertex.agent.tool_response':
+            expect.stringContaining('test-result'),
+        }),
+      );
+    });
   });
 
   describe('traceMergedToolCalls', () => {

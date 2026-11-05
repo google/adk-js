@@ -13,6 +13,7 @@
  */
 import {
   BaseLlm,
+  FunctionTool,
   InMemorySessionService,
   LlmAgent,
   Runner,
@@ -20,19 +21,33 @@ import {
 
 const APP_NAME = 'web_app';
 const USER_ID = 'web_user';
+const ADD_PROMPT = 'add 2 and 3';
 
-/** Stands in for a real model, as the Node integration tests do. */
+/**
+ * Stands in for a real model, as the Node integration tests do.
+ *
+ * Asked to add, it calls the `add` tool and then reports what the tool
+ * returned, error included. Anything else gets a fixed greeting.
+ */
 class MockLlm extends BaseLlm {
   static supportedModels = ['mock-web-model'];
 
-  async *generateContentAsync() {
-    yield {
-      content: {
-        role: 'model',
-        parts: [{text: 'Hello from the agent'}],
-      },
-      turnComplete: true,
-    };
+  async *generateContentAsync(llmRequest) {
+    const lastPart = llmRequest.contents.at(-1)?.parts?.at(-1);
+    const toolResult = lastPart?.functionResponse?.response;
+
+    let part = {text: 'Hello from the agent'};
+    if (lastPart?.text === ADD_PROMPT) {
+      part = {functionCall: {name: 'add', args: {a: 2, b: 3}}};
+    } else if (toolResult) {
+      part = {
+        text: toolResult.error
+          ? `Tool failed: ${toolResult.error}`
+          : `The sum is ${toolResult.sum}`,
+      };
+    }
+
+    yield {content: {role: 'model', parts: [part]}, turnComplete: true};
   }
 
   async connect() {
@@ -49,10 +64,22 @@ function addMessage(author, text) {
   messages.appendChild(li);
 }
 
+const add = new FunctionTool({
+  name: 'add',
+  description: 'Adds two numbers.',
+  parameters: {
+    type: 'OBJECT',
+    properties: {a: {type: 'NUMBER'}, b: {type: 'NUMBER'}},
+    required: ['a', 'b'],
+  },
+  execute: ({a, b}) => ({sum: a + b}),
+});
+
 const agent = new LlmAgent({
   name: 'web_agent',
   model: new MockLlm({model: 'mock-web-model'}),
   instruction: 'You are a helpful assistant.',
+  tools: [add],
 });
 
 const sessionService = new InMemorySessionService();
