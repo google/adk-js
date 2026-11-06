@@ -580,6 +580,38 @@ describe('CLI Entrypoint', () => {
         stagingBucket: 'my-bucket',
       });
     });
+
+    it('should pass otelToCloud to deployToAgentEngine when --otel_to_cloud is set', async () => {
+      await parse(['deploy', 'agent_engine', '--otel_to_cloud']);
+
+      expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
+        otelToCloud: true,
+      });
+    });
+
+    it('should pass otelToCloud to deployToAgentEngine when --otel_to_cloud=true is set', async () => {
+      await parse(['deploy', 'agent_engine', '--otel_to_cloud=true']);
+
+      expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
+        otelToCloud: true,
+      });
+    });
+
+    it('should leave otelToCloud unset when --otel_to_cloud is absent', async () => {
+      await parse(['deploy', 'agent_engine']);
+
+      expect(
+        (deployToAgentEngine as Mock).mock.calls[0][0].otelToCloud,
+      ).toBeUndefined();
+    });
+
+    it('should leave otelToCloud unset when --otel_to_cloud=false is set', async () => {
+      await parse(['deploy', 'agent_engine', '--otel_to_cloud=false']);
+
+      expect(
+        (deployToAgentEngine as Mock).mock.calls[0][0].otelToCloud,
+      ).toBeUndefined();
+    });
   });
 
   describe('command: deploy reasoning_engine', () => {
@@ -614,6 +646,22 @@ describe('CLI Entrypoint', () => {
       expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
         stagingBucket: 'my-bucket',
       });
+    });
+
+    it('should pass otelToCloud to deployToAgentEngine when --otel_to_cloud is set', async () => {
+      await parse(['deploy', 'reasoning_engine', '--otel_to_cloud']);
+
+      expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
+        otelToCloud: true,
+      });
+    });
+
+    it('should leave otelToCloud unset when --otel_to_cloud is absent', async () => {
+      await parse(['deploy', 'reasoning_engine']);
+
+      expect(
+        (deployToAgentEngine as Mock).mock.calls[0][0].otelToCloud,
+      ).toBeUndefined();
     });
   });
   describe('additional CLI options and eval command', () => {
