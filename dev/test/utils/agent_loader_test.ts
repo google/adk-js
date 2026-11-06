@@ -1380,6 +1380,121 @@ describe('AgentLoader', () => {
         );
         await loader.disposeAll();
       });
+
+      // reference: test_loading_order_preference
+      it('prefers a top-level agent module over a subdirectory with the same name', async () => {
+        const agentName = 'order_test_agent';
+        const moduleCode = `
+          const {BaseAgent} = require('@google/adk');
+          class ModuleAgent extends BaseAgent {
+            constructor() {
+              super({name: '${agentName}_module_version'});
+            }
+          }
+          exports.rootAgent = new ModuleAgent();
+        `;
+        await fs.writeFile(
+          path.join(tempAgentsDir, `${agentName}.js`),
+          moduleCode,
+        );
+
+        const packageDir = path.join(tempAgentsDir, agentName);
+        await fs.mkdir(packageDir, {recursive: true});
+        const submoduleCode = `
+          const {BaseAgent} = require('@google/adk');
+          class SubmoduleAgent extends BaseAgent {
+            constructor() {
+              super({name: '${agentName}_submodule_version'});
+            }
+          }
+          exports.rootAgent = new SubmoduleAgent();
+        `;
+        await fs.writeFile(path.join(packageDir, 'agent.js'), submoduleCode);
+
+        const loader = new AgentLoader(tempAgentsDir);
+        const agent = await loader.loadAgent(agentName);
+
+        expect(agent.name).toBe(`${agentName}_module_version`);
+        const compiledEntries = (esbuild.build as Mock).mock.calls.map(
+          (call: Array<{entryPoints: string[]}>) => call[0].entryPoints[0],
+        );
+        expect(compiledEntries).not.toContain(
+          path.join(packageDir, 'agent.js'),
+        );
+        await loader.disposeAll();
+      });
+
+      it('falls back to a subdirectory agent when a same-named top-level file exports no root agent', async () => {
+        const agentName = 'fallback_dir_agent';
+        await fs.writeFile(
+          path.join(tempAgentsDir, `${agentName}.js`),
+          'exports.helperValue = 123;',
+        );
+
+        const packageDir = path.join(tempAgentsDir, agentName);
+        await fs.mkdir(packageDir, {recursive: true});
+        const submoduleCode = `
+          const {BaseAgent} = require('@google/adk');
+          class SubmoduleAgent extends BaseAgent {
+            constructor() {
+              super({name: '${agentName}_submodule_version'});
+            }
+          }
+          exports.rootAgent = new SubmoduleAgent();
+        `;
+        await fs.writeFile(path.join(packageDir, 'agent.js'), submoduleCode);
+        mockCompiledPackageFixture(agentName, 'fallback_dir_agent_sub.cjs');
+
+        const loader = new AgentLoader(tempAgentsDir);
+        const agent = await loader.loadAgent(agentName);
+
+        expect(agent.name).toBe(`${agentName}_submodule_version`);
+        await loader.disposeAll();
+      });
+
+      // reference: test_agent_internal_module_not_found_error
+      it('surfaces a missing internal dependency when an agent imports a non-existent module', async () => {
+        const agentName = 'importer_agent';
+        const importerCode = `
+          const {BaseAgent} = require('@google/adk');
+          require('non_existent_module');
+          class ImporterAgent extends BaseAgent {
+            constructor() {
+              super({name: '${agentName}'});
+            }
+          }
+          exports.rootAgent = new ImporterAgent();
+        `;
+        await fs.writeFile(
+          path.join(tempAgentsDir, `${agentName}.js`),
+          importerCode,
+        );
+
+        const loader = new AgentLoader(tempAgentsDir);
+        await expect(loader.loadAgent(agentName)).rejects.toThrow(
+          /Agent 'importer_agent' failed to load[\s\S]*Cannot find module 'non_existent_module'/,
+        );
+        await loader.disposeAll();
+      });
+
+      // reference: test_agent_internal_import_error
+      it('surfaces a syntax error when an agent module contains invalid code', async () => {
+        const agentName = 'syntax_error_agent';
+        const syntaxErrorCode = `
+          const {BaseAgent} = require('@google/adk');
+          this is not valid javascript code
+        `;
+        await fs.writeFile(
+          path.join(tempAgentsDir, `${agentName}.js`),
+          syntaxErrorCode,
+        );
+
+        const loader = new AgentLoader(tempAgentsDir);
+        await expect(loader.loadAgent(agentName)).rejects.toThrow(
+          /Agent 'syntax_error_agent' failed to load/,
+        );
+        await loader.disposeAll();
+      });
     });
   });
 

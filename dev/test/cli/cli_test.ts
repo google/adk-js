@@ -797,6 +797,111 @@ describe('CLI Entrypoint', () => {
         fs.rmSync(tempDir, {recursive: true, force: true});
       }
     });
+
+    it('runs the eval command on a structured EvalSet file with case selection', async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-cli-structured-eval-'),
+      );
+      const agentDir = path.join(tempDir, 'my_structured_eval_app');
+      fs.mkdirSync(agentDir, {recursive: true});
+
+      const agentFile = path.join(agentDir, 'agent.js');
+      fs.writeFileSync(
+        agentFile,
+        [
+          `import {BaseAgent, createEvent} from '@google/adk';`,
+          `class EvalAgent extends BaseAgent {`,
+          `  constructor() { super({name: 'my_structured_eval_agent'}); }`,
+          `  async *runAsyncImpl(ctx) {`,
+          `    const text = ctx.userContent?.parts?.[0]?.text ?? '';`,
+          `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'Echo: ' + text}]}});`,
+          `  }`,
+          `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+          `}`,
+          `export const rootAgent = new EvalAgent();`,
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const evalSetFile = path.join(tempDir, 'structured_set.evalset.json');
+      fs.writeFileSync(
+        evalSetFile,
+        JSON.stringify({
+          evalSetId: 'structured_set',
+          name: 'structured_set',
+          evalCases: [
+            {
+              evalId: 'pass_case',
+              conversation: [
+                {
+                  invocationId: 'inv_1',
+                  userContent: {role: 'user', parts: [{text: 'ping'}]},
+                  finalResponse: {
+                    role: 'model',
+                    parts: [{text: 'Echo: ping'}],
+                  },
+                  intermediateData: {
+                    toolUses: [],
+                    intermediateResponses: [],
+                  },
+                },
+              ],
+              sessionInput: {
+                appName: 'my_structured_eval_app',
+                userId: 'user_1',
+                state: {},
+              },
+            },
+            {
+              evalId: 'fail_case',
+              conversation: [
+                {
+                  invocationId: 'inv_2',
+                  userContent: {role: 'user', parts: [{text: 'ping'}]},
+                  finalResponse: {
+                    role: 'model',
+                    parts: [{text: 'totally different response'}],
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+        'utf-8',
+      );
+
+      const stdoutChunks: string[] = [];
+      const stdoutSpy = vi
+        .spyOn(process.stdout, 'write')
+        .mockImplementation((chunk: string | Uint8Array) => {
+          stdoutChunks.push(String(chunk));
+          return true;
+        });
+
+      try {
+        await parse(['eval', agentDir, `${evalSetFile}:pass_case`]);
+
+        const output = stdoutChunks.join('');
+        expect(output).toContain('Eval Run Summary');
+        expect(output).toContain('Tests passed: 1');
+        expect(output).toContain('Tests failed: 0');
+
+        const manager = new LocalEvalSetResultsManager(tempDir);
+        const resultIds = manager.listEvalSetResults('my_structured_eval_app');
+        expect(resultIds).toHaveLength(1);
+
+        const storedResult = manager.getEvalSetResult(
+          'my_structured_eval_app',
+          resultIds[0],
+        );
+        expect(storedResult.evalSetId).toBe('structured_set');
+        expect(storedResult.evalCaseResults).toHaveLength(1);
+        expect(storedResult.evalCaseResults[0].eval_id).toBe('pass_case');
+      } finally {
+        stdoutSpy.mockRestore();
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
+    });
   });
 });
 

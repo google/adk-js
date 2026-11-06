@@ -12,11 +12,10 @@ import {
   BaseSessionService,
   bearerTokenUserBuilder,
   closeRunners,
-  convertSessionToEvalFormat,
+  convertSessionToEvalInvocations,
   createEmptyState,
   EVAL_SESSION_ID_PREFIX,
   EvalCaseResult,
-  EvalEntry,
   EvalMetric,
   Event,
   getFunctionCalls,
@@ -30,8 +29,10 @@ import {
   LiveRequestQueue,
   loadDotenvForAgent,
   LocalEvalSetResultsManager,
+  LocalEvalSetsManager,
   Logger,
   LogLevel,
+  normalizeEvalCase,
   NotFoundError,
   publicEvent,
   publicSession,
@@ -203,6 +204,7 @@ export class AdkApiServer {
   private readonly sessionService: BaseSessionService;
   private readonly memoryService: BaseMemoryService;
   private readonly artifactService: BaseArtifactService;
+  private readonly evalSetsManager: LocalEvalSetsManager;
   private readonly evalSetResultsManager: LocalEvalSetResultsManager;
   private readonly serveDebugUI: boolean;
   private readonly allowedOrigins: string[];
@@ -230,6 +232,9 @@ export class AdkApiServer {
     this.memoryService = options.memoryService ?? new InMemoryMemoryService();
     this.artifactService =
       options.artifactService ?? new InMemoryArtifactService();
+    this.evalSetsManager = new LocalEvalSetsManager(
+      options.agentsDir ?? process.cwd(),
+    );
     this.evalSetResultsManager = new LocalEvalSetResultsManager(
       options.agentsDir ?? process.cwd(),
     );
@@ -974,15 +979,7 @@ export class AdkApiServer {
     );
 
     // --------------------- Eval Sets related endpoints -----------------------
-    const EVAL_SET_FILE_EXTENSION = '.evalset.json';
     const VALID_EVAL_ID_PATTERN = /^[a-zA-Z0-9_]+$/;
-    const getEvalSetFilePath = (appName: string, evalSetId: string): string => {
-      return path.join(
-        this.agentsDir ?? process.cwd(),
-        appName,
-        `${evalSetId}${EVAL_SET_FILE_EXTENSION}`,
-      );
-    };
 
     app.post(
       '/apps/:appName/eval_sets/:evalSetId',
@@ -990,24 +987,13 @@ export class AdkApiServer {
         try {
           const appName = req.params['appName'];
           const evalSetId = req.params['evalSetId'];
-          if (!VALID_EVAL_ID_PATTERN.test(evalSetId)) {
-            return res.status(400).json({
-              error: `Invalid eval set ID. Eval set ID should have the \`${VALID_EVAL_ID_PATTERN}\` format`,
-            });
-          }
-
-          const newEvalSetPath = getEvalSetFilePath(appName, evalSetId);
-          if (fs.existsSync(newEvalSetPath)) {
-            return res.status(400).json({
-              error: `Eval set ${evalSetId} already exists.`,
-            });
-          }
-
-          fs.mkdirSync(path.dirname(newEvalSetPath), {recursive: true});
-          fs.writeFileSync(newEvalSetPath, '[]', 'utf-8');
+          this.evalSetsManager.createEvalSet(appName, evalSetId);
           return res.status(200).json({});
         } catch (e: unknown) {
-          const error = `Failed to create eval set: ${e}`;
+          if (e instanceof InputValidationError) {
+            return res.status(400).json({error: e.message});
+          }
+          const error = `Failed to create eval set: ${getErrorMessage(e)}`;
           this.logger.error(error);
           return res.status(500).json({error});
         }
@@ -1017,23 +1003,12 @@ export class AdkApiServer {
     app.get('/apps/:appName/eval_sets', (req: Request, res: Response) => {
       try {
         const appName = req.params['appName'];
-        const evalSetFolderPath = path.join(
-          this.agentsDir ?? process.cwd(),
-          appName,
-        );
-        if (!fs.existsSync(evalSetFolderPath)) {
-          return res.json([]);
-        }
-
-        const evalSets: string[] = [];
-        for (const file of fs.readdirSync(evalSetFolderPath)) {
-          if (file.endsWith(EVAL_SET_FILE_EXTENSION)) {
-            evalSets.push(path.basename(file, EVAL_SET_FILE_EXTENSION));
-          }
-        }
-        return res.json(evalSets.sort());
+        return res.json(this.evalSetsManager.listEvalSets(appName));
       } catch (e: unknown) {
-        const error = `Failed to list eval sets: ${e}`;
+        if (e instanceof InputValidationError) {
+          return res.status(400).json({error: e.message});
+        }
+        const error = `Failed to list eval sets: ${getErrorMessage(e)}`;
         this.logger.error(error);
         return res.status(500).json({error});
       }
@@ -1058,20 +1033,19 @@ export class AdkApiServer {
             });
           }
 
-          const evalSetFilePath = getEvalSetFilePath(appName, evalSetId);
-          if (!fs.existsSync(evalSetFilePath)) {
+          const evalSetData = this.evalSetsManager.getEvalSet(
+            appName,
+            evalSetId,
+          );
+          if (!evalSetData) {
             return res.status(400).json({
-              error: `Eval set ${evalSetId} not found.`,
+              error: `Eval set \`${evalSetId}\` not found.`,
             });
           }
 
-          const evalSetData = JSON.parse(
-            fs.readFileSync(evalSetFilePath, 'utf-8'),
-          ) as EvalEntry[];
-
-          if (evalSetData.some((x) => x.name === evalId)) {
+          if (evalSetData.evalCases.some((x) => x.evalId === evalId)) {
             return res.status(400).json({
-              error: `Eval id ${evalId} already exists in ${evalSetId} eval set.`,
+              error: `Eval id \`${evalId}\` already exists in \`${evalSetId}\` eval set.`,
             });
           }
 
@@ -1086,7 +1060,7 @@ export class AdkApiServer {
               .json({error: `Session not found: ${sessionId}`});
           }
 
-          const testData = convertSessionToEvalFormat(session);
+          const invocations = convertSessionToEvalInvocations(session);
           await using agentFile = await this.agentLoader.getAgentFile(appName);
           const loaded = await agentFile.load();
           const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
@@ -1096,24 +1070,23 @@ export class AdkApiServer {
               ? createEmptyState(rootAgent, session.state)
               : {...session.state};
 
-          evalSetData.push({
-            name: evalId,
-            data: testData,
-            initial_session: {
+          this.evalSetsManager.addEvalCase(appName, evalSetId, {
+            evalId,
+            conversation: invocations,
+            sessionInput: {
+              appName,
+              userId,
               state: initialSessionState,
-              app_name: appName,
-              user_id: userId,
             },
+            creationTimestamp:
+              (performance.timeOrigin + performance.now()) / 1000,
           });
-
-          fs.writeFileSync(
-            evalSetFilePath,
-            JSON.stringify(evalSetData, null, 2),
-            'utf-8',
-          );
           return res.status(200).json({});
         } catch (e: unknown) {
-          const error = `Failed to add session to eval set: ${e}`;
+          if (e instanceof InputValidationError || e instanceof NotFoundError) {
+            return res.status(400).json({error: e.message});
+          }
+          const error = `Failed to add session to eval set: ${getErrorMessage(e)}`;
           this.logger.error(error);
           return res.status(500).json({error});
         }
@@ -1126,44 +1099,111 @@ export class AdkApiServer {
         try {
           const appName = req.params['appName'];
           const evalSetId = req.params['evalSetId'];
-          const evalSetFilePath = getEvalSetFilePath(appName, evalSetId);
-          if (!fs.existsSync(evalSetFilePath)) {
+          const evalSetData = this.evalSetsManager.getEvalSet(
+            appName,
+            evalSetId,
+          );
+          if (!evalSetData) {
             return res.status(400).json({
-              error: `Eval set ${evalSetId} not found.`,
+              error: `Eval set \`${evalSetId}\` not found.`,
             });
           }
 
-          const evalSetData = JSON.parse(
-            fs.readFileSync(evalSetFilePath, 'utf-8'),
-          ) as EvalEntry[];
-          return res.json(evalSetData.map((x) => x.name).sort());
+          return res.json(evalSetData.evalCases.map((x) => x.evalId).sort());
         } catch (e: unknown) {
-          const error = `Failed to list evals: ${e}`;
+          if (e instanceof InputValidationError) {
+            return res.status(400).json({error: e.message});
+          }
+          const error = `Failed to list evals: ${getErrorMessage(e)}`;
           this.logger.error(error);
           return res.status(500).json({error});
         }
       },
     );
 
-    // TODO: Implement eval set related endpoints.
     app.get(
       '/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
       (req: Request, res: Response) => {
-        return res.status(501).json({error: 'Not implemented'});
+        try {
+          const appName = req.params['appName'];
+          const evalSetId = req.params['evalSetId'];
+          const evalCaseId = req.params['evalCaseId'];
+          const evalCase = this.evalSetsManager.getEvalCase(
+            appName,
+            evalSetId,
+            evalCaseId,
+          );
+          if (evalCase) {
+            return res.json(evalCase);
+          }
+          return res.status(404).json({
+            error: `Eval set \`${evalSetId}\` or Eval \`${evalCaseId}\` not found.`,
+          });
+        } catch (e: unknown) {
+          if (e instanceof NotFoundError || e instanceof InputValidationError) {
+            return res.status(404).json({error: e.message});
+          }
+          const error = `Failed to get eval case: ${getErrorMessage(e)}`;
+          this.logger.error(error);
+          return res.status(500).json({error});
+        }
       },
     );
 
     app.put(
       '/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
       (req: Request, res: Response) => {
-        return res.status(501).json({error: 'Not implemented'});
+        try {
+          const appName = req.params['appName'];
+          const evalSetId = req.params['evalSetId'];
+          const evalCaseId = req.params['evalCaseId'];
+          const updatedEvalCase = normalizeEvalCase(req.body ?? {});
+
+          if (updatedEvalCase.evalId && updatedEvalCase.evalId !== evalCaseId) {
+            return res.status(400).json({
+              error:
+                'Eval id in EvalCase should match the eval id in the API route.',
+            });
+          }
+
+          updatedEvalCase.evalId = evalCaseId;
+          this.evalSetsManager.updateEvalCase(
+            appName,
+            evalSetId,
+            updatedEvalCase,
+          );
+          return res.status(200).json({});
+        } catch (e: unknown) {
+          if (e instanceof NotFoundError) {
+            return res.status(404).json({error: e.message});
+          }
+          if (e instanceof InputValidationError) {
+            return res.status(400).json({error: e.message});
+          }
+          const error = `Failed to update eval case: ${getErrorMessage(e)}`;
+          this.logger.error(error);
+          return res.status(500).json({error});
+        }
       },
     );
 
     app.delete(
       '/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
       (req: Request, res: Response) => {
-        return res.status(501).json({error: 'Not implemented'});
+        try {
+          const appName = req.params['appName'];
+          const evalSetId = req.params['evalSetId'];
+          const evalCaseId = req.params['evalCaseId'];
+          this.evalSetsManager.deleteEvalCase(appName, evalSetId, evalCaseId);
+          return res.status(200).json({});
+        } catch (e: unknown) {
+          if (e instanceof NotFoundError || e instanceof InputValidationError) {
+            return res.status(404).json({error: e.message});
+          }
+          const error = `Failed to delete eval case: ${getErrorMessage(e)}`;
+          this.logger.error(error);
+          return res.status(500).json({error});
+        }
       },
     );
 
@@ -1173,10 +1213,10 @@ export class AdkApiServer {
         try {
           const appName = req.params['appName'];
           const evalSetId = req.params['evalSetId'];
-          const evalSetFilePath = getEvalSetFilePath(appName, evalSetId);
-          if (!fs.existsSync(evalSetFilePath)) {
+          const evalSet = this.evalSetsManager.getEvalSet(appName, evalSetId);
+          if (!evalSet) {
             return res.status(400).json({
-              error: `Eval set ${evalSetId} not found.`,
+              error: `Eval set \`${evalSetId}\` not found.`,
             });
           }
 
@@ -1194,14 +1234,10 @@ export class AdkApiServer {
             ? ((body['evalMetrics'] ?? body['eval_metrics']) as EvalMetric[])
             : [];
 
-          const evalSetData = JSON.parse(
-            fs.readFileSync(evalSetFilePath, 'utf-8'),
-          ) as EvalEntry[];
-
           const evalCases =
             evalIds.length > 0
-              ? evalSetData.filter((e) => evalIds.includes(e.name))
-              : evalSetData;
+              ? evalSet.evalCases.filter((e) => evalIds.includes(e.evalId))
+              : evalSet.evalCases;
 
           await using agentFile = await this.agentLoader.getAgentFile(appName);
           const loaded = await agentFile.load();

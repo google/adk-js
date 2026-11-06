@@ -701,16 +701,23 @@ export class AgentLoader {
         if (fileOrDir.isFile && isJsFile(fileOrDir.ext)) {
           return this.loadAgentFromFile(fileOrDir);
         }
+      }),
+    );
 
-        if (fileOrDir.isDirectory) {
-          if (
-            fileOrDir.name === 'node_modules' ||
-            fileOrDir.name.startsWith('.')
-          ) {
-            return;
-          }
-          return this.loadAgentFromDirectory(fileOrDir);
+    await Promise.all(
+      files.map(async (fileOrDir: FileMetadata) => {
+        if (!fileOrDir.isDirectory) {
+          return;
         }
+        if (
+          fileOrDir.name === 'node_modules' ||
+          fileOrDir.name.startsWith('.') ||
+          fileOrDir.name in this.preloadedAgents ||
+          fileOrDir.name in this.loadFailures
+        ) {
+          return;
+        }
+        return this.loadAgentFromDirectory(fileOrDir);
       }),
     );
 
