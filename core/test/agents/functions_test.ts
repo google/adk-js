@@ -497,6 +497,90 @@ describe('handleFunctionCallList', () => {
     expect(executionSpan.ended).toBe(true);
   });
 
+  it('records tool name, arguments, and result on execution span when content capture is enabled', async () => {
+    vi.stubEnv(
+      'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT',
+      'SPAN_ONLY',
+    );
+    const echoTool = new FunctionTool({
+      name: 'echoTool',
+      description: 'echoes arguments',
+      execute: async (args) => ({echo: args}),
+    });
+
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [
+        {
+          id: 'call_1',
+          name: 'echoTool',
+          args: {query: 'test query', count: 42},
+        },
+      ],
+      toolsDict: {echoTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const spans = spanExporter
+      .getFinishedSpans()
+      .filter((s) => s.name === 'execute_tool echoTool');
+    expect(spans).toHaveLength(1);
+    const executionSpan = spans[0];
+    expect(executionSpan.attributes['gen_ai.tool.name']).toBe('echoTool');
+    expect(executionSpan.attributes['gen_ai.tool.call.arguments']).toBe(
+      JSON.stringify({query: 'test query', count: 42}),
+    );
+    expect(executionSpan.attributes['gen_ai.tool.call.result']).toContain(
+      'test query',
+    );
+  });
+
+  it('preserves unescaped non-ASCII characters in tool call arguments', async () => {
+    vi.stubEnv(
+      'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT',
+      'SPAN_ONLY',
+    );
+    const unicodeTool = new FunctionTool({
+      name: 'unicodeTool',
+      description: 'handles unicode arguments',
+      execute: async (args) => ({received: args}),
+    });
+
+    const nonAsciiArgs = {
+      japanese: '日本語テスト',
+      german: 'München Größe',
+      emoji: '🚀',
+    };
+
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [
+        {
+          id: 'call_unicode',
+          name: 'unicodeTool',
+          args: nonAsciiArgs,
+        },
+      ],
+      toolsDict: {unicodeTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const spans = spanExporter
+      .getFinishedSpans()
+      .filter((s) => s.name === 'execute_tool unicodeTool');
+    expect(spans).toHaveLength(1);
+    const executionSpan = spans[0];
+    const recordedArgs = executionSpan.attributes[
+      'gen_ai.tool.call.arguments'
+    ] as string;
+    expect(recordedArgs).toContain('日本語テスト');
+    expect(recordedArgs).toContain('München Größe');
+    expect(recordedArgs).toContain('🚀');
+    expect(recordedArgs).not.toContain('\\u');
+  });
+
   it('should return error message when error is thrown during tool execution, when no plugin onToolErrorCallback is provided', async () => {
     const errorFunctionCall: FunctionCall = {
       id: randomIdForTestingOnly(),

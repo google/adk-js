@@ -79,7 +79,69 @@ describe('MCPSessionManager', () => {
       command: 'test-command',
       args: ['arg1', 'arg2'],
     });
-    expect(client.connect).toHaveBeenCalled();
+    expect(client.connect).toHaveBeenCalledWith(expect.any(Object), {
+      timeout: 5000,
+    });
+  });
+
+  it('creates an stdio client with custom timeout', async () => {
+    const manager = new MCPSessionManager({
+      type: 'StdioConnectionParams',
+      serverParams: {
+        command: 'test-command',
+      },
+      timeout: 10,
+    });
+
+    const client = await manager.createSession();
+
+    expect(client.connect).toHaveBeenCalledWith(expect.any(Object), {
+      timeout: 10000,
+    });
+  });
+
+  describe('getRequestOptions', () => {
+    it('returns default timeout for stdio without signal', () => {
+      const manager = new MCPSessionManager({
+        type: 'StdioConnectionParams',
+        serverParams: {command: 'test-command'},
+      });
+
+      expect(manager.getRequestOptions()).toEqual({timeout: 5000});
+    });
+
+    it('returns custom timeout and signal for stdio', () => {
+      const manager = new MCPSessionManager({
+        type: 'StdioConnectionParams',
+        serverParams: {command: 'test-command'},
+        timeout: 12,
+      });
+      const controller = new AbortController();
+
+      expect(manager.getRequestOptions(controller.signal)).toEqual({
+        signal: controller.signal,
+        timeout: 12000,
+      });
+    });
+
+    it('omits timeout for HTTP and SSE transports', () => {
+      const httpManager = new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: 'http://test-url',
+      });
+      expect(httpManager.getRequestOptions()).toEqual({});
+
+      const controller = new AbortController();
+      expect(httpManager.getRequestOptions(controller.signal)).toEqual({
+        signal: controller.signal,
+      });
+
+      const sseManager = new MCPSessionManager({
+        type: 'SseConnectionParams',
+        url: 'http://test-url/sse',
+      });
+      expect(sseManager.getRequestOptions()).toEqual({});
+    });
   });
 
   it('creates an http client with transport options headers', async () => {

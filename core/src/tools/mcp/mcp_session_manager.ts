@@ -8,6 +8,14 @@ import type {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import type {SSEClientTransportOptions} from '@modelcontextprotocol/sdk/client/sse.js';
 import type {StdioServerParameters} from '@modelcontextprotocol/sdk/client/stdio.js';
 import type {StreamableHTTPClientTransportOptions} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type {RequestOptions} from '@modelcontextprotocol/sdk/shared/protocol.js';
+
+export type {RequestOptions};
+
+/**
+ * Default timeout in seconds for stdio MCP client requests.
+ */
+export const DEFAULT_STDIO_TIMEOUT_SECONDS = 5;
 
 import {mergeTrackingHeaders} from '../../utils/client_labels.js';
 import {formatError} from '../../utils/error_utils.js';
@@ -39,6 +47,10 @@ function logTransportError(err: unknown): void {
 export interface StdioConnectionParams {
   type: 'StdioConnectionParams';
   serverParams: StdioServerParameters;
+  /**
+   * Request timeout in seconds for stdio MCP operations.
+   * Defaults to 5 seconds.
+   */
   timeout?: number;
 }
 
@@ -174,6 +186,29 @@ export class MCPSessionManager {
     this.connectionParams = connectionParams;
   }
 
+  /**
+   * Returns request options configured for the active transport.
+   *
+   * For stdio connections, injects a timeout (defaulting to 5 seconds, in milliseconds).
+   * For HTTP and SSE connections, passes through signal without a timeout.
+   * Keys with undefined values are omitted.
+   *
+   * @param signal An optional AbortSignal for request cancellation.
+   * @returns The request options for the MCP client call.
+   */
+  getRequestOptions(signal?: AbortSignal): RequestOptions {
+    const options: RequestOptions = {};
+    if (signal !== undefined) {
+      options.signal = signal;
+    }
+    if (this.connectionParams.type === 'StdioConnectionParams') {
+      const timeoutSeconds =
+        this.connectionParams.timeout ?? DEFAULT_STDIO_TIMEOUT_SECONDS;
+      options.timeout = timeoutSeconds * 1000;
+    }
+    return options;
+  }
+
   async createSession(): Promise<Client> {
     const {Client} = await loadOptionalPeer(
       MCP_SDK,
@@ -192,7 +227,7 @@ export class MCPSessionManager {
             this.connectionParams.serverParams,
           );
           transport.onerror = logTransportError;
-          await client.connect(transport);
+          await client.connect(transport, this.getRequestOptions());
           break;
         }
         case 'StreamableHTTPConnectionParams': {

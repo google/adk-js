@@ -781,6 +781,137 @@ describe('toGeminiSchema', () => {
       anyOf: [{type: Type.OBJECT, properties: {}}, {type: Type.STRING}],
     });
   });
+
+  describe('format retention', () => {
+    // reference: test_sanitize_integer_formats
+    it('preserves int32 and int64 formats for integer types and drops invalid formats', () => {
+      const input = {
+        type: 'object',
+        properties: {
+          int32Field: {type: 'integer', format: 'int32'},
+          int64Field: {type: 'integer', format: 'int64'},
+          invalidIntFormat: {type: 'integer', format: 'unsigned'},
+        },
+      };
+
+      const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+      expect(schema?.properties?.['int32Field']?.format).toBe('int32');
+      expect(schema?.properties?.['int64Field']?.format).toBe('int64');
+      expect(schema?.properties?.['invalidIntFormat']?.format).toBeUndefined();
+    });
+
+    // reference: test_sanitize_string_formats
+    it('preserves date-time and enum formats for string types and drops other formats', () => {
+      const input = {
+        type: 'object',
+        properties: {
+          datetimeField: {type: 'string', format: 'date-time'},
+          enumField: {type: 'string', format: 'enum', enum: ['a', 'b']},
+          dateField: {type: 'string', format: 'date'},
+          emailField: {type: 'string', format: 'email'},
+          byteField: {type: 'string', format: 'byte'},
+        },
+      };
+
+      const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+      expect(schema?.properties?.['datetimeField']?.format).toBe('date-time');
+      expect(schema?.properties?.['enumField']?.format).toBe('enum');
+      expect(schema?.properties?.['dateField']?.format).toBeUndefined();
+      expect(schema?.properties?.['emailField']?.format).toBeUndefined();
+      expect(schema?.properties?.['byteField']?.format).toBeUndefined();
+    });
+
+    // reference: test_sanitize_number_formats
+    it('preserves int32 format for number types and drops float and double', () => {
+      const input = {
+        type: 'object',
+        properties: {
+          floatField: {type: 'number', format: 'float'},
+          doubleField: {type: 'number', format: 'double'},
+          int32Number: {type: 'number', format: 'int32'},
+        },
+      };
+
+      const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+      expect(schema?.properties?.['floatField']?.format).toBeUndefined();
+      expect(schema?.properties?.['doubleField']?.format).toBeUndefined();
+      expect(schema?.properties?.['int32Number']?.format).toBe('int32');
+    });
+
+    // reference: test_preserve_valid_formats_without_type
+    it('drops format when the declared type is missing or an array', () => {
+      const withoutType = {
+        format: 'date-time',
+        properties: {
+          field1: {format: 'int32'},
+        },
+      };
+      const schemaWithoutType = toGeminiSchema(
+        withoutType as unknown as MCPToolSchema,
+      );
+      expect(schemaWithoutType?.format).toBeUndefined();
+      expect(schemaWithoutType?.properties?.['field1']?.format).toBeUndefined();
+
+      const withArrayType = {
+        type: ['string', 'null'],
+        format: 'date-time',
+      };
+      const schemaWithArray = toGeminiSchema(
+        withArrayType as unknown as MCPToolSchema,
+      );
+      expect(schemaWithArray?.format).toBeUndefined();
+    });
+
+    // reference: test_sanitize_nested_formats
+    it('sanitizes format in nested properties and array items', () => {
+      const input = {
+        type: 'object',
+        properties: {
+          nested: {
+            type: 'object',
+            properties: {
+              dateStr: {type: 'string', format: 'date'},
+              intField: {type: 'integer', format: 'int64'},
+            },
+          },
+          arrayField: {
+            type: 'array',
+            items: {type: 'string', format: 'uri'},
+          },
+        },
+      };
+
+      const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+      expect(
+        schema?.properties?.['nested']?.properties?.['dateStr']?.format,
+      ).toBeUndefined();
+      expect(
+        schema?.properties?.['nested']?.properties?.['intField']?.format,
+      ).toBe('int64');
+      expect(schema?.properties?.['arrayField']?.items?.format).toBeUndefined();
+    });
+
+    // reference: test_sanitize_anyof_formats
+    it('sanitizes format in anyOf branches', () => {
+      const input = {
+        anyOf: [
+          {type: 'string', format: 'email'},
+          {type: 'integer', format: 'int32'},
+          {type: 'string', format: 'date-time'},
+        ],
+      };
+
+      const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+      expect(schema?.anyOf?.[0]?.format).toBeUndefined();
+      expect(schema?.anyOf?.[1]?.format).toBe('int32');
+      expect(schema?.anyOf?.[2]?.format).toBe('date-time');
+    });
+  });
 });
 
 describe('openApiSchemaToGeminiSchema', () => {
@@ -797,5 +928,141 @@ describe('openApiSchemaToGeminiSchema', () => {
     const schema = openApiSchemaToGeminiSchema({type: 'custom'});
 
     expect(schema?.type).toBe(Type.TYPE_UNSPECIFIED);
+  });
+
+  describe('format retention', () => {
+    // reference: test_sanitize_integer_formats
+    it('preserves int32 and int64 for integer schemas and drops invalid formats', () => {
+      const schema = openApiSchemaToGeminiSchema({
+        type: 'object',
+        properties: {
+          int32Field: {type: 'integer', format: 'int32'},
+          int64Field: {type: 'integer', format: 'int64'},
+          invalidInt: {type: 'integer', format: 'unsigned'},
+        },
+      });
+
+      expect(schema?.properties?.['int32Field']?.format).toBe('int32');
+      expect(schema?.properties?.['int64Field']?.format).toBe('int64');
+      expect(schema?.properties?.['invalidInt']?.format).toBeUndefined();
+    });
+
+    // reference: test_sanitize_string_formats
+    it('preserves date-time and enum for string schemas and drops other formats', () => {
+      const schema = openApiSchemaToGeminiSchema({
+        type: 'object',
+        properties: {
+          datetimeField: {type: 'string', format: 'date-time'},
+          enumField: {type: 'string', format: 'enum'},
+          dateField: {type: 'string', format: 'date'},
+          emailField: {type: 'string', format: 'email'},
+          byteField: {type: 'string', format: 'byte'},
+        },
+      });
+
+      expect(schema?.properties?.['datetimeField']?.format).toBe('date-time');
+      expect(schema?.properties?.['enumField']?.format).toBe('enum');
+      expect(schema?.properties?.['dateField']?.format).toBeUndefined();
+      expect(schema?.properties?.['emailField']?.format).toBeUndefined();
+      expect(schema?.properties?.['byteField']?.format).toBeUndefined();
+    });
+
+    // reference: test_sanitize_number_formats
+    it('preserves int32 and int64 for number schemas and drops float and double', () => {
+      const schema = openApiSchemaToGeminiSchema({
+        type: 'object',
+        properties: {
+          floatField: {type: 'number', format: 'float'},
+          doubleField: {type: 'number', format: 'double'},
+          int32Number: {type: 'number', format: 'int32'},
+          int64Number: {type: 'number', format: 'int64'},
+        },
+      });
+
+      expect(schema?.properties?.['floatField']?.format).toBeUndefined();
+      expect(schema?.properties?.['doubleField']?.format).toBeUndefined();
+      expect(schema?.properties?.['int32Number']?.format).toBe('int32');
+      expect(schema?.properties?.['int64Number']?.format).toBe('int64');
+    });
+
+    // reference: test_preserve_valid_formats_without_type
+    it('drops format on schemas without an explicit single primitive type', () => {
+      const untyped = openApiSchemaToGeminiSchema({
+        format: 'date-time',
+        properties: {
+          field1: {format: 'int32'},
+        },
+      });
+      expect(untyped?.format).toBeUndefined();
+      expect(untyped?.properties?.['field1']?.format).toBeUndefined();
+
+      const arrayType = openApiSchemaToGeminiSchema({
+        type: ['string', 'null'],
+        format: 'date-time',
+      });
+      expect(arrayType?.format).toBeUndefined();
+    });
+
+    // reference: test_to_gemini_schema_remove_unrecognized_fields
+    it('preserves valid formats and drops unsupported keys through public converter', () => {
+      const schema = openApiSchemaToGeminiSchema({
+        type: 'string',
+        description: 'A date-time string.',
+        format: 'date-time',
+        title: 'Ignored Title',
+        default: '2026-01-01T00:00:00Z',
+      });
+
+      expect(schema).toEqual({
+        type: Type.STRING,
+        description: 'A date-time string.',
+        format: 'date-time',
+      });
+      expect(schema?.['title']).toBeUndefined();
+      expect(schema?.['default']).toBeUndefined();
+    });
+
+    // reference: test_sanitize_nested_formats
+    it('sanitizes format in nested properties and items', () => {
+      const schema = openApiSchemaToGeminiSchema({
+        type: 'object',
+        properties: {
+          nested: {
+            type: 'object',
+            properties: {
+              dateStr: {type: 'string', format: 'date'},
+              intField: {type: 'integer', format: 'int64'},
+            },
+          },
+          arrayField: {
+            type: 'array',
+            items: {type: 'string', format: 'uri'},
+          },
+        },
+      });
+
+      expect(
+        schema?.properties?.['nested']?.properties?.['dateStr']?.format,
+      ).toBeUndefined();
+      expect(
+        schema?.properties?.['nested']?.properties?.['intField']?.format,
+      ).toBe('int64');
+      expect(schema?.properties?.['arrayField']?.items?.format).toBeUndefined();
+    });
+
+    // reference: test_sanitize_anyof_formats
+    it('sanitizes format in anyOf branches', () => {
+      const schema = openApiSchemaToGeminiSchema({
+        anyOf: [
+          {type: 'string', format: 'email'},
+          {type: 'integer', format: 'int32'},
+          {type: 'string', format: 'date-time'},
+        ],
+      });
+
+      expect(schema?.anyOf?.[0]?.format).toBeUndefined();
+      expect(schema?.anyOf?.[1]?.format).toBe('int32');
+      expect(schema?.anyOf?.[2]?.format).toBe('date-time');
+    });
   });
 });

@@ -47,6 +47,32 @@ const getTypeFromArrayItem = (
   return mcpType?.type?.toLowerCase?.();
 };
 
+const GEMINI_SUPPORTED_INTEGER_FORMATS: ReadonlySet<string> = new Set([
+  'int32',
+  'int64',
+]);
+
+const GEMINI_SUPPORTED_STRING_FORMATS: ReadonlySet<string> = new Set([
+  'date-time',
+  'enum',
+]);
+
+function keepsGeminiFormat(type: unknown, format: unknown): boolean {
+  if (typeof format !== 'string') {
+    return false;
+  }
+  if (
+    (type === 'integer' || type === 'number') &&
+    GEMINI_SUPPORTED_INTEGER_FORMATS.has(format)
+  ) {
+    return true;
+  }
+  if (type === 'string' && GEMINI_SUPPORTED_STRING_FORMATS.has(format)) {
+    return true;
+  }
+  return false;
+}
+
 export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
   if (!mcpSchema) {
     return undefined;
@@ -61,6 +87,7 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
       mcp = {type: 'object'};
     }
 
+    const declaredType = mcp.type;
     const sourceType = mcp.anyOf ?? mcp.type;
     let isNullable = false;
     let nonNullTypes;
@@ -149,6 +176,10 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
       geminiSchema.description = mcp.description;
     }
 
+    if (keepsGeminiFormat(declaredType, mcp.format)) {
+      geminiSchema.format = mcp.format;
+    }
+
     if (mcp.enum) {
       // A null member carries nullability, not a value. Every member is
       // stringified below, so keeping it would offer the model 'null'.
@@ -216,14 +247,11 @@ const GEMINI_SCHEMA_FIELDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Fields the Gemini backend rejects even though `Schema` declares them. A
- * `format` of `date` on a STRING, for example, fails with "only 'enum' and
- * 'date-time' are supported for STRING type".
+ * Fields the Gemini backend rejects even though `Schema` declares them.
  */
 const GEMINI_REJECTED_SCHEMA_FIELDS: ReadonlySet<string> = new Set([
   'title',
   'default',
-  'format',
 ]);
 
 /**
@@ -335,6 +363,12 @@ export function openApiSchemaToGeminiSchema(
     if (
       !GEMINI_SCHEMA_FIELDS.has(field) ||
       GEMINI_REJECTED_SCHEMA_FIELDS.has(field)
+    ) {
+      continue;
+    }
+    if (
+      field === 'format' &&
+      !keepsGeminiFormat(openApiSchema['type'], value)
     ) {
       continue;
     }

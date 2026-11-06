@@ -68,9 +68,13 @@ export class MCPTool extends BaseTool {
     try {
       const callRequest: CallToolRequest = {} as CallToolRequest;
       callRequest.params = {name: this.originalName, arguments: request.args};
-      const result = await session.callTool(callRequest.params, undefined, {
-        signal: request.toolContext.abortSignal,
-      });
+      const result = await session.callTool(
+        callRequest.params,
+        undefined,
+        this.mcpSessionManager.getRequestOptions(
+          request.toolContext.abortSignal,
+        ),
+      );
       return result as CallToolResult;
     } finally {
       await this.mcpSessionManager.closeSession(session);

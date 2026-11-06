@@ -88,6 +88,23 @@ describe('MCPToolset', () => {
     expect(tools[1].name).toBe('other-tool');
   });
 
+  it('passes stdio default timeout to listTools', async () => {
+    const {Client} = await import('@modelcontextprotocol/sdk/client/index.js');
+    const listTools = vi.fn().mockResolvedValue({tools: []});
+    vi.mocked(Client).mockImplementationOnce(function () {
+      return {
+        connect: noop(),
+        close: noop(),
+        listTools,
+      } as unknown as Client;
+    });
+
+    const toolset = new MCPToolset(stdioParams);
+    await toolset.getTools();
+
+    expect(listTools).toHaveBeenCalledWith(undefined, {timeout: 5000});
+  });
+
   it('discovers tools with prefix applied', async () => {
     const toolset = new MCPToolset(stdioParams, [], 'myprefix');
     const tools = await toolset.getTools();
@@ -241,7 +258,10 @@ describe('MCPToolset', () => {
       const toolset = new MCPToolset(stdioParams);
       const contents = await toolset.readResource('res1');
 
-      expect(readResource).toHaveBeenCalledWith({uri: 'file:///res1'});
+      expect(readResource).toHaveBeenCalledWith(
+        {uri: 'file:///res1'},
+        {timeout: 5000},
+      );
       expect(contents).toEqual([{uri: 'file:///res1', text: 'hello'}]);
     });
 
