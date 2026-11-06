@@ -208,8 +208,8 @@ export class ApplicationIntegrationToolset extends BaseToolset {
     const toolsByName = new Map<string, BaseTool>();
 
     if (integration) {
-      const specDict = await integrationClient.getOpenApiSpecForIntegration();
-      const spec = toOpenApiDocument(specDict);
+      const specRecord = await integrationClient.getOpenApiSpecForIntegration();
+      const spec = toOpenApiDocument(specRecord);
       for (const [path, pathItem] of Object.entries(spec.paths ?? {})) {
         const openApiToolset = new OpenAPIToolset({
           specDict: {...spec, paths: {[removeFragment(path)]: pathItem}},
@@ -241,12 +241,11 @@ export class ApplicationIntegrationToolset extends BaseToolset {
         'Authentication schema and credentials are not used because authOverrideEnabled is not enabled in the connection.',
       );
     }
-    const specDict = await integrationClient.getOpenApiSpecForConnection(
+    const specRecord = await integrationClient.getOpenApiSpecForConnection(
       resolvedToolName,
       toolInstructions,
     );
-    const spec = toOpenApiDocument(specDict);
-    addDynamicAuthConfigToConnectionSchemas(spec);
+    const spec = toOpenApiDocument(specRecord);
     const operations = new OpenApiSpecParser({
       preservePropertyNames: true,
     }).parse(spec);
@@ -295,34 +294,10 @@ export class ApplicationIntegrationToolset extends BaseToolset {
   }
 }
 
-function addDynamicAuthConfigToConnectionSchemas(
-  spec: OpenAPIV3.Document,
-): void {
-  const schemas = spec.components?.schemas;
-  if (!schemas) {
-    return;
-  }
-  for (const [schemaName, schema] of Object.entries(schemas)) {
-    if (
-      schemaName.endsWith('_Request') &&
-      isJsonObject(schema) &&
-      isJsonObject(schema.properties) &&
-      !('dynamicAuthConfig' in schema.properties)
-    ) {
-      schema.properties = {
-        ...schema.properties,
-        dynamicAuthConfig: {
-          $ref: '#/components/schemas/dynamicAuthConfig',
-        },
-      };
-    }
-  }
-}
-
 function toOpenApiDocument(
-  specDict: JsonObject | ConnectorSpec,
+  specRecord: JsonObject | ConnectorSpec,
 ): OpenAPIV3.Document {
-  return specDict as OpenAPIV3.Document;
+  return specRecord as OpenAPIV3.Document;
 }
 
 function toStringValue(value: unknown): string {
