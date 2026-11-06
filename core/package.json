@@ -56,10 +56,10 @@
       "default": "./dist/esm/sessions/database_session_service.js"
     },
     "./telemetry/gcp": {
-      "types": "./dist/types/telemetry/google_cloud.d.ts",
-      "import": "./dist/esm/telemetry/google_cloud.js",
-      "require": "./dist/cjs/telemetry/google_cloud.js",
-      "default": "./dist/esm/telemetry/google_cloud.js"
+      "types": "./dist/types/telemetry/export/google_cloud.d.ts",
+      "import": "./dist/esm/telemetry/export/google_cloud.js",
+      "require": "./dist/cjs/telemetry/export/google_cloud.js",
+      "default": "./dist/esm/telemetry/export/google_cloud.js"
     },
     "./tools/mcp": {
       "types": "./dist/types/tools/mcp/index.d.ts",

@@ -343,23 +343,28 @@ export async function runWithInMemoryRunner(
 }
 
 interface TelemetryHarness {
+  readonly contextManager: AsyncLocalStorageContextManager;
   readonly tracerProvider: BasicTracerProvider;
   readonly spanExporter: InMemorySpanExporter;
   readonly loggerProvider: LoggerProvider;
   readonly logExporter: InMemoryLogRecordExporter;
   readonly meterProvider: MeterProvider;
   readonly metricExporter: InMemoryMetricExporter;
+  shutdown(): Promise<void>;
 }
 
-let sharedHarness: TelemetryHarness | undefined;
-
 /**
- * Initializes a single process-wide set of in-memory OpenTelemetry providers.
+ * Installs a fresh set of in-memory OpenTelemetry providers for one test run.
+ *
+ * `core/src/telemetry/api/internal/` resolves the active tracer, logger, and
+ * meter per call, so disabling and re-registering global providers isolates
+ * each scenario without leaking exporters between tests.
  */
 export function getOrCreateTelemetryHarness(): TelemetryHarness {
-  if (sharedHarness) {
-    return sharedHarness;
-  }
+  trace.disable();
+  logs.disable();
+  metrics.disable();
+  context.disable();
 
   const contextManager = new AsyncLocalStorageContextManager();
   contextManager.enable();
@@ -389,15 +394,25 @@ export function getOrCreateTelemetryHarness(): TelemetryHarness {
   });
   metrics.setGlobalMeterProvider(meterProvider);
 
-  sharedHarness = {
+  return {
+    contextManager,
     tracerProvider,
     spanExporter,
     loggerProvider,
     logExporter,
     meterProvider,
     metricExporter,
+    async shutdown(): Promise<void> {
+      await tracerProvider.shutdown();
+      await loggerProvider.shutdown();
+      await meterProvider.shutdown();
+      trace.disable();
+      logs.disable();
+      metrics.disable();
+      context.disable();
+      contextManager.disable();
+    },
   };
-  return sharedHarness;
 }
 
 const MANAGED_ENV_KEYS = [
@@ -470,28 +485,28 @@ export async function recordScenario(
   scenarioRunner: () => Promise<void>,
 ): Promise<TelemetryDigest> {
   const harness = getOrCreateTelemetryHarness();
-  harness.spanExporter.reset();
-  harness.logExporter.reset();
-  harness.metricExporter.reset();
-
-  await applyEnv(tc, async () => {
-    try {
-      await scenarioRunner();
-    } catch (error: unknown) {
-      if (!tc.expectError) {
-        throw error;
+  try {
+    await applyEnv(tc, async () => {
+      try {
+        await scenarioRunner();
+      } catch (error: unknown) {
+        if (!tc.expectError) {
+          throw error;
+        }
       }
-    }
-    await harness.tracerProvider.forceFlush();
-    await harness.loggerProvider.forceFlush();
-    await harness.meterProvider.forceFlush();
-  });
+      await harness.tracerProvider.forceFlush();
+      await harness.loggerProvider.forceFlush();
+      await harness.meterProvider.forceFlush();
+    });
 
-  return buildTelemetryDigest(
-    harness.spanExporter.getFinishedSpans(),
-    harness.logExporter.getFinishedLogRecords(),
-    harness.metricExporter.getMetrics(),
-  );
+    return buildTelemetryDigest(
+      harness.spanExporter.getFinishedSpans(),
+      harness.logExporter.getFinishedLogRecords(),
+      harness.metricExporter.getMetrics(),
+    );
+  } finally {
+    await harness.shutdown();
+  }
 }
 
 /**
