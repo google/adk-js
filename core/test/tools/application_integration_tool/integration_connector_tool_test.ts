@@ -56,12 +56,14 @@ function createRestTool(): RestApiTool {
               page_size: {type: 'integer'},
               page_token: {type: 'string'},
               filter: {type: 'string'},
+              sort_by_columns: {type: 'array', items: {type: 'string'}},
             },
             required: [
               'user_id',
               'page_size',
               'page_token',
               'filter',
+              'sort_by_columns',
               'connection_name',
               'dynamic_auth_config',
             ],
@@ -131,6 +133,8 @@ describe('IntegrationConnectorTool', () => {
       'filter',
       'filter_clause',
       'filterClause',
+      'sort_by_columns',
+      'sortByColumns',
     ]);
     expect(Object.isFrozen(IntegrationConnectorTool.EXCLUDE_FIELDS)).toBe(true);
     expect(Object.isFrozen(IntegrationConnectorTool.OPTIONAL_FIELDS)).toBe(
@@ -138,7 +142,8 @@ describe('IntegrationConnectorTool', () => {
     );
   });
 
-  it('test_get_declaration', () => {
+  // reference: test_get_declaration
+  it('excludes routing fields and marks optional fields optional in _getDeclaration', () => {
     const restApiTool = createRestTool();
     const integrationTool = createIntegrationTool({restApiTool});
 
@@ -161,6 +166,7 @@ describe('IntegrationConnectorTool', () => {
     expect('page_size' in (params?.properties ?? {})).toBe(true);
     expect('page_token' in (params?.properties ?? {})).toBe(true);
     expect('filter' in (params?.properties ?? {})).toBe(true);
+    expect('sort_by_columns' in (params?.properties ?? {})).toBe(true);
 
     expect(params?.required).toEqual(['user_id']);
 
@@ -175,6 +181,7 @@ describe('IntegrationConnectorTool', () => {
     expect(underlyingParams?.required).toContain('connection_name');
     expect(underlyingParams?.required).toContain('dynamic_auth_config');
     expect(underlyingParams?.required).toContain('page_size');
+    expect(underlyingParams?.required).toContain('sort_by_columns');
   });
 
   it('excludes camelCase routing fields and optional fields when preservePropertyNames is enabled', () => {
@@ -199,6 +206,8 @@ describe('IntegrationConnectorTool', () => {
                 pageToken: {type: 'string'},
                 filterClause: {type: 'string'},
                 filter_clause: {type: 'string'},
+                sortByColumns: {type: 'array', items: {type: 'string'}},
+                sort_by_columns: {type: 'array', items: {type: 'string'}},
               },
               required: [
                 'userId',
@@ -209,6 +218,8 @@ describe('IntegrationConnectorTool', () => {
                 'pageToken',
                 'filterClause',
                 'filter_clause',
+                'sortByColumns',
+                'sort_by_columns',
               ],
             },
           },
@@ -235,11 +246,14 @@ describe('IntegrationConnectorTool', () => {
       'pageToken',
       'filterClause',
       'filter_clause',
+      'sortByColumns',
+      'sort_by_columns',
     ]);
     expect(params?.required).toEqual(['userId']);
   });
 
-  it('test_run_async', async () => {
+  // reference: test_run_async
+  it('injects connection details and forwards arguments in runAsync', async () => {
     const restApiTool = createRestTool();
     const runAsyncSpy = vi
       .spyOn(restApiTool, 'runAsync')
@@ -320,6 +334,7 @@ describe('IntegrationConnectorTool', () => {
     expect(result).toEqual({status: 'success', data: 'mock_data'});
   });
 
+  // reference: test_run_async_with_auth_cred_missing_token
   it('injects an empty object in dynamic_auth_config when the credential has no token', async () => {
     const restApiTool = createRestTool();
     const runAsyncSpy = vi
@@ -347,7 +362,7 @@ describe('IntegrationConnectorTool', () => {
     const toolContext = createToolContext();
 
     const result = await integrationTool.runAsync({
-      args: {user_id: 'user123', page_size: 10},
+      args: {user_id: 'user123', page_size: 10, sortByColumns: ['a', 'b']},
       toolContext,
     });
 
@@ -355,6 +370,7 @@ describe('IntegrationConnectorTool', () => {
       args: {
         user_id: 'user123',
         page_size: 10,
+        sortByColumns: ['a', 'b'],
         connection_name: 'test-conn',
         connectionName: 'test-conn',
         host: 'test.example.com',

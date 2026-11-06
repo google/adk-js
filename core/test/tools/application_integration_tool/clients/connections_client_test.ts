@@ -238,6 +238,23 @@ describe('ConnectionsClient', () => {
       });
     });
 
+    // reference: test_get_connection_details_without_name
+    it('defaults name to an empty string when the response omits name', async () => {
+      fetchMock.mockResolvedValue(
+        jsonResponse({
+          serviceDirectory: 'test_service',
+          authOverrideEnabled: false,
+        }),
+      );
+
+      await expect(client().getConnectionDetails()).resolves.toEqual({
+        name: '',
+        serviceName: 'test_service',
+        host: '',
+        authOverrideEnabled: false,
+      });
+    });
+
     it('defaults every missing field', async () => {
       fetchMock.mockResolvedValue(jsonResponse({}));
 
@@ -467,6 +484,12 @@ describe('ConnectionsClient', () => {
               type: 'integer',
               default: 120,
               description: 'Timeout in seconds for execution of custom query',
+            },
+            sortByColumns: {
+              type: 'array',
+              items: {type: 'string'},
+              default: [],
+              description: 'Column to sort the results by',
             },
             connectorOutputPayload: {type: 'object'},
             nextPageToken: {type: 'string'},
@@ -753,6 +776,7 @@ describe('ConnectionsClient', () => {
           serviceName: ref('serviceName'),
           host: ref('host'),
           entity: ref('entity'),
+          sortByColumns: ref('sortByColumns'),
         },
       });
     });

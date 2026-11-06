@@ -146,8 +146,9 @@ Each connection operation is wrapped in an `IntegrationConnectorTool`. Its
 (`connection_name`, `connectionName`, `service_name`, `serviceName`, `host`,
 `entity`, `operation`, `action`, `dynamic_auth_config` and `dynamicAuthConfig`)
 from `parameters.properties` and removes those fields along with `page_size`,
-`pageSize`, `page_token`, `pageToken`, `filter`, `filter_clause` and
-`filterClause` from `parameters.required`. When the agent calls the tool,
+`pageSize`, `page_token`, `pageToken`, `filter`, `filter_clause`,
+`filterClause`, `sort_by_columns` and `sortByColumns` from
+`parameters.required`. When the agent calls the tool,
 `runAsync` prepares any configured dynamic end-user credentials and injects the
 connection name, service name, host, and any configured entity, action,
 operation and dynamic auth configuration before delegating the request to the
@@ -184,21 +185,21 @@ false on the connection, the toolset logs a warning and ignores `authScheme` and
 
 The options are the fields of `ApplicationIntegrationToolsetOptions`.
 
-| Option               | Type                        | Default  | Description                                                                     |
-| :------------------- | :-------------------------- | :------- | :------------------------------------------------------------------------------ |
-| `project`            | `string`                    | Required | The Google Cloud project ID.                                                    |
-| `location`           | `string`                    | Required | The Google Cloud location, such as `us-central1`.                               |
-| `integration`        | `string`                    | None     | The integration name, for integration mode.                                     |
-| `triggers`           | `string[]`                  | None     | The API trigger IDs, for integration mode.                                      |
-| `connection`         | `string`                    | None     | The connection name, for connection mode.                                       |
-| `entityOperations`   | `Record<string, string[]>`  | None     | Operations to expose, keyed by entity name.                                     |
-| `actions`            | `string[]`                  | None     | Actions to expose.                                                              |
-| `toolNamePrefix`     | `string`                    | `''`     | Prefix of every tool name, in connection mode.                                  |
-| `toolInstructions`   | `string`                    | `''`     | Text added to every tool description, in connection mode.                       |
-| `serviceAccountJson` | `string`                    | None     | A service-account key, as JSON. Without it, ADC is used.                        |
-| `authScheme`         | `AuthScheme`                | None     | Authentication scheme for dynamic end-user credentials, in connection mode.     |
-| `authCredential`     | `AuthCredential`            | None     | Authentication credential for dynamic end-user credentials, in connection mode. |
-| `toolFilter`         | `ToolPredicate \| string[]` | `[]`     | Filter selecting which generated tools `getTools` exposes.                      |
+| Option               | Type                        | Default     | Description                                                                     |
+| :------------------- | :-------------------------- | :---------- | :------------------------------------------------------------------------------ |
+| `project`            | `string`                    | Required    | The Google Cloud project ID.                                                    |
+| `location`           | `string`                    | Required    | The Google Cloud location, such as `us-central1`.                               |
+| `integration`        | `string`                    | `undefined` | The integration name, for integration mode.                                     |
+| `triggers`           | `string[]`                  | `undefined` | The API trigger IDs, for integration mode.                                      |
+| `connection`         | `string`                    | `undefined` | The connection name, for connection mode.                                       |
+| `entityOperations`   | `Record<string, string[]>`  | `undefined` | Operations to expose, keyed by entity name.                                     |
+| `actions`            | `string[]`                  | `undefined` | Actions to expose.                                                              |
+| `toolNamePrefix`     | `string`                    | `''`        | Prefix of every tool name, in connection mode.                                  |
+| `toolInstructions`   | `string`                    | `''`        | Text added to every tool description, in connection mode.                       |
+| `serviceAccountJson` | `string`                    | `undefined` | A service-account key, as JSON. Without it, ADC is used.                        |
+| `authScheme`         | `AuthScheme`                | `undefined` | Authentication scheme for dynamic end-user credentials, in connection mode.     |
+| `authCredential`     | `AuthCredential`            | `undefined` | Authentication credential for dynamic end-user credentials, in connection mode. |
+| `toolFilter`         | `ToolPredicate \| string[]` | `[]`        | Filter selecting which generated tools `getTools` exposes.                      |
 
 `project` and `location` name where the resources live. In connection mode,
 the `ExecuteConnection` integration must be in the same project and location

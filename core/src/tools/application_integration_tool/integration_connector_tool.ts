@@ -74,6 +74,8 @@ export class IntegrationConnectorTool extends BaseTool {
     'filter',
     'filter_clause',
     'filterClause',
+    'sort_by_columns',
+    'sortByColumns',
   ]);
 
   readonly connectionName: string;
