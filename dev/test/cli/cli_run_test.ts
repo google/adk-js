@@ -54,6 +54,7 @@ vi.mock('@google/adk', async (importOriginal) => {
             yield event;
           }
         }),
+        close: vi.fn().mockResolvedValue(undefined),
       };
     }),
     InMemoryArtifactService: vi.fn(),
@@ -77,6 +78,13 @@ vi.mock('@google/adk', async (importOriginal) => {
     InMemoryMemoryService: vi.fn(),
     isApp: vi.fn().mockReturnValue(false),
   };
+});
+
+// The real `watch` stays in place; a test overrides it once to capture the
+// agent file listener and fire a reload on demand.
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {...actual, watch: vi.fn(actual.watch)};
 });
 
 vi.mock('node:readline', () => ({
@@ -133,6 +141,7 @@ describe('cli_run', () => {
             yield event;
           }
         },
+        close: vi.fn().mockResolvedValue(undefined),
       };
     });
     (InMemorySessionService as unknown as Mock).mockImplementation(
@@ -191,6 +200,7 @@ describe('cli_run', () => {
           }
           yield {author: 'model', content: {parts: [{text: 'recovered'}]}};
         },
+        close: vi.fn().mockResolvedValue(undefined),
       };
     });
     (mockRl.question as Mock)
@@ -297,8 +307,9 @@ describe('cli_run', () => {
   /** Replaces the mocked Runner with one whose runAsync the test can watch. */
   const watchRunner = () => {
     const runAsync = vi.fn(async function* () {});
+    const close = vi.fn().mockResolvedValue(undefined);
     vi.mocked(Runner).mockImplementation(function () {
-      return {runAsync} as unknown as Runner;
+      return {runAsync, close} as unknown as Runner;
     });
     return runAsync;
   };
@@ -1061,6 +1072,66 @@ describe('cli_run', () => {
         delete process.env['ADK_CLI_RUN_DOTENV_TEST'];
         fs.rmSync(tempDir, {recursive: true, force: true});
       }
+    });
+
+    it('closes the active runner when interactive execution exits', async () => {
+      const closeSpy = vi.fn().mockResolvedValue(undefined);
+      (Runner as unknown as Mock).mockImplementation(function () {
+        return {
+          runAsync: async function* () {
+            for (const event of runnerState.events) {
+              yield event;
+            }
+          },
+          close: closeSpy,
+        };
+      });
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        sessionService: createMockSessionService(),
+      });
+
+      expect(closeSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('closes the replaced runner when the agent file reloads', async () => {
+      const closeSpies: Mock[] = [];
+      (Runner as unknown as Mock).mockImplementation(function () {
+        const close = vi.fn().mockResolvedValue(undefined);
+        closeSpies.push(close);
+        return {runAsync: async function* () {}, close};
+      });
+      let reloadAgentFile: (() => Promise<void>) | undefined;
+      vi.mocked(fs.watch).mockImplementationOnce(((
+        _path: fs.PathLike,
+        listener: () => Promise<void>,
+      ) => {
+        reloadAgentFile = listener;
+        return {close: vi.fn()} as unknown as fs.FSWatcher;
+      }) as unknown as typeof fs.watch);
+      let closeCallsAfterReload: number[] = [];
+      (mockRl.question as Mock).mockImplementationOnce(
+        (_query: string, cb: (answer: string) => void) => {
+          void reloadAgentFile?.().then(() => {
+            closeCallsAfterReload = closeSpies.map(
+              (spy) => spy.mock.calls.length,
+            );
+            cb('exit');
+          });
+        },
+      );
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        sessionService: createMockSessionService(),
+        reloadAgents: true,
+      });
+
+      expect(closeCallsAfterReload).toEqual([1, 0]);
+      expect(closeSpies).toHaveLength(2);
+      expect(closeSpies[0]).toHaveBeenCalledTimes(1);
+      expect(closeSpies[1]).toHaveBeenCalledTimes(1);
     });
   });
 });
