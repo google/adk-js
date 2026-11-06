@@ -9,6 +9,7 @@ import {
   FinishReason,
   FunctionCall,
   GenerateContentResponse,
+  Language,
   Part,
 } from '@google/genai';
 import {describe, expect, it, vi} from 'vitest';
@@ -355,14 +356,14 @@ describe('GeminiStreamingResponseAggregator', () => {
         results.push(res);
       }
 
-      expect(results.length).toBe(3);
+      expect(results.length).toBe(2);
       expect(results[0].partial).toBe(true);
       expect(results[0].content?.parts).toEqual([{text: 'Some text '}]);
 
       expect(results[1].partial).toBe(false);
       expect(results[1].content?.parts).toEqual([{text: 'Some text '}]);
 
-      expect(results[2].content?.parts).toEqual([
+      expect(aggregator.close()?.content?.parts).toEqual([
         {
           functionCall: {
             name: 'get_weather',
@@ -373,7 +374,7 @@ describe('GeminiStreamingResponseAggregator', () => {
       ]);
     });
 
-    it('should preserve tool calls without replaying them from close', async () => {
+    it('should emit tool calls once, from close', async () => {
       const aggregator = new GeminiStreamingResponseAggregator({
         isProgressiveMode: false,
       });
@@ -411,11 +412,14 @@ describe('GeminiStreamingResponseAggregator', () => {
         results.push(res);
       }
 
-      expect(results.length).toBe(3);
+      expect(results.length).toBe(2);
       expect(results[1].content?.parts).toEqual([
         {text: 'Let me help with that. '},
       ]);
-      expect(results[2].content?.parts).toEqual([
+      expect(results.some((r) => r.content?.parts?.[0]?.functionCall)).toBe(
+        false,
+      );
+      expect(aggregator.close()?.content?.parts).toEqual([
         {
           functionCall: {
             name: 'showForecastChart',
@@ -434,6 +438,95 @@ describe('GeminiStreamingResponseAggregator', () => {
 
       const finalResponse = aggregator.close();
       expect(finalResponse).toBeUndefined();
+    });
+
+    it('should emit parallel calls from separate chunks as one event, keeping the signature only on the first', async () => {
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: false,
+      });
+      const chunks: Part[][] = [
+        [
+          {
+            functionCall: {name: 'get_weather', args: {city: 'Paris'}},
+            thoughtSignature: 'signature-a',
+          },
+        ],
+        [{functionCall: {name: 'get_time', args: {city: 'Paris'}}}],
+        [{functionCall: {name: 'get_weather', args: {city: 'Lima'}}}],
+        // Trailing signature-only text does not end the run of calls.
+        [{text: '', thoughtSignature: 'signature-b'}],
+      ];
+
+      const results = [];
+      for (const parts of chunks) {
+        for await (const res of aggregator.processResponse(
+          createResponse({content: {role: 'model', parts}}),
+        )) {
+          results.push(res);
+        }
+      }
+
+      expect(
+        results.filter((r) => r.content?.parts?.some((p) => p.functionCall)),
+      ).toEqual([]);
+      expect(aggregator.close()?.content?.parts).toEqual([
+        {
+          functionCall: {
+            name: 'get_weather',
+            args: {city: 'Paris'},
+            id: 'mocked-fc-id',
+          },
+          thoughtSignature: 'signature-a',
+        },
+        {
+          functionCall: {
+            name: 'get_time',
+            args: {city: 'Paris'},
+            id: 'mocked-fc-id',
+          },
+        },
+        {
+          functionCall: {
+            name: 'get_weather',
+            args: {city: 'Lima'},
+            id: 'mocked-fc-id',
+          },
+        },
+      ]);
+    });
+
+    it('should flush held calls before text that follows them', async () => {
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: false,
+      });
+      const chunks: Part[][] = [
+        [{functionCall: {name: 'first', args: {}}, thoughtSignature: 'sig'}],
+        [{functionCall: {name: 'second', args: {}}}, {text: 'Done.'}],
+      ];
+
+      const results = [];
+      for (const parts of chunks) {
+        for await (const res of aggregator.processResponse(
+          createResponse({content: {role: 'model', parts}}),
+        )) {
+          results.push(res);
+        }
+      }
+
+      expect(results.map((r) => [r.partial, r.content?.parts])).toEqual([
+        [
+          false,
+          [
+            {
+              functionCall: {name: 'first', args: {}, id: 'mocked-fc-id'},
+              thoughtSignature: 'sig',
+            },
+            {functionCall: {name: 'second', args: {}, id: 'mocked-fc-id'}},
+          ],
+        ],
+        [true, [{text: 'Done.'}]],
+      ]);
+      expect(aggregator.close()?.content?.parts).toEqual([{text: 'Done.'}]);
     });
 
     it('should split mixed text and tool-call chunks into saveable events', async () => {
@@ -461,13 +554,12 @@ describe('GeminiStreamingResponseAggregator', () => {
         results.push(res);
       }
 
-      expect(results.length).toBe(2);
+      expect(results.length).toBe(1);
       expect(results[0].partial).toBe(false);
       expect(results[0].content?.parts).toEqual([
         {text: 'Let me help with that. '},
       ]);
-      expect(results[1].partial).toBe(false);
-      expect(results[1].content?.parts).toEqual([
+      expect(aggregator.close()?.content?.parts).toEqual([
         {
           functionCall: {
             name: 'showForecastChart',
@@ -853,21 +945,17 @@ describe('GeminiStreamingResponseAggregator', () => {
       });
     });
 
-    it('should preserve metadata in close() when no text parts are accumulated in non-progressive mode', async () => {
+    it('should preserve metadata in close() when no parts are accumulated in non-progressive mode', async () => {
       const aggregator = new GeminiStreamingResponseAggregator({
         isProgressiveMode: false,
       });
 
-      // 1. Simulate a chunk carrying a function call (no text parts)
+      // 1. Simulate a chunk carrying code (flushed as it arrives, so nothing
+      // is left for close())
       const response1 = createResponse({
         content: {
           parts: [
-            {
-              functionCall: {
-                name: 'get_weather',
-                args: {location: 'San Francisco'},
-              },
-            },
+            {executableCode: {code: 'print(1)', language: Language.PYTHON}},
           ],
         },
         finishReason: FinishReason.STOP,
@@ -937,10 +1025,7 @@ describe('GeminiStreamingResponseAggregator', () => {
       for await (const res of aggregator.processResponse(response1)) {
         results1.push(res);
       }
-      expect(results1).toHaveLength(1);
-      expect(results1[0].content?.parts?.[0]?.functionCall?.name).toBe(
-        'get_weather',
-      );
+      expect(results1).toHaveLength(0);
 
       // 2. Trailing empty STOP chunk with zero parts
       const response2 = createResponse({
@@ -952,6 +1037,12 @@ describe('GeminiStreamingResponseAggregator', () => {
         results2.push(res);
       }
       expect(results2).toHaveLength(0); // Should be suppressed/returned early
+
+      const finalResponse = aggregator.close();
+      expect(finalResponse?.errorCode).toBeUndefined();
+      expect(finalResponse?.content?.parts?.[0]?.functionCall?.name).toBe(
+        'get_weather',
+      );
     });
 
     it('should suppress trailing empty STOP chunk for normal text streams in non-progressive mode', async () => {
