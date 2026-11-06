@@ -10,7 +10,7 @@ import type {Totals} from '../common/accumulators.js';
 import {ERROR_TYPE_ATTR, GenAiAttr} from '../common/attributes.js';
 import {
   isExperimentalFeatureEnabled,
-  type TelemetryConfig,
+  type ResolvedTelemetryConfig,
 } from '../common/config.js';
 import {
   cachedInstruments,
@@ -96,7 +96,7 @@ export function recordAgentDuration({
 export interface RecordAgentTotalsParams {
   readonly agentName: string;
   readonly totals: Totals;
-  readonly config: TelemetryConfig;
+  readonly config: ResolvedTelemetryConfig;
 }
 
 /**

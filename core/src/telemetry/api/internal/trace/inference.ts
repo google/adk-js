@@ -13,12 +13,12 @@ import {AdkAttr, GenAiAttr} from '../common/attributes.js';
 import {
   isExperimentalFeatureEnabled,
   shouldAddContentToSpans,
-  type TelemetryConfig,
+  type ResolvedTelemetryConfig,
 } from '../common/config.js';
 import {isReportedFinishReason} from '../common/finish_reason.js';
 import {
-  type OperationDetails,
   withoutContent,
+  type OperationDetails,
 } from '../common/genai_messages.js';
 import {safeJsonSerialize} from '../common/serialization.js';
 import {TokenUsage} from '../common/token_usage.js';
@@ -121,7 +121,7 @@ function buildGroundingAttributes(
 export function setInferenceResponseAttributes(
   span: Span,
   llmResponse: LlmResponse,
-  config: TelemetryConfig,
+  config: ResolvedTelemetryConfig,
 ): void {
   span.setAttributes(buildResponseAttributes(llmResponse));
   if (
@@ -145,7 +145,7 @@ export function setInferenceResponseAttributes(
 export function setInferenceOperationDetails(
   span: Span,
   details: OperationDetails,
-  config: TelemetryConfig,
+  config: ResolvedTelemetryConfig,
 ): void {
   const recorded = shouldAddContentToSpans(config)
     ? details

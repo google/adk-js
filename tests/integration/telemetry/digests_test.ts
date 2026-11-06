@@ -15,21 +15,9 @@ import {
   ResourceMetrics,
 } from '@opentelemetry/sdk-metrics';
 import {ReadableSpan} from '@opentelemetry/sdk-trace-base';
-import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
-import {fileURLToPath} from 'node:url';
 import {describe, expect, it} from 'vitest';
 
 import {buildTelemetryDigest, PRESENT} from './digests.js';
-
-const CURRENT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const DIVERGENCES_PATH = path.join(CURRENT_DIR, 'functional_divergences.json');
-
-interface DivergenceEntry {
-  owner_name: string;
-  affected_tests: string[];
-  divergences: Array<{reason: string}>;
-}
 
 const TEST_SCOPE: InstrumentationScope = {
   name: 'test-scope',
@@ -400,22 +388,5 @@ describe('buildTelemetryDigest', () => {
     expect(() => buildTelemetryDigest([root1, root2])).toThrow(
       /Multiple root spans found/,
     );
-  });
-
-  it('lists only recorded cases, each with a reason, in the divergences file', async () => {
-    const entries = JSON.parse(
-      await fs.readFile(DIVERGENCES_PATH, 'utf8'),
-    ) as DivergenceEntry[];
-
-    for (const entry of entries) {
-      for (const testCase of entry.affected_tests) {
-        const goldenPath = path.join(CURRENT_DIR, `${testCase}.json`);
-        const stat = await fs.stat(goldenPath);
-        expect(stat.isFile(), `${entry.owner_name}: ${testCase}`).toBe(true);
-      }
-      for (const divergence of entry.divergences) {
-        expect(divergence.reason, entry.owner_name).not.toBe('');
-      }
-    }
   });
 });

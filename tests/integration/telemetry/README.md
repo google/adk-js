@@ -17,14 +17,3 @@ ADK_UPDATE_TELEMETRY_GOLDENS=1 npx vitest run --project integration tests/integr
 
 Then run `npm test` and inspect `git diff tests/integration/telemetry/` to
 review the resulting telemetry changes.
-
-## Divergences from adk-python
-
-The goldens follow adk-python's telemetry schema v2 goldens for the same
-scenario and case. Every place where an adk-js golden deliberately differs is
-listed, with its reason, in
-[`./functional_divergences.json`](./functional_divergences.json). That file
-sits in this directory rather than inside a scenario directory, because each
-scenario test suite treats every `.json` file in its directory as a golden. When
-a re-recorded golden changes, check that each remaining difference from
-adk-python is listed there.

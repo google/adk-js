@@ -187,7 +187,89 @@
             },
             "status": "UNSET",
             "children": [],
-            "logs": []
+            "logs": [
+              {
+                "event_name": "adk.experimental.mcp.http.client.response.end",
+                "body": {
+                  "http.request.body.content": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"MCPClient\",\"version\":\"1.0.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}",
+                  "http.response.body.content": "{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"test-mcp-server\",\"version\":\"1.0.0\"}}}"
+                },
+                "attributes": {
+                  "http.request.header.authorization": [
+                    "<redacted>"
+                  ],
+                  "http.request.method": "POST",
+                  "http.response.header.content-type": [
+                    "application/json"
+                  ],
+                  "http.response.status_code": 200,
+                  "mcp.protocol.version": "2025-06-18",
+                  "mcp.session.id": "mcp-session-1",
+                  "server.address": "mcp.example.com",
+                  "url.full": "https://mcp.example.com/mcp"
+                }
+              },
+              {
+                "event_name": "adk.experimental.mcp.http.client.response.end",
+                "body": {
+                  "http.request.body.content": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}",
+                  "http.response.body.content": ""
+                },
+                "attributes": {
+                  "http.request.header.authorization": [
+                    "<redacted>"
+                  ],
+                  "http.request.method": "POST",
+                  "http.response.header.content-type": [
+                    "application/json"
+                  ],
+                  "http.response.status_code": 202,
+                  "mcp.protocol.version": "2025-06-18",
+                  "mcp.session.id": "mcp-session-1",
+                  "server.address": "mcp.example.com",
+                  "url.full": "https://mcp.example.com/mcp"
+                }
+              },
+              {
+                "event_name": "adk.experimental.mcp.http.client.response.end",
+                "body": {
+                  "http.response.body.content": ""
+                },
+                "attributes": {
+                  "error.type": "405",
+                  "http.request.header.authorization": [
+                    "<redacted>"
+                  ],
+                  "http.request.method": "GET",
+                  "http.response.status_code": 405,
+                  "mcp.protocol.version": "2025-06-18",
+                  "mcp.session.id": "mcp-session-1",
+                  "server.address": "mcp.example.com",
+                  "url.full": "https://mcp.example.com/mcp"
+                }
+              },
+              {
+                "event_name": "adk.experimental.mcp.http.client.response.end",
+                "body": {
+                  "http.request.body.content": "{\"method\":\"tools/call\",\"params\":{\"name\":\"some_tool\",\"arguments\":{\"arg1\":\"val1\"}},\"jsonrpc\":\"2.0\",\"id\":1}",
+                  "http.response.body.content": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"processed val1\"}],\"isError\":false}}"
+                },
+                "attributes": {
+                  "http.request.header.authorization": [
+                    "<redacted>"
+                  ],
+                  "http.request.method": "POST",
+                  "http.response.header.content-type": [
+                    "application/json"
+                  ],
+                  "http.response.status_code": 200,
+                  "mcp.protocol.version": "2025-06-18",
+                  "mcp.session.id": "mcp-session-1",
+                  "server.address": "mcp.example.com",
+                  "url.full": "https://mcp.example.com/mcp"
+                }
+              }
+            ]
           },
           {
             "name": "generate_content gemini-2.5-flash",
@@ -388,7 +470,332 @@
             ]
           }
         ],
-        "logs": []
+        "logs": [
+          {
+            "event_name": "adk.experimental.mcp.http.client.response.end",
+            "body": {
+              "http.request.body.content": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"MCPClient\",\"version\":\"1.0.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}",
+              "http.response.body.content": "{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"test-mcp-server\",\"version\":\"1.0.0\"}}}"
+            },
+            "attributes": {
+              "http.request.header.authorization": [
+                "<redacted>"
+              ],
+              "http.request.method": "POST",
+              "http.response.header.content-type": [
+                "application/json"
+              ],
+              "http.response.status_code": 200,
+              "mcp.protocol.version": "2025-06-18",
+              "mcp.session.id": "mcp-session-1",
+              "server.address": "mcp.example.com",
+              "url.full": "https://mcp.example.com/mcp"
+            }
+          },
+          {
+            "event_name": "adk.experimental.mcp.http.client.response.end",
+            "body": {
+              "http.request.body.content": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}",
+              "http.response.body.content": ""
+            },
+            "attributes": {
+              "http.request.header.authorization": [
+                "<redacted>"
+              ],
+              "http.request.method": "POST",
+              "http.response.header.content-type": [
+                "application/json"
+              ],
+              "http.response.status_code": 202,
+              "mcp.protocol.version": "2025-06-18",
+              "mcp.session.id": "mcp-session-1",
+              "server.address": "mcp.example.com",
+              "url.full": "https://mcp.example.com/mcp"
+            }
+          },
+          {
+            "event_name": "adk.experimental.mcp.http.client.response.end",
+            "body": {
+              "http.response.body.content": ""
+            },
+            "attributes": {
+              "error.type": "405",
+              "http.request.header.authorization": [
+                "<redacted>"
+              ],
+              "http.request.method": "GET",
+              "http.response.status_code": 405,
+              "mcp.protocol.version": "2025-06-18",
+              "mcp.session.id": "mcp-session-1",
+              "server.address": "mcp.example.com",
+              "url.full": "https://mcp.example.com/mcp"
+            }
+          },
+          {
+            "event_name": "adk.experimental.mcp.http.client.response.end",
+            "body": {
+              "http.request.body.content": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}",
+              "http.response.body.content": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[{\"name\":\"some_tool\",\"description\":\"Echoes back its input.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"arg1\":{\"type\":\"string\"}},\"required\":[\"arg1\"]}}]}}"
+            },
+            "attributes": {
+              "http.request.header.authorization": [
+                "<redacted>"
+              ],
+              "http.request.method": "POST",
+              "http.response.header.content-type": [
+                "application/json"
+              ],
+              "http.response.status_code": 200,
+              "mcp.protocol.version": "2025-06-18",
+              "mcp.session.id": "mcp-session-1",
+              "server.address": "mcp.example.com",
+              "url.full": "https://mcp.example.com/mcp"
+            }
+          },
+          {
+            "event_name": "adk.experimental.mcp.http.client.response.end",
+            "body": {
+              "http.request.body.content": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"MCPClient\",\"version\":\"1.0.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}",
+              "http.response.body.content": "{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"test-mcp-server\",\"version\":\"1.0.0\"}}}"
+            },
+            "attributes": {
+              "http.request.header.authorization": [
+                "<redacted>"
+              ],
+              "http.request.method": "POST",
+              "http.response.header.content-type": [
+                "application/json"
+              ],
+              "http.response.status_code": 200,
+              "mcp.protocol.version": "2025-06-18",
+              "mcp.session.id": "mcp-session-1",
+              "server.address": "mcp.example.com",
+              "url.full": "https://mcp.example.com/mcp"
+            }
+          },
+          {
+            "event_name": "adk.experimental.mcp.http.client.response.end",
+            "body": {
+              "http.request.body.content": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}",
+              "http.response.body.content": ""
+            },
+            "attributes": {
+              "http.request.header.authorization": [
+                "<redacted>"
+              ],
+              "http.request.method": "POST",
+              "http.response.header.content-type": [
+                "application/json"
+              ],
+              "http.response.status_code": 202,
+              "mcp.protocol.version": "2025-06-18",
+              "mcp.session.id": "mcp-session-1",
+              "server.address": "mcp.example.com",
+              "url.full": "https://mcp.example.com/mcp"
+            }
+          },
+          {
+            "event_name": "adk.experimental.mcp.http.client.response.end",
+            "body": {
+              "http.response.body.content": ""
+            },
+            "attributes": {
+              "error.type": "405",
+              "http.request.header.authorization": [
+                "<redacted>"
+              ],
+              "http.request.method": "GET",
+              "http.response.status_code": 405,
+              "mcp.protocol.version": "2025-06-18",
+              "mcp.session.id": "mcp-session-1",
+              "server.address": "mcp.example.com",
+              "url.full": "https://mcp.example.com/mcp"
+            }
+          },
+          {
+            "event_name": "adk.experimental.mcp.http.client.response.end",
+            "body": {
+              "http.request.body.content": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}",
+              "http.response.body.content": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[{\"name\":\"some_tool\",\"description\":\"Echoes back its input.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"arg1\":{\"type\":\"string\"}},\"required\":[\"arg1\"]}}]}}"
+            },
+            "attributes": {
+              "http.request.header.authorization": [
+                "<redacted>"
+              ],
+              "http.request.method": "POST",
+              "http.response.header.content-type": [
+                "application/json"
+              ],
+              "http.response.status_code": 200,
+              "mcp.protocol.version": "2025-06-18",
+              "mcp.session.id": "mcp-session-1",
+              "server.address": "mcp.example.com",
+              "url.full": "https://mcp.example.com/mcp"
+            }
+          },
+          {
+            "event_name": "adk.experimental.mcp.http.client.response.end",
+            "body": {
+              "http.request.body.content": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"MCPClient\",\"version\":\"1.0.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}",
+              "http.response.body.content": "{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"test-mcp-server\",\"version\":\"1.0.0\"}}}"
+            },
+            "attributes": {
+              "http.request.header.authorization": [
+                "<redacted>"
+              ],
+              "http.request.method": "POST",
+              "http.response.header.content-type": [
+                "application/json"
+              ],
+              "http.response.status_code": 200,
+              "mcp.protocol.version": "2025-06-18",
+              "mcp.session.id": "mcp-session-1",
+              "server.address": "mcp.example.com",
+              "url.full": "https://mcp.example.com/mcp"
+            }
+          },
+          {
+            "event_name": "adk.experimental.mcp.http.client.response.end",
+            "body": {
+              "http.request.body.content": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}",
+              "http.response.body.content": ""
+            },
+            "attributes": {
+              "http.request.header.authorization": [
+                "<redacted>"
+              ],
+              "http.request.method": "POST",
+              "http.response.header.content-type": [
+                "application/json"
+              ],
+              "http.response.status_code": 202,
+              "mcp.protocol.version": "2025-06-18",
+              "mcp.session.id": "mcp-session-1",
+              "server.address": "mcp.example.com",
+              "url.full": "https://mcp.example.com/mcp"
+            }
+          },
+          {
+            "event_name": "adk.experimental.mcp.http.client.response.end",
+            "body": {
+              "http.response.body.content": ""
+            },
+            "attributes": {
+              "error.type": "405",
+              "http.request.header.authorization": [
+                "<redacted>"
+              ],
+              "http.request.method": "GET",
+              "http.response.status_code": 405,
+              "mcp.protocol.version": "2025-06-18",
+              "mcp.session.id": "mcp-session-1",
+              "server.address": "mcp.example.com",
+              "url.full": "https://mcp.example.com/mcp"
+            }
+          },
+          {
+            "event_name": "adk.experimental.mcp.http.client.response.end",
+            "body": {
+              "http.request.body.content": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}",
+              "http.response.body.content": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[{\"name\":\"some_tool\",\"description\":\"Echoes back its input.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"arg1\":{\"type\":\"string\"}},\"required\":[\"arg1\"]}}]}}"
+            },
+            "attributes": {
+              "http.request.header.authorization": [
+                "<redacted>"
+              ],
+              "http.request.method": "POST",
+              "http.response.header.content-type": [
+                "application/json"
+              ],
+              "http.response.status_code": 200,
+              "mcp.protocol.version": "2025-06-18",
+              "mcp.session.id": "mcp-session-1",
+              "server.address": "mcp.example.com",
+              "url.full": "https://mcp.example.com/mcp"
+            }
+          },
+          {
+            "event_name": "adk.experimental.mcp.http.client.response.end",
+            "body": {
+              "http.request.body.content": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"MCPClient\",\"version\":\"1.0.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}",
+              "http.response.body.content": "{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"test-mcp-server\",\"version\":\"1.0.0\"}}}"
+            },
+            "attributes": {
+              "http.request.header.authorization": [
+                "<redacted>"
+              ],
+              "http.request.method": "POST",
+              "http.response.header.content-type": [
+                "application/json"
+              ],
+              "http.response.status_code": 200,
+              "mcp.protocol.version": "2025-06-18",
+              "mcp.session.id": "mcp-session-1",
+              "server.address": "mcp.example.com",
+              "url.full": "https://mcp.example.com/mcp"
+            }
+          },
+          {
+            "event_name": "adk.experimental.mcp.http.client.response.end",
+            "body": {
+              "http.request.body.content": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}",
+              "http.response.body.content": ""
+            },
+            "attributes": {
+              "http.request.header.authorization": [
+                "<redacted>"
+              ],
+              "http.request.method": "POST",
+              "http.response.header.content-type": [
+                "application/json"
+              ],
+              "http.response.status_code": 202,
+              "mcp.protocol.version": "2025-06-18",
+              "mcp.session.id": "mcp-session-1",
+              "server.address": "mcp.example.com",
+              "url.full": "https://mcp.example.com/mcp"
+            }
+          },
+          {
+            "event_name": "adk.experimental.mcp.http.client.response.end",
+            "body": {
+              "http.response.body.content": ""
+            },
+            "attributes": {
+              "error.type": "405",
+              "http.request.header.authorization": [
+                "<redacted>"
+              ],
+              "http.request.method": "GET",
+              "http.response.status_code": 405,
+              "mcp.protocol.version": "2025-06-18",
+              "mcp.session.id": "mcp-session-1",
+              "server.address": "mcp.example.com",
+              "url.full": "https://mcp.example.com/mcp"
+            }
+          },
+          {
+            "event_name": "adk.experimental.mcp.http.client.response.end",
+            "body": {
+              "http.request.body.content": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}",
+              "http.response.body.content": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[{\"name\":\"some_tool\",\"description\":\"Echoes back its input.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"arg1\":{\"type\":\"string\"}},\"required\":[\"arg1\"]}}]}}"
+            },
+            "attributes": {
+              "http.request.header.authorization": [
+                "<redacted>"
+              ],
+              "http.request.method": "POST",
+              "http.response.header.content-type": [
+                "application/json"
+              ],
+              "http.response.status_code": 200,
+              "mcp.protocol.version": "2025-06-18",
+              "mcp.session.id": "mcp-session-1",
+              "server.address": "mcp.example.com",
+              "url.full": "https://mcp.example.com/mcp"
+            }
+          }
+        ]
       }
     ],
     "logs": []
