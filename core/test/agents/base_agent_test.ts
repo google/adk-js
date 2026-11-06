@@ -544,7 +544,7 @@ describe('BaseAgent', () => {
 
       const CHAIN_CASES: ChainSpec[] = [
         {
-          name: 'middle_async_callback_returns',
+          name: 'when middle async callback returns content',
           callbacks: [
             {response: undefined, isAsync: false},
             {response: 'callback_2_response', isAsync: true},
@@ -559,7 +559,7 @@ describe('BaseAgent', () => {
           expectedCalls: [1, 1, 0, 0],
         },
         {
-          name: 'all_callbacks_return_undefined',
+          name: 'when all callbacks return undefined',
           callbacks: [
             {response: undefined, isAsync: false},
             {response: undefined, isAsync: true},
@@ -571,7 +571,7 @@ describe('BaseAgent', () => {
           expectedCalls: [1, 1, 1, 1],
         },
         {
-          name: 'first_sync_callback_returns',
+          name: 'when first sync callback returns content',
           callbacks: [
             {response: 'callback_1_response', isAsync: false},
             {response: 'callback_2_response', isAsync: true},
