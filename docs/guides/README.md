@@ -60,6 +60,7 @@ The `LlmAgent` request/response processor pipeline, live streaming function-call
 
 Third-party model and ecosystem integrations packaged in `@google/adk-integrations`.
 
+- [BigQuery Agent Analytics Plugin](integrations/plugins/bigquery_agent_analytics_plugin/index.md) - `BigQueryAgentAnalyticsPlugin`, table schema, event batching, trace correlation, and querying analytics in BigQuery.
 - [Claude on Vertex AI](integrations/models/anthropic_llm/index.md) - `Claude`, `LLMRegistry` registration for `claude-*` models on Vertex AI, and Anthropic message and tool conversion helpers.
 - [CrewAI tool](integrations/crewai/index.md) - `CrewaiTool`, `isCrewaiTool`, and adapting CrewAI tools into ADK tools.
 - [LangChain tool](integrations/langchain/index.md) - `LangchainTool`, `isLangchainTool`, and adapting LangChain structured and simple tools into ADK tools.

@@ -18,4 +18,26 @@ export type {
 } from './langchain/langchain_tool.js';
 export {Claude, isClaude} from './models/anthropic_llm.js';
 export type {ClaudeParams} from './models/anthropic_llm.js';
+export type {DropStats} from './plugins/bigquery_agent_analytics/batch_processor.js';
+export {BigQueryAgentAnalyticsPlugin} from './plugins/bigquery_agent_analytics/bigquery_agent_analytics_plugin.js';
+export {
+  createBigQueryLoggerConfig,
+  validateLoggerConfig,
+} from './plugins/bigquery_agent_analytics/config.js';
+export type {
+  BigQueryAgentAnalyticsPluginOptions,
+  BigQueryLoggerConfig,
+  RetryConfig,
+} from './plugins/bigquery_agent_analytics/config.js';
+export {
+  ADK_ENVELOPE_SCHEMA_VERSION,
+  EVENTS_SCHEMA,
+  SCHEMA_VERSION,
+  SCHEMA_VERSION_LABEL_KEY,
+} from './plugins/bigquery_agent_analytics/event_schema.js';
+export type {
+  ContentPartRow,
+  EventRow,
+  EventSchemaField,
+} from './plugins/bigquery_agent_analytics/event_schema.js';
 export {version} from './version.js';
