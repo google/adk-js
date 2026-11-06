@@ -81,13 +81,11 @@ export const agent = new LlmAgent({
    - `REQUEST_INPUT_LLM_REQUEST_PROCESSOR`: Resumes workflow and tool input interrupts for `adk_request_input`.
    - `ContextCompactorRequestProcessor`: Inserted immediately before `CONTENT_REQUEST_PROCESSOR` when `config.contextCompactors` is non-empty, compacting older session events.
    - `CONTENT_REQUEST_PROCESSOR`: Builds `llmRequest.contents` from `session.events`, re-attributing other agents' events and filtering incomplete or internal branches.
-   - `NL_PLANNING_REQUEST_PROCESSOR`: Applies `agent.planner` for `BuiltInPlanner` or `PlanReActPlanner` and strips `thought` flags from historical request parts.
    - `INTERACTIONS_REQUEST_PROCESSOR`: Populates interaction metadata when configured.
    - `CODE_EXECUTION_REQUEST_PROCESSOR`: Extracts inline data files, converts historical code blocks when using a client-side `BaseCodeExecutor`, or attaches `BuiltInCodeExecutor` to `llmRequest`.
    - `TOOL_FILTER_REQUEST_PROCESSOR`: Populates `llmRequest.allowedTools` when tool filtering is active.
    - `AGENT_TRANSFER_LLM_REQUEST_PROCESSOR`: Appended unless `disallowTransferToParent && disallowTransferToPeers && !subAgents.length`, adding transfer instructions and registering the `transfer_to_agent` tool.
 2. **Default response processor chain**: When `config.responseProcessors` is omitted, `LlmAgent` runs:
-   - `NL_PLANNING_RESPONSE_PROCESSOR`: Applies `agent.planner.processPlanningResponse` to split or mark thought parts.
    - `CODE_EXECUTION_RESPONSE_PROCESSOR`: Extracts fenced code blocks from model responses, executes them via `agent.codeExecutor`, saves generated files as artifacts, and yields execution result events.
 3. **Compositional Function Calling with `runConfig.supportCfc`**:
    - In `Runner.runAsync`, enabling `runConfig.supportCfc` verifies that the root `LlmAgent` model is Gemini 2.0 or newer and installs `BuiltInCodeExecutor` if not already set.
@@ -281,7 +279,7 @@ async function runWithCfc(agent: LlmAgent) {
 
 ## Limitations
 
-- **Custom `requestProcessors` and `responseProcessors` replace the defaults**: Passing `requestProcessors` or `responseProcessors` to `new LlmAgent({...})` replaces the default processor array rather than appending to it. Because several internal processors such as `BASIC_LLM_REQUEST_PROCESSOR`, `IDENTITY_LLM_REQUEST_PROCESSOR`, `INSTRUCTIONS_LLM_REQUEST_PROCESSOR`, and `NL_PLANNING_REQUEST_PROCESSOR` are not exported from the root `@google/adk` barrel, use `beforeModelCallback` and `afterModelCallback` when you want to keep the full default chain intact, or mutate `agent.requestProcessors.push(...)` and `agent.responseProcessors.push(...)` after constructing the `LlmAgent`.
+- **Custom `requestProcessors` and `responseProcessors` replace the defaults**: Passing `requestProcessors` or `responseProcessors` to `new LlmAgent({...})` replaces the default processor array rather than appending to it. Because several internal processors such as `BASIC_LLM_REQUEST_PROCESSOR`, `IDENTITY_LLM_REQUEST_PROCESSOR`, and `INSTRUCTIONS_LLM_REQUEST_PROCESSOR` are not exported from the root `@google/adk` barrel, use `beforeModelCallback` and `afterModelCallback` when you want to keep the full default chain intact, or mutate `agent.requestProcessors.push(...)` and `agent.responseProcessors.push(...)` after constructing the `LlmAgent`.
 - **`supportCfc` requires Gemini 2.0 or newer and forces text modality**: `Runner.runAsync` throws if `runConfig.supportCfc` is enabled on a model earlier than Gemini 2.0, and `applyLiveRunConfig` overrides `liveConnectConfig.responseModalities` to `[Modality.TEXT]`.
 - **`stop_streaming` cancellation timeout is 1 second**: `stop_streaming` calls `task.cancel()` and waits up to 1000 ms for the background `Task` to settle. If a custom task ignores `AbortSignal` and stays pending past 1000 ms, `stop_streaming` logs a warning and returns `{status: 'The task is not cancelled yet for <name>.'}`.
 - **`AudioTranscriber` is internal**: `AudioTranscriber` (`core/src/flows/llm_flows/audio_transcriber.ts`) is an internal helper and is not re-exported from the top-level `@google/adk` barrel; live audio sessions emit native `inputTranscription` and `outputTranscription` events on `LlmAgent`.
@@ -294,5 +292,4 @@ async function runWithCfc(agent: LlmAgent) {
 
 - [Tools](../tools/index.md) - `BaseTool`, `FunctionTool` with `_callLive` streaming, `LongRunningFunctionTool`, `AgentTool`, and `ToolContext`.
 - [Code executors](../code_executors/index.md) - Server-side and client-side code executors and `CodeExecutionResponseProcessor`.
-- [Planners](../planners/index.md) - `BasePlanner`, `BuiltInPlanner`, and `PlanReActPlanner` used by the planning processors.
 - [Auth](../auth/index.md) - `AuthConfig`, `AuthHandler`, and `AUTH_PREPROCESSOR` credential resumption.

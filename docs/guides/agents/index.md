@@ -3,7 +3,7 @@
 The `agents` subsystem defines the executable agent hierarchy, orchestration shells, external framework adapters, and per-invocation execution contexts in `@google/adk`. Every agent extends `BaseAgent`, which manages parent-child agent trees, lifecycle callbacks, and invocation cost tracking across single-agent and multi-agent runs:
 
 - `BaseAgent` and `isBaseAgent` - Abstract base class for all agents, providing hierarchy management, `beforeAgentCallback` and `afterAgentCallback` hooks, `clone`, and `runAsync` and `runLive` entry points.
-- `LlmAgent`, `Agent`, and `isLlmAgent` - Language-model agent supporting instructions, tools, structured schemas, context compactors, planners, code executors, and agent transfer.
+- `LlmAgent`, `Agent`, and `isLlmAgent` - Language-model agent supporting instructions, tools, structured schemas, context compactors, code executors, and agent transfer.
 - `SequentialAgent`, `ParallelAgent`, and `LoopAgent` - Deterministic orchestration agents that run `subAgents` in sequence, concurrently on isolated branches, or repeatedly until escalation.
 - `LangGraphAgent`, `isLangGraphAgent`, `getLastHumanMessages`, `LangGraphHumanMessage`, `LangGraphAIMessage`, and `LangGraphSystemMessage` - Adapter agent that wraps a compiled LangGraph state graph (`CompiledGraphLike`) for single-turn and multi-turn execution.
 - `InvocationContext`, `ReadonlyContext`, `Context`, `CallbackContext`, `LlmCallsLimitExceededError`, and `isLlmCallsLimitExceededError` - Per-invocation state containers, callback and tool context wrappers, and shared LLM call budget enforcement.
@@ -148,7 +148,7 @@ The `LlmAgentConfig` interface extends `BaseAgentConfig` with model, instruction
 | `instruction`              | `string \| InstructionProvider` | `''`          | Agent instruction string supporting `{state_key}` interpolation, or a function receiving `ReadonlyContext`.   |
 | `globalInstruction`        | `string \| InstructionProvider` | `''`          | Root-agent instruction prepended to every agent in the tree.                                                  |
 | `tools`                    | `ToolUnion[]`                   | `[]`          | `BaseTool`, `BaseToolset`, or `BaseNode` instances exposed to the model.                                      |
-| `generateContentConfig`    | `GenerateContentConfig`         | `undefined`   | Model generation parameters such as `temperature` and `maxOutputTokens`.                                      |
+| `generateContentConfig`    | `GenerateContentConfig`         | `undefined`   | Model generation parameters such as `temperature`, `maxOutputTokens`, and `thinkingConfig`.                   |
 | `disallowTransferToParent` | `boolean`                       | `false`       | Prevents the model from transferring control back to `parentAgent`.                                           |
 | `disallowTransferToPeers`  | `boolean`                       | `false`       | Prevents the model from transferring control to sibling agents.                                               |
 | `includeContents`          | `'default' \| 'none'`           | `'default'`   | Controls whether prior conversation history is included in model requests.                                    |
@@ -156,7 +156,6 @@ The `LlmAgentConfig` interface extends `BaseAgentConfig` with model, instruction
 | `outputSchema`             | `LlmAgentSchema`                | `undefined`   | Zod object or `@google/genai` `Schema` enforcing structured JSON output from the model.                       |
 | `outputKey`                | `string`                        | `undefined`   | Session state key where the agent's text response is persisted via `actions.stateDelta`.                      |
 | `codeExecutor`             | `BaseCodeExecutor`              | `undefined`   | Code executor used to run fenced code blocks emitted by the model.                                            |
-| `planner`                  | `BasePlanner`                   | `undefined`   | Planner such as `BuiltInPlanner` or `PlanReActPlanner` applied before and after model calls.                  |
 | `contextCompactors`        | `BaseContextCompactor[]`        | `[]`          | Context compactors evaluated in priority order before `CONTENT_REQUEST_PROCESSOR`.                            |
 | `requestProcessors`        | `BaseLlmRequestProcessor[]`     | Default chain | Ordered request processor pipeline.                                                                           |
 | `responseProcessors`       | `BaseLlmResponseProcessor[]`    | Default chain | Ordered response processor pipeline.                                                                          |
