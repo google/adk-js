@@ -12,6 +12,7 @@ import {
   EvalMetric,
   EvalResult,
   EvalStatus,
+  LocalEvalSetResultsManager,
   LogLevel,
   getArtifactServiceFromUri,
   getEvaluationCriteriaOrDefault,
@@ -534,23 +535,57 @@ export function createProgram(): Command {
             evalResults.push(result);
           }
 
+          const isAgentFile =
+            fs.existsSync(absAgentPath) && fs.statSync(absAgentPath).isFile();
+          const appName = isAgentFile
+            ? path.basename(absAgentPath, path.extname(absAgentPath))
+            : path.basename(absAgentPath);
+          const agentsDir = path.dirname(absAgentPath);
+          const localEvalSetResultsManager = new LocalEvalSetResultsManager(
+            agentsDir,
+          );
+          const evalSetIdToEvalResults: Record<string, EvalResult[]> = {};
+          for (const evalResult of evalResults) {
+            const rawSetId = evalResult.eval_set_id;
+            const evalSetId = path
+              .basename(rawSetId)
+              .replace(/\.evalset\.json$/, '')
+              .replace(/\.json$/, '');
+            if (
+              !Object.prototype.hasOwnProperty.call(
+                evalSetIdToEvalResults,
+                evalSetId,
+              )
+            ) {
+              evalSetIdToEvalResults[evalSetId] = [];
+            }
+            evalSetIdToEvalResults[evalSetId].push(evalResult);
+          }
+          for (const [evalSetId, evalCaseResults] of Object.entries(
+            evalSetIdToEvalResults,
+          )) {
+            localEvalSetResultsManager.saveEvalSetResult({
+              appName,
+              evalSetId,
+              evalCaseResults,
+            });
+          }
+
           process.stdout.write(
             '*********************************************************************\n',
           );
           const evalRunSummary: Record<string, [number, number]> = {};
           for (const evalResult of evalResults) {
+            const summaryKey = evalResult.eval_set_id;
             if (
-              !Object.prototype.hasOwnProperty.call(
-                evalRunSummary,
-                evalResult.eval_set_file,
-              )
+              !Object.prototype.hasOwnProperty.call(evalRunSummary, summaryKey)
             ) {
-              evalRunSummary[evalResult.eval_set_file] = [0, 0];
+              evalRunSummary[summaryKey] = [0, 0];
             }
             if (evalResult.final_eval_status === EvalStatus.PASSED) {
-              evalRunSummary[evalResult.eval_set_file][0] += 1;
+              evalRunSummary[summaryKey][0] += 1;
             } else {
-              evalRunSummary[evalResult.eval_set_file][1] += 1;
+              evalRunSummary[summaryKey][1] += 1;
             }
           }
 
