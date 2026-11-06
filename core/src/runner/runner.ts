@@ -316,7 +316,13 @@ export class Runner {
     const runnerCtx = this;
     try {
       yield* recordInvocation(
-        {entrypoint: this.agent, sessionId, runConfig},
+        {
+          entrypoint: this.agent,
+          sessionId,
+          runConfig,
+          remoteParent: runConfig.remoteParent,
+          supportId: runConfig.supportId,
+        },
         async function* () {
           const session = await runnerCtx.resolveSession(userId, sessionId);
 
@@ -791,7 +797,13 @@ export class Runner {
 
     const runnerCtx = this;
     yield* recordInvocation(
-      {entrypoint: agent, sessionId, runConfig},
+      {
+        entrypoint: agent,
+        sessionId,
+        runConfig,
+        remoteParent: runConfig.remoteParent,
+        supportId: runConfig.supportId,
+      },
       async function* () {
         const session = await runnerCtx.sessionService.getOrCreateSession({
           appName: runnerCtx.appName,

@@ -356,7 +356,13 @@ export {InMemorySessionService} from './sessions/in_memory_session_service.js';
 export {createSession} from './sessions/session.js';
 export type {CompositeSessionKey, Session} from './sessions/session.js';
 export {State, StateSchemaError, isStateSchemaError} from './sessions/state.js';
+export {
+  AGENT_ENGINE_TRACEPARENT_HEADER,
+  TRACEPARENT_HEADER,
+  extractAgentEngineContext,
+} from './telemetry/api/instrumentation.js';
 export type {
+  AgentEngineTraceContext,
   ContentCapturingMode,
   ExperimentalFeature,
   TelemetryConfig,
