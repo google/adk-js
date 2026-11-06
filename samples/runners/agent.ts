@@ -121,6 +121,7 @@ async function archivePastConversation(): Promise<void> {
   }
 
   await memoryService.addSessionToMemory(session);
+  await archiveRunner.close();
 }
 
 await archivePastConversation();

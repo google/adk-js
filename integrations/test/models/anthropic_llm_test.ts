@@ -110,7 +110,7 @@ function createSampleAnthropicMessage(
   };
 }
 
-describe('test_match_claude_family', () => {
+describe('Claude model family matching', () => {
   beforeAll(() => {
     LLMRegistry.register(Claude);
   });
@@ -122,6 +122,8 @@ describe('test_match_claude_family', () => {
     'claude-3-haiku@20240307',
     'claude-3-opus@20240229',
     'claude-3-sonnet@20240229',
+    'claude-sonnet-4@20250514',
+    'claude-opus-4@20250514',
     'claude-haiku-4-5',
     'claude-haiku-4-5@20251001',
     'claude-haiku-5-5@default',
@@ -132,9 +134,12 @@ describe('test_match_claude_family', () => {
     'claude-opus-5@default',
   ];
 
-  it.each(supportedModelNames)('test_match_claude_family (%s)', (modelName) => {
-    expect(LLMRegistry.resolve(modelName)).toBe(Claude);
-  });
+  it.each(supportedModelNames)(
+    'resolves %s to Claude in LLMRegistry',
+    (modelName) => {
+      expect(LLMRegistry.resolve(modelName)).toBe(Claude);
+    },
+  );
 
   it('instantiates Claude via LLMRegistry.newLlm', () => {
     const llm = LLMRegistry.newLlm('claude-sonnet-4-6@default');
@@ -372,7 +377,7 @@ describe('Claude', () => {
     );
   });
 
-  it('test_generate_content_async_with_max_tokens', async () => {
+  it('passes constructor maxTokens as max_tokens in the Anthropic request', async () => {
     mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
 
     const llm = new Claude({maxTokens: 4096});
@@ -424,7 +429,7 @@ describe('Claude', () => {
     ['max_tokens', FinishReason.MAX_TOKENS],
     ['refusal', FinishReason.SAFETY],
   ])(
-    'test_non_streaming_sets_finish_reason (%s)',
+    'maps Anthropic stop_reason %s to FinishReason in non-streaming responses',
     async (stopReason, expectedFinishReason) => {
       mockMessagesCreate.mockResolvedValue(
         createSampleAnthropicMessage({stop_reason: stopReason}),
@@ -554,23 +559,23 @@ describe('Claude', () => {
     [string, Array<string | undefined>, Array<string | undefined>, number]
   >([
     [
-      'distinct_invalid_pair_uniquely',
+      'distinct invalid IDs pair uniquely',
       ['bad A!', 'bad B!'],
       ['bad A!', 'bad B!'],
       2,
     ],
-    ['matching_empty_ids_pair', [''], [''], 1],
-    ['multiple_empty_ids_pair_distinctly', ['', ''], ['', ''], 2],
+    ['matching empty IDs pair', [''], [''], 1],
+    ['multiple empty IDs pair distinctly', ['', ''], ['', ''], 2],
     [
-      'multiple_none_ids_pair_distinctly',
+      'multiple undefined IDs pair distinctly',
       [undefined, undefined],
       [undefined, undefined],
       2,
     ],
-    ['none_and_empty_collapse', [undefined], [''], 1],
-    ['repeated_invalid_id_consistent', ['bad!'], ['bad!'], 1],
+    ['undefined and empty IDs collapse', [undefined], [''], 1],
+    ['repeated invalid IDs stay consistent', ['bad!'], ['bad!'], 1],
   ])(
-    'test_generate_content_async_pairs_invalid_tool_ids (%s)',
+    'pairs sanitized fallback tool IDs across call and response parts (%s)',
     async (_caseId, callIds, responseIds, expectedUnique) => {
       mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
 
@@ -614,7 +619,7 @@ describe('Claude', () => {
     },
   );
 
-  it('test_generate_content_async_multiturn_empty_tool_ids_unique', async () => {
+  it('assigns unique fallback tool IDs to empty IDs across multi-turn requests', async () => {
     mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
 
     const llm = new Claude();
@@ -670,7 +675,7 @@ describe('Claude', () => {
     expect(useIds).toEqual(resultIds);
   });
 
-  it('test_generate_content_async_named_response_removes_from_fallback_list', async () => {
+  it('removes a named tool response from the fallback queue so a subsequent unnamed response gets the remaining ID', async () => {
     mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
 
     const llm = new Claude();
@@ -720,7 +725,7 @@ describe('Claude', () => {
     expect(useIds).toEqual(resultIds);
   });
 
-  it('test_generate_content_async_anonymous_response_removes_from_named_map', async () => {
+  it('removes an unnamed tool response from the named map so a subsequent named response gets the remaining ID', async () => {
     mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
 
     const llm = new Claude();

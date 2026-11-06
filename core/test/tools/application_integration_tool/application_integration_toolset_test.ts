@@ -760,7 +760,7 @@ describe('ApplicationIntegrationToolset', () => {
 
       expect(
         Object.keys(tools[0]._getDeclaration()?.parameters?.properties ?? {}),
-      ).toEqual(['filter_clause', 'page_size', 'page_token']);
+      ).toEqual(['filterClause', 'pageSize', 'pageToken']);
       fetchMock.mockReset();
       fetchMock.mockResolvedValue(jsonResponse({connectorOutputPayload: []}));
       await tools[0].runAsync({
@@ -791,7 +791,7 @@ describe('ApplicationIntegrationToolset', () => {
       });
     });
 
-    it('includes filter_clause in update and delete tool declarations and request bodies', async () => {
+    it('includes filterClause in update and delete tool declarations and request bodies', async () => {
       const connectionUrl = `https://connectors.googleapis.com/v1/projects/${PROJECT}/locations/${LOCATION}/connections/${CONNECTION}`;
       const routes: Record<string, unknown> = {
         [`${connectionUrl}?view=BASIC`]: {
@@ -831,15 +831,15 @@ describe('ApplicationIntegrationToolset', () => {
       ]);
       expect(
         Object.keys(tools[0]._getDeclaration()?.parameters?.properties ?? {}),
-      ).toEqual(['connector_input_payload', 'entity_id', 'filter_clause']);
+      ).toEqual(['connectorInputPayload', 'entityId', 'filterClause']);
       expect(
         Object.keys(tools[1]._getDeclaration()?.parameters?.properties ?? {}),
-      ).toEqual(['entity_id', 'filter_clause']);
+      ).toEqual(['entityId', 'filterClause']);
 
       fetchMock.mockReset();
       fetchMock.mockResolvedValue(jsonResponse({connectorOutputPayload: {}}));
       await tools[1].runAsync({
-        args: {entity_id: 'issue-1', filter_clause: "status='closed'"},
+        args: {entityId: 'issue-1', filterClause: "status='closed'"},
         toolContext: toolContext(),
       });
 
@@ -876,6 +876,16 @@ describe('ApplicationIntegrationToolset', () => {
             operations: ['LIST'],
           },
         },
+        [`${connectionUrl}/connectionSchemaMetadata:getAction?actionId=ExecuteCustomQuery`]:
+          {name: 'operations/action'},
+        'https://connectors.googleapis.com/v1/operations/action': {
+          done: true,
+          response: {
+            inputJsonSchema: {type: 'object'},
+            outputJsonSchema: {type: 'object'},
+            displayName: 'ExecuteCustomQuery',
+          },
+        },
       };
       fetchMock.mockImplementation(async (input) => {
         const url = String(input);
@@ -895,6 +905,7 @@ describe('ApplicationIntegrationToolset', () => {
       const tools = await toolset({
         connection: CONNECTION,
         entityOperations: {Issues: ['LIST']},
+        actions: ['ExecuteCustomQuery'],
         toolNamePrefix: 'tracker',
         authScheme: TEST_AUTH_SCHEME,
         authCredential: TEST_AUTH_CREDENTIAL,
@@ -902,7 +913,10 @@ describe('ApplicationIntegrationToolset', () => {
 
       expect(
         Object.keys(tools[0]._getDeclaration()?.parameters?.properties ?? {}),
-      ).toEqual(['filter_clause', 'page_size', 'page_token']);
+      ).toEqual(['filterClause', 'pageSize', 'pageToken']);
+      expect(
+        Object.keys(tools[1]._getDeclaration()?.parameters?.properties ?? {}),
+      ).toEqual(['query', 'timeout', 'pageSize']);
 
       fetchMock.mockReset();
       fetchMock.mockResolvedValue(jsonResponse({connectorOutputPayload: []}));
@@ -916,6 +930,29 @@ describe('ApplicationIntegrationToolset', () => {
       expect(JSON.parse(String(init?.body))).toEqual({
         operation: 'LIST_ENTITIES',
         entity: 'Issues',
+        connectionName: `projects/${PROJECT}/locations/${LOCATION}/connections/${CONNECTION}`,
+        serviceName: 'test-service',
+        host: '',
+        dynamicAuthConfig: {
+          'oauth2_auth_code_flow.access_token': 'dynamic_user_token',
+        },
+      });
+
+      fetchMock.mockReset();
+      fetchMock.mockResolvedValue(jsonResponse({connectorOutputPayload: []}));
+      await tools[1].runAsync({
+        args: {query: 'SELECT 1', timeout: 120, pageSize: 50},
+        toolContext: toolContext(),
+      });
+
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const [, queryInit] = fetchMock.mock.calls[0];
+      expect(JSON.parse(String(queryInit?.body))).toEqual({
+        operation: 'EXECUTE_QUERY',
+        action: 'ExecuteCustomQuery',
+        query: 'SELECT 1',
+        timeout: 120,
+        pageSize: 50,
         connectionName: `projects/${PROJECT}/locations/${LOCATION}/connections/${CONNECTION}`,
         serviceName: 'test-service',
         host: '',

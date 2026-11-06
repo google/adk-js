@@ -42,7 +42,7 @@ export abstract class BaseToolset {
   readonly [BASE_TOOLSET_SIGNATURE_SYMBOL] = true;
 
   constructor(
-    readonly toolFilter: ToolPredicate | string[],
+    readonly toolFilter: ToolPredicate | string[] = [],
     readonly prefix?: string,
   ) {}
 

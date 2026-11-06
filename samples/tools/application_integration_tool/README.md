@@ -33,6 +33,10 @@ the start of the first turn, and keeps them for later turns.
 - Connection mode also needs an integration named `ExecuteConnection`, with
   the API trigger `api_trigger/ExecuteConnection`, in the same project and
   region as the connection. Every generated tool calls that integration.
+- Optional `CLIENT_ID` and `CLIENT_SECRET` OAuth2 credentials for connection
+  mode when `authOverrideEnabled` is enabled on the connection, so generated
+  entity, action, and `ExecuteCustomQuery` tools send dynamic end-user
+  credentials in `dynamicAuthConfig`.
 
 ## Running
 

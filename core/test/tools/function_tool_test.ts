@@ -597,7 +597,7 @@ describe('FunctionTool', () => {
   });
 
   describe('declaration building utilities', () => {
-    it('test_string_input', () => {
+    it('maps a string parameter schema to Type.STRING', () => {
       const decl = buildFunctionDeclarationUtil(
         false,
         'simple_function',
@@ -621,7 +621,7 @@ describe('FunctionTool', () => {
       });
     });
 
-    it('test_int_input', () => {
+    it('maps an integer parameter and returnType to Type.INTEGER', () => {
       const decl = buildFunctionDeclarationUtil(
         true,
         'simple_function',
@@ -646,7 +646,7 @@ describe('FunctionTool', () => {
       });
     });
 
-    it('test_float_input', () => {
+    it('maps a float parameter and returnType to Type.NUMBER', () => {
       const decl = buildFunctionDeclarationUtil(
         true,
         'simple_function',
@@ -671,7 +671,7 @@ describe('FunctionTool', () => {
       });
     });
 
-    it('test_bool_input', () => {
+    it('maps a boolean parameter and returnType to Type.BOOLEAN', () => {
       const decl = buildFunctionDeclarationUtil(
         true,
         'simple_function',
@@ -696,7 +696,7 @@ describe('FunctionTool', () => {
       });
     });
 
-    it('test_array_input', () => {
+    it('maps list and tuple parameters to Type.ARRAY with typed items', () => {
       const decl = buildFunctionDeclarationUtil(
         false,
         'simple_function',
@@ -720,7 +720,7 @@ describe('FunctionTool', () => {
       });
     });
 
-    it('test_dict_input', () => {
+    it('maps object and any parameters to Type.OBJECT and Type.TYPE_UNSPECIFIED', () => {
       const decl = buildFunctionDeclarationUtil(
         false,
         'simple_function',
@@ -744,7 +744,7 @@ describe('FunctionTool', () => {
       });
     });
 
-    it('test_basemodel_input', () => {
+    it('maps a nested object schema input to Type.OBJECT', () => {
       const decl = buildFunctionDeclarationUtil(
         false,
         'simple_function',
@@ -776,7 +776,7 @@ describe('FunctionTool', () => {
       });
     });
 
-    it('test_toolcontext_ignored', () => {
+    it('omits parameters when properties is empty', () => {
       const decl = buildFunctionDeclarationUtil(
         false,
         'simple_function',
@@ -791,7 +791,7 @@ describe('FunctionTool', () => {
       expect(decl.parameters).toBeUndefined();
     });
 
-    it('test_basemodel', () => {
+    it('builds a standalone schema with unspecified response type for Vertex AI', () => {
       const decl = buildFunctionDeclarationUtil(
         true,
         'SimpleFunction',
@@ -818,7 +818,7 @@ describe('FunctionTool', () => {
       });
     });
 
-    it('test_nested_basemodel_input', () => {
+    it('maps deeply nested object parameter schemas to Type.OBJECT', () => {
       const decl = buildFunctionDeclarationUtil(
         false,
         'simple_function',
@@ -858,7 +858,7 @@ describe('FunctionTool', () => {
       });
     });
 
-    it('test_basemodel_with_nested_basemodel', () => {
+    it('maps a custom schema with a nested child object', () => {
       const decl = buildFunctionDeclarationUtil(
         false,
         'CustomInput',
@@ -888,7 +888,7 @@ describe('FunctionTool', () => {
       });
     });
 
-    it('test_list', () => {
+    it('maps array schemas of strings and objects', () => {
       const decl = buildFunctionDeclarationUtil(
         false,
         'simple_function',
@@ -910,7 +910,7 @@ describe('FunctionTool', () => {
       });
     });
 
-    it('test_basemodel_list', () => {
+    it('maps an array of nested objects to Type.ARRAY with nested Type.OBJECT items', () => {
       const decl = buildFunctionDeclarationUtil(
         false,
         'simple_function',
@@ -1007,6 +1007,68 @@ describe('FunctionTool', () => {
       });
       expect(vertexDecl.response).toEqual({type: Type.TYPE_UNSPECIFIED});
       expect(GoogleLLMVariant.VERTEX_AI).toBe('VERTEX_AI');
+    });
+
+    it('maps null parameter types to OBJECT with nullable true', () => {
+      const vertexUtilDecl = buildFunctionDeclarationUtil(
+        true,
+        'nullParamFn',
+        'Handles null parameter annotation',
+        function nullParamFn() {},
+        {
+          properties: {
+            nullStrParam: {type: 'null'},
+            nullParam: {type: null},
+          },
+        },
+      );
+      expect(vertexUtilDecl.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          nullStrParam: {type: Type.OBJECT, nullable: true},
+          nullParam: {type: Type.OBJECT, nullable: true},
+        },
+      });
+
+      const vertexLangchainDecl = buildFunctionDeclarationForLangchain(
+        true,
+        'lcNullFn',
+        'LangChain null parameter',
+        function lcNullFn() {},
+        {
+          nullParam: {type: null},
+          requiredStr: {type: 'string'},
+        },
+      );
+      expect(vertexLangchainDecl.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          nullParam: {type: Type.OBJECT, nullable: true},
+          requiredStr: {type: Type.STRING},
+        },
+        required: ['requiredStr'],
+      });
+
+      const geminiCrewaiDecl = buildFunctionDeclarationForParamsForCrewai(
+        false,
+        'crewNullFn',
+        'CrewAI null parameter',
+        function crewNullFn() {},
+        {
+          properties: {
+            nullParam: {type: null},
+            requiredStr: {type: 'string'},
+          },
+        },
+      );
+      expect(geminiCrewaiDecl.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          nullParam: {type: Type.OBJECT},
+          requiredStr: {type: Type.STRING},
+        },
+        required: ['requiredStr'],
+      });
     });
   });
 
@@ -1117,7 +1179,7 @@ describe('FunctionTool', () => {
       _args: z4.infer<typeof fourArgSchema>,
     ): void {}
 
-    it('test_init', async () => {
+    it('initializes a FunctionTool with no arguments and rejects an empty tool name', async () => {
       const tool = new FunctionTool({
         name: 'function_for_testing_with_no_args',
         description: 'Function for testing with no args.',
@@ -1143,7 +1205,7 @@ describe('FunctionTool', () => {
       ).toThrow('Tool name cannot be empty');
     });
 
-    it('test_run_async_with_tool_context_async_func', async () => {
+    it('runs an async function with toolContext', async () => {
       const tool = new FunctionTool({
         name: 'async_function_for_testing_with_1_arg_and_tool_context',
         description: 'Async function for testing with 1 arg and tool context.',
@@ -1157,7 +1219,7 @@ describe('FunctionTool', () => {
       expect(result).toBe('test_value_1');
     });
 
-    it('test_run_async_with_tool_context_async_callable', async () => {
+    it('runs an async bound callable method with toolContext', async () => {
       const callable = new AsyncCallableWith1ArgAndToolContext();
       const tool = new FunctionTool({
         name: 'AsyncCallableWith1ArgAndToolContext',
@@ -1173,7 +1235,7 @@ describe('FunctionTool', () => {
       expect(result).toBe('test_value_1');
     });
 
-    it('test_run_async_without_tool_context_async_func', async () => {
+    it('runs an async function without toolContext', async () => {
       const tool = new FunctionTool({
         name: 'async_function_for_testing_with_2_arg_and_no_tool_context',
         description:
@@ -1188,15 +1250,18 @@ describe('FunctionTool', () => {
       expect(result).toBe('test_value_1');
     });
 
-    it('test_run_async_without_tool_context_async_callable', async () => {
+    it('runs async callable without tool context', async () => {
       const callable = new AsyncCallableWith2ArgsAndNoToolContext();
+      const executeFn = (args: {arg1: string; arg2: string}) =>
+        callable.execute(args);
+      Object.defineProperty(executeFn, 'name', {value: 'Async callable name'});
       const tool = new FunctionTool({
-        name: 'AsyncCallableWith2ArgsAndNoToolContext',
-        description: 'Async callable with 2 args and no tool context.',
+        description: 'Async callable doc',
         parameters: twoArgSchema,
-        execute: callable.execute.bind(callable),
+        execute: executeFn,
       });
-      expect(tool.name).toBe('AsyncCallableWith2ArgsAndNoToolContext');
+      expect(tool.name).toBe('Async callable name');
+      expect(tool.description).toBe('Async callable doc');
       const result = await tool.runAsync({
         args: {arg1: 'test_value_1', arg2: 'test_value_2'},
         toolContext: emptyContext,
@@ -1204,7 +1269,7 @@ describe('FunctionTool', () => {
       expect(result).toBe('test_value_1');
     });
 
-    it('test_run_async_with_tool_context_sync_func', async () => {
+    it('runs a synchronous function with toolContext', async () => {
       const tool = new FunctionTool({
         name: 'function_for_testing_with_1_arg_and_tool_context',
         description: 'Function for testing with 1 arg and tool context.',
@@ -1218,7 +1283,7 @@ describe('FunctionTool', () => {
       expect(result).toBe('test_value_1');
     });
 
-    it('test_run_async_without_tool_context_sync_func', async () => {
+    it('runs a synchronous function without toolContext', async () => {
       const tool = new FunctionTool({
         name: 'function_for_testing_with_2_arg_and_no_tool_context',
         description: 'Function for testing with 2 args and no tool context.',
@@ -1232,7 +1297,7 @@ describe('FunctionTool', () => {
       expect(result).toBe('test_value_1');
     });
 
-    it('test_run_async_1_missing_arg_sync_func', async () => {
+    it('rejects a synchronous function call when 1 required argument is missing', async () => {
       const tool = new FunctionTool({
         name: 'function_for_testing_with_2_arg_and_no_tool_context',
         description: 'Function for testing with 2 args and no tool context.',
@@ -1260,7 +1325,7 @@ describe('FunctionTool', () => {
       });
     });
 
-    it('test_run_async_1_missing_arg_async_func', async () => {
+    it('rejects an async function call when 1 required argument is missing', async () => {
       const tool = new FunctionTool({
         name: 'async_function_for_testing_with_2_arg_and_no_tool_context',
         description:
@@ -1289,7 +1354,7 @@ describe('FunctionTool', () => {
       });
     });
 
-    it('test_run_async_3_missing_arg_sync_func', async () => {
+    it('rejects a synchronous function call when 3 required arguments are missing', async () => {
       const tool = new FunctionTool({
         name: 'function_for_testing_with_4_arg_and_no_tool_context',
         description: 'Function for testing with 4 args.',
@@ -1317,7 +1382,7 @@ describe('FunctionTool', () => {
       });
     });
 
-    it('test_run_async_3_missing_arg_async_func', async () => {
+    it('rejects an async function call when 3 required arguments are missing', async () => {
       const tool = new FunctionTool({
         name: 'async_function_for_testing_with_4_arg_and_no_tool_context',
         description: 'Async function for testing with 4 args.',
@@ -1345,7 +1410,7 @@ describe('FunctionTool', () => {
       });
     });
 
-    it('test_run_async_missing_all_arg_sync_func', async () => {
+    it('rejects a synchronous function call when all required arguments are missing', async () => {
       const tool = new FunctionTool({
         name: 'function_for_testing_with_4_arg_and_no_tool_context',
         description: 'Function for testing with 4 args.',
@@ -1373,7 +1438,7 @@ describe('FunctionTool', () => {
       });
     });
 
-    it('test_run_async_missing_all_arg_async_func', async () => {
+    it('rejects an async function call when all required arguments are missing', async () => {
       const tool = new FunctionTool({
         name: 'async_function_for_testing_with_4_arg_and_no_tool_context',
         description: 'Async function for testing with 4 args.',
@@ -1401,7 +1466,7 @@ describe('FunctionTool', () => {
       });
     });
 
-    it('test_run_async_with_optional_args_not_set_sync_func', async () => {
+    it('runs a synchronous function when optional arguments are omitted', async () => {
       const tool = new FunctionTool({
         name: 'func_with_optional_args',
         description: 'Sync function with optional args.',
@@ -1420,7 +1485,7 @@ describe('FunctionTool', () => {
       expect(result).toBe('test_value_1,test_value_3');
     });
 
-    it('test_run_async_with_optional_args_not_set_async_func', async () => {
+    it('runs an async function when optional arguments are omitted', async () => {
       const tool = new FunctionTool({
         name: 'async_func_with_optional_args',
         description: 'Async function with optional args.',

@@ -174,30 +174,31 @@ tool, paired with a bearer scheme.
 
 In connection mode, when `authOverrideEnabled` is enabled on the connection, you
 can also pass `authScheme` and `authCredential` to supply dynamic end-user
-credentials. Each `IntegrationConnectorTool` prepares those credentials through
-`ToolAuthHandler` before running and sends the resolved access token in
-`dynamicAuthConfig`. When `authOverrideEnabled` is false on the connection, the
-toolset logs a warning and ignores `authScheme` and `authCredential`.
+credentials (including for `ExecuteCustomQuery`). Each `IntegrationConnectorTool`
+prepares those credentials through `ToolAuthHandler` before running and sends
+the resolved access token in `dynamicAuthConfig`. When `authOverrideEnabled` is
+false on the connection, the toolset logs a warning and ignores `authScheme` and
+`authCredential`.
 
 ## Configuration options
 
 The options are the fields of `ApplicationIntegrationToolsetOptions`.
 
-| Option               | Type                        | Default  | Description                                                                      |
-| :------------------- | :-------------------------- | :------- | :------------------------------------------------------------------------------- |
-| `project`            | `string`                    | Required | The Google Cloud project ID.                                                     |
-| `location`           | `string`                    | Required | The Google Cloud location, such as `us-central1`.                                |
-| `integration`        | `string`                    | None     | The integration name, for integration mode.                                      |
-| `triggers`           | `string[]`                  | None     | The API trigger IDs, for integration mode.                                       |
-| `connection`         | `string`                    | None     | The connection name, for connection mode.                                        |
-| `entityOperations`   | `Record<string, string[]>`  | None     | Operations to expose, keyed by entity name.                                      |
-| `actions`            | `string[]`                  | None     | Actions to expose.                                                               |
-| `toolNamePrefix`     | `string`                    | `''`     | Prefix of every tool name, in connection mode.                                   |
-| `toolInstructions`   | `string`                    | `''`     | Text added to every tool description, in connection mode.                        |
-| `serviceAccountJson` | `string`                    | None     | A service-account key, as JSON. Without it, ADC is used.                         |
-| `authScheme`         | `AuthScheme`                | None     | Authentication scheme for dynamic end-user credentials, in connection mode.      |
-| `authCredential`     | `AuthCredential`            | None     | Authentication credential for dynamic end-user credentials, in connection mode.  |
-| `toolFilter`         | `ToolPredicate \| string[]` | `[]`     | Filter selecting which generated tools `getTools` exposes.                       |
+| Option               | Type                        | Default  | Description                                                                     |
+| :------------------- | :-------------------------- | :------- | :------------------------------------------------------------------------------ |
+| `project`            | `string`                    | Required | The Google Cloud project ID.                                                    |
+| `location`           | `string`                    | Required | The Google Cloud location, such as `us-central1`.                               |
+| `integration`        | `string`                    | None     | The integration name, for integration mode.                                     |
+| `triggers`           | `string[]`                  | None     | The API trigger IDs, for integration mode.                                      |
+| `connection`         | `string`                    | None     | The connection name, for connection mode.                                       |
+| `entityOperations`   | `Record<string, string[]>`  | None     | Operations to expose, keyed by entity name.                                     |
+| `actions`            | `string[]`                  | None     | Actions to expose.                                                              |
+| `toolNamePrefix`     | `string`                    | `''`     | Prefix of every tool name, in connection mode.                                  |
+| `toolInstructions`   | `string`                    | `''`     | Text added to every tool description, in connection mode.                       |
+| `serviceAccountJson` | `string`                    | None     | A service-account key, as JSON. Without it, ADC is used.                        |
+| `authScheme`         | `AuthScheme`                | None     | Authentication scheme for dynamic end-user credentials, in connection mode.     |
+| `authCredential`     | `AuthCredential`            | None     | Authentication credential for dynamic end-user credentials, in connection mode. |
+| `toolFilter`         | `ToolPredicate \| string[]` | `[]`     | Filter selecting which generated tools `getTools` exposes.                      |
 
 `project` and `location` name where the resources live. In connection mode,
 the `ExecuteConnection` integration must be in the same project and location
