@@ -13,10 +13,8 @@ import {BaseTool, BaseToolParams, RunAsyncToolRequest} from '../base_tool.js';
 import {ToolAuthHandler} from '../openapi_tool/openapi_spec_parser/tool_auth_handler.js';
 import {RestApiTool} from '../openapi_tool/rest_api_tool.js';
 
-const DYNAMIC_AUTH_EXCLUDE_FIELDS: readonly string[] = Object.freeze([
-  'dynamic_auth_config',
-  'dynamicAuthConfig',
-]);
+/** The request field that carries the end-user credential. */
+const DYNAMIC_AUTH_CONFIG_FIELD = 'dynamicAuthConfig';
 
 /** Options for {@link IntegrationConnectorTool}. */
 export interface IntegrationConnectorToolOptions extends BaseToolParams {
@@ -113,19 +111,17 @@ export class IntegrationConnectorTool extends BaseTool {
       parameters = {...rawParameters};
       if (rawParameters.properties) {
         const properties = {...rawParameters.properties};
-        for (const field of [
-          ...IntegrationConnectorTool.EXCLUDE_FIELDS,
-          ...DYNAMIC_AUTH_EXCLUDE_FIELDS,
-        ]) {
+        for (const field of IntegrationConnectorTool.EXCLUDE_FIELDS) {
           delete properties[field];
         }
+        delete properties[DYNAMIC_AUTH_CONFIG_FIELD];
         parameters.properties = properties;
       }
       if (rawParameters.required) {
         parameters.required = rawParameters.required.filter(
           (field) =>
             !IntegrationConnectorTool.EXCLUDE_FIELDS.includes(field) &&
-            !DYNAMIC_AUTH_EXCLUDE_FIELDS.includes(field) &&
+            field !== DYNAMIC_AUTH_CONFIG_FIELD &&
             !IntegrationConnectorTool.OPTIONAL_FIELDS.includes(field),
         );
       }
@@ -176,11 +172,11 @@ export class IntegrationConnectorTool extends BaseTool {
     }
     if (authResult.authCredential) {
       const token = prepareDynamicEuc(authResult.authCredential);
-      const dynamicAuthPayload = {
-        'oauth2_auth_code_flow.access_token': token ?? {},
-      };
-      updatedArgs['dynamic_auth_config'] = dynamicAuthPayload;
-      updatedArgs['dynamicAuthConfig'] = dynamicAuthPayload;
+      if (token) {
+        updatedArgs[DYNAMIC_AUTH_CONFIG_FIELD] = {
+          'oauth2_auth_code_flow.access_token': token,
+        };
+      }
     }
     logger.debug(`Running tool: ${this.name}`);
     return this.restApiTool.runAsync({
@@ -190,6 +186,7 @@ export class IntegrationConnectorTool extends BaseTool {
   }
 }
 
+/** Returns the end-user access token from an HTTP credential, if it has one. */
 function prepareDynamicEuc(authCredential: AuthCredential): string | undefined {
-  return authCredential.http?.credentials?.token || undefined;
+  return authCredential.http?.credentials?.token;
 }
