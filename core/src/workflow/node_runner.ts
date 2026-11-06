@@ -8,7 +8,6 @@ import {InvocationContext} from '../agents/invocation_context.js';
 import {createEvent, Event} from '../events/event.js';
 import {
   type NodeInvocationScope,
-  recordNodeAttempt,
   recordNodeInvocation,
 } from '../telemetry/api/instrumentation.js';
 import {BaseNode} from './base_node.js';
@@ -116,7 +115,11 @@ export function executeChildNode(
   // this node. Nodes are raced concurrently in `Workflow.runLoop`, so a parent
   // captured any later would nest concurrent siblings inside whichever task
   // happened to resolve first.
-  const scope = recordNodeInvocation({nodeName});
+  const scope = recordNodeInvocation({
+    node,
+    nodeName,
+    sessionId: parent.invocationContext.session.id,
+  });
 
   // Deliberately not `async`, and the callback is deliberately not `async`
   // either: `scope.run` hands the inner promise straight back, so the child
@@ -134,7 +137,7 @@ interface RunChildNodeParams {
   scope: NodeInvocationScope;
 }
 
-/** The body of {@link executeChildNode}, running under its `execute_node` span. */
+/** The body of {@link executeChildNode}, running under its node scope. */
 async function runChildNode({
   params: {
     parent,
@@ -224,15 +227,6 @@ async function runChildNode({
       });
       if (skipOutput !== undefined) {
         child.output = skipOutput;
-        // A skipped node still fills its slot in the trace, so record it as
-        // completed rather than leaving an attribute-less span behind.
-        scope.recordCompletion({
-          nodePath,
-          runId,
-          attempt: nodeState.attemptCount,
-          status: 'completed',
-          interruptCount: child.interruptIds.length,
-        });
         if (options.useAsOutput) {
           parent.output = child.output;
           parent.route = child.route;
@@ -247,16 +241,14 @@ async function runChildNode({
       resetState(child);
       child.attemptCount = nodeState.attemptCount;
       try {
-        inputRecorded = await runAttempt({
+        inputRecorded = await runOnce({
           node,
           child,
           input,
           nodeName,
           branch,
           isolationScope,
-          nodePath,
-          runId,
-          attempt: nodeState.attemptCount,
+          scope,
         });
         failIfNodeReportedError(child, nodeName);
         succeeded = true;
@@ -297,14 +289,6 @@ async function runChildNode({
       recordInputForResume({child, nodeName, branch, isolationScope, input});
     }
 
-    scope.recordCompletion({
-      nodePath,
-      runId,
-      attempt: nodeState.attemptCount,
-      status: child.interruptIds.length > 0 ? 'waiting' : 'completed',
-      interruptCount: child.interruptIds.length,
-    });
-
     if (pluginManager?.hasPlugins) {
       const replacedOutput = await pluginManager.runAfterNodeCallback({
         node,
@@ -324,47 +308,11 @@ async function runChildNode({
 
     return child;
   } catch (err) {
-    scope.recordFailure({
-      nodePath,
-      runId,
-      attempt: nodeState.attemptCount,
-      interruptCount: child.interruptIds.length,
-      error: err,
-    });
+    scope.end(err);
     throw err;
   } finally {
     scope.end();
   }
-}
-
-interface RunAttemptParams extends RunOnceParams {
-  nodePath: string;
-  runId: string;
-  attempt: number;
-}
-
-/**
- * Not `async`: a node without a retry config must reach `runOnce` and settle on
- * exactly the microtask it would have without tracing (see `executeChildNode`).
- *
- * Resolves to whether the attempt recorded the node's input for resume (see
- * {@link runOnce}).
- */
-function runAttempt(params: RunAttemptParams): Promise<boolean> {
-  const {node, nodeName, nodePath, runId, attempt, child} = params;
-  return recordNodeAttempt(
-    {
-      enabled: Boolean(node.preparedRetryConfig),
-      nodeName,
-      nodePath,
-      runId,
-      attempt,
-      getStatus: () =>
-        child.interruptIds.length > 0 ? 'waiting' : 'completed',
-      getInterruptCount: () => child.interruptIds.length,
-    },
-    () => runOnce(params),
-  );
 }
 
 /**
@@ -422,6 +370,8 @@ interface RunOnceParams {
   nodeName: string;
   branch: string | undefined;
   isolationScope: string | undefined;
+  /** The node's telemetry scope, which records every event it emits. */
+  scope: NodeInvocationScope;
 }
 
 /**
@@ -452,6 +402,7 @@ async function runOnce({
   nodeName,
   branch,
   isolationScope,
+  scope,
 }: RunOnceParams): Promise<boolean> {
   let inputRecorded = false;
   const consume = (event: Event): void => {
@@ -498,6 +449,7 @@ async function runOnce({
       };
       inputRecorded = true;
     }
+    scope.recordEvent(event);
     child.channel.push(event);
   };
 

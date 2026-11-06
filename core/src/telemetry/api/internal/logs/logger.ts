@@ -7,12 +7,14 @@
 import {logs, type Logger} from '@opentelemetry/api-logs';
 
 import {version} from '../../../../version.js';
-import {GEN_AI_SYSTEM_VALUE} from '../common/attributes.js';
+import {GEN_AI_SYSTEM_VALUE, SCHEMA_URL} from '../common/attributes.js';
 
 /**
- * Returns the OpenTelemetry logger for ADK instrumentation scopes from the
- * active global logger provider.
+ * Returns the ADK logger from the global `LoggerProvider`.
+ *
+ * Resolved on every call rather than once at import, so records reach a
+ * provider the application registers after importing ADK.
  */
 export function getTelemetryLogger(): Logger {
-  return logs.getLogger(GEN_AI_SYSTEM_VALUE, version);
+  return logs.getLogger(GEN_AI_SYSTEM_VALUE, version, {schemaUrl: SCHEMA_URL});
 }

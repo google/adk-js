@@ -306,220 +306,225 @@ export class Runner {
     // =========================================================================
     const runnerCtx = this;
     try {
-      yield* recordInvocation(async function* () {
-        const session = await runnerCtx.resolveSession(userId, sessionId);
+      yield* recordInvocation(
+        {entrypoint: this.agent, sessionId},
+        async function* () {
+          const session = await runnerCtx.resolveSession(userId, sessionId);
 
-        if (params.abortSignal?.aborted) {
-          return;
-        }
-
-        if (!session) {
-          if (!runnerCtx.appName) {
-            throw new Error(
-              `Session lookup failed: appName must be provided in runner constructor (or via app.name)`,
-            );
+          if (params.abortSignal?.aborted) {
+            return;
           }
-          throw new Error(
-            `Session not found: ${sessionId} (appName=${runnerCtx.appName}, userId=${userId})`,
-          );
-        }
 
-        if (runConfig.supportCfc && isLlmAgent(runnerCtx.agent)) {
-          const modelName = runnerCtx.agent.canonicalModel.model;
-          if (!isGemini2OrAbove(modelName)) {
+          if (!session) {
+            if (!runnerCtx.appName) {
+              throw new Error(
+                `Session lookup failed: appName must be provided in runner constructor (or via app.name)`,
+              );
+            }
             throw new Error(
-              `CFC is not supported for model: ${
-                modelName
-              } in agent: ${runnerCtx.agent.name}`,
+              `Session not found: ${sessionId} (appName=${runnerCtx.appName}, userId=${userId})`,
             );
           }
 
-          if (!isBuiltInCodeExecutor(runnerCtx.agent.codeExecutor)) {
-            runnerCtx.agent.codeExecutor = new BuiltInCodeExecutor();
+          if (runConfig.supportCfc && isLlmAgent(runnerCtx.agent)) {
+            const modelName = runnerCtx.agent.canonicalModel.model;
+            if (!isGemini2OrAbove(modelName)) {
+              throw new Error(
+                `CFC is not supported for model: ${
+                  modelName
+                } in agent: ${runnerCtx.agent.name}`,
+              );
+            }
+
+            if (!isBuiltInCodeExecutor(runnerCtx.agent.codeExecutor)) {
+              runnerCtx.agent.codeExecutor = new BuiltInCodeExecutor();
+            }
           }
-        }
 
-        const invocationContext = new InvocationContext({
-          artifactService: runnerCtx.artifactService
-            ? isSessionArtifactService(runnerCtx.artifactService)
-              ? runnerCtx.artifactService
-              : new ScopedArtifactService(
-                  runnerCtx.artifactService,
-                  runnerCtx.appName,
-                  userId,
-                  sessionId,
-                )
-            : undefined,
-          sessionService: runnerCtx.sessionService,
-          memoryService: runnerCtx.memoryService,
-          credentialService: runnerCtx.credentialService,
-          invocationId: newInvocationContextId(),
-          agent: isBaseAgent(runnerCtx.agent) ? runnerCtx.agent : undefined,
-          session,
-          userContent: newMessage,
-          runConfig,
-          a2aMetadata: runConfig.a2aMetadata,
-          pluginManager: runnerCtx.pluginManager,
-          abortSignal: params.abortSignal,
-        });
-
-        // =========================================================================
-        // Preprocess plugins on user message
-        // =========================================================================
-        const pluginUserMessage =
-          await runnerCtx.pluginManager.runOnUserMessageCallback({
-            userMessage: newMessage,
-            invocationContext,
+          const invocationContext = new InvocationContext({
+            artifactService: runnerCtx.artifactService
+              ? isSessionArtifactService(runnerCtx.artifactService)
+                ? runnerCtx.artifactService
+                : new ScopedArtifactService(
+                    runnerCtx.artifactService,
+                    runnerCtx.appName,
+                    userId,
+                    sessionId,
+                  )
+              : undefined,
+            sessionService: runnerCtx.sessionService,
+            memoryService: runnerCtx.memoryService,
+            credentialService: runnerCtx.credentialService,
+            invocationId: newInvocationContextId(),
+            agent: isBaseAgent(runnerCtx.agent) ? runnerCtx.agent : undefined,
+            session,
+            userContent: newMessage,
+            runConfig,
+            a2aMetadata: runConfig.a2aMetadata,
+            pluginManager: runnerCtx.pluginManager,
+            abortSignal: params.abortSignal,
           });
 
-        if (params.abortSignal?.aborted) {
-          return;
-        }
+          // =========================================================================
+          // Preprocess plugins on user message
+          // =========================================================================
+          const pluginUserMessage =
+            await runnerCtx.pluginManager.runOnUserMessageCallback({
+              userMessage: newMessage,
+              invocationContext,
+            });
 
-        if (pluginUserMessage) {
-          newMessage = pluginUserMessage as Content;
-        }
-
-        // =========================================================================
-        // Append user message to session
-        // =========================================================================
-        if (newMessage) {
-          if (!newMessage.parts?.length) {
-            throw new Error('No parts in the newMessage.');
+          if (params.abortSignal?.aborted) {
+            return;
           }
 
-          // Directly saves the artifacts (if applicable) in the user message and
-          // replaces the artifact data with a file name placeholder.
-          if (runConfig.saveInputBlobsAsArtifacts) {
-            newMessage = await runnerCtx.saveArtifacts(
-              invocationContext.artifactService,
-              invocationContext.invocationId,
-              newMessage,
-            );
+          if (pluginUserMessage) {
+            newMessage = pluginUserMessage as Content;
+          }
+
+          // =========================================================================
+          // Append user message to session
+          // =========================================================================
+          if (newMessage) {
+            if (!newMessage.parts?.length) {
+              throw new Error('No parts in the newMessage.');
+            }
+
+            // Directly saves the artifacts (if applicable) in the user message and
+            // replaces the artifact data with a file name placeholder.
+            if (runConfig.saveInputBlobsAsArtifacts) {
+              newMessage = await runnerCtx.saveArtifacts(
+                invocationContext.artifactService,
+                invocationContext.invocationId,
+                newMessage,
+              );
+              if (params.abortSignal?.aborted) {
+                return;
+              }
+            }
+            // Append the user message to the session with optional state delta.
+            await runnerCtx.sessionService.appendEvent({
+              session,
+              event: createEvent({
+                invocationId: invocationContext.invocationId,
+                author: 'user',
+                actions: stateDelta
+                  ? createEventActions({stateDelta})
+                  : undefined,
+                content: newMessage,
+                // Callers cannot set ADK-internal keys.
+                customMetadata: withoutInternalMetadata(params.customMetadata),
+              }),
+            });
             if (params.abortSignal?.aborted) {
               return;
             }
           }
-          // Append the user message to the session with optional state delta.
-          await runnerCtx.sessionService.appendEvent({
-            session,
-            event: createEvent({
-              invocationId: invocationContext.invocationId,
-              author: 'user',
-              actions: stateDelta
-                ? createEventActions({stateDelta})
-                : undefined,
-              content: newMessage,
-              // Callers cannot set ADK-internal keys.
-              customMetadata: withoutInternalMetadata(params.customMetadata),
-            }),
-          });
-          if (params.abortSignal?.aborted) {
-            return;
+
+          // =========================================================================
+          // Determine which agent should handle the workflow resumption.
+          // =========================================================================
+          // Only meaningful for an agent root: this resolves an event author
+          // against the agent tree, and a node subtree is not in that tree.
+          if (isBaseAgent(runnerCtx.agent)) {
+            invocationContext.agent = runnerCtx.determineAgentForResumption(
+              session,
+              runnerCtx.agent,
+            );
           }
-        }
 
-        // =========================================================================
-        // Determine which agent should handle the workflow resumption.
-        // =========================================================================
-        // Only meaningful for an agent root: this resolves an event author
-        // against the agent tree, and a node subtree is not in that tree.
-        if (isBaseAgent(runnerCtx.agent)) {
-          invocationContext.agent = runnerCtx.determineAgentForResumption(
-            session,
-            runnerCtx.agent,
-          );
-        }
-
-        // =========================================================================
-        // Run the agent with the plugins (aka hooks to apply in the lifecycle)
-        // =========================================================================
-        if (newMessage) {
           // =========================================================================
           // Run the agent with the plugins (aka hooks to apply in the lifecycle)
           // =========================================================================
-          // Step 1: Run the before_run callbacks to see if we should early exit.
-          const beforeRunCallbackResponse =
-            await runnerCtx.pluginManager.runBeforeRunCallback({
-              invocationContext,
-            });
-          if (params.abortSignal?.aborted) {
-            return;
-          }
-
-          if (beforeRunCallbackResponse) {
-            const earlyExitEvent = createEvent({
-              invocationId: invocationContext.invocationId,
-              author: 'model',
-              content: beforeRunCallbackResponse,
-            });
-            // TODO: b/447446338 - In the future, do *not* save live call
-            // audio content to the session.
-            await runnerCtx.sessionService.appendEvent({
-              session,
-              event: earlyExitEvent,
-            });
+          if (newMessage) {
+            // =========================================================================
+            // Run the agent with the plugins (aka hooks to apply in the lifecycle)
+            // =========================================================================
+            // Step 1: Run the before_run callbacks to see if we should early exit.
+            const beforeRunCallbackResponse =
+              await runnerCtx.pluginManager.runBeforeRunCallback({
+                invocationContext,
+              });
             if (params.abortSignal?.aborted) {
               return;
             }
 
-            yield earlyExitEvent;
-          } else {
-            // Step 2: Otherwise continue with normal execution
-            let abortSealed = false;
-            const sealAbortedInvocation = () => {
-              abortSealed = true;
-              return runnerCtx.synthesizeAbortEvents(invocationContext);
-            };
-            try {
-              for await (const event of runnerCtx.runRoot(invocationContext)) {
-                if (params.abortSignal?.aborted) {
-                  break;
-                }
-
-                // Step 3: Run the on_event callbacks before persisting so
-                // callback changes are stored in the session and match the
-                // streamed event.
-                const outputEvent = await runnerCtx.processAndAppendEvent(
-                  invocationContext,
-                  event,
-                );
-                if (params.abortSignal?.aborted) {
-                  break;
-                }
-
-                yield outputEvent;
-              }
+            if (beforeRunCallbackResponse) {
+              const earlyExitEvent = createEvent({
+                invocationId: invocationContext.invocationId,
+                author: 'model',
+                content: beforeRunCallbackResponse,
+              });
+              // TODO: b/447446338 - In the future, do *not* save live call
+              // audio content to the session.
+              await runnerCtx.sessionService.appendEvent({
+                session,
+                event: earlyExitEvent,
+              });
               if (params.abortSignal?.aborted) {
-                for (const abortEvent of await sealAbortedInvocation()) {
-                  yield abortEvent;
-                }
                 return;
               }
-            } finally {
-              if (params.abortSignal?.aborted && !abortSealed) {
-                // Best-effort: only reached on early close or error, where
-                // throwing would mask the in-flight exception.
-                try {
-                  await sealAbortedInvocation();
-                } catch (e) {
-                  logger.error(
-                    `Failed to seal aborted invocation ${invocationContext.invocationId}.`,
-                    e,
+
+              yield earlyExitEvent;
+            } else {
+              // Step 2: Otherwise continue with normal execution
+              let abortSealed = false;
+              const sealAbortedInvocation = () => {
+                abortSealed = true;
+                return runnerCtx.synthesizeAbortEvents(invocationContext);
+              };
+              try {
+                for await (const event of runnerCtx.runRoot(
+                  invocationContext,
+                )) {
+                  if (params.abortSignal?.aborted) {
+                    break;
+                  }
+
+                  // Step 3: Run the on_event callbacks before persisting so
+                  // callback changes are stored in the session and match the
+                  // streamed event.
+                  const outputEvent = await runnerCtx.processAndAppendEvent(
+                    invocationContext,
+                    event,
                   );
+                  if (params.abortSignal?.aborted) {
+                    break;
+                  }
+
+                  yield outputEvent;
+                }
+                if (params.abortSignal?.aborted) {
+                  for (const abortEvent of await sealAbortedInvocation()) {
+                    yield abortEvent;
+                  }
+                  return;
+                }
+              } finally {
+                if (params.abortSignal?.aborted && !abortSealed) {
+                  // Best-effort: only reached on early close or error, where
+                  // throwing would mask the in-flight exception.
+                  try {
+                    await sealAbortedInvocation();
+                  } catch (e) {
+                    logger.error(
+                      `Failed to seal aborted invocation ${invocationContext.invocationId}.`,
+                      e,
+                    );
+                  }
                 }
               }
-            }
-            // Step 4: Run the after_run callbacks to optionally modify the context.
-            await runnerCtx.pluginManager.runAfterRunCallback({
-              invocationContext,
-            });
-            if (params.abortSignal?.aborted) {
-              return;
+              // Step 4: Run the after_run callbacks to optionally modify the context.
+              await runnerCtx.pluginManager.runAfterRunCallback({
+                invocationContext,
+              });
+              if (params.abortSignal?.aborted) {
+                return;
+              }
             }
           }
-        }
-      });
+        },
+      );
     } finally {
       const toolsets = isBaseAgent(this.agent)
         ? getAllToolsets(this.agent)
@@ -755,6 +760,7 @@ export class Runner {
       throw new Error('runLive is only supported for agents.');
     }
     const agent = this.agent;
+    const {sessionId} = params;
 
     const runConfig = createRunConfig(params.runConfig);
     if (!runConfig.responseModalities?.length) {
@@ -770,7 +776,7 @@ export class Runner {
     }
 
     const runnerCtx = this;
-    yield* recordInvocation(async function* () {
+    yield* recordInvocation({entrypoint: agent, sessionId}, async function* () {
       const session = await runnerCtx.sessionService.getOrCreateSession({
         appName: runnerCtx.appName,
         userId: params.userId,
