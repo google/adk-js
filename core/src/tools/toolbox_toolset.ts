@@ -44,13 +44,13 @@ export interface ToolboxToolLike {
  */
 export interface ToolboxLoadOptions {
   /**
-   * Mapping of authentication service names to callables that return the
+   * Mapping of authentication service names to functions that return the
    * corresponding authentication token.
    */
   authTokenGetters?: Record<string, () => string | Promise<string>>;
 
   /**
-   * Mapping of parameter names to bind to fixed values or callables that
+   * Mapping of parameter names to bind to fixed values or functions that
    * produce values as needed.
    */
   boundParams?: Record<string, unknown>;
@@ -62,7 +62,7 @@ export interface ToolboxLoadOptions {
  */
 export interface ToolboxToolsetClientLike {
   /**
-   * Loads a single tool by name (camelCase convention).
+   * Loads a single tool by name.
    */
   loadTool?: (
     toolName: string,
@@ -74,33 +74,9 @@ export interface ToolboxToolsetClientLike {
     | Promise<BaseTool | ToolboxToolLike | ((...args: never[]) => unknown)>;
 
   /**
-   * Loads a single tool by name (snake_case convention).
-   */
-  load_tool?: (
-    toolName: string,
-    options?: ToolboxLoadOptions,
-  ) =>
-    | BaseTool
-    | ToolboxToolLike
-    | ((...args: never[]) => unknown)
-    | Promise<BaseTool | ToolboxToolLike | ((...args: never[]) => unknown)>;
-
-  /**
-   * Loads a toolset by name (camelCase convention).
+   * Loads a toolset by name.
    */
   loadToolset?: (
-    toolsetName: string,
-    options?: ToolboxLoadOptions,
-  ) =>
-    | Array<BaseTool | ToolboxToolLike | ((...args: never[]) => unknown)>
-    | Promise<
-        Array<BaseTool | ToolboxToolLike | ((...args: never[]) => unknown)>
-      >;
-
-  /**
-   * Loads a toolset by name (snake_case convention).
-   */
-  load_toolset?: (
     toolsetName: string,
     options?: ToolboxLoadOptions,
   ) =>
@@ -135,13 +111,13 @@ export interface ToolboxToolsetOptions {
   toolNames?: readonly string[];
 
   /**
-   * Mapping of authentication service names to callables that return the
+   * Mapping of authentication service names to functions that return the
    * corresponding authentication token.
    */
   authTokenGetters?: Record<string, () => string | Promise<string>>;
 
   /**
-   * Mapping of parameter names to bind to fixed values or callables that
+   * Mapping of parameter names to bind to fixed values or functions that
    * produce values as needed.
    */
   boundParams?: Record<string, unknown>;
@@ -284,20 +260,7 @@ export class ToolboxToolset extends BaseToolset {
    */
   readonly toolboxClient: ToolboxToolsetClientLike;
 
-  constructor(options: ToolboxToolsetOptions);
-  constructor(
-    serverUrl: string,
-    options: Omit<ToolboxToolsetOptions, 'serverUrl'>,
-  );
-  constructor(
-    serverUrlOrOptions: string | ToolboxToolsetOptions,
-    extraOptions?: Omit<ToolboxToolsetOptions, 'serverUrl'>,
-  ) {
-    const options: ToolboxToolsetOptions =
-      typeof serverUrlOrOptions === 'string'
-        ? {serverUrl: serverUrlOrOptions, ...extraOptions}
-        : serverUrlOrOptions;
-
+  constructor(options: ToolboxToolsetOptions) {
     if (
       (!options.toolNames || options.toolNames.length === 0) &&
       !options.toolsetName
@@ -327,13 +290,9 @@ export class ToolboxToolset extends BaseToolset {
     const tools: BaseTool[] = [];
 
     if (this.toolsetName) {
-      const loader =
-        this.toolboxClient.loadToolset?.bind(this.toolboxClient) ??
-        this.toolboxClient.load_toolset?.bind(this.toolboxClient);
+      const loader = this.toolboxClient.loadToolset?.bind(this.toolboxClient);
       if (!loader) {
-        throw new Error(
-          'ToolboxClient does not implement loadToolset or load_toolset.',
-        );
+        throw new Error('ToolboxClient does not implement loadToolset.');
       }
       const loadedToolset = await loader(this.toolsetName, loadOptions);
       for (const rawTool of loadedToolset) {
@@ -342,13 +301,9 @@ export class ToolboxToolset extends BaseToolset {
     }
 
     if (this.toolNames && this.toolNames.length > 0) {
-      const loader =
-        this.toolboxClient.loadTool?.bind(this.toolboxClient) ??
-        this.toolboxClient.load_tool?.bind(this.toolboxClient);
+      const loader = this.toolboxClient.loadTool?.bind(this.toolboxClient);
       if (!loader) {
-        throw new Error(
-          'ToolboxClient does not implement loadTool or load_tool.',
-        );
+        throw new Error('ToolboxClient does not implement loadTool.');
       }
       const loadedSingleTools = await Promise.all(
         this.toolNames.map((toolName) => loader(toolName, loadOptions)),
