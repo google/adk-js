@@ -360,11 +360,15 @@ export {
   AGENT_ENGINE_TRACEPARENT_HEADER,
   TRACEPARENT_HEADER,
   extractAgentEngineContext,
+  extractTraceContext,
+  injectTraceContext,
+  wrapFetchWithTraceContext,
 } from './telemetry/api/instrumentation.js';
 export type {
   AgentEngineTraceContext,
   ContentCapturingMode,
   ExperimentalFeature,
+  ExtractedTraceContext,
   TelemetryConfig,
 } from './telemetry/api/instrumentation.js';
 export {AgentTool, isAgentTool} from './tools/agent_tool.js';

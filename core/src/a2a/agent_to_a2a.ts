@@ -25,10 +25,21 @@ import {
 import {A2AAgentExecutor} from './agent_executor.js';
 import {
   AdkDefaultRequestHandler,
+  deleteA2aRequestHeaders,
+  getA2aRequestHeaders,
   getA2aRequestMetadata,
+  type HttpHeadersRecord,
+  setA2aRequestHeaders,
 } from './request_metadata.js';
 
-export {AdkDefaultRequestHandler, getA2aRequestMetadata};
+export {
+  AdkDefaultRequestHandler,
+  deleteA2aRequestHeaders,
+  getA2aRequestHeaders,
+  getA2aRequestMetadata,
+  setA2aRequestHeaders,
+};
+export type {HttpHeadersRecord};
 
 /**
  * Loads Express and the Express bindings of `@a2a-js/sdk`, which are only
@@ -232,6 +243,30 @@ export async function toA2a(
     // a preflight, which this app does not answer.
     app.use(expressFactory.json({limit: '50mb'}));
   }
+
+  app.use((req, res, next) => {
+    const bodies = Array.isArray(req.body) ? req.body : [req.body];
+    for (const b of bodies) {
+      const item = b as
+        | {
+            message?: {messageId?: string};
+            params?: {message?: {messageId?: string}};
+          }
+        | undefined;
+      const messageId =
+        item?.message?.messageId ?? item?.params?.message?.messageId;
+      if (messageId && typeof messageId === 'string') {
+        setA2aRequestHeaders(
+          messageId,
+          req.headers as Record<string, string | string[] | undefined>,
+        );
+        res.on('close', () => {
+          deleteA2aRequestHeaders(messageId);
+        });
+      }
+    }
+    next();
+  });
 
   app.use(
     `${basePath}/${AGENT_CARD_PATH}`,

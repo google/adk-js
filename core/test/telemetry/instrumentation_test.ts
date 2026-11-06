@@ -15,6 +15,7 @@ import {
   type Attributes,
   context,
   metrics,
+  ROOT_CONTEXT,
   SpanStatusCode,
   trace,
 } from '@opentelemetry/api';
@@ -74,6 +75,8 @@ import {ContextCompactionTrigger} from '../../src/plugins/base_plugin.js';
 import {
   AGENT_ENGINE_TRACEPARENT_HEADER,
   extractAgentEngineContext,
+  extractTraceContext,
+  injectTraceContext,
   instrumentMcpFetch,
   type McpFetch,
   recordAgentInvocation,
@@ -88,7 +91,9 @@ import {
   recordWorkflowInvocation,
   type ToolExecutionScope,
   TRACEPARENT_HEADER,
+  wrapFetchWithTraceContext,
 } from '../../src/telemetry/api/instrumentation.js';
+import {formatTraceparent} from '../../src/telemetry/api/internal/trace/traceparent.js';
 import {logger} from '../../src/utils/logger.js';
 import {version} from '../../src/version.js';
 
@@ -3026,6 +3031,231 @@ describe('instrumentMcpFetch', () => {
       expect(extractAgentEngineContext({})).toEqual({});
       expect(extractAgentEngineContext(undefined)).toEqual({});
       expect(extractAgentEngineContext(null)).toEqual({});
+    });
+  });
+
+  describe('formatTraceparent', () => {
+    it('formats a valid span context into a W3C traceparent string', () => {
+      const formatted = formatTraceparent({
+        traceId: '4bf92f3577b34da6a3ce929d0e0e4736',
+        spanId: '00f067aa0ba902b7',
+        traceFlags: 1,
+      });
+      expect(formatted).toBe(
+        '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+      );
+    });
+
+    it('formats trace flags with leading zeros', () => {
+      const formatted = formatTraceparent({
+        traceId: '4bf92f3577b34da6a3ce929d0e0e4736',
+        spanId: '00f067aa0ba902b7',
+        traceFlags: 0,
+      });
+      expect(formatted).toBe(
+        '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00',
+      );
+    });
+
+    it('returns undefined for invalid span contexts', () => {
+      expect(
+        formatTraceparent({
+          traceId: '00000000000000000000000000000000',
+          spanId: '00f067aa0ba902b7',
+          traceFlags: 1,
+        }),
+      ).toBeUndefined();
+
+      expect(
+        formatTraceparent({
+          traceId: '4bf92f3577b34da6a3ce929d0e0e4736',
+          spanId: '0000000000000000',
+          traceFlags: 1,
+        }),
+      ).toBeUndefined();
+    });
+  });
+
+  describe('extractTraceContext', () => {
+    const VALID_TRACEPARENT =
+      '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+    const VALID_TRACESTATE = 'congo=t61rcWkgMzE,rojo=00f067a';
+
+    it('extracts valid traceparent and tracestate headers', () => {
+      const extracted = extractTraceContext({
+        traceparent: VALID_TRACEPARENT,
+        tracestate: VALID_TRACESTATE,
+      });
+      expect(extracted).toEqual({
+        remoteParent: VALID_TRACEPARENT,
+        traceState: VALID_TRACESTATE,
+      });
+    });
+
+    it('handles case-insensitive header names', () => {
+      const extracted = extractTraceContext({
+        TRACEPARENT: VALID_TRACEPARENT,
+        TraceState: VALID_TRACESTATE,
+      });
+      expect(extracted).toEqual({
+        remoteParent: VALID_TRACEPARENT,
+        traceState: VALID_TRACESTATE,
+      });
+    });
+
+    it('falls back to Google-Agent-Engine-Traceparent when traceparent is absent', () => {
+      const extracted = extractTraceContext({
+        [AGENT_ENGINE_TRACEPARENT_HEADER]: VALID_TRACEPARENT,
+      });
+      expect(extracted).toEqual({
+        remoteParent: VALID_TRACEPARENT,
+      });
+    });
+
+    it('handles array values by taking the first element', () => {
+      const extracted = extractTraceContext({
+        traceparent: [VALID_TRACEPARENT, 'other-traceparent'],
+        tracestate: [VALID_TRACESTATE, 'other-tracestate'],
+      });
+      expect(extracted).toEqual({
+        remoteParent: VALID_TRACEPARENT,
+        traceState: VALID_TRACESTATE,
+      });
+    });
+
+    it('ignores malformed traceparent headers and returns an empty object', () => {
+      expect(
+        extractTraceContext({
+          traceparent: 'malformed-traceparent-header',
+        }),
+      ).toEqual({});
+
+      expect(
+        extractTraceContext({
+          traceparent:
+            '00-00000000000000000000000000000000-00f067aa0ba902b7-01',
+        }),
+      ).toEqual({});
+    });
+
+    it('returns an empty object when headers are absent or null', () => {
+      expect(extractTraceContext({})).toEqual({});
+      expect(extractTraceContext(undefined)).toEqual({});
+      expect(extractTraceContext(null)).toEqual({});
+    });
+  });
+
+  describe('injectTraceContext', () => {
+    it('injects traceparent when an active span is in scope', () => {
+      const tracer = trace.getTracer('test-tracer');
+      const span = tracer.startSpan('test-span');
+      const ctx = trace.setSpan(context.active(), span);
+
+      try {
+        const headers = injectTraceContext({}, ctx);
+        const spanContext = span.spanContext();
+        expect(headers.traceparent).toBe(
+          `00-${spanContext.traceId}-${spanContext.spanId}-01`,
+        );
+      } finally {
+        span.end();
+      }
+    });
+
+    it('leaves headers untouched when no active trace exists', () => {
+      const headers = injectTraceContext({}, ROOT_CONTEXT);
+      expect(headers).toEqual({});
+    });
+
+    it('does not overwrite an existing traceparent header', () => {
+      const tracer = trace.getTracer('test-tracer');
+      const span = tracer.startSpan('test-span');
+      const ctx = trace.setSpan(context.active(), span);
+
+      try {
+        const headers = injectTraceContext(
+          {traceparent: 'existing-traceparent'},
+          ctx,
+        );
+        expect(headers.traceparent).toBe('existing-traceparent');
+      } finally {
+        span.end();
+      }
+    });
+  });
+
+  describe('wrapFetchWithTraceContext', () => {
+    it('injects traceparent header into outgoing fetch requests when a trace is active', async () => {
+      const tracer = trace.getTracer('test-tracer');
+      const span = tracer.startSpan('test-span');
+      const ctx = trace.setSpan(context.active(), span);
+
+      let capturedHeaders: Headers | Record<string, string> | undefined;
+      const customFetch = vi.fn(
+        async (
+          _url: Parameters<typeof fetch>[0],
+          init?: Parameters<typeof fetch>[1],
+        ) => {
+          capturedHeaders = init?.headers as Headers | Record<string, string>;
+          return new Response('{}', {status: 200});
+        },
+      );
+
+      const wrapped = wrapFetchWithTraceContext(
+        customFetch as unknown as typeof fetch,
+      );
+
+      try {
+        await context.with(ctx, async () => {
+          await wrapped('https://api.example.com/a2a', {
+            method: 'POST',
+            headers: {'content-type': 'application/json'},
+          });
+        });
+
+        const spanContext = span.spanContext();
+        const expected = `00-${spanContext.traceId}-${spanContext.spanId}-01`;
+        expect(customFetch).toHaveBeenCalled();
+        if (capturedHeaders instanceof Headers) {
+          expect(capturedHeaders.get('traceparent')).toBe(expected);
+          expect(capturedHeaders.get('content-type')).toBe('application/json');
+        } else {
+          expect((capturedHeaders as Record<string, string>)?.traceparent).toBe(
+            expected,
+          );
+        }
+      } finally {
+        span.end();
+      }
+    });
+
+    it('passes through without injecting headers when no trace is active', async () => {
+      let capturedInit: Parameters<typeof fetch>[1];
+      const customFetch = vi.fn(
+        async (
+          _url: Parameters<typeof fetch>[0],
+          init?: Parameters<typeof fetch>[1],
+        ) => {
+          capturedInit = init;
+          return new Response('{}', {status: 200});
+        },
+      );
+
+      const wrapped = wrapFetchWithTraceContext(
+        customFetch as unknown as typeof fetch,
+      );
+      const originalInit: Parameters<typeof fetch>[1] = {
+        method: 'POST',
+        headers: {'content-type': 'application/json'},
+      };
+
+      await wrapped('https://api.example.com/a2a', originalInit);
+
+      expect(customFetch).toHaveBeenCalledWith(
+        'https://api.example.com/a2a',
+        originalInit,
+      );
+      expect(capturedInit).toBe(originalInit);
     });
   });
 });

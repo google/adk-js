@@ -15,10 +15,20 @@ import {
   TaskArtifactUpdateEvent,
   TaskStatusUpdateEvent,
 } from '@a2a-js/sdk';
-import {Client, ClientFactory} from '@a2a-js/sdk/client';
+import {
+  Client,
+  ClientFactory,
+  ClientFactoryOptions,
+  JsonRpcTransportFactory,
+  RestTransportFactory,
+} from '@a2a-js/sdk/client';
 import {BaseAgent, BaseAgentConfig} from '../agents/base_agent.js';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {Event as AdkEvent, createEvent} from '../events/event.js';
+import {
+  injectTraceContext,
+  wrapFetchWithTraceContext,
+} from '../telemetry/api/instrumentation.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 import {MessageRole} from './a2a_event.js';
@@ -103,7 +113,9 @@ export interface RemoteA2AAgentConfig extends BaseAgentConfig {
   /**
    * Optional default configuration for sending messages.
    */
-  messageSendConfig?: MessageSendConfiguration;
+  messageSendConfig?: MessageSendConfiguration & {
+    headers?: Record<string, string>;
+  };
   /**
    * Callbacks run before the remote request is sent.
    */
@@ -154,7 +166,20 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
       );
 
       if (!this.client) {
-        const factory = this.a2aConfig.clientFactory || new ClientFactory();
+        const factory =
+          this.a2aConfig.clientFactory ||
+          new ClientFactory(
+            ClientFactoryOptions.createFrom(ClientFactoryOptions.default, {
+              transports: [
+                new JsonRpcTransportFactory({
+                  fetchImpl: wrapFetchWithTraceContext(),
+                }),
+                new RestTransportFactory({
+                  fetchImpl: wrapFetchWithTraceContext(),
+                }),
+              ],
+            }),
+          );
         this.client = await factory.createFromAgentCard(this.card);
       }
     }
@@ -220,9 +245,22 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
       if (contextId) message.contextId = contextId;
 
       const metadata = this.a2aConfig.metadata ?? context.a2aMetadata;
+      const baseConfig = this.a2aConfig.messageSendConfig;
+      const headers: Record<string, string> = {
+        ...baseConfig?.headers,
+      };
+      injectTraceContext(headers);
+
+      const configuration: MessageSendConfiguration & {
+        headers?: Record<string, string>;
+      } = {
+        ...baseConfig,
+        ...(Object.keys(headers).length > 0 ? {headers} : {}),
+      };
+
       const params: MessageSendParams = {
         message,
-        configuration: this.a2aConfig.messageSendConfig,
+        configuration,
         ...(metadata ? {metadata} : {}),
       };
 

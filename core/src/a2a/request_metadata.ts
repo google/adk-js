@@ -17,9 +17,13 @@ import {
   ServerCallContext,
 } from '@a2a-js/sdk/server';
 
+/** Type for HTTP request headers map. */
+export type HttpHeadersRecord = Record<string, string | string[] | undefined>;
+
 interface RequestContextWithRequest extends RequestContext {
   request?: {
     metadata?: Record<string, unknown>;
+    headers?: HttpHeadersRecord;
   };
 }
 
@@ -29,6 +33,55 @@ interface RequestContextWithRequest extends RequestContext {
  * params.metadata to RequestContext, while SDK >= 1.0.0 provides ctx.request.metadata natively.
  */
 const requestMetadataStore = new Map<string, Record<string, unknown>>();
+
+/**
+ * In-flight request headers store keyed by message ID.
+ */
+const requestHeadersStore = new Map<string, HttpHeadersRecord>();
+
+/**
+ * Stores incoming request headers keyed by message ID.
+ *
+ * @param messageId - The A2A message ID.
+ * @param headers - The incoming request headers.
+ */
+export function setA2aRequestHeaders(
+  messageId: string,
+  headers: HttpHeadersRecord,
+): void {
+  requestHeadersStore.set(messageId, headers);
+}
+
+/**
+ * Removes stored request headers for a message ID.
+ *
+ * @param messageId - The A2A message ID.
+ */
+export function deleteA2aRequestHeaders(messageId: string): void {
+  requestHeadersStore.delete(messageId);
+}
+
+/**
+ * Extracts request-level HTTP headers from a RequestContext.
+ *
+ * Checks `ctx.request.headers` first, then falls back to the in-flight headers store.
+ *
+ * @param ctx - The A2A RequestContext.
+ * @returns The incoming request headers, or undefined if not available.
+ */
+export function getA2aRequestHeaders(
+  ctx: RequestContext,
+): Record<string, string | string[] | undefined> | undefined {
+  const reqContext = ctx as RequestContextWithRequest;
+  if (reqContext.request?.headers) {
+    return reqContext.request.headers;
+  }
+  const messageId = ctx.userMessage?.messageId;
+  if (messageId && requestHeadersStore.has(messageId)) {
+    return requestHeadersStore.get(messageId);
+  }
+  return undefined;
+}
 
 /**
  * Extracts request-level A2A metadata from a RequestContext.
@@ -52,7 +105,7 @@ export function getA2aRequestMetadata(
 
 /**
  * A2A DefaultRequestHandler extension that preserves request-level metadata (`params.metadata`)
- * across agent executions regardless of @a2a-js/sdk version.
+ * and headers across agent executions regardless of @a2a-js/sdk version.
  */
 export class AdkDefaultRequestHandler extends DefaultRequestHandler {
   override async sendMessage(
@@ -66,11 +119,22 @@ export class AdkDefaultRequestHandler extends DefaultRequestHandler {
         params.metadata as Record<string, unknown>,
       );
     }
+    const configHeaders = (
+      params.configuration as {headers?: HttpHeadersRecord} | undefined
+    )?.headers;
+    let didStoreConfigHeaders = false;
+    if (messageId && configHeaders && !requestHeadersStore.has(messageId)) {
+      requestHeadersStore.set(messageId, configHeaders);
+      didStoreConfigHeaders = true;
+    }
     try {
       return await super.sendMessage(params, context);
     } finally {
       if (messageId) {
         requestMetadataStore.delete(messageId);
+        if (didStoreConfigHeaders) {
+          requestHeadersStore.delete(messageId);
+        }
       }
     }
   }
@@ -90,11 +154,22 @@ export class AdkDefaultRequestHandler extends DefaultRequestHandler {
         params.metadata as Record<string, unknown>,
       );
     }
+    const configHeaders = (
+      params.configuration as {headers?: HttpHeadersRecord} | undefined
+    )?.headers;
+    let didStoreConfigHeaders = false;
+    if (messageId && configHeaders && !requestHeadersStore.has(messageId)) {
+      requestHeadersStore.set(messageId, configHeaders);
+      didStoreConfigHeaders = true;
+    }
     try {
       yield* super.sendMessageStream(params, context);
     } finally {
       if (messageId) {
         requestMetadataStore.delete(messageId);
+        if (didStoreConfigHeaders) {
+          requestHeadersStore.delete(messageId);
+        }
       }
     }
   }
