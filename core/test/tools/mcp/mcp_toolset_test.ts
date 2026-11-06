@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type {SseConnectionParams, SseServerParams} from '@google/adk';
+import type {SseConnectionParams} from '@google/adk';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {SSEClientTransport} from '@modelcontextprotocol/sdk/client/sse.js';
 import {describe, expect, it, vi} from 'vitest';
@@ -357,7 +357,11 @@ describe('MCPToolset', () => {
       const sseParams: SseConnectionParams = {
         type: 'SseConnectionParams',
         url: 'http://localhost:8090/sse',
-        headers: {'Authorization': 'Bearer sse-token'},
+        transportOptions: {
+          requestInit: {
+            headers: {'Authorization': 'Bearer sse-token'},
+          },
+        },
       };
       const toolset = new MCPToolset(sseParams);
 
@@ -378,8 +382,8 @@ describe('MCPToolset', () => {
       expect(tools[1].name).toBe('other-tool');
     });
 
-    it('accepts the SseServerParams alias with prefix and filter', async () => {
-      const sseParams: SseServerParams = {
+    it('applies prefix and toolFilter with SseConnectionParams', async () => {
+      const sseParams: SseConnectionParams = {
         type: 'SseConnectionParams',
         url: 'http://localhost:8090/sse',
         timeout: 5,

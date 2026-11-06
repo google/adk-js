@@ -59,8 +59,12 @@ const sseParams: SseConnectionParams | undefined = process.env.MCP_SSE_URL
   ? {
       type: 'SseConnectionParams',
       url: process.env.MCP_SSE_URL,
-      headers: process.env.MCP_SSE_TOKEN
-        ? {Authorization: `Bearer ${process.env.MCP_SSE_TOKEN}`}
+      transportOptions: process.env.MCP_SSE_TOKEN
+        ? {
+            requestInit: {
+              headers: {Authorization: `Bearer ${process.env.MCP_SSE_TOKEN}`},
+            },
+          }
         : undefined,
     }
   : undefined;
