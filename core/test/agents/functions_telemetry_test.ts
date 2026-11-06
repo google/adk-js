@@ -27,18 +27,16 @@ import {
   SimpleSpanProcessor,
   type ReadableSpan,
 } from '@opentelemetry/sdk-trace-base';
-import {afterAll, beforeAll, beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {z} from 'zod';
 
 const {handleFunctionCallList} = functionsExportedForTestingOnly;
 
 const INVOCATION_ID = 'inv_telemetry_1';
 
-const exporter = new InMemorySpanExporter();
-const contextManager = new AsyncLocalStorageContextManager();
-const provider = new BasicTracerProvider({
-  spanProcessors: [new SimpleSpanProcessor(exporter)],
-});
+let exporter: InMemorySpanExporter;
+let contextManager: AsyncLocalStorageContextManager;
+let provider: BasicTracerProvider;
 
 const echoTool = new FunctionTool({
   name: 'echoTool',
@@ -47,20 +45,23 @@ const echoTool = new FunctionTool({
   execute: async () => ({result: 'echoed'}),
 });
 
-beforeAll(() => {
-  context.setGlobalContextManager(contextManager.enable());
+beforeEach(() => {
+  trace.disable();
+  context.disable();
+  exporter = new InMemorySpanExporter();
+  contextManager = new AsyncLocalStorageContextManager().enable();
+  provider = new BasicTracerProvider({
+    spanProcessors: [new SimpleSpanProcessor(exporter)],
+  });
+  context.setGlobalContextManager(contextManager);
   trace.setGlobalTracerProvider(provider);
 });
 
-afterAll(async () => {
+afterEach(async () => {
   await provider.shutdown();
   trace.disable();
   context.disable();
   contextManager.disable();
-});
-
-beforeEach(() => {
-  exporter.reset();
 });
 
 function createInvocationContext(): InvocationContext {

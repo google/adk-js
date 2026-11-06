@@ -5,7 +5,6 @@
  */
 
 import {Content, createPartFromText, Modality, Part} from '@google/genai';
-import {context, trace} from '@opentelemetry/api';
 
 import {BaseAgent, isBaseAgent} from '../agents/base_agent.js';
 import {reservedFunctionCallName} from '../agents/framework_function_calls.js';
@@ -47,10 +46,7 @@ import {BasePlugin} from '../plugins/base_plugin.js';
 import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {Session} from '../sessions/session.js';
-import {
-  runAsyncGeneratorWithOtelContext,
-  tracer,
-} from '../telemetry/tracing.js';
+import {recordInvocation} from '../telemetry/api/instrumentation.js';
 import {BaseToolset, isBaseToolset} from '../tools/base_toolset.js';
 import {logger} from '../utils/logger.js';
 import {isGemini2OrAbove} from '../utils/model_name.js';
@@ -308,227 +304,223 @@ export class Runner {
     // =========================================================================
     // Setup the session and invocation context
     // =========================================================================
-    const span = tracer.startSpan('invocation');
-    const ctx = trace.setSpan(context.active(), span);
+    const runnerCtx = this;
     try {
-      yield* runAsyncGeneratorWithOtelContext<Runner, Event>(
-        ctx,
-        this,
-        async function* () {
-          const session = await this.resolveSession(userId, sessionId);
+      yield* recordInvocation(async function* () {
+        const session = await runnerCtx.resolveSession(userId, sessionId);
 
-          if (params.abortSignal?.aborted) {
-            return;
-          }
+        if (params.abortSignal?.aborted) {
+          return;
+        }
 
-          if (!session) {
-            if (!this.appName) {
-              throw new Error(
-                `Session lookup failed: appName must be provided in runner constructor (or via app.name)`,
-              );
-            }
+        if (!session) {
+          if (!runnerCtx.appName) {
             throw new Error(
-              `Session not found: ${sessionId} (appName=${this.appName}, userId=${userId})`,
+              `Session lookup failed: appName must be provided in runner constructor (or via app.name)`,
+            );
+          }
+          throw new Error(
+            `Session not found: ${sessionId} (appName=${runnerCtx.appName}, userId=${userId})`,
+          );
+        }
+
+        if (runConfig.supportCfc && isLlmAgent(runnerCtx.agent)) {
+          const modelName = runnerCtx.agent.canonicalModel.model;
+          if (!isGemini2OrAbove(modelName)) {
+            throw new Error(
+              `CFC is not supported for model: ${
+                modelName
+              } in agent: ${runnerCtx.agent.name}`,
             );
           }
 
-          if (runConfig.supportCfc && isLlmAgent(this.agent)) {
-            const modelName = this.agent.canonicalModel.model;
-            if (!isGemini2OrAbove(modelName)) {
-              throw new Error(
-                `CFC is not supported for model: ${
-                  modelName
-                } in agent: ${this.agent.name}`,
-              );
-            }
-
-            if (!isBuiltInCodeExecutor(this.agent.codeExecutor)) {
-              this.agent.codeExecutor = new BuiltInCodeExecutor();
-            }
+          if (!isBuiltInCodeExecutor(runnerCtx.agent.codeExecutor)) {
+            runnerCtx.agent.codeExecutor = new BuiltInCodeExecutor();
           }
+        }
 
-          const invocationContext = new InvocationContext({
-            artifactService: this.artifactService
-              ? isSessionArtifactService(this.artifactService)
-                ? this.artifactService
-                : new ScopedArtifactService(
-                    this.artifactService,
-                    this.appName,
-                    userId,
-                    sessionId,
-                  )
-              : undefined,
-            sessionService: this.sessionService,
-            memoryService: this.memoryService,
-            credentialService: this.credentialService,
-            invocationId: newInvocationContextId(),
-            agent: isBaseAgent(this.agent) ? this.agent : undefined,
-            session,
-            userContent: newMessage,
-            runConfig,
-            a2aMetadata: runConfig.a2aMetadata,
-            pluginManager: this.pluginManager,
-            abortSignal: params.abortSignal,
+        const invocationContext = new InvocationContext({
+          artifactService: runnerCtx.artifactService
+            ? isSessionArtifactService(runnerCtx.artifactService)
+              ? runnerCtx.artifactService
+              : new ScopedArtifactService(
+                  runnerCtx.artifactService,
+                  runnerCtx.appName,
+                  userId,
+                  sessionId,
+                )
+            : undefined,
+          sessionService: runnerCtx.sessionService,
+          memoryService: runnerCtx.memoryService,
+          credentialService: runnerCtx.credentialService,
+          invocationId: newInvocationContextId(),
+          agent: isBaseAgent(runnerCtx.agent) ? runnerCtx.agent : undefined,
+          session,
+          userContent: newMessage,
+          runConfig,
+          a2aMetadata: runConfig.a2aMetadata,
+          pluginManager: runnerCtx.pluginManager,
+          abortSignal: params.abortSignal,
+        });
+
+        // =========================================================================
+        // Preprocess plugins on user message
+        // =========================================================================
+        const pluginUserMessage =
+          await runnerCtx.pluginManager.runOnUserMessageCallback({
+            userMessage: newMessage,
+            invocationContext,
           });
 
-          // =========================================================================
-          // Preprocess plugins on user message
-          // =========================================================================
-          const pluginUserMessage =
-            await this.pluginManager.runOnUserMessageCallback({
-              userMessage: newMessage,
-              invocationContext,
-            });
+        if (params.abortSignal?.aborted) {
+          return;
+        }
 
-          if (params.abortSignal?.aborted) {
-            return;
+        if (pluginUserMessage) {
+          newMessage = pluginUserMessage as Content;
+        }
+
+        // =========================================================================
+        // Append user message to session
+        // =========================================================================
+        if (newMessage) {
+          if (!newMessage.parts?.length) {
+            throw new Error('No parts in the newMessage.');
           }
 
-          if (pluginUserMessage) {
-            newMessage = pluginUserMessage as Content;
-          }
-
-          // =========================================================================
-          // Append user message to session
-          // =========================================================================
-          if (newMessage) {
-            if (!newMessage.parts?.length) {
-              throw new Error('No parts in the newMessage.');
-            }
-
-            // Directly saves the artifacts (if applicable) in the user message and
-            // replaces the artifact data with a file name placeholder.
-            if (runConfig.saveInputBlobsAsArtifacts) {
-              newMessage = await this.saveArtifacts(
-                invocationContext.artifactService,
-                invocationContext.invocationId,
-                newMessage,
-              );
-              if (params.abortSignal?.aborted) {
-                return;
-              }
-            }
-            // Append the user message to the session with optional state delta.
-            await this.sessionService.appendEvent({
-              session,
-              event: createEvent({
-                invocationId: invocationContext.invocationId,
-                author: 'user',
-                actions: stateDelta
-                  ? createEventActions({stateDelta})
-                  : undefined,
-                content: newMessage,
-                // Callers cannot set ADK-internal keys.
-                customMetadata: withoutInternalMetadata(params.customMetadata),
-              }),
-            });
+          // Directly saves the artifacts (if applicable) in the user message and
+          // replaces the artifact data with a file name placeholder.
+          if (runConfig.saveInputBlobsAsArtifacts) {
+            newMessage = await runnerCtx.saveArtifacts(
+              invocationContext.artifactService,
+              invocationContext.invocationId,
+              newMessage,
+            );
             if (params.abortSignal?.aborted) {
               return;
             }
           }
-
-          // =========================================================================
-          // Determine which agent should handle the workflow resumption.
-          // =========================================================================
-          // Only meaningful for an agent root: this resolves an event author
-          // against the agent tree, and a node subtree is not in that tree.
-          if (isBaseAgent(this.agent)) {
-            invocationContext.agent = this.determineAgentForResumption(
-              session,
-              this.agent,
-            );
+          // Append the user message to the session with optional state delta.
+          await runnerCtx.sessionService.appendEvent({
+            session,
+            event: createEvent({
+              invocationId: invocationContext.invocationId,
+              author: 'user',
+              actions: stateDelta
+                ? createEventActions({stateDelta})
+                : undefined,
+              content: newMessage,
+              // Callers cannot set ADK-internal keys.
+              customMetadata: withoutInternalMetadata(params.customMetadata),
+            }),
+          });
+          if (params.abortSignal?.aborted) {
+            return;
           }
+        }
 
+        // =========================================================================
+        // Determine which agent should handle the workflow resumption.
+        // =========================================================================
+        // Only meaningful for an agent root: this resolves an event author
+        // against the agent tree, and a node subtree is not in that tree.
+        if (isBaseAgent(runnerCtx.agent)) {
+          invocationContext.agent = runnerCtx.determineAgentForResumption(
+            session,
+            runnerCtx.agent,
+          );
+        }
+
+        // =========================================================================
+        // Run the agent with the plugins (aka hooks to apply in the lifecycle)
+        // =========================================================================
+        if (newMessage) {
           // =========================================================================
           // Run the agent with the plugins (aka hooks to apply in the lifecycle)
           // =========================================================================
-          if (newMessage) {
-            // =========================================================================
-            // Run the agent with the plugins (aka hooks to apply in the lifecycle)
-            // =========================================================================
-            // Step 1: Run the before_run callbacks to see if we should early exit.
-            const beforeRunCallbackResponse =
-              await this.pluginManager.runBeforeRunCallback({
-                invocationContext,
-              });
+          // Step 1: Run the before_run callbacks to see if we should early exit.
+          const beforeRunCallbackResponse =
+            await runnerCtx.pluginManager.runBeforeRunCallback({
+              invocationContext,
+            });
+          if (params.abortSignal?.aborted) {
+            return;
+          }
+
+          if (beforeRunCallbackResponse) {
+            const earlyExitEvent = createEvent({
+              invocationId: invocationContext.invocationId,
+              author: 'model',
+              content: beforeRunCallbackResponse,
+            });
+            // TODO: b/447446338 - In the future, do *not* save live call
+            // audio content to the session.
+            await runnerCtx.sessionService.appendEvent({
+              session,
+              event: earlyExitEvent,
+            });
             if (params.abortSignal?.aborted) {
               return;
             }
 
-            if (beforeRunCallbackResponse) {
-              const earlyExitEvent = createEvent({
-                invocationId: invocationContext.invocationId,
-                author: 'model',
-                content: beforeRunCallbackResponse,
-              });
-              // TODO: b/447446338 - In the future, do *not* save live call
-              // audio content to the session.
-              await this.sessionService.appendEvent({
-                session,
-                event: earlyExitEvent,
-              });
-              if (params.abortSignal?.aborted) {
-                return;
-              }
-
-              yield earlyExitEvent;
-            } else {
-              // Step 2: Otherwise continue with normal execution
-              let abortSealed = false;
-              const sealAbortedInvocation = () => {
-                abortSealed = true;
-                return this.synthesizeAbortEvents(invocationContext);
-              };
-              try {
-                for await (const event of this.runRoot(invocationContext)) {
-                  if (params.abortSignal?.aborted) {
-                    break;
-                  }
-
-                  // Step 3: Run the on_event callbacks before persisting so
-                  // callback changes are stored in the session and match the
-                  // streamed event.
-                  const outputEvent = await this.processAndAppendEvent(
-                    invocationContext,
-                    event,
-                  );
-                  if (params.abortSignal?.aborted) {
-                    break;
-                  }
-
-                  yield outputEvent;
-                }
+            yield earlyExitEvent;
+          } else {
+            // Step 2: Otherwise continue with normal execution
+            let abortSealed = false;
+            const sealAbortedInvocation = () => {
+              abortSealed = true;
+              return runnerCtx.synthesizeAbortEvents(invocationContext);
+            };
+            try {
+              for await (const event of runnerCtx.runRoot(invocationContext)) {
                 if (params.abortSignal?.aborted) {
-                  for (const abortEvent of await sealAbortedInvocation()) {
-                    yield abortEvent;
-                  }
-                  return;
+                  break;
                 }
-              } finally {
-                if (params.abortSignal?.aborted && !abortSealed) {
-                  // Best-effort: only reached on early close or error, where
-                  // throwing would mask the in-flight exception.
-                  try {
-                    await sealAbortedInvocation();
-                  } catch (e) {
-                    logger.error(
-                      `Failed to seal aborted invocation ${invocationContext.invocationId}.`,
-                      e,
-                    );
-                  }
+
+                // Step 3: Run the on_event callbacks before persisting so
+                // callback changes are stored in the session and match the
+                // streamed event.
+                const outputEvent = await runnerCtx.processAndAppendEvent(
+                  invocationContext,
+                  event,
+                );
+                if (params.abortSignal?.aborted) {
+                  break;
                 }
+
+                yield outputEvent;
               }
-              // Step 4: Run the after_run callbacks to optionally modify the context.
-              await this.pluginManager.runAfterRunCallback({invocationContext});
               if (params.abortSignal?.aborted) {
+                for (const abortEvent of await sealAbortedInvocation()) {
+                  yield abortEvent;
+                }
                 return;
+              }
+            } finally {
+              if (params.abortSignal?.aborted && !abortSealed) {
+                // Best-effort: only reached on early close or error, where
+                // throwing would mask the in-flight exception.
+                try {
+                  await sealAbortedInvocation();
+                } catch (e) {
+                  logger.error(
+                    `Failed to seal aborted invocation ${invocationContext.invocationId}.`,
+                    e,
+                  );
+                }
               }
             }
+            // Step 4: Run the after_run callbacks to optionally modify the context.
+            await runnerCtx.pluginManager.runAfterRunCallback({
+              invocationContext,
+            });
+            if (params.abortSignal?.aborted) {
+              return;
+            }
           }
-        },
-      );
+        }
+      });
     } finally {
-      span.end();
       const toolsets = isBaseAgent(this.agent)
         ? getAllToolsets(this.agent)
         : [];
@@ -777,115 +769,106 @@ export class Runner {
       runConfig.inputAudioTranscription ??= {};
     }
 
-    const span = tracer.startSpan('invocation');
-    const ctx = trace.setSpan(context.active(), span);
-    try {
-      yield* runAsyncGeneratorWithOtelContext<Runner, Event>(
-        ctx,
-        this,
-        async function* () {
-          const session = await this.sessionService.getOrCreateSession({
-            appName: this.appName,
-            userId: params.userId,
-            sessionId: params.sessionId,
-          });
+    const runnerCtx = this;
+    yield* recordInvocation(async function* () {
+      const session = await runnerCtx.sessionService.getOrCreateSession({
+        appName: runnerCtx.appName,
+        userId: params.userId,
+        sessionId: params.sessionId,
+      });
 
-          if (params.abortSignal?.aborted) {
-            return;
-          }
+      if (params.abortSignal?.aborted) {
+        return;
+      }
 
-          const invocationContext = new InvocationContext({
-            artifactService: this.artifactService
-              ? isSessionArtifactService(this.artifactService)
-                ? this.artifactService
-                : new ScopedArtifactService(
-                    this.artifactService,
-                    this.appName,
-                    params.userId,
-                    params.sessionId,
-                  )
-              : undefined,
-            sessionService: this.sessionService,
-            memoryService: this.memoryService,
-            credentialService: this.credentialService,
-            invocationId: newInvocationContextId(),
-            agent,
-            session,
-            runConfig,
-            a2aMetadata: runConfig.a2aMetadata,
-            pluginManager: this.pluginManager,
-            liveRequestQueue: params.liveRequestQueue,
-            abortSignal: params.abortSignal,
-            liveSessionResumptionHandle: params.liveSessionResumptionHandle,
-          });
+      const invocationContext = new InvocationContext({
+        artifactService: runnerCtx.artifactService
+          ? isSessionArtifactService(runnerCtx.artifactService)
+            ? runnerCtx.artifactService
+            : new ScopedArtifactService(
+                runnerCtx.artifactService,
+                runnerCtx.appName,
+                params.userId,
+                params.sessionId,
+              )
+          : undefined,
+        sessionService: runnerCtx.sessionService,
+        memoryService: runnerCtx.memoryService,
+        credentialService: runnerCtx.credentialService,
+        invocationId: newInvocationContextId(),
+        agent,
+        session,
+        runConfig,
+        a2aMetadata: runConfig.a2aMetadata,
+        pluginManager: runnerCtx.pluginManager,
+        liveRequestQueue: params.liveRequestQueue,
+        abortSignal: params.abortSignal,
+        liveSessionResumptionHandle: params.liveSessionResumptionHandle,
+      });
 
-          invocationContext.agent = this.determineAgentForResumption(
-            session,
-            agent,
-          );
-
-          // Step 1: before-run plugin hook (early exit if it returns content).
-          const beforeRunCallbackResponse =
-            await this.pluginManager.runBeforeRunCallback({
-              invocationContext,
-            });
-          if (params.abortSignal?.aborted) {
-            return;
-          }
-          if (beforeRunCallbackResponse) {
-            const earlyExitEvent = createEvent({
-              invocationId: invocationContext.invocationId,
-              author: 'model',
-              content: beforeRunCallbackResponse,
-            });
-            await this.sessionService.appendEvent({
-              session,
-              event: earlyExitEvent,
-            });
-            yield earlyExitEvent;
-            return;
-          }
-
-          // Step 2: drive the agent's runLive and propagate events.
-          for await (const event of requireAgent(invocationContext).runLive(
-            invocationContext,
-          )) {
-            if (params.abortSignal?.aborted) {
-              return;
-            }
-
-            const modifiedEvent = await this.pluginManager.runOnEventCallback({
-              invocationContext,
-              event,
-            });
-            if (params.abortSignal?.aborted) {
-              return;
-            }
-
-            const eventToProcess = modifiedEvent
-              ? withInternalMetadataOf(event, modifiedEvent)
-              : event;
-
-            if (
-              !eventToProcess.partial &&
-              !isLiveModelMediaEventWithInlineData(eventToProcess)
-            ) {
-              await this.sessionService.appendEvent({
-                session,
-                event: eventToProcess,
-              });
-            }
-
-            yield eventToProcess;
-          }
-
-          // Step 3: after-run plugin hook for cleanup/metrics.
-          await this.pluginManager.runAfterRunCallback({invocationContext});
-        },
+      invocationContext.agent = runnerCtx.determineAgentForResumption(
+        session,
+        agent,
       );
-    } finally {
-      span.end();
-    }
+
+      // Step 1: before-run plugin hook (early exit if it returns content).
+      const beforeRunCallbackResponse =
+        await runnerCtx.pluginManager.runBeforeRunCallback({
+          invocationContext,
+        });
+      if (params.abortSignal?.aborted) {
+        return;
+      }
+      if (beforeRunCallbackResponse) {
+        const earlyExitEvent = createEvent({
+          invocationId: invocationContext.invocationId,
+          author: 'model',
+          content: beforeRunCallbackResponse,
+        });
+        await runnerCtx.sessionService.appendEvent({
+          session,
+          event: earlyExitEvent,
+        });
+        yield earlyExitEvent;
+        return;
+      }
+
+      // Step 2: drive the agent's runLive and propagate events.
+      for await (const event of requireAgent(invocationContext).runLive(
+        invocationContext,
+      )) {
+        if (params.abortSignal?.aborted) {
+          return;
+        }
+
+        const modifiedEvent = await runnerCtx.pluginManager.runOnEventCallback({
+          invocationContext,
+          event,
+        });
+        if (params.abortSignal?.aborted) {
+          return;
+        }
+
+        const eventToProcess = modifiedEvent
+          ? withInternalMetadataOf(event, modifiedEvent)
+          : event;
+
+        if (
+          !eventToProcess.partial &&
+          !isLiveModelMediaEventWithInlineData(eventToProcess)
+        ) {
+          await runnerCtx.sessionService.appendEvent({
+            session,
+            event: eventToProcess,
+          });
+        }
+
+        yield eventToProcess;
+      }
+
+      // Step 3: after-run plugin hook for cleanup/metrics.
+      await runnerCtx.pluginManager.runAfterRunCallback({invocationContext});
+    });
   }
 }
 
