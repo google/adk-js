@@ -182,11 +182,13 @@ a mismatch renames a parameter between the two SDKs.
 
 The declaration the model receives is a Gemini `Schema`, not the raw OpenAPI
 schema, and the two are not the same language. The conversion keeps the fields
-Gemini declares, and drops `title`, `default` and `format` because the backend
-refuses them. A schema whose `type` is outside Gemini's set — `array`,
-`boolean`, `integer`, `null`, `number`, `object`, `string` — has its type
-dropped rather than mapped to a near equivalent, because a schema with no type
-is valid and a schema Gemini rejects fails the whole declaration.
+Gemini declares and supported formats (`int32` and `int64` for integers/numbers,
+`date-time` and `enum` for strings), and drops `title`, `default`, and
+unsupported formats because the backend refuses them. A schema whose `type` is
+outside Gemini's set — `array`, `boolean`, `integer`, `null`, `number`, `object`,
+`string` — has its type dropped rather than mapped to a near equivalent, because
+a schema with no type is valid and a schema Gemini rejects fails the whole
+declaration.
 
 `_getDeclaration()` on a `RestApiTool` returns what the model will see, which
 is the fastest way to confirm a parameter survived parsing under the name you

@@ -32,6 +32,10 @@ describe('MCPTool', () => {
     const mockSessionManager = {
       createSession: vi.fn().mockResolvedValue(mockClient),
       closeSession: vi.fn().mockResolvedValue(undefined),
+      getRequestOptions: vi.fn().mockImplementation((signal) => ({
+        signal,
+        timeout: 5000,
+      })),
     } as unknown as MCPSessionManager;
 
     const tool = new MCPTool(mockTool, mockSessionManager);
@@ -51,7 +55,7 @@ describe('MCPTool', () => {
     expect(mockClient.callTool).toHaveBeenCalledWith(
       {name: 'test-tool', arguments: {}},
       undefined,
-      {signal: signal},
+      {signal: signal, timeout: 5000},
     );
   });
 
@@ -70,6 +74,10 @@ describe('MCPTool', () => {
     const mockSessionManager = {
       createSession: vi.fn().mockResolvedValue(mockClient),
       closeSession: vi.fn().mockResolvedValue(undefined),
+      getRequestOptions: vi.fn().mockImplementation((signal) => ({
+        signal,
+        timeout: 5000,
+      })),
     } as unknown as MCPSessionManager;
 
     const tool = new MCPTool(mockTool, mockSessionManager, 'test-tool');
@@ -89,7 +97,7 @@ describe('MCPTool', () => {
     expect(mockClient.callTool).toHaveBeenCalledWith(
       {name: 'test-tool', arguments: {}},
       undefined,
-      {signal: signal},
+      {signal: signal, timeout: 5000},
     );
   });
 
@@ -107,11 +115,13 @@ describe('MCPTool', () => {
         }
         return Promise.resolve({content: []});
       }),
+      close: vi.fn().mockResolvedValue(undefined),
     } as unknown as Client;
 
     const mockSessionManager = {
       createSession: vi.fn().mockResolvedValue(mockClient),
       closeSession: vi.fn().mockResolvedValue(undefined),
+      getRequestOptions: vi.fn().mockImplementation((signal) => ({signal})),
     } as unknown as MCPSessionManager;
 
     const tool = new MCPTool(mockTool, mockSessionManager);
@@ -141,11 +151,13 @@ describe('MCPTool', () => {
 
     const mockClient = {
       callTool: vi.fn().mockRejectedValue(new Error('Call failed')),
+      close: vi.fn().mockResolvedValue(undefined),
     } as unknown as Client;
 
     const mockSessionManager = {
       createSession: vi.fn().mockResolvedValue(mockClient),
       closeSession: vi.fn().mockResolvedValue(undefined),
+      getRequestOptions: vi.fn().mockImplementation((signal) => ({signal})),
     } as unknown as MCPSessionManager;
 
     const tool = new MCPTool(mockTool, mockSessionManager);

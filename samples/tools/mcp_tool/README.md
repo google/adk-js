@@ -64,8 +64,9 @@ graph TD
 ## How To
 
 **Connect over stdio or HTTP+SSE.** `StdioConnectionParams` launches a local
-subprocess; `SseConnectionParams` connects to an HTTP+SSE endpoint and merges
-any `headers` with the ADK tracking headers.
+subprocess with an optional request `timeout` in seconds (defaulting to 5);
+`SseConnectionParams` connects to an HTTP+SSE endpoint and merges any `headers`
+with the ADK tracking headers.
 
 ```ts
 const stdioParams: StdioConnectionParams = {
@@ -74,6 +75,7 @@ const stdioParams: StdioConnectionParams = {
     command: process.execPath,
     args: [SERVER_SCRIPT],
   },
+  timeout: 10,
 };
 
 const sseParams: SseConnectionParams | undefined = process.env.MCP_SSE_URL

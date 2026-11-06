@@ -1503,5 +1503,29 @@ describe('FunctionTool', () => {
       });
       expect(result).toBe('test_value_1,test_value_3');
     });
+
+    it('preserves empty object and undefined returns from execute', async () => {
+      const emptyObjectTool = new FunctionTool({
+        name: 'empty_object_tool',
+        description: 'Returns an empty object.',
+        execute: async () => ({}),
+      });
+      const emptyObjectResult = await emptyObjectTool.runAsync({
+        args: {},
+        toolContext: emptyContext,
+      });
+      expect(emptyObjectResult).toEqual({});
+
+      const voidTool = new FunctionTool({
+        name: 'void_tool',
+        description: 'Returns undefined.',
+        execute: async () => undefined,
+      });
+      const voidResult = await voidTool.runAsync({
+        args: {},
+        toolContext: emptyContext,
+      });
+      expect(voidResult).toBeUndefined();
+    });
   });
 });

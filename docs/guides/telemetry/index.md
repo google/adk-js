@@ -172,7 +172,8 @@ and only when content capture includes events; it is never set on a span.
 
 ADK keeps a few things out even when content is captured: the bytes of inline
 data parts (only the MIME type is recorded), and the secret fields of anything
-shaped like an auth credential in a tool result.
+shaped like an auth credential in a tool result. Serialized tool arguments and
+payloads retain non-ASCII characters without Unicode escaping.
 
 A trace or log backend usually sits behind a different trust boundary from the
 application, with different retention and a wider audience, so exporting the

@@ -53,6 +53,7 @@ const stdioParams: StdioConnectionParams = {
     command: process.execPath,
     args: [SERVER_SCRIPT],
   },
+  timeout: 10,
 };
 
 const sseParams: SseConnectionParams | undefined = process.env.MCP_SSE_URL

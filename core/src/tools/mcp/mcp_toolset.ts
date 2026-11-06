@@ -87,7 +87,10 @@ export class MCPToolset extends BaseToolset {
 
     let listResult: ListToolsResult;
     try {
-      listResult = (await session.listTools()) as ListToolsResult;
+      listResult = (await session.listTools(
+        undefined,
+        this.mcpSessionManager.getRequestOptions(),
+      )) as ListToolsResult;
     } finally {
       await this.mcpSessionManager.closeSession(session);
     }
@@ -116,7 +119,10 @@ export class MCPToolset extends BaseToolset {
   async listResources(): Promise<string[]> {
     const session = await this.mcpSessionManager.createSession();
     try {
-      const result = (await session.listResources()) as ListResourcesResult;
+      const result = (await session.listResources(
+        undefined,
+        this.mcpSessionManager.getRequestOptions(),
+      )) as ListResourcesResult;
       return result.resources.map((resource) => resource.name);
     } finally {
       await this.mcpSessionManager.closeSession(session);
@@ -134,7 +140,10 @@ export class MCPToolset extends BaseToolset {
     const session = await this.mcpSessionManager.createSession();
     let result: ListResourcesResult;
     try {
-      result = (await session.listResources()) as ListResourcesResult;
+      result = (await session.listResources(
+        undefined,
+        this.mcpSessionManager.getRequestOptions(),
+      )) as ListResourcesResult;
     } finally {
       await this.mcpSessionManager.closeSession(session);
     }
@@ -169,9 +178,12 @@ export class MCPToolset extends BaseToolset {
 
     const session = await this.mcpSessionManager.createSession();
     try {
-      const result = (await session.readResource({
-        uri: resourceInfo.uri,
-      })) as ReadResourceResult;
+      const result = (await session.readResource(
+        {
+          uri: resourceInfo.uri,
+        },
+        this.mcpSessionManager.getRequestOptions(),
+      )) as ReadResourceResult;
       return result.contents;
     } finally {
       await this.mcpSessionManager.closeSession(session);

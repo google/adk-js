@@ -67,3 +67,7 @@ The `LangchainToolConfig` interface configures `new LangchainTool(config)` or `n
 
 - [Tools](../../tools/index.md) - `BaseTool`, `FunctionTool`, and tool lifecycle in ADK.
 - [CrewAI tool](../crewai/index.md) - Adapting CrewAI tools in `@google/adk-integrations`.
+
+## Related samples
+
+- [LangChain tool](../../../../samples/integrations/langchain/README.md) - Demonstrates wrapping structured and simple LangChain tools in an `LlmAgent`.
