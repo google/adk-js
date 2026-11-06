@@ -27,7 +27,7 @@ JSON Schema, use `genaiSchemaToJsonSchema` or `toJsonSchema`.
 | `MCPToolset`                               | You want an agent to discover and call tools from an MCP server.                       |
 | `StdioConnectionParams`                    | The MCP server runs as a local child process over `stdin` and `stdout`.                |
 | `StreamableHTTPConnectionParams`           | The MCP server exposes a Streamable HTTP endpoint.                                     |
-| `SseConnectionParams` / `SseServerParams`  | The MCP server exposes an HTTP+SSE endpoint.                                           |
+| `SseConnectionParams`                      | The MCP server exposes an HTTP+SSE endpoint.                                           |
 | `LoadMcpResourceTool`                      | You want the agent to list and read MCP server resources into the prompt context.      |
 | `MCPTool`                                  | You are wrapping a single MCP `Tool` definition directly rather than listing a server. |
 | `MCPSessionManager`                        | You are managing MCP client sessions or building `MCPTool` instances yourself.         |
@@ -83,7 +83,11 @@ const streamableParams: StreamableHTTPConnectionParams = {
 const sseParams: SseConnectionParams = {
   type: 'SseConnectionParams',
   url: 'http://localhost:8090/sse',
-  headers: {Authorization: 'Bearer demo-token'},
+  transportOptions: {
+    requestInit: {
+      headers: {Authorization: 'Bearer demo-token'},
+    },
+  },
 };
 
 const streamableToolset = new MCPToolset(streamableParams);
@@ -183,23 +187,20 @@ caller's `transportOptions` object is never mutated. Prefer
 
 ### SseConnectionParams
 
-Use `SseConnectionParams`, also exported under the alias `SseServerParams`, for
-MCP servers that implement the HTTP+SSE transport.
+Use `SseConnectionParams` for MCP servers that implement the HTTP+SSE
+transport.
 
-| Option             | Type                        | Default     | Description                                                                                                         |
-| :----------------- | :-------------------------- | :---------- | :------------------------------------------------------------------------------------------------------------------ |
-| `type`             | `'SseConnectionParams'`     | required    | Selects `SSEClientTransport`.                                                                                       |
-| `url`              | `string`                    | required    | SSE endpoint URL of the MCP server.                                                                                 |
-| `headers`          | `Record<string, unknown>`   | `undefined` | HTTP headers merged into `requestInit.headers` when `transportOptions.requestInit` is `undefined`.                  |
-| `header`           | `Record<string, unknown>`   | `undefined` | Deprecated alias for `headers`; takes precedence over `headers` when `transportOptions.requestInit` is `undefined`. |
-| `transportOptions` | `SSEClientTransportOptions` | `undefined` | Options forwarded to `SSEClientTransport`, including `eventSourceInit` and `requestInit`.                           |
-| `timeout`          | `number`                    | `undefined` | Optional connection timeout value carried on the parameter object.                                                  |
-| `sseReadTimeout`   | `number`                    | `undefined` | Optional SSE read timeout value carried on the parameter object.                                                    |
+| Option             | Type                        | Default     | Description                                                                               |
+| :----------------- | :-------------------------- | :---------- | :---------------------------------------------------------------------------------------- |
+| `type`             | `'SseConnectionParams'`     | required    | Selects `SSEClientTransport`.                                                             |
+| `url`              | `string`                    | required    | SSE endpoint URL of the MCP server.                                                       |
+| `transportOptions` | `SSEClientTransportOptions` | `undefined` | Options forwarded to `SSEClientTransport`, including `eventSourceInit` and `requestInit`. |
+| `timeout`          | `number`                    | `undefined` | Optional connection timeout value carried on the parameter object.                        |
+| `sseReadTimeout`   | `number`                    | `undefined` | Optional SSE read timeout value carried on the parameter object.                          |
 
 As with Streamable HTTP, `MCPSessionManager` merges the ADK tracking headers
-into `requestInit.headers` without mutating the input object. When
-`transportOptions.requestInit` is provided, its `headers` win over both `header`
-and `headers`.
+into `transportOptions.requestInit.headers` on a fresh copy so the caller's
+`transportOptions` object is never mutated.
 
 ## Advanced applications
 
