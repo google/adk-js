@@ -16,9 +16,10 @@ exercises the whole MCP workflow without an external service:
 - `status_agent` receives a second `MCPToolset` configured with `prefix: 'ops'`
   and `toolFilter: ['ops_lookup_service_status']`.
 
-Set `GEMINI_API_KEY` to run the agent against the bundled stdio server, or set
-`MCP_SSE_URL` (and optionally `MCP_SSE_TOKEN`) to connect over
-`SseConnectionParams` instead:
+Set `GEMINI_API_KEY` to run the agent against the bundled stdio server, set
+`MCP_STREAMABLE_HTTP_URL` (and optionally `MCP_STREAMABLE_HTTP_TOKEN`) to
+connect over `StreamableHTTPConnectionParams`, or set `MCP_SSE_URL` (and
+optionally `MCP_SSE_TOKEN`) to connect over `SseConnectionParams`:
 
 ```bash
 npm run build
@@ -63,9 +64,10 @@ graph TD
 
 ## How To
 
-**Connect over stdio or HTTP+SSE.** `StdioConnectionParams` launches a local
-subprocess; `SseConnectionParams` connects to an HTTP+SSE endpoint and merges
-any `headers` with the ADK tracking headers.
+**Connect over stdio, Streamable HTTP, or HTTP+SSE.** `StdioConnectionParams`
+launches a local subprocess; `StreamableHTTPConnectionParams` and
+`SseConnectionParams` connect to remote endpoints and merge any `headers` with
+the ADK tracking headers.
 
 ```ts
 const stdioParams: StdioConnectionParams = {
@@ -75,6 +77,17 @@ const stdioParams: StdioConnectionParams = {
     args: [SERVER_SCRIPT],
   },
 };
+
+const streamableHttpParams: StreamableHTTPConnectionParams | undefined = process
+  .env.MCP_STREAMABLE_HTTP_URL
+  ? {
+      type: 'StreamableHTTPConnectionParams',
+      url: process.env.MCP_STREAMABLE_HTTP_URL,
+      headers: process.env.MCP_STREAMABLE_HTTP_TOKEN
+        ? {Authorization: `Bearer ${process.env.MCP_STREAMABLE_HTTP_TOKEN}`}
+        : undefined,
+    }
+  : undefined;
 
 const sseParams: SseConnectionParams | undefined = process.env.MCP_SSE_URL
   ? {
