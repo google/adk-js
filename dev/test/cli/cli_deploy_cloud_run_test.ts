@@ -22,6 +22,7 @@ import {
   saveToFile,
   tryToFindFileRecursively,
 } from '../../src/utils/file_utils.js';
+import {version} from '../../src/version.js';
 
 type Callback = (error: Error | null, result?: unknown) => void;
 
@@ -291,6 +292,14 @@ describe('createDockerFileContent', () => {
   it('should not use a floating Node base image tag', () => {
     const content = createDockerFileContent(defaultOptions);
     expect(content).not.toMatch(/FROM node:(lts|latest|current)/);
+  });
+
+  it('should pin adk-devtools to the version of the deploying CLI', () => {
+    const content = createDockerFileContent(defaultOptions);
+    expect(content).toContain(
+      `RUN npm install @google/adk-devtools@${version}`,
+    );
+    expect(content).not.toContain('@google/adk-devtools@latest');
   });
 });
 

@@ -13,6 +13,7 @@ import {
   saveToFile,
   tryToFindFileRecursively,
 } from '../../utils/file_utils.js';
+import {version} from '../../version.js';
 
 export const execAsync = promisify(exec);
 export const spawnAsync = (
@@ -201,7 +202,7 @@ COPY --chown=myuser:myuser "package.json" "/app/package.json"
 # Copy application files
 
 # Install Agent Deps - Start
-RUN npm install @google/adk-devtools@latest
+RUN npm install @google/adk-devtools@${version}
 RUN npm install --production
 # Install Agent Deps - End
 
