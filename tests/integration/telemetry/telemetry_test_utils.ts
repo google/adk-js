@@ -126,7 +126,7 @@ export interface TelemetryTestCase {
    * `undefined` to unset.
    */
   readonly captureContent?: string;
-  /** Whether `ADK_ENABLE_EXPERIMENTAL_TELEMETRY` is enabled for the run. */
+  /** Whether `ADK_EXPERIMENTAL_TELEMETRY` is enabled for the run. */
   readonly experimentalTelemetry?: boolean;
   /** Whether the scenario is expected to throw during execution. */
   readonly expectError?: boolean;
@@ -420,7 +420,10 @@ const MANAGED_ENV_KEYS = [
   'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT',
   'ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN',
   'ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS',
-  'ADK_ENABLE_EXPERIMENTAL_TELEMETRY',
+  'ADK_EXPERIMENTAL_TELEMETRY',
+  'ADK_EXPERIMENTAL_TELEMETRY_FEATURES',
+  'GOOGLE_GENAI_USE_VERTEXAI',
+  'GOOGLE_GENAI_USE_ENTERPRISE',
   'ADK_CAPTURE_MCP_HTTP_BODIES',
   'ADK_CAPTURE_MCP_HTTP_EXCHANGE',
   'OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_REQUEST',
@@ -459,9 +462,13 @@ export async function applyEnv<T>(
     setOrDeleteEnv('ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN', '2');
     setOrDeleteEnv('ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS', 'false');
     setOrDeleteEnv(
-      'ADK_ENABLE_EXPERIMENTAL_TELEMETRY',
-      tc.experimentalTelemetry === false ? undefined : 'true',
+      'ADK_EXPERIMENTAL_TELEMETRY',
+      String(tc.experimentalTelemetry ?? false),
     );
+    setOrDeleteEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', undefined);
+    // The provider name follows the Gemini backend in use, so it is pinned.
+    setOrDeleteEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
+    setOrDeleteEnv('GOOGLE_GENAI_USE_ENTERPRISE', undefined);
     if (tc.env) {
       for (const [key, value] of Object.entries(tc.env)) {
         setOrDeleteEnv(key, value);

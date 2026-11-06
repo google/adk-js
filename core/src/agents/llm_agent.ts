@@ -50,8 +50,7 @@ import {ActiveStreamingTool} from './active_streaming_tool.js';
 import {Context} from './context.js';
 
 import {
-  recordCallLlm,
-  recordCallLlmResponse,
+  recordInference,
   recordSendData,
 } from '../telemetry/api/instrumentation.js';
 import {parseWithSchema, SchemaLike} from '../utils/schema.js';
@@ -1648,57 +1647,54 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // =========================================================================
     // Calls the LLM
     // =========================================================================
-    const agentCtx = this;
-    yield* recordCallLlm(async function* () {
-      const responsesGenerator = async function* () {
-        for await (const llmResponse of agentCtx.callLlmAsync(
+    const responsesGenerator = async function* (this: LlmAgent) {
+      for await (const llmResponse of this.callLlmAsync(
+        invocationContext,
+        llmRequest,
+        modelResponseEvent,
+      )) {
+        if (invocationContext.abortSignal?.aborted) {
+          return;
+        }
+
+        if (invocationContext.runConfig?.supportCfc && isEvent(llmResponse)) {
+          modelResponseEvent.id = createNewEventId();
+          modelResponseEvent.timestamp = new Date().getTime();
+          yield llmResponse;
+          continue;
+        }
+
+        // ======================================================================
+        // Postprocess after calling the LLM
+        // ======================================================================
+        for await (const event of this.postprocess(
           invocationContext,
           llmRequest,
+          llmResponse,
           modelResponseEvent,
         )) {
           if (invocationContext.abortSignal?.aborted) {
             return;
           }
 
-          if (invocationContext.runConfig?.supportCfc && isEvent(llmResponse)) {
+          // Partial chunks of one streaming response share the base id;
+          // mint a fresh id only after a complete event so distinct
+          // responses differ.
+          if (!event.partial) {
             modelResponseEvent.id = createNewEventId();
             modelResponseEvent.timestamp = new Date().getTime();
-            yield llmResponse;
-            continue;
           }
-
-          // ======================================================================
-          // Postprocess after calling the LLM
-          // ======================================================================
-          for await (const event of agentCtx.postprocess(
-            invocationContext,
-            llmRequest,
-            llmResponse,
-            modelResponseEvent,
-          )) {
-            if (invocationContext.abortSignal?.aborted) {
-              return;
-            }
-
-            // Partial chunks of one streaming response share the base id;
-            // mint a fresh id only after a complete event so distinct
-            // responses differ.
-            if (!event.partial) {
-              modelResponseEvent.id = createNewEventId();
-              modelResponseEvent.timestamp = new Date().getTime();
-            }
-            yield event;
-          }
+          yield event;
         }
-      };
+      }
+    };
 
-      yield* agentCtx.runAndHandleError(
-        responsesGenerator(),
-        invocationContext,
-        llmRequest,
-        modelResponseEvent,
-      );
-    });
+    yield* this.runAndHandleError(
+      responsesGenerator.call(this),
+      invocationContext,
+      llmRequest,
+      modelResponseEvent,
+    );
   }
 
   private async *postprocess(
@@ -1960,21 +1956,18 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         liveRequestQueue.close();
       }
     } else {
-      const responsesGenerator = llm.generateContentAsync(
-        llmRequest,
-        /* stream= */ invocationContext.runConfig?.streamingMode ===
-          StreamingMode.SSE,
-        invocationContext.abortSignal,
+      const responsesGenerator = recordInference(
+        {invocationContext, llmRequest, modelResponseEvent},
+        () =>
+          llm.generateContentAsync(
+            llmRequest,
+            /* stream= */ invocationContext.runConfig?.streamingMode ===
+              StreamingMode.SSE,
+            invocationContext.abortSignal,
+          ),
       );
 
       for await (const llmResponse of responsesGenerator) {
-        recordCallLlmResponse({
-          invocationContext,
-          eventId: modelResponseEvent.id,
-          llmRequest,
-          llmResponse,
-        });
-
         if (invocationContext.abortSignal?.aborted) {
           return;
         }

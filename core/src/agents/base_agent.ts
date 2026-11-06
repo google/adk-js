@@ -250,34 +250,36 @@ export abstract class BaseAgent<
     parentContext: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
     const agentCtx = this;
-    yield* recordAgentInvocation({agent: this}, async function* (scope) {
-      const context = agentCtx.createInvocationContext(parentContext);
+    yield* recordAgentInvocation(
+      {agent: this, invocationContext: parentContext},
+      async function* () {
+        const context = agentCtx.createInvocationContext(parentContext);
 
-      const beforeAgentCallbackEvent =
-        await agentCtx.handleBeforeAgentCallback(context);
-      if (beforeAgentCallbackEvent) {
-        yield beforeAgentCallbackEvent;
-      }
+        const beforeAgentCallbackEvent =
+          await agentCtx.handleBeforeAgentCallback(context);
+        if (beforeAgentCallbackEvent) {
+          yield beforeAgentCallbackEvent;
+        }
 
-      if (context.endInvocation || parentContext.abortSignal?.aborted) {
-        return;
-      }
+        if (context.endInvocation || parentContext.abortSignal?.aborted) {
+          return;
+        }
 
-      scope.recordInvocation(context);
-      for await (const event of agentCtx.runAsyncImpl(context)) {
-        yield event;
-      }
+        for await (const event of agentCtx.runAsyncImpl(context)) {
+          yield event;
+        }
 
-      if (context.endInvocation || parentContext.abortSignal?.aborted) {
-        return;
-      }
+        if (context.endInvocation || parentContext.abortSignal?.aborted) {
+          return;
+        }
 
-      const afterAgentCallbackEvent =
-        await agentCtx.handleAfterAgentCallback(context);
-      if (afterAgentCallbackEvent) {
-        yield afterAgentCallbackEvent;
-      }
-    });
+        const afterAgentCallbackEvent =
+          await agentCtx.handleAfterAgentCallback(context);
+        if (afterAgentCallbackEvent) {
+          yield afterAgentCallbackEvent;
+        }
+      },
+    );
   }
 
   /**
@@ -320,33 +322,36 @@ export abstract class BaseAgent<
     parentContext: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
     const agentCtx = this;
-    yield* recordAgentInvocation({agent: this}, async function* () {
-      const context = agentCtx.createInvocationContext(parentContext);
+    yield* recordAgentInvocation(
+      {agent: this, invocationContext: parentContext},
+      async function* () {
+        const context = agentCtx.createInvocationContext(parentContext);
 
-      const beforeAgentCallbackEvent =
-        await agentCtx.handleBeforeAgentCallback(context);
-      if (beforeAgentCallbackEvent) {
-        yield beforeAgentCallbackEvent;
-      }
+        const beforeAgentCallbackEvent =
+          await agentCtx.handleBeforeAgentCallback(context);
+        if (beforeAgentCallbackEvent) {
+          yield beforeAgentCallbackEvent;
+        }
 
-      if (context.endInvocation || parentContext.abortSignal?.aborted) {
-        return;
-      }
+        if (context.endInvocation || parentContext.abortSignal?.aborted) {
+          return;
+        }
 
-      for await (const event of agentCtx.runLiveImpl(context)) {
-        yield event;
-      }
+        for await (const event of agentCtx.runLiveImpl(context)) {
+          yield event;
+        }
 
-      if (context.endInvocation || parentContext.abortSignal?.aborted) {
-        return;
-      }
+        if (context.endInvocation || parentContext.abortSignal?.aborted) {
+          return;
+        }
 
-      const afterAgentCallbackEvent =
-        await agentCtx.handleAfterAgentCallback(context);
-      if (afterAgentCallbackEvent) {
-        yield afterAgentCallbackEvent;
-      }
-    });
+        const afterAgentCallbackEvent =
+          await agentCtx.handleAfterAgentCallback(context);
+        if (afterAgentCallbackEvent) {
+          yield afterAgentCallbackEvent;
+        }
+      },
+    );
   }
 
   /**
