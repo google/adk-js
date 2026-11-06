@@ -28,9 +28,9 @@ Credentials for tools that call protected APIs: how a credential is described, h
 
 ### CLI
 
-Environment loading, session-to-eval conversion, instruction placeholder initialization, log routing, and batch evaluation utilities backing the ADK CLI and development server.
+Environment loading, session-to-eval conversion, instruction placeholder initialization, log routing, runner cleanup, and batch evaluation utilities backing the ADK CLI and development server.
 
-- [CLI and Evaluation Utilities](cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalFormat`, `setupAdkLogger`, `logToTmpFolder`, `runEvals`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun`.
+- [CLI and Evaluation Utilities](cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalFormat`, `setupAdkLogger`, `logToTmpFolder`, `closeRunners`, `runEvals`, `LocalEvalSetResultsManager`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun`.
 
 ### Code executors
 
@@ -60,6 +60,7 @@ The `LlmAgent` request/response processor pipeline, live streaming function-call
 
 Third-party model and ecosystem integrations packaged in `@google/adk-integrations`.
 
+- [BigQuery toolset](integrations/bigquery/index.md) - `BigQueryToolset`, `BigQueryTool`, `BigQueryCredentialsConfig`, `getBigQueryClient`, and the first-party BigQuery metadata and SQL query tools.
 - [Claude on Vertex AI](integrations/models/anthropic_llm/index.md) - `Claude`, `LLMRegistry` registration for `claude-*` models on Vertex AI, and Anthropic message and tool conversion helpers.
 - [CrewAI tool](integrations/crewai/index.md) - `CrewaiTool`, `isCrewaiTool`, and adapting CrewAI tools into ADK tools.
 - [LangChain tool](integrations/langchain/index.md) - `LangchainTool`, `isLangchainTool`, and adapting LangChain structured and simple tools into ADK tools.
