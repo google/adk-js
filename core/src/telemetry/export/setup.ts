@@ -9,7 +9,7 @@ import {logs} from '@opentelemetry/api-logs';
 import {OTLPLogExporter} from '@opentelemetry/exporter-logs-otlp-http';
 import {OTLPMetricExporter} from '@opentelemetry/exporter-metrics-otlp-http';
 import {OTLPTraceExporter} from '@opentelemetry/exporter-trace-otlp-http';
-import {detectResources, Resource} from '@opentelemetry/resources';
+import {detectResources, envDetector, Resource} from '@opentelemetry/resources';
 import {
   BatchLogRecordProcessor,
   LoggerProvider,
@@ -23,10 +23,14 @@ import {
 import {BatchSpanProcessor, SpanProcessor} from '@opentelemetry/sdk-trace-base';
 import {NodeTracerProvider} from '@opentelemetry/sdk-trace-node';
 
+import type {GoogleAuth} from 'google-auth-library';
+
 export interface OtelExportersConfig {
   enableTracing?: boolean;
   enableMetrics?: boolean;
   enableLogging?: boolean;
+  projectId?: string;
+  auth?: GoogleAuth;
 }
 
 /**
@@ -113,7 +117,7 @@ export function maybeSetOtelProviders(
  */
 function getOtelResource(): Resource {
   return detectResources({
-    detectors: [],
+    detectors: [envDetector],
   });
 }
 

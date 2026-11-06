@@ -6,6 +6,7 @@
 
 import {
   getGcpExporters,
+  getGcpProjectId,
   getGcpResource,
   maybeSetOtelProviders,
   OTelHooks,
@@ -163,14 +164,17 @@ async function setupGcpTelemetryExperimental(
     });
   }
 
+  const projectId = await getGcpProjectId();
+
   const gcpExporters = await getGcpExporters({
     enableTracing: true,
-    enableLogging: false,
+    enableLogging: true,
     enableMetrics: true,
+    projectId,
   });
   otelHooksToAdd.push(gcpExporters);
 
-  const otelResource = getGcpResource();
+  const otelResource = await getGcpResource(projectId);
 
   maybeSetOtelProviders(otelHooksToAdd, otelResource);
 }
