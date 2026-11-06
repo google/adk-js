@@ -7,6 +7,7 @@
 import {context, type Span, SpanStatusCode, trace} from '@opentelemetry/api';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {createEvent, Event} from '../events/event.js';
+import {carryDeltaStamps} from '../sessions/state_write_order.js';
 import {traceNodeExecution, tracer} from '../telemetry/tracing.js';
 import {formatError} from '../utils/error_utils.js';
 import {BaseNode} from './base_node.js';
@@ -238,6 +239,16 @@ async function runChildNode({
           parent.route = child.route;
         }
         return child;
+      }
+      if (child.state.hasDelta()) {
+        const stateDelta = {...child.actions.stateDelta};
+        carryDeltaStamps(child.actions.stateDelta, stateDelta);
+        const event = createEvent({
+          author: nodeName,
+          actions: {stateDelta},
+        });
+        enrichEvent({event, child, nodeName, branch, isolationScope});
+        child.channel.push(event);
       }
     }
 
