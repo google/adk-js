@@ -11,7 +11,13 @@ import {
   GenerateContentResponseUsageMetadata,
   Type,
 } from '@google/genai';
-import {context, SpanStatusCode, trace} from '@opentelemetry/api';
+import {
+  type Attributes,
+  context,
+  metrics,
+  SpanStatusCode,
+  trace,
+} from '@opentelemetry/api';
 import {logs} from '@opentelemetry/api-logs';
 import {AsyncLocalStorageContextManager} from '@opentelemetry/context-async-hooks';
 import {
@@ -20,6 +26,13 @@ import {
   type ReadableLogRecord,
   SimpleLogRecordProcessor,
 } from '@opentelemetry/sdk-logs';
+import {
+  AggregationTemporality,
+  DataPointType,
+  MeterProvider,
+  type MetricData,
+  MetricReader,
+} from '@opentelemetry/sdk-metrics';
 import {
   BasicTracerProvider,
   InMemorySpanExporter,
@@ -68,6 +81,7 @@ import {
   recordSkillActivity,
   recordToolExecution,
   recordWorkflowInvocation,
+  type ToolExecutionScope,
 } from '../../src/telemetry/api/instrumentation.js';
 import {version} from '../../src/version.js';
 
@@ -97,26 +111,46 @@ const loggerProvider = new LoggerProvider({
   processors: [new SimpleLogRecordProcessor({exporter: logExporter})],
 });
 
+/** Reads metrics on demand, each collection holding only what is new. */
+class DeltaMetricReader extends MetricReader {
+  constructor() {
+    super({
+      aggregationTemporalitySelector: () => AggregationTemporality.DELTA,
+    });
+  }
+
+  protected override async onForceFlush(): Promise<void> {}
+
+  protected override async onShutdown(): Promise<void> {}
+}
+
+const metricReader = new DeltaMetricReader();
+const meterProvider = new MeterProvider({readers: [metricReader]});
+
 // The providers are registered only after the instrumentation module has been
 // imported, as an application that sets up OpenTelemetry after ADK would.
 beforeAll(() => {
   context.setGlobalContextManager(contextManager.enable());
   trace.setGlobalTracerProvider(tracerProvider);
   logs.setGlobalLoggerProvider(loggerProvider);
+  metrics.setGlobalMeterProvider(meterProvider);
 });
 
 afterAll(async () => {
   await tracerProvider.shutdown();
   await loggerProvider.shutdown();
+  await meterProvider.shutdown();
   trace.disable();
   logs.disable();
+  metrics.disable();
   context.disable();
   contextManager.disable();
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   spanExporter.reset();
   logExporter.reset();
+  await metricReader.collect();
   vi.stubEnv(CAPTURE_ENV, undefined);
   vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY', undefined);
   vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', undefined);
@@ -1153,5 +1187,784 @@ describe('recordSendData', () => {
     );
     expect(span.attributes['gcp.vertex.agent.event_id']).toBe(EVENT_ID);
     expect(parseJsonAttribute(span, 'gcp.vertex.agent.data')).toEqual(data);
+  });
+});
+
+describe('metrics', () => {
+  const ROOT_AGENT = 'root_agent';
+  const SCHEMA_URL = 'https://opentelemetry.io/schemas/1.44.0';
+
+  interface MetricPoint {
+    readonly attributes: Attributes;
+    /** The counter value, or the histogram sum. */
+    readonly value: number;
+    /** The histogram bucket boundaries, if the point is a histogram. */
+    readonly boundaries?: readonly number[];
+  }
+
+  async function collectMetrics(
+    reader: MetricReader = metricReader,
+  ): Promise<MetricData[]> {
+    const {resourceMetrics} = await reader.collect();
+    return resourceMetrics.scopeMetrics.flatMap((scope) => scope.metrics);
+  }
+
+  function findMetric(
+    collected: readonly MetricData[],
+    name: string,
+  ): MetricData | undefined {
+    return collected.find(
+      (metric) =>
+        metric.descriptor.name === name && metric.dataPoints.length > 0,
+    );
+  }
+
+  function pointsOf(
+    collected: readonly MetricData[],
+    name: string,
+  ): MetricPoint[] {
+    const metric = findMetric(collected, name);
+    if (metric === undefined) {
+      return [];
+    }
+    switch (metric.dataPointType) {
+      case DataPointType.HISTOGRAM:
+        return metric.dataPoints.map((point) => ({
+          attributes: point.attributes,
+          value: point.value.sum ?? 0,
+          boundaries: point.value.buckets.boundaries,
+        }));
+      case DataPointType.SUM:
+        return metric.dataPoints.map((point) => ({
+          attributes: point.attributes,
+          value: point.value,
+        }));
+      default:
+        return expect.fail(`${name} is neither a histogram nor a counter`);
+    }
+  }
+
+  function valuesOf(
+    collected: readonly MetricData[],
+    name: string,
+  ): Array<{attributes: Attributes; value: number}> {
+    return pointsOf(collected, name).map(({attributes, value}) => ({
+      attributes,
+      value,
+    }));
+  }
+
+  function namesOf(collected: readonly MetricData[]): string[] {
+    return collected
+      .filter((metric) => metric.dataPoints.length > 0)
+      .map((metric) => metric.descriptor.name);
+  }
+
+  function usageResponse(
+    usage: GenerateContentResponseUsageMetadata | undefined,
+    finishReason?: FinishReason,
+  ): LlmResponse {
+    return {
+      content: {role: 'model', parts: [{text: 'ok'}]},
+      usageMetadata: usage,
+      finishReason,
+    };
+  }
+
+  async function runInference(
+    responses: readonly LlmResponse[] = [
+      usageResponse(USAGE, FinishReason.STOP),
+    ],
+  ): Promise<void> {
+    await drain(recordInference(inferenceParams(), () => streamOf(responses)));
+  }
+
+  async function runAgent(
+    agentName: string,
+    body: () => Promise<void> = async () => {},
+  ): Promise<void> {
+    await drain(
+      recordAgentInvocation(
+        {
+          agent: new LlmAgent({name: agentName}),
+          invocationContext: createInvocationContext(),
+        },
+        async function* () {
+          yield* [];
+          await body();
+        },
+      ),
+    );
+  }
+
+  async function runInvocation(body: () => Promise<void>): Promise<void> {
+    await drain(
+      recordInvocation(
+        {entrypoint: new LlmAgent({name: ROOT_AGENT}), sessionId: SESSION_ID},
+        async function* () {
+          yield* [];
+          await body();
+        },
+      ),
+    );
+  }
+
+  async function runWorkflow(
+    workflowName: string,
+    body: () => Promise<void>,
+  ): Promise<void> {
+    const scope = recordWorkflowInvocation({
+      workflow: new Workflow({
+        name: workflowName,
+        edges: [['START', new FunctionNode('step', () => 'out')]],
+      }),
+      sessionId: SESSION_ID,
+    });
+    await scope.run(body);
+    scope.end();
+  }
+
+  async function runTool(
+    fn: (scope: ToolExecutionScope) => Promise<void> = async () => {},
+  ): Promise<void> {
+    await recordToolExecution(
+      {
+        tool: new FunctionTool({
+          name: 'test_tool',
+          description: 'A test tool',
+          execute: () => ({}),
+        }),
+        args: {},
+        invocationContext: createInvocationContext(),
+      },
+      fn,
+    );
+  }
+
+  const rootWorkflowAttributes = {
+    'adk.experimental.root_agent.name': ROOT_AGENT,
+    'gen_ai.workflow.name': ROOT_AGENT,
+  };
+
+  it('uses the same instrumentation scope as the tracer', async () => {
+    await runAgent(ROOT_AGENT);
+
+    const {resourceMetrics} = await metricReader.collect();
+    expect(resourceMetrics.scopeMetrics.map(({scope}) => scope)).toEqual([
+      {name: 'gcp.vertex.agent', version, schemaUrl: SCHEMA_URL},
+    ]);
+    expect(onlySpan(`invoke_agent ${ROOT_AGENT}`).instrumentationScope).toEqual(
+      {name: 'gcp.vertex.agent', version, schemaUrl: SCHEMA_URL},
+    );
+  });
+
+  it('reaches a meter provider registered after earlier records', async () => {
+    await runAgent(ROOT_AGENT);
+    expect(
+      pointsOf(await collectMetrics(), 'gen_ai.invoke_agent.duration'),
+    ).toHaveLength(1);
+
+    const lateReader = new DeltaMetricReader();
+    const lateProvider = new MeterProvider({readers: [lateReader]});
+    metrics.disable();
+    metrics.setGlobalMeterProvider(lateProvider);
+    try {
+      await runAgent(ROOT_AGENT);
+      expect(
+        pointsOf(
+          await collectMetrics(lateReader),
+          'gen_ai.invoke_agent.duration',
+        ),
+      ).toHaveLength(1);
+      expect(
+        pointsOf(await collectMetrics(), 'gen_ai.invoke_agent.duration'),
+      ).toEqual([]);
+    } finally {
+      await lateProvider.shutdown();
+      metrics.disable();
+      metrics.setGlobalMeterProvider(meterProvider);
+    }
+  });
+
+  it('does not record the GenAI client operation duration or token usage', async () => {
+    vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY', 'true');
+
+    await runInvocation(() => runAgent(ROOT_AGENT, () => runInference()));
+
+    const names = namesOf(await collectMetrics());
+    expect(names).toContain('gen_ai.invoke_agent.inference_calls');
+    expect(names).not.toContain('gen_ai.client.operation.duration');
+    expect(names).not.toContain('gen_ai.client.token.usage');
+  });
+
+  it('counts the newest cumulative usage report of a call, including one after the finish reason', async () => {
+    vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', 'token_usage');
+
+    await runAgent(ROOT_AGENT, () =>
+      runInference([
+        usageResponse({promptTokenCount: 10, candidatesTokenCount: 1}),
+        usageResponse(
+          {promptTokenCount: 10, candidatesTokenCount: 5},
+          FinishReason.STOP,
+        ),
+        usageResponse({promptTokenCount: 10, candidatesTokenCount: 7}),
+        usageResponse(undefined),
+      ]),
+    );
+
+    const collected = await collectMetrics();
+    const attributes = {'gen_ai.agent.name': ROOT_AGENT};
+    expect(
+      valuesOf(collected, 'adk.experimental.invoke_agent.input_tokens'),
+    ).toEqual([{attributes, value: 10}]);
+    expect(
+      valuesOf(collected, 'adk.experimental.invoke_agent.output_tokens'),
+    ).toEqual([{attributes, value: 7}]);
+    expect(
+      valuesOf(collected, 'adk.experimental.invoke_agent.total_tokens'),
+    ).toEqual([{attributes, value: 17}]);
+  });
+
+  it('counts the call and the usage reported before the model stream fails', async () => {
+    vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', 'token_usage');
+    const error = new Error('stream broke');
+
+    await runAgent(ROOT_AGENT, async () => {
+      await expect(
+        drain(
+          recordInference(inferenceParams(), async function* () {
+            yield usageResponse(USAGE);
+            throw error;
+          }),
+        ),
+      ).rejects.toBe(error);
+    });
+
+    const collected = await collectMetrics();
+    const attributes = {'gen_ai.agent.name': ROOT_AGENT};
+    expect(valuesOf(collected, 'gen_ai.invoke_agent.inference_calls')).toEqual([
+      {attributes, value: 1},
+    ]);
+    expect(
+      valuesOf(collected, 'adk.experimental.invoke_agent.input_tokens'),
+    ).toEqual([{attributes, value: 103}]);
+  });
+
+  it('records the token buckets of each call into the agent token metrics', async () => {
+    vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', 'token_usage');
+
+    await runAgent(ROOT_AGENT, () => runInference());
+
+    const collected = await collectMetrics();
+    const value = (suffix: string) =>
+      pointsOf(collected, `adk.experimental.invoke_agent.${suffix}`).map(
+        (point) => point.value,
+      );
+    expect(value('input_tokens')).toEqual([103]);
+    expect(value('output_tokens')).toEqual([25]);
+    expect(value('total_tokens')).toEqual([128]);
+    expect(value('cache_read.input_tokens')).toEqual([40]);
+    expect(value('reasoning.output_tokens')).toEqual([5]);
+    expect(value('tool.input_tokens')).toEqual([3]);
+  });
+
+  it('records error.type on the agent duration when the agent fails', async () => {
+    const error = new TypeError('boom');
+
+    await expect(
+      runAgent(ROOT_AGENT, async () => {
+        throw error;
+      }),
+    ).rejects.toBe(error);
+
+    expect(
+      valuesOf(await collectMetrics(), 'gen_ai.invoke_agent.duration').map(
+        (point) => point.attributes,
+      ),
+    ).toEqual([{'gen_ai.agent.name': ROOT_AGENT, 'error.type': 'TypeError'}]);
+  });
+
+  it('records error.type on the tool duration when the tool fails or reports an error', async () => {
+    const error = new TypeError('boom');
+
+    await expect(
+      runTool(async () => {
+        throw error;
+      }),
+    ).rejects.toBe(error);
+    await runTool(async (scope) => {
+      scope.recordSuccess({rawResult: {error: 'x', errorType: 'MCP_ERROR'}});
+    });
+    await runTool();
+
+    const toolAttributes = {
+      'gen_ai.agent.name': 'test_agent',
+      'gen_ai.tool.name': 'test_tool',
+      'gen_ai.tool.type': 'FunctionTool',
+    };
+    expect(
+      pointsOf(await collectMetrics(), 'gen_ai.execute_tool.duration').map(
+        (point) => point.attributes,
+      ),
+    ).toEqual([
+      {...toolAttributes, 'error.type': 'TypeError'},
+      {...toolAttributes, 'error.type': 'MCP_ERROR'},
+      toolAttributes,
+    ]);
+  });
+
+  it('records exclusive totals for an agent nested in another agent', async () => {
+    vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', 'token_usage');
+
+    await runAgent('outer_agent', async () => {
+      await runInference();
+      await runTool();
+      await runAgent('inner_agent', async () => {
+        await runInference();
+        await runInference();
+      });
+    });
+
+    const collected = await collectMetrics();
+    const outer = {'gen_ai.agent.name': 'outer_agent'};
+    const inner = {'gen_ai.agent.name': 'inner_agent'};
+    expect(valuesOf(collected, 'gen_ai.invoke_agent.inference_calls')).toEqual(
+      expect.arrayContaining([
+        {attributes: outer, value: 1},
+        {attributes: inner, value: 2},
+      ]),
+    );
+    expect(valuesOf(collected, 'gen_ai.invoke_agent.tool_calls')).toEqual(
+      expect.arrayContaining([
+        {attributes: outer, value: 1},
+        {attributes: inner, value: 0},
+      ]),
+    );
+    expect(
+      valuesOf(collected, 'adk.experimental.invoke_agent.input_tokens'),
+    ).toEqual(
+      expect.arrayContaining([
+        {attributes: outer, value: 103},
+        {attributes: inner, value: 206},
+      ]),
+    );
+  });
+
+  it('records inclusive totals for nested workflows, which inherit the root agent name', async () => {
+    vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', 'workflow,token_usage');
+
+    await runInvocation(async () => {
+      await runAgent(ROOT_AGENT, () => runInference());
+      await runWorkflow('child_workflow', () =>
+        runAgent('child_agent', async () => {
+          await runInference();
+          await runTool();
+        }),
+      );
+    });
+
+    const collected = await collectMetrics();
+    const nested = {
+      'adk.experimental.root_agent.name': ROOT_AGENT,
+      'gen_ai.workflow.name': 'child_workflow',
+      'gen_ai.workflow.nested': true,
+    };
+    expect(
+      valuesOf(collected, 'adk.experimental.invoke_workflow.inference_calls'),
+    ).toEqual(
+      expect.arrayContaining([
+        {attributes: nested, value: 1},
+        {attributes: rootWorkflowAttributes, value: 2},
+      ]),
+    );
+    expect(
+      valuesOf(collected, 'adk.experimental.invoke_workflow.tool_calls'),
+    ).toEqual(
+      expect.arrayContaining([
+        {attributes: nested, value: 1},
+        {attributes: rootWorkflowAttributes, value: 1},
+      ]),
+    );
+    expect(
+      valuesOf(collected, 'adk.experimental.invoke_workflow.input_tokens'),
+    ).toEqual(
+      expect.arrayContaining([
+        {attributes: nested, value: 103},
+        {attributes: rootWorkflowAttributes, value: 206},
+      ]),
+    );
+    expect(
+      pointsOf(collected, 'gen_ai.invoke_workflow.duration').map(
+        (point) => point.attributes,
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        {
+          'gen_ai.operation.name': 'invoke_workflow',
+          'gen_ai.workflow.name': 'child_workflow',
+          'gen_ai.workflow.nested': true,
+        },
+        {
+          'gen_ai.operation.name': 'invoke_workflow',
+          'gen_ai.workflow.name': ROOT_AGENT,
+        },
+      ]),
+    );
+  });
+
+  it('sums each call once into the agent and into every enclosing workflow', async () => {
+    vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', 'workflow,token_usage');
+
+    await runInvocation(() =>
+      runAgent(ROOT_AGENT, async () => {
+        await runInference();
+        await runInference();
+      }),
+    );
+
+    const collected = await collectMetrics();
+    expect(
+      valuesOf(collected, 'adk.experimental.invoke_agent.input_tokens'),
+    ).toEqual([{attributes: {'gen_ai.agent.name': ROOT_AGENT}, value: 206}]);
+    expect(
+      valuesOf(collected, 'adk.experimental.invoke_workflow.input_tokens'),
+    ).toEqual([{attributes: rootWorkflowAttributes, value: 206}]);
+  });
+
+  it('records agent tokens but no workflow totals for the token_usage feature alone', async () => {
+    vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', 'token_usage');
+
+    await runInvocation(() =>
+      runAgent(ROOT_AGENT, async () => {
+        await runInference();
+        await runInference();
+      }),
+    );
+
+    const names = namesOf(await collectMetrics());
+    expect(names).toContain('adk.experimental.invoke_agent.input_tokens');
+    expect(names).toContain('gen_ai.invoke_workflow.duration');
+    expect(names).not.toContain('adk.experimental.invoke_agent.skill.loads');
+    expect(
+      names.filter((name) =>
+        name.startsWith('adk.experimental.invoke_workflow.'),
+      ),
+    ).toEqual([]);
+  });
+
+  it('records workflow call totals but no token, skill or compaction metrics for the workflow feature alone', async () => {
+    vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', 'workflow');
+
+    await runInvocation(() => runAgent(ROOT_AGENT, () => runInference()));
+
+    const names = namesOf(await collectMetrics());
+    expect(names).toEqual(
+      expect.arrayContaining([
+        'adk.experimental.invoke_workflow.inference_calls',
+        'adk.experimental.invoke_workflow.tool_calls',
+      ]),
+    );
+    expect(
+      names.filter(
+        (name) =>
+          name.endsWith('tokens') ||
+          name.endsWith('skill.loads') ||
+          name.endsWith('compactions'),
+      ),
+    ).toEqual([]);
+  });
+
+  it('records skill loads for agents, and for workflows only with the workflow feature', async () => {
+    vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', 'skills');
+    await runInvocation(() => runAgent(ROOT_AGENT));
+    let names = namesOf(await collectMetrics());
+    expect(names).toContain('adk.experimental.invoke_agent.skill.loads');
+    expect(names).not.toContain('adk.experimental.invoke_workflow.skill.loads');
+
+    vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', 'skills,workflow');
+    await runInvocation(() => runAgent(ROOT_AGENT));
+    names = namesOf(await collectMetrics());
+    expect(names).toContain('adk.experimental.invoke_workflow.skill.loads');
+    expect(names).not.toContain('adk.experimental.invoke_workflow.compactions');
+  });
+
+  it('records zero call counts, but no token metrics when no call reported usage', async () => {
+    vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY', 'true');
+
+    await runInvocation(() =>
+      runAgent(ROOT_AGENT, () =>
+        runInference([usageResponse({}, FinishReason.STOP)]),
+      ),
+    );
+
+    const collected = await collectMetrics();
+    const agent = {'gen_ai.agent.name': ROOT_AGENT};
+    expect(valuesOf(collected, 'gen_ai.invoke_agent.tool_calls')).toEqual([
+      {attributes: agent, value: 0},
+    ]);
+    expect(
+      valuesOf(collected, 'adk.experimental.invoke_agent.skill.loads'),
+    ).toEqual([{attributes: agent, value: 0}]);
+    expect(
+      valuesOf(collected, 'adk.experimental.invoke_workflow.compactions'),
+    ).toEqual([{attributes: rootWorkflowAttributes, value: 0}]);
+    expect(
+      namesOf(collected).filter((name) => name.endsWith('tokens')),
+    ).toEqual([]);
+  });
+
+  it('uses the units, descriptions and bucket boundaries of the ADK metrics', async () => {
+    vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY', 'true');
+
+    await runInvocation(() =>
+      runAgent(ROOT_AGENT, async () => {
+        await runInference();
+        await runTool();
+      }),
+    );
+
+    const collected = await collectMetrics();
+    const describeMetric = (name: string) => {
+      const metric = findMetric(collected, name);
+      return {
+        unit: metric?.descriptor.unit,
+        description: metric?.descriptor.description,
+        boundaries: pointsOf(collected, name)[0]?.boundaries,
+      };
+    };
+    const callCountBuckets = [
+      0, 1, 2, 3, 4, 5, 6, 8, 12, 16, 24, 32, 64, 128, 256, 512,
+    ];
+    expect(describeMetric('gen_ai.invoke_agent.duration')).toEqual({
+      unit: 's',
+      description: 'Duration of agent invocations.',
+      boundaries: [
+        0.1, 0.2, 0.4, 0.8, 1.6, 3.2, 6.4, 12.8, 25.6, 51.2, 102.4, 204.8,
+        409.6,
+      ],
+    });
+    expect(describeMetric('gen_ai.execute_tool.duration')).toEqual({
+      unit: 's',
+      description: 'Duration of tool executions.',
+      boundaries: [
+        0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24,
+        20.48, 40.96, 81.92,
+      ],
+    });
+    expect(describeMetric('gen_ai.invoke_workflow.duration')).toMatchObject({
+      unit: 's',
+      description: 'Duration of workflow invocations.',
+    });
+    expect(describeMetric('gen_ai.invoke_agent.inference_calls')).toEqual({
+      unit: '1',
+      description: 'Number of inference (model) calls per agent invocation.',
+      boundaries: callCountBuckets,
+    });
+    expect(
+      describeMetric('adk.experimental.invoke_workflow.tool_calls'),
+    ).toEqual({
+      unit: '1',
+      description:
+        'Number of tool calls over one workflow invocation, across every' +
+        ' agent that ran in it. Includes the `transfer_to_agent` calls that' +
+        ' route between them.',
+      boundaries: callCountBuckets,
+    });
+    expect(
+      describeMetric('adk.experimental.invoke_agent.input_tokens'),
+    ).toEqual({
+      unit: '{token}',
+      description: expect.stringMatching(
+        / Summed over one agent invocation\.$/,
+      ),
+      boundaries: [
+        0, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072,
+        262144, 524288, 1048576,
+      ],
+    });
+    expect(
+      describeMetric('adk.experimental.invoke_workflow.output_tokens'),
+    ).toEqual({
+      unit: '{token}',
+      description: expect.stringMatching(
+        / Summed over one workflow invocation, across every agent that ran in it\.$/,
+      ),
+      boundaries: [
+        0, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536,
+        131072,
+      ],
+    });
+  });
+
+  it('records one workflow duration when the scope ends twice', async () => {
+    const scope = recordWorkflowInvocation({
+      workflow: new Workflow({
+        name: 'twice_workflow',
+        edges: [['START', new FunctionNode('step', () => 'out')]],
+      }),
+      sessionId: SESSION_ID,
+    });
+    scope.end(new TypeError('failed'));
+    scope.end();
+
+    expect(
+      pointsOf(await collectMetrics(), 'gen_ai.invoke_workflow.duration').map(
+        (point) => point.attributes,
+      ),
+    ).toEqual([
+      {
+        'gen_ai.operation.name': 'invoke_workflow',
+        'gen_ai.workflow.name': 'twice_workflow',
+        'error.type': 'TypeError',
+      },
+    ]);
+  });
+
+  describe('skill counters', () => {
+    const skill = {
+      frontmatter: {name: 'my-skill', description: 'A skill.'},
+      instructions: 'do things',
+      resources: {scripts: {'run.py': {src: 'print(1)'}}},
+    };
+
+    async function runSkillTool(
+      activity: Parameters<typeof recordSkillActivity>[0],
+      {
+        resolve,
+        rawResult,
+      }: {readonly resolve: boolean; readonly rawResult?: unknown},
+    ): Promise<void> {
+      await runTool(async (scope) => {
+        const skillScope = recordSkillActivity(activity);
+        if (resolve) {
+          skillScope.recordSkill(skill);
+        }
+        scope.recordSuccess({rawResult});
+      });
+    }
+
+    it('counts skill loads, bounding an unresolved skill and recording the error', async () => {
+      vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', 'skills');
+
+      await runAgent(ROOT_AGENT, async () => {
+        await runSkillTool(
+          {kind: 'load', skillName: 'my-skill'},
+          {resolve: true},
+        );
+        await runSkillTool(
+          {kind: 'load', skillName: 'made-up-skill'},
+          {
+            resolve: false,
+            rawResult: {error: 'not found', error_code: 'SKILL_NOT_FOUND'},
+          },
+        );
+      });
+
+      const collected = await collectMetrics();
+      expect(valuesOf(collected, 'adk.experimental.skill.loads')).toEqual([
+        {
+          attributes: {
+            'gen_ai.agent.name': 'test_agent',
+            'gen_ai.skill.name': 'my-skill',
+          },
+          value: 1,
+        },
+        {
+          attributes: {
+            'gen_ai.agent.name': 'test_agent',
+            'gen_ai.skill.name': '<hallucinated>',
+            'error.type': 'SKILL_NOT_FOUND',
+          },
+          value: 1,
+        },
+      ]);
+      expect(
+        valuesOf(collected, 'adk.experimental.invoke_agent.skill.loads'),
+      ).toEqual([{attributes: {'gen_ai.agent.name': ROOT_AGENT}, value: 2}]);
+    });
+
+    it('counts script executions, bounding an unknown script', async () => {
+      vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', 'skills');
+
+      await runSkillTool(
+        {kind: 'script', skillName: 'my-skill', scriptPath: 'scripts/run.py'},
+        {resolve: true},
+      );
+      await runSkillTool(
+        {kind: 'script', skillName: 'my-skill', scriptPath: 'scripts/nope.py'},
+        {resolve: true},
+      );
+
+      expect(
+        valuesOf(
+          await collectMetrics(),
+          'adk.experimental.skill.script.executions',
+        ),
+      ).toEqual([
+        {
+          attributes: {
+            'gen_ai.agent.name': 'test_agent',
+            'gen_ai.skill.name': 'my-skill',
+            'gen_ai.skill.resource.name': 'scripts/run.py',
+          },
+          value: 1,
+        },
+        {
+          attributes: {
+            'gen_ai.agent.name': 'test_agent',
+            'gen_ai.skill.name': 'my-skill',
+            'gen_ai.skill.resource.name': '<hallucinated>',
+          },
+          value: 1,
+        },
+      ]);
+    });
+
+    it('records no skill counters without the skills feature', async () => {
+      await runSkillTool(
+        {kind: 'load', skillName: 'my-skill'},
+        {resolve: true},
+      );
+
+      const names = namesOf(await collectMetrics());
+      expect(names).toContain('gen_ai.execute_tool.duration');
+      expect(names.filter((name) => name.includes('skill'))).toEqual([]);
+    });
+  });
+
+  it('counts a compaction in the workflow totals only when it adds a summary event', async () => {
+    vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', 'workflow,compaction');
+    const invocationContext = createInvocationContext();
+    invocationContext.session.events.push(
+      createEvent({id: 'e1', author: 'user', timestamp: 10}),
+      createEvent({id: 'e2', author: 'test_agent', timestamp: 20}),
+    );
+
+    await runInvocation(async () => {
+      await recordCompaction(
+        {invocationContext, trigger: ContextCompactionTrigger.Auto},
+        async () => {},
+      );
+      await recordCompaction(
+        {invocationContext, trigger: ContextCompactionTrigger.Auto},
+        async () => {
+          invocationContext.session.events.push(
+            createCompactedEvent({
+              id: 'summary',
+              startTime: 10,
+              endTime: 20,
+              compactedContent: 'summary',
+            }),
+          );
+        },
+      );
+    });
+
+    expect(
+      valuesOf(
+        await collectMetrics(),
+        'adk.experimental.invoke_workflow.compactions',
+      ),
+    ).toEqual([{attributes: rootWorkflowAttributes, value: 1}]);
   });
 });

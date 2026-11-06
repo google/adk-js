@@ -32,9 +32,8 @@ import {
 } from '@opentelemetry/sdk-logs';
 import {
   AggregationTemporality,
-  InMemoryMetricExporter,
   MeterProvider,
-  PeriodicExportingMetricReader,
+  MetricReader,
 } from '@opentelemetry/sdk-metrics';
 import {
   BasicTracerProvider,
@@ -342,6 +341,18 @@ export async function runWithInMemoryRunner(
   }
 }
 
+class ScenarioMetricReader extends MetricReader {
+  constructor() {
+    super({
+      aggregationTemporalitySelector: () => AggregationTemporality.DELTA,
+    });
+  }
+
+  protected override async onForceFlush(): Promise<void> {}
+
+  protected override async onShutdown(): Promise<void> {}
+}
+
 interface TelemetryHarness {
   readonly contextManager: AsyncLocalStorageContextManager;
   readonly tracerProvider: BasicTracerProvider;
@@ -349,7 +360,7 @@ interface TelemetryHarness {
   readonly loggerProvider: LoggerProvider;
   readonly logExporter: InMemoryLogRecordExporter;
   readonly meterProvider: MeterProvider;
-  readonly metricExporter: InMemoryMetricExporter;
+  readonly metricReader: ScenarioMetricReader;
   shutdown(): Promise<void>;
 }
 
@@ -382,13 +393,7 @@ export function getOrCreateTelemetryHarness(): TelemetryHarness {
   });
   logs.setGlobalLoggerProvider(loggerProvider);
 
-  const metricExporter = new InMemoryMetricExporter(
-    AggregationTemporality.CUMULATIVE,
-  );
-  const metricReader = new PeriodicExportingMetricReader({
-    exporter: metricExporter,
-    exportIntervalMillis: 60_000,
-  });
+  const metricReader = new ScenarioMetricReader();
   const meterProvider = new MeterProvider({
     readers: [metricReader],
   });
@@ -401,7 +406,7 @@ export function getOrCreateTelemetryHarness(): TelemetryHarness {
     loggerProvider,
     logExporter,
     meterProvider,
-    metricExporter,
+    metricReader,
     async shutdown(): Promise<void> {
       await tracerProvider.shutdown();
       await loggerProvider.shutdown();
@@ -493,6 +498,7 @@ export async function recordScenario(
 ): Promise<TelemetryDigest> {
   const harness = getOrCreateTelemetryHarness();
   try {
+    await harness.metricReader.collect();
     await applyEnv(tc, async () => {
       try {
         await scenarioRunner();
@@ -505,11 +511,12 @@ export async function recordScenario(
       await harness.loggerProvider.forceFlush();
       await harness.meterProvider.forceFlush();
     });
+    const {resourceMetrics} = await harness.metricReader.collect();
 
     return buildTelemetryDigest(
       harness.spanExporter.getFinishedSpans(),
       harness.logExporter.getFinishedLogRecords(),
-      harness.metricExporter.getMetrics(),
+      [resourceMetrics],
     );
   } finally {
     await harness.shutdown();

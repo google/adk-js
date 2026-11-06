@@ -45,6 +45,7 @@ export enum GenAiAttr {
 /** ADK-specific attribute keys outside the GenAI semantic conventions. */
 export enum AdkAttr {
   SKILL_ADDITIONAL_TOOLS = 'adk.skill.additional_tools',
+  EXPERIMENTAL_ROOT_AGENT_NAME = 'adk.experimental.root_agent.name',
   EXPERIMENTAL_GROUNDING_QUERY_COUNT = 'adk.experimental.grounding.query_count',
   EXPERIMENTAL_GROUNDING_CHUNK_COUNT = 'adk.experimental.grounding.chunk_count',
   EXPERIMENTAL_GROUNDING_WEB_SEARCH_QUERIES = 'adk.experimental.grounding.web_search_queries',
