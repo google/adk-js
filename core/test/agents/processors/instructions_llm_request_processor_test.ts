@@ -347,7 +347,7 @@ describe('InstructionsLlmRequestProcessor', () => {
       });
     }
 
-    it('test_build_system_instruction', async () => {
+    it('injects session state into a string instruction', async () => {
       const request: LlmRequest = {
         model: 'gemini-2.5-flash',
         contents: [],
@@ -381,7 +381,7 @@ describe('InstructionsLlmRequestProcessor', () => {
       );
     });
 
-    it('test_function_system_instruction', async () => {
+    it('does not inject session state into an instruction provider', async () => {
       const buildFunctionInstruction = (readonlyContext: ReadonlyContext) =>
         'This is the function agent instruction for invocation:' +
         ' provider template intact { customerId }' +
@@ -420,7 +420,7 @@ describe('InstructionsLlmRequestProcessor', () => {
       );
     });
 
-    it('test_async_function_system_instruction', async () => {
+    it('does not inject session state into an async instruction provider', async () => {
       const buildFunctionInstruction = async (
         readonlyContext: ReadonlyContext,
       ) =>
@@ -461,7 +461,7 @@ describe('InstructionsLlmRequestProcessor', () => {
       );
     });
 
-    it('test_global_system_instruction', async () => {
+    it('prepends the root agent global instruction to the sub-agent instruction', async () => {
       const subAgent = new LlmAgent({
         model: 'gemini-2.5-flash',
         name: 'sub_agent',
@@ -497,7 +497,7 @@ describe('InstructionsLlmRequestProcessor', () => {
       );
     });
 
-    it('test_function_global_system_instruction', async () => {
+    it('prepends a global instruction provider result to an instruction provider result', async () => {
       const subAgentSi = (_readonlyContext: ReadonlyContext) =>
         'This is the sub agent instruction.';
       const rootAgentGi = (_readonlyContext: ReadonlyContext) =>
@@ -538,7 +538,7 @@ describe('InstructionsLlmRequestProcessor', () => {
       );
     });
 
-    it('test_async_function_global_system_instruction', async () => {
+    it('prepends an async global instruction provider result to an async instruction provider result', async () => {
       const subAgentSi = async (_readonlyContext: ReadonlyContext) =>
         'This is the sub agent instruction.';
       const rootAgentGi = async (_readonlyContext: ReadonlyContext) =>
@@ -615,7 +615,7 @@ describe('InstructionsLlmRequestProcessor', () => {
       );
     });
 
-    it('test_build_system_instruction_with_namespace', async () => {
+    it('injects app: and user: prefixed state and leaves unknown prefixes intact', async () => {
       const request: LlmRequest = {
         model: 'gemini-2.5-flash',
         contents: [],
