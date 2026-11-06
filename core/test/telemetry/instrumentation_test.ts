@@ -72,6 +72,8 @@ import {
 import {createCompactedEvent} from '../../src/events/compacted_event.js';
 import {ContextCompactionTrigger} from '../../src/plugins/base_plugin.js';
 import {
+  AGENT_ENGINE_TRACEPARENT_HEADER,
+  extractAgentEngineContext,
   instrumentMcpFetch,
   type McpFetch,
   recordAgentInvocation,
@@ -85,6 +87,7 @@ import {
   recordToolExecution,
   recordWorkflowInvocation,
   type ToolExecutionScope,
+  TRACEPARENT_HEADER,
 } from '../../src/telemetry/api/instrumentation.js';
 import {logger} from '../../src/utils/logger.js';
 import {version} from '../../src/version.js';
@@ -1092,6 +1095,78 @@ describe('invocation, agent and workflow spans', () => {
       'gen_ai.conversation.id': SESSION_ID,
       'gen_ai.workflow.name': 'root_agent',
     });
+  });
+
+  it('continues Agent Engine trace and records supportID when headers are present', async () => {
+    const aeTraceparent =
+      '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+    const supportId = '00-12345678901234567890123456789012-abcdef1234567890-01';
+
+    await drain(
+      recordInvocation(
+        {
+          entrypoint: agent,
+          sessionId: SESSION_ID,
+          remoteParent: aeTraceparent,
+          supportId,
+        },
+        async function* () {
+          yield* [];
+        },
+      ),
+    );
+
+    const span = onlySpan('invoke_workflow root_agent');
+    expect(span.spanContext().traceId).toBe('4bf92f3577b34da6a3ce929d0e0e4736');
+    expect(span.parentSpanContext?.spanId).toBe('00f067aa0ba902b7');
+    expect(span.attributes['supportID']).toBe(supportId);
+  });
+
+  it('continues trace and sets supportID when passed through runConfig', async () => {
+    const aeTraceparent =
+      '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+    const supportId = '00-12345678901234567890123456789012-abcdef1234567890-01';
+
+    await drain(
+      recordInvocation(
+        {
+          entrypoint: agent,
+          sessionId: SESSION_ID,
+          runConfig: {
+            remoteParent: aeTraceparent,
+            supportId,
+          },
+        },
+        async function* () {
+          yield* [];
+        },
+      ),
+    );
+
+    const span = onlySpan('invoke_workflow root_agent');
+    expect(span.spanContext().traceId).toBe('4bf92f3577b34da6a3ce929d0e0e4736');
+    expect(span.parentSpanContext?.spanId).toBe('00f067aa0ba902b7');
+    expect(span.attributes['supportID']).toBe(supportId);
+  });
+
+  it('ignores invalid remoteParent and starts a normal root span without failing', async () => {
+    await drain(
+      recordInvocation(
+        {
+          entrypoint: agent,
+          sessionId: SESSION_ID,
+          remoteParent: 'invalid-traceparent',
+          supportId: 'original-traceparent',
+        },
+        async function* () {
+          yield* [];
+        },
+      ),
+    );
+
+    const span = onlySpan('invoke_workflow root_agent');
+    expect(span.parentSpanContext).toBeUndefined();
+    expect(span.attributes['supportID']).toBe('original-traceparent');
   });
 
   it('records agent attributes when the span starts and ERROR when it fails', async () => {
@@ -2860,6 +2935,97 @@ describe('instrumentMcpFetch', () => {
       expect(record.attributes).toMatchObject({
         'http.request.header.x-trace': ['a'],
       });
+    });
+  });
+
+  describe('extractAgentEngineContext', () => {
+    const AE_TRACEPARENT =
+      '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+    const SUPPORT_TRACEPARENT =
+      '00-12345678901234567890123456789012-abcdef1234567890-01';
+
+    it('extracts Google-Agent-Engine-Traceparent and traceparent headers', () => {
+      const extracted = extractAgentEngineContext({
+        [AGENT_ENGINE_TRACEPARENT_HEADER]: AE_TRACEPARENT,
+        [TRACEPARENT_HEADER]: SUPPORT_TRACEPARENT,
+      });
+      expect(extracted).toEqual({
+        remoteParent: AE_TRACEPARENT,
+        supportId: SUPPORT_TRACEPARENT,
+      });
+    });
+
+    it('handles lowercase, uppercase, and mixed-case header names', () => {
+      const extracted = extractAgentEngineContext({
+        'google-agent-engine-traceparent': AE_TRACEPARENT,
+        TRACEPARENT: SUPPORT_TRACEPARENT,
+      });
+      expect(extracted).toEqual({
+        remoteParent: AE_TRACEPARENT,
+        supportId: SUPPORT_TRACEPARENT,
+      });
+    });
+
+    it('handles array values by using the first element', () => {
+      const extracted = extractAgentEngineContext({
+        [AGENT_ENGINE_TRACEPARENT_HEADER]: [AE_TRACEPARENT, 'second-header'],
+        [TRACEPARENT_HEADER]: [SUPPORT_TRACEPARENT, 'second-traceparent'],
+      });
+      expect(extracted).toEqual({
+        remoteParent: AE_TRACEPARENT,
+        supportId: SUPPORT_TRACEPARENT,
+      });
+    });
+
+    it.each([
+      {
+        reason: 'all-zero trace ID',
+        header: '00-00000000000000000000000000000000-00f067aa0ba902b7-01',
+      },
+      {
+        reason: 'all-zero span ID',
+        header: '00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01',
+      },
+      {
+        reason: 'unsupported version ff',
+        header: 'ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+      },
+      {
+        reason: 'invalid hex in trace ID',
+        header: '00-4bf92f3577b34da6a3ce929d0e0e473g-00f067aa0ba902b7-01',
+      },
+      {
+        reason: 'invalid hex in span ID',
+        header: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902bg-01',
+      },
+      {
+        reason: 'extra fields on version 00',
+        header: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01-extra',
+      },
+      {
+        reason: 'too few parts',
+        header: '00-4bf92f3577b34da6a3ce929d0e0e4736',
+      },
+      {
+        reason: 'malformed non-hyphenated string',
+        header: 'not-a-traceparent',
+      },
+    ])(
+      'rejects invalid W3C traceparent ($reason), returning remoteParent: undefined',
+      ({header}) => {
+        const extracted = extractAgentEngineContext({
+          [AGENT_ENGINE_TRACEPARENT_HEADER]: header,
+          [TRACEPARENT_HEADER]: SUPPORT_TRACEPARENT,
+        });
+        expect(extracted.remoteParent).toBeUndefined();
+        expect(extracted.supportId).toBe(SUPPORT_TRACEPARENT);
+      },
+    );
+
+    it('returns empty object when headers are absent', () => {
+      expect(extractAgentEngineContext({})).toEqual({});
+      expect(extractAgentEngineContext(undefined)).toEqual({});
+      expect(extractAgentEngineContext(null)).toEqual({});
     });
   });
 });

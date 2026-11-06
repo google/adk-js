@@ -18,6 +18,7 @@ import {
   EvalEntry,
   EvalMetric,
   Event,
+  extractAgentEngineContext,
   getFunctionCalls,
   getFunctionResponses,
   InMemoryArtifactService,
@@ -1276,6 +1277,7 @@ export class AdkApiServer {
         }
       });
 
+      const traceContext = extractAgentEngineContext(req.headers);
       const events: Event[] = [];
       try {
         for await (const e of this.executeAgentRun({
@@ -1285,6 +1287,9 @@ export class AdkApiServer {
           newMessage,
           stateDelta,
           customMetadata,
+          runConfig: {
+            ...traceContext,
+          },
           abortSignal: abortController.signal,
         })) {
           events.push(e);
@@ -1327,6 +1332,7 @@ export class AdkApiServer {
           req.on('close', () => {
             abortController.abort();
           });
+          const traceContext = extractAgentEngineContext(req.headers);
           for await (const e of this.executeAgentRun({
             appName,
             userId,
@@ -1334,6 +1340,9 @@ export class AdkApiServer {
             newMessage,
             stateDelta,
             customMetadata,
+            runConfig: {
+              ...traceContext,
+            },
             abortSignal: abortController.signal,
           })) {
             events.push(e);
@@ -1413,6 +1422,7 @@ export class AdkApiServer {
         res.setHeader('Connection', 'keep-alive');
         res.flushHeaders();
 
+        const traceContext = extractAgentEngineContext(req.headers);
         for await (const event of this.executeAgentRun({
           appName,
           userId,
@@ -1422,6 +1432,7 @@ export class AdkApiServer {
           customMetadata,
           runConfig: {
             streamingMode: streaming ? StreamingMode.SSE : StreamingMode.NONE,
+            ...traceContext,
           },
           abortSignal: abortController.signal,
         })) {

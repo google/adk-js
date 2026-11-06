@@ -166,6 +166,18 @@ export interface RunConfig {
   telemetry?: TelemetryConfig;
 
   /**
+   * Optional W3C traceparent header string specifying a remote parent span
+   * for distributed tracing (e.g. from `Google-Agent-Engine-Traceparent`).
+   */
+  remoteParent?: string;
+
+  /**
+   * Optional incoming traceparent header string preserved as a support ID
+   * on the root invocation span.
+   */
+  supportId?: string;
+
+  /**
    * Set by the A2A executor to record that this run's message came from a
    * remote peer. Not part of the configuration surface: an application setting
    * it by hand is asserting something about the message's provenance that only

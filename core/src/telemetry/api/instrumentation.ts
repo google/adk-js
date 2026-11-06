@@ -104,6 +104,7 @@ import {
   type SkillReport,
   type ToolCallOutcome,
 } from './internal/trace/tool.js';
+import {parseTraceparent} from './internal/trace/traceparent.js';
 import {
   bindOtelContextToAsyncGenerator,
   getTracer,
@@ -116,6 +117,76 @@ export type {
   ExperimentalFeature,
   TelemetryConfig,
 } from './internal/common/config.js';
+
+/** Header carrying the W3C traceparent for Agent Engine request tracing. */
+export const AGENT_ENGINE_TRACEPARENT_HEADER =
+  'Google-Agent-Engine-Traceparent';
+
+/** Header carrying the incoming traceparent to preserve as a support ID. */
+export const TRACEPARENT_HEADER = 'traceparent';
+
+/** Distributed tracing context extracted from Agent Engine request headers. */
+export interface AgentEngineTraceContext {
+  /** The validated remote parent traceparent string, or undefined if absent or invalid. */
+  readonly remoteParent?: string;
+  /** The incoming traceparent string preserved as a support ID, or undefined if absent. */
+  readonly supportId?: string;
+}
+
+function getFirstHeaderValue(
+  headers: Record<string, string | string[] | undefined>,
+  targetName: string,
+): string | undefined {
+  const targetLower = targetName.toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === targetLower) {
+      if (Array.isArray(value)) {
+        const first = value[0];
+        return typeof first === 'string' && first.trim() !== ''
+          ? first.trim()
+          : undefined;
+      }
+      return typeof value === 'string' && value.trim() !== ''
+        ? value.trim()
+        : undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Extracts Agent Engine distributed trace context from HTTP request headers.
+ *
+ * Looks up headers case-insensitively. If `Google-Agent-Engine-Traceparent` is
+ * valid W3C traceparent syntax, it is returned as `remoteParent`; invalid headers
+ * are ignored. The `traceparent` header is returned as `supportId`.
+ *
+ * @param headers Incoming HTTP headers object.
+ * @returns Extracted trace context.
+ */
+export function extractAgentEngineContext(
+  headers?: Record<string, string | string[] | undefined> | null,
+): AgentEngineTraceContext {
+  if (!headers || typeof headers !== 'object') {
+    return {};
+  }
+
+  let remoteParent: string | undefined;
+  const rawAeTraceparent = getFirstHeaderValue(
+    headers,
+    AGENT_ENGINE_TRACEPARENT_HEADER,
+  );
+  if (rawAeTraceparent && parseTraceparent(rawAeTraceparent)) {
+    remoteParent = rawAeTraceparent;
+  }
+
+  const supportId = getFirstHeaderValue(headers, TRACEPARENT_HEADER);
+
+  return {
+    ...(remoteParent !== undefined ? {remoteParent} : {}),
+    ...(supportId !== undefined ? {supportId} : {}),
+  };
+}
 
 function nowMillis(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -160,15 +231,31 @@ function startWorkflowScope({
   sessionId,
   entrypoint,
   telemetry,
+  remoteParent,
+  supportId,
 }: {
   readonly workflowName: string;
   readonly sessionId: string;
   readonly entrypoint?: object;
   /** The run's telemetry overrides, when the scope is opened for a run. */
   readonly telemetry?: TelemetryConfig;
+  /** Optional remote parent context or W3C traceparent string for distributed tracing. */
+  readonly remoteParent?: string | Context;
+  /** Optional support ID recorded on the root invocation span. */
+  readonly supportId?: string;
 }): SyncStartedScope & StartedScope {
   const startMillis = nowMillis();
-  const parentContext = context.active();
+  let parentContext = context.active();
+  if (remoteParent) {
+    if (typeof remoteParent === 'string') {
+      const parsed = parseTraceparent(remoteParent);
+      if (parsed) {
+        parentContext = trace.setSpanContext(parentContext, parsed);
+      }
+    } else {
+      parentContext = remoteParent;
+    }
+  }
   const {frame, context: frameContext} = openWorkflowFrame({
     workflowName,
     config: resolveTelemetryConfig(telemetry),
@@ -181,6 +268,7 @@ function startWorkflowScope({
     sessionId,
     nested,
     parentContext,
+    supportId,
   });
   const ctx = trace.setSpan(frameContext, span);
   let ended = false;
@@ -223,6 +311,10 @@ export interface RecordInvocationParams {
   readonly sessionId: string;
   /** The run's config, whose `telemetry` overrides apply to the invocation. */
   readonly runConfig?: RunConfig;
+  /** Optional remote parent context or W3C traceparent string for distributed tracing. */
+  readonly remoteParent?: string | Context;
+  /** Optional support ID recorded on the root invocation span. */
+  readonly supportId?: string;
 }
 
 /**
@@ -232,9 +324,17 @@ export interface RecordInvocationParams {
  * workflow entrypoint runs inside it rather than opening a second one.
  */
 export function recordInvocation<T>(
-  {entrypoint, sessionId, runConfig}: RecordInvocationParams,
+  {
+    entrypoint,
+    sessionId,
+    runConfig,
+    remoteParent,
+    supportId,
+  }: RecordInvocationParams,
   createGenerator: () => AsyncGenerator<T, void, void>,
 ): AsyncGenerator<T, void, void> {
+  const effectiveRemoteParent = remoteParent ?? runConfig?.remoteParent;
+  const effectiveSupportId = supportId ?? runConfig?.supportId;
   return streamInScope(
     () =>
       startWorkflowScope({
@@ -242,6 +342,8 @@ export function recordInvocation<T>(
         sessionId,
         entrypoint,
         telemetry: runConfig?.telemetry,
+        remoteParent: effectiveRemoteParent,
+        supportId: effectiveSupportId,
       }),
     createGenerator,
   );

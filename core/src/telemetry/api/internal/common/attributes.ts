@@ -87,6 +87,9 @@ export const ERROR_TYPE_ATTR = 'error.type';
 /** Standard OpenTelemetry end-user identifier attribute key. */
 export const USER_ID_ATTR = 'user.id';
 
+/** Support identifier stamped on root spans for Agent Engine traces. */
+export const SUPPORT_ID_ATTR = 'supportID';
+
 /** Instrumentation scope name identifying ADK as the emitter. */
 export const GEN_AI_SYSTEM_VALUE = 'gcp.vertex.agent';
 

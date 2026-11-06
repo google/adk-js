@@ -99,8 +99,8 @@ class HttpClient {
     return this.request<T>(url, {method: 'GET'});
   }
 
-  post<T>(url: string, body?: unknown) {
-    return this.request<T>(url, {method: 'POST', body});
+  post<T>(url: string, body?: unknown, headers?: Record<string, string>) {
+    return this.request<T>(url, {method: 'POST', body, headers});
   }
 
   put<T>(url: string, body?: unknown) {
@@ -113,11 +113,22 @@ class HttpClient {
 
   private async request<T = unknown>(
     url: string,
-    {method, body}: {method: string; body?: unknown},
+    {
+      method,
+      body,
+      headers,
+    }: {
+      method: string;
+      body?: unknown;
+      headers?: Record<string, string>;
+    },
   ): Promise<{status: number; data?: T; text?: string}> {
     const options = {
       method,
-      headers: body ? {'Content-Type': 'application/json'} : undefined,
+      headers: {
+        ...(body ? {'Content-Type': 'application/json'} : {}),
+        ...headers,
+      },
       body: body ? JSON.stringify(body) : undefined,
       redirect: 'manual' as const,
     };
@@ -880,6 +891,80 @@ describe('AdkWebServer', () => {
       spy.mockRestore();
     });
 
+    it('forwards Agent Engine trace headers to Runner.runAsync in /run', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const spy = vi.spyOn(Runner.prototype, 'runAsync');
+      const aeTraceparent =
+        '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+      const supportId =
+        '00-12345678901234567890123456789012-abcdef1234567890-01';
+
+      const response = await client.post<Event[]>(
+        '/run',
+        {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'sessionId',
+          newMessage: {
+            parts: [{text: 'Hello test agent!'}],
+            role: 'user',
+          },
+        },
+        {
+          'Google-Agent-Engine-Traceparent': aeTraceparent,
+          traceparent: supportId,
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const runAsyncParams = spy.mock.calls[0][0];
+      expect(runAsyncParams.runConfig?.remoteParent).toBe(aeTraceparent);
+      expect(runAsyncParams.runConfig?.supportId).toBe(supportId);
+
+      spy.mockRestore();
+    });
+
+    it('ignores invalid traceparent header in /run without failing', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const spy = vi.spyOn(Runner.prototype, 'runAsync');
+
+      const response = await client.post<Event[]>(
+        '/run',
+        {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'sessionId',
+          newMessage: {
+            parts: [{text: 'Hello test agent!'}],
+            role: 'user',
+          },
+        },
+        {
+          'Google-Agent-Engine-Traceparent': 'invalid-traceparent',
+          traceparent: 'original-traceparent',
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const runAsyncParams = spy.mock.calls[0][0];
+      expect(runAsyncParams.runConfig?.remoteParent).toBeUndefined();
+      expect(runAsyncParams.runConfig?.supportId).toBe('original-traceparent');
+
+      spy.mockRestore();
+    });
+
     it('leaves customMetadata undefined when the body omits it', async () => {
       await sessionService.createSession({
         appName: 'testApp',
@@ -1190,6 +1275,47 @@ describe('AdkWebServer', () => {
         tenant: 'acme',
       });
       // The metadata travels beside runConfig, so streaming is unaffected.
+      expect(runAsyncParams.runConfig?.streamingMode).toBe(StreamingMode.SSE);
+
+      spy.mockRestore();
+    });
+
+    it('forwards Agent Engine trace headers to Runner.runAsync in /run_sse', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const spy = vi.spyOn(Runner.prototype, 'runAsync');
+      const aeTraceparent =
+        '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+      const supportId =
+        '00-12345678901234567890123456789012-abcdef1234567890-01';
+
+      const response = await client.post(
+        '/run_sse',
+        {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'sessionId',
+          newMessage: {
+            parts: [{text: 'Hello test agent!'}],
+            role: 'user',
+          },
+          streaming: true,
+        },
+        {
+          'Google-Agent-Engine-Traceparent': aeTraceparent,
+          traceparent: supportId,
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const runAsyncParams = spy.mock.calls[0][0];
+      expect(runAsyncParams.runConfig?.remoteParent).toBe(aeTraceparent);
+      expect(runAsyncParams.runConfig?.supportId).toBe(supportId);
       expect(runAsyncParams.runConfig?.streamingMode).toBe(StreamingMode.SSE);
 
       spy.mockRestore();
@@ -1902,6 +2028,84 @@ describe('AdkWebServer', () => {
       expect(spy.mock.calls[0][0].customMetadata).toEqual({
         requestId: 'abc-123',
       });
+
+      spy.mockRestore();
+    });
+
+    it('forwards Agent Engine trace headers to Runner.runAsync in /api/reasoning_engine', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const spy = vi.spyOn(Runner.prototype, 'runAsync');
+      const aeTraceparent =
+        '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+      const supportId =
+        '00-12345678901234567890123456789012-abcdef1234567890-01';
+
+      const response = await client.post<{output: Event[]}>(
+        '/api/reasoning_engine',
+        {
+          input: {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'sessionId',
+            newMessage: {
+              parts: [{text: 'Hello'}],
+              role: 'user',
+            },
+          },
+        },
+        {
+          'Google-Agent-Engine-Traceparent': aeTraceparent,
+          traceparent: supportId,
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const runAsyncParams = spy.mock.calls[0][0];
+      expect(runAsyncParams.runConfig?.remoteParent).toBe(aeTraceparent);
+      expect(runAsyncParams.runConfig?.supportId).toBe(supportId);
+
+      spy.mockRestore();
+    });
+
+    it('ignores invalid traceparent header in /api/reasoning_engine without failing', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const spy = vi.spyOn(Runner.prototype, 'runAsync');
+
+      const response = await client.post<{output: Event[]}>(
+        '/api/reasoning_engine',
+        {
+          input: {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'sessionId',
+            newMessage: {
+              parts: [{text: 'Hello'}],
+              role: 'user',
+            },
+          },
+        },
+        {
+          'Google-Agent-Engine-Traceparent': 'invalid-traceparent',
+          traceparent: 'original-traceparent',
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const runAsyncParams = spy.mock.calls[0][0];
+      expect(runAsyncParams.runConfig?.remoteParent).toBeUndefined();
+      expect(runAsyncParams.runConfig?.supportId).toBe('original-traceparent');
 
       spy.mockRestore();
     });

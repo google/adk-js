@@ -6,7 +6,7 @@
 
 import {context, type Context, type Span} from '@opentelemetry/api';
 
-import {GenAiAttr} from '../common/attributes.js';
+import {GenAiAttr, SUPPORT_ID_ATTR} from '../common/attributes.js';
 import {getTracer} from './tracer.js';
 
 /** Parameters for {@link startWorkflowSpan}. */
@@ -15,6 +15,7 @@ export interface StartWorkflowSpanParams {
   readonly sessionId: string;
   readonly nested: boolean;
   readonly parentContext?: Context;
+  readonly supportId?: string;
 }
 
 /**
@@ -28,6 +29,7 @@ export function startWorkflowSpan({
   sessionId,
   nested,
   parentContext = context.active(),
+  supportId,
 }: StartWorkflowSpanParams): Span {
   return getTracer().startSpan(
     workflowName ? `invoke_workflow ${workflowName}` : 'invoke_workflow',
@@ -37,6 +39,7 @@ export function startWorkflowSpan({
         [GenAiAttr.CONVERSATION_ID]: sessionId,
         ...(nested ? {[GenAiAttr.WORKFLOW_NESTED]: true} : {}),
         ...(workflowName ? {[GenAiAttr.WORKFLOW_NAME]: workflowName} : {}),
+        ...(!nested && supportId ? {[SUPPORT_ID_ATTR]: supportId} : {}),
       },
     },
     parentContext,
