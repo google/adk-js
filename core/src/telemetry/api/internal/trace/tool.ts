@@ -112,6 +112,8 @@ export interface SkillReport {
   readonly resourceName?: string;
   /** Whether the tool loaded the skill itself, as opposed to part of it. */
   readonly isSkillLoad: boolean;
+  /** Whether the tool executed a skill script. */
+  readonly isSkillScript?: boolean;
   /** The skill, once the tool has resolved it. */
   readonly skill?: Skill;
 }

@@ -4,7 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content} from '@google/genai';
+import {
+  Content,
+  type GenerateContentResponseUsageMetadata,
+} from '@google/genai';
 import {
   type Attributes,
   context,
@@ -27,6 +30,12 @@ import type {BaseTool} from '../../tools/base_tool.js';
 import type {BaseNode} from '../../workflow/base_node.js';
 
 import {
+  captureAccumulators,
+  claimEntrypointWorkflowFrame,
+  openAgentFrame,
+  openWorkflowFrame,
+} from './internal/common/accumulators.js';
+import {
   GcpAttr,
   GenAiAttr,
   USER_ID_ATTR,
@@ -47,7 +56,21 @@ import {
   withoutContent,
 } from './internal/common/genai_messages.js';
 import {resolveProviderName} from './internal/common/provider_name.js';
+import {TokenUsage} from './internal/common/token_usage.js';
 import {emitInferenceOperationDetails} from './internal/logs/inference.js';
+import {
+  recordAgentDuration,
+  recordAgentTotals,
+} from './internal/metrics/agent.js';
+import {
+  recordSkillLoad,
+  recordSkillScriptExecution,
+  recordToolDuration,
+} from './internal/metrics/tool.js';
+import {
+  recordWorkflowDuration,
+  recordWorkflowTotals,
+} from './internal/metrics/workflow.js';
 import {buildAgentInvocationAttributes} from './internal/trace/agent.js';
 import {
   buildCompactionResultAttributes,
@@ -77,34 +100,100 @@ import {
   getTracer,
   setSpanError,
 } from './internal/trace/tracer.js';
-import {
-  claimEntrypointWorkflowSpan,
-  startWorkflowSpan,
-} from './internal/trace/workflow.js';
+import {startWorkflowSpan} from './internal/trace/workflow.js';
+
+function nowMillis(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+
+function elapsedSeconds(startMillis: number): number {
+  return Math.max(0, (nowMillis() - startMillis) / 1000);
+}
+
+interface StartedScope {
+  readonly context: Context;
+  end(error?: unknown): void;
+}
 
 /**
- * Drives a generator under a span that `start` opens on the first pull, with
- * the span's context bound to every step. The span ends when the generator
- * finishes, and records an ERROR status if an error escapes it.
+ * Drives a generator under a scope that `start` opens on the first pull, with
+ * the scope's context bound to every step. The scope ends when the generator
+ * finishes, and records the error if one escapes it.
  */
-function streamInSpan<T>(
-  start: () => {span: Span; context: Context},
+function streamInScope<T>(
+  start: () => StartedScope,
   createGenerator: () => AsyncGenerator<T, void, void>,
 ): AsyncGenerator<T, void, void> {
   return (async function* () {
-    const {span, context: ctx} = start();
+    const scope = start();
     try {
       yield* bindOtelContextToAsyncGenerator(
-        ctx,
-        context.with(ctx, createGenerator),
+        scope.context,
+        context.with(scope.context, createGenerator),
       );
     } catch (error: unknown) {
-      setSpanError(span, error);
+      scope.end(error);
       throw error;
     } finally {
-      span.end();
+      scope.end();
     }
   })();
+}
+
+function startWorkflowScope({
+  workflowName,
+  sessionId,
+  entrypoint,
+}: {
+  readonly workflowName: string;
+  readonly sessionId: string;
+  readonly entrypoint?: object;
+}): SyncStartedScope & StartedScope {
+  const startMillis = nowMillis();
+  const parentContext = context.active();
+  const {frame, context: frameContext} = openWorkflowFrame({
+    workflowName,
+    entrypoint,
+    parentContext,
+  });
+  const nested = frame.parent !== undefined;
+  const span = startWorkflowSpan({
+    workflowName,
+    sessionId,
+    nested,
+    parentContext,
+  });
+  const ctx = trace.setSpan(frameContext, span);
+  let ended = false;
+  return {
+    context: ctx,
+    run: (fn) => context.with(ctx, fn),
+    end(error?: unknown): void {
+      if (ended) {
+        return;
+      }
+      ended = true;
+      let errorType: string | undefined;
+      if (error !== undefined) {
+        errorType = resolveErrorType(error);
+        setSpanError(span, error);
+      }
+      span.end();
+      recordWorkflowDuration({
+        workflowName,
+        durationSeconds: elapsedSeconds(startMillis),
+        nested,
+        errorType,
+      });
+      recordWorkflowTotals({
+        rootAgentName: frame.rootAgentName,
+        workflowName,
+        nested,
+        totals: frame.totals,
+        config: frame.config,
+      });
+    },
+  };
 }
 
 /** Parameters for starting an invocation with {@link recordInvocation}. */
@@ -125,9 +214,13 @@ export function recordInvocation<T>(
   {entrypoint, sessionId}: RecordInvocationParams,
   createGenerator: () => AsyncGenerator<T, void, void>,
 ): AsyncGenerator<T, void, void> {
-  return streamInSpan(
+  return streamInScope(
     () =>
-      startWorkflowSpan({workflowName: entrypoint.name, sessionId, entrypoint}),
+      startWorkflowScope({
+        workflowName: entrypoint.name,
+        sessionId,
+        entrypoint,
+      }),
     createGenerator,
   );
 }
@@ -146,16 +239,50 @@ export function recordAgentInvocation<T>(
   {agent, invocationContext}: RecordAgentInvocationParams,
   createGenerator: () => AsyncGenerator<T, void, void>,
 ): AsyncGenerator<T, void, void> {
-  return streamInSpan(() => {
-    const span = getTracer().startSpan(`invoke_agent ${agent.name}`, {
-      attributes: buildAgentInvocationAttributes({
-        agent,
-        // Read defensively: telemetry must not fail a run whose context was
-        // assembled without a session.
-        sessionId: invocationContext.session?.id,
-      }),
-    });
-    return {span, context: trace.setSpan(context.active(), span)};
+  return streamInScope(() => {
+    const startMillis = nowMillis();
+    const config = readTelemetryConfig();
+    const parentContext = context.active();
+    const {frame, context: frameContext} = openAgentFrame(parentContext);
+    const span = getTracer().startSpan(
+      `invoke_agent ${agent.name}`,
+      {
+        attributes: buildAgentInvocationAttributes({
+          agent,
+          // Read defensively: telemetry must not fail a run whose context was
+          // assembled without a session.
+          sessionId: invocationContext.session?.id,
+        }),
+      },
+      parentContext,
+    );
+    const ctx = trace.setSpan(frameContext, span);
+    let ended = false;
+    return {
+      context: ctx,
+      end(error?: unknown): void {
+        if (ended) {
+          return;
+        }
+        ended = true;
+        let errorType: string | undefined;
+        if (error !== undefined) {
+          errorType = resolveErrorType(error);
+          setSpanError(span, error);
+        }
+        span.end();
+        recordAgentDuration({
+          agentName: agent.name,
+          durationSeconds: elapsedSeconds(startMillis),
+          errorType,
+        });
+        recordAgentTotals({
+          agentName: agent.name,
+          totals: frame.totals,
+          config,
+        });
+      },
+    };
   }, createGenerator);
 }
 
@@ -171,10 +298,10 @@ export interface RecordInferenceParams {
 interface Inference {
   /** The context carrying the `generate_content` span. */
   readonly context: Context;
-  /** Records a response; ends the call when it reports a finish reason. */
+  /** Records a response; ends the span when it reports a finish reason. */
   record(llmResponse: LlmResponse): void;
-  /** Ends the call, once: emits its log record, then ends its span. */
-  end(failure?: {error: unknown}): void;
+  /** Ends the call, once: ends the span if still open and accumulates totals. */
+  finish(failure?: {error: unknown}): void;
 }
 
 function startInference({
@@ -183,6 +310,7 @@ function startInference({
   modelResponseEvent,
 }: RecordInferenceParams): Inference {
   const config = readTelemetryConfig();
+  const accumulators = captureAccumulators(context.active());
   const agentName = invocationContext.agent?.name;
   const commonAttributes: Attributes = {
     ...(agentName ? {[GenAiAttr.AGENT_NAME]: agentName} : {}),
@@ -195,13 +323,15 @@ function startInference({
   const requestDetails = buildRequestOperationDetails(llmRequest);
   const outputMessages: AnyValueMap[] = [];
   let responseAttributes: Attributes = {};
-  let ended = false;
+  let newestUsage: GenerateContentResponseUsageMetadata | undefined;
+  let spanEnded = false;
+  let finished = false;
 
-  const end = (failure?: {error: unknown}): void => {
-    if (ended) {
+  const endSpan = (failure?: {error: unknown}): void => {
+    if (spanEnded) {
       return;
     }
-    ended = true;
+    spanEnded = true;
     if (failure) {
       setSpanError(span, failure.error);
     }
@@ -225,7 +355,8 @@ function startInference({
   return {
     context: trace.setSpan(context.active(), span),
     record(llmResponse: LlmResponse): void {
-      if (ended) {
+      newestUsage = llmResponse.usageMetadata ?? newestUsage;
+      if (spanEnded) {
         return;
       }
       setInferenceResponseAttributes(span, llmResponse, config);
@@ -242,10 +373,23 @@ function startInference({
       // reaches the caller, keeps what the caller does with it (such as
       // running the tool the model asked for) outside the span.
       if (isReportedFinishReason(llmResponse.finishReason)) {
-        end();
+        endSpan();
       }
     },
-    end,
+    finish(failure?: {error: unknown}): void {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      endSpan(failure);
+      accumulators.addInferenceCall();
+      if (newestUsage !== undefined) {
+        const usage = new TokenUsage(newestUsage);
+        if (usage.input !== undefined || usage.output !== undefined) {
+          accumulators.addTokens(usage);
+        }
+      }
+    },
   };
 }
 
@@ -275,10 +419,10 @@ export function recordInference(
         yield llmResponse;
       }
     } catch (error: unknown) {
-      inference.end({error});
+      inference.finish({error});
       throw error;
     } finally {
-      inference.end();
+      inference.finish();
     }
   })();
 }
@@ -357,7 +501,9 @@ export async function recordToolExecution<T>(
   {tool, args, invocationContext}: RecordToolExecutionParams,
   fn: (scope: ToolExecutionScope) => Promise<T>,
 ): Promise<T> {
+  const startMillis = nowMillis();
   const config = readTelemetryConfig();
+  const accumulators = captureAccumulators(context.active());
   const toolScope: ToolScopeState = {skill: undefined};
   return getTracer().startActiveSpan(
     `execute_tool ${tool.name}`,
@@ -380,11 +526,12 @@ export async function recordToolExecution<T>(
         setSpanError(span, error);
         throw error;
       } finally {
+        const agentName = invocationContext.agent?.name;
         span.setAttributes(
           buildToolCallAttributes({
             tool,
             args,
-            agentName: invocationContext.agent?.name,
+            agentName,
             outcome,
             config,
           }),
@@ -398,10 +545,41 @@ export async function recordToolExecution<T>(
             message: outcome.errorType,
           });
         }
-        if (toolScope.skill) {
-          setSkillSpanAttributes(span, tool.name, toolScope.skill);
+        const skillReport = toolScope.skill;
+        if (skillReport) {
+          setSkillSpanAttributes(span, tool.name, skillReport);
+          if (skillReport.isSkillLoad) {
+            accumulators.addSkillLoad();
+            if (agentName !== undefined) {
+              recordSkillLoad({
+                agentName,
+                skill: skillReport.skill,
+                errorType: outcome.errorType,
+                config,
+              });
+            }
+          } else if (
+            skillReport.isSkillScript &&
+            skillReport.resourceName !== undefined &&
+            agentName !== undefined
+          ) {
+            recordSkillScriptExecution({
+              agentName,
+              skill: skillReport.skill,
+              scriptPath: skillReport.resourceName,
+              config,
+            });
+          }
         }
         span.end();
+        accumulators.addToolCall();
+        recordToolDuration({
+          agentName: agentName ?? '',
+          toolName: tool.name,
+          toolType: tool.constructor.name,
+          durationSeconds: elapsedSeconds(startMillis),
+          errorType: outcome.errorType,
+        });
       }
     },
   );
@@ -446,6 +624,7 @@ function toSkillReport(activity: SkillActivity): SkillReport {
         skillName: activity.skillName,
         resourceName: activity.scriptPath,
         isSkillLoad: false,
+        isSkillScript: true,
       };
     default: {
       const exhaustive: never = activity;
@@ -566,15 +745,14 @@ export function recordWorkflowInvocation({
   workflow,
   sessionId,
 }: RecordWorkflowInvocationParams): SyncStartedScope {
-  const entrypointContext = claimEntrypointWorkflowSpan(workflow);
+  const entrypointContext = claimEntrypointWorkflowFrame(workflow);
   if (entrypointContext) {
     return {run: (fn) => context.with(entrypointContext, fn), end(): void {}};
   }
-  const {span, context: ctx} = startWorkflowSpan({
+  return startWorkflowScope({
     workflowName: workflow.name,
     sessionId,
   });
-  return startSyncScope(span, ctx);
 }
 
 /** Parameters for starting a workflow node's instrumentation scope. */
@@ -643,13 +821,19 @@ export async function recordCompaction<T>(
 ): Promise<T> {
   const {session} = invocationContext;
   const eventsBefore = [...session.events];
+  const accumulators = captureAccumulators(context.active());
   const span = startCompactionSpan({sessionId: session.id, trigger});
   return context.with(trace.setSpan(context.active(), span), async () => {
     try {
       const result = await fn();
-      span.setAttributes(
-        buildCompactionResultAttributes(eventsBefore, session.events),
+      const attributes = buildCompactionResultAttributes(
+        eventsBefore,
+        session.events,
       );
+      span.setAttributes(attributes);
+      if (GenAiAttr.COMPACTION_RESULT_EVENT_ID in attributes) {
+        accumulators.addCompaction();
+      }
       return result;
     } catch (error: unknown) {
       setSpanError(span, error);

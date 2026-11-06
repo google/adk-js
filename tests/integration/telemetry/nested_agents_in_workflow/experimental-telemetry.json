@@ -216,5 +216,343 @@
     ],
     "logs": []
   },
-  "metric_points": {}
+  "metric_points": {
+    "adk.experimental.invoke_agent.cache_read.input_tokens": [
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_nested_agent"
+        },
+        "value": 30
+      },
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_root_agent"
+        },
+        "value": 100
+      }
+    ],
+    "adk.experimental.invoke_agent.input_tokens": [
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_nested_agent"
+        },
+        "value": 70
+      },
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_root_agent"
+        },
+        "value": 250
+      }
+    ],
+    "adk.experimental.invoke_agent.output_tokens": [
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_nested_agent"
+        },
+        "value": 13
+      },
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_root_agent"
+        },
+        "value": 75
+      }
+    ],
+    "adk.experimental.invoke_agent.reasoning.output_tokens": [
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_nested_agent"
+        },
+        "value": 3
+      },
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_root_agent"
+        },
+        "value": 20
+      }
+    ],
+    "adk.experimental.invoke_agent.skill.loads": [
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_nested_agent"
+        },
+        "value": 0
+      },
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_root_agent"
+        },
+        "value": 0
+      }
+    ],
+    "adk.experimental.invoke_agent.tool.input_tokens": [
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_nested_agent"
+        },
+        "value": 0
+      },
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_root_agent"
+        },
+        "value": 0
+      }
+    ],
+    "adk.experimental.invoke_agent.total_tokens": [
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_nested_agent"
+        },
+        "value": 83
+      },
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_root_agent"
+        },
+        "value": 325
+      }
+    ],
+    "adk.experimental.invoke_workflow.cache_read.input_tokens": [
+      {
+        "attributes": {
+          "adk.experimental.root_agent.name": "my_workflow",
+          "gen_ai.workflow.name": "my_nested_workflow",
+          "gen_ai.workflow.nested": true
+        },
+        "value": 30
+      },
+      {
+        "attributes": {
+          "adk.experimental.root_agent.name": "my_workflow",
+          "gen_ai.workflow.name": "my_workflow"
+        },
+        "value": 130
+      }
+    ],
+    "adk.experimental.invoke_workflow.compactions": [
+      {
+        "attributes": {
+          "adk.experimental.root_agent.name": "my_workflow",
+          "gen_ai.workflow.name": "my_nested_workflow",
+          "gen_ai.workflow.nested": true
+        },
+        "value": 0
+      },
+      {
+        "attributes": {
+          "adk.experimental.root_agent.name": "my_workflow",
+          "gen_ai.workflow.name": "my_workflow"
+        },
+        "value": 0
+      }
+    ],
+    "adk.experimental.invoke_workflow.inference_calls": [
+      {
+        "attributes": {
+          "adk.experimental.root_agent.name": "my_workflow",
+          "gen_ai.workflow.name": "my_nested_workflow",
+          "gen_ai.workflow.nested": true
+        },
+        "value": 1
+      },
+      {
+        "attributes": {
+          "adk.experimental.root_agent.name": "my_workflow",
+          "gen_ai.workflow.name": "my_workflow"
+        },
+        "value": 3
+      }
+    ],
+    "adk.experimental.invoke_workflow.input_tokens": [
+      {
+        "attributes": {
+          "adk.experimental.root_agent.name": "my_workflow",
+          "gen_ai.workflow.name": "my_nested_workflow",
+          "gen_ai.workflow.nested": true
+        },
+        "value": 70
+      },
+      {
+        "attributes": {
+          "adk.experimental.root_agent.name": "my_workflow",
+          "gen_ai.workflow.name": "my_workflow"
+        },
+        "value": 320
+      }
+    ],
+    "adk.experimental.invoke_workflow.output_tokens": [
+      {
+        "attributes": {
+          "adk.experimental.root_agent.name": "my_workflow",
+          "gen_ai.workflow.name": "my_nested_workflow",
+          "gen_ai.workflow.nested": true
+        },
+        "value": 13
+      },
+      {
+        "attributes": {
+          "adk.experimental.root_agent.name": "my_workflow",
+          "gen_ai.workflow.name": "my_workflow"
+        },
+        "value": 88
+      }
+    ],
+    "adk.experimental.invoke_workflow.reasoning.output_tokens": [
+      {
+        "attributes": {
+          "adk.experimental.root_agent.name": "my_workflow",
+          "gen_ai.workflow.name": "my_nested_workflow",
+          "gen_ai.workflow.nested": true
+        },
+        "value": 3
+      },
+      {
+        "attributes": {
+          "adk.experimental.root_agent.name": "my_workflow",
+          "gen_ai.workflow.name": "my_workflow"
+        },
+        "value": 23
+      }
+    ],
+    "adk.experimental.invoke_workflow.skill.loads": [
+      {
+        "attributes": {
+          "adk.experimental.root_agent.name": "my_workflow",
+          "gen_ai.workflow.name": "my_nested_workflow",
+          "gen_ai.workflow.nested": true
+        },
+        "value": 0
+      },
+      {
+        "attributes": {
+          "adk.experimental.root_agent.name": "my_workflow",
+          "gen_ai.workflow.name": "my_workflow"
+        },
+        "value": 0
+      }
+    ],
+    "adk.experimental.invoke_workflow.tool.input_tokens": [
+      {
+        "attributes": {
+          "adk.experimental.root_agent.name": "my_workflow",
+          "gen_ai.workflow.name": "my_nested_workflow",
+          "gen_ai.workflow.nested": true
+        },
+        "value": 0
+      },
+      {
+        "attributes": {
+          "adk.experimental.root_agent.name": "my_workflow",
+          "gen_ai.workflow.name": "my_workflow"
+        },
+        "value": 0
+      }
+    ],
+    "adk.experimental.invoke_workflow.tool_calls": [
+      {
+        "attributes": {
+          "adk.experimental.root_agent.name": "my_workflow",
+          "gen_ai.workflow.name": "my_nested_workflow",
+          "gen_ai.workflow.nested": true
+        },
+        "value": 0
+      },
+      {
+        "attributes": {
+          "adk.experimental.root_agent.name": "my_workflow",
+          "gen_ai.workflow.name": "my_workflow"
+        },
+        "value": 1
+      }
+    ],
+    "adk.experimental.invoke_workflow.total_tokens": [
+      {
+        "attributes": {
+          "adk.experimental.root_agent.name": "my_workflow",
+          "gen_ai.workflow.name": "my_nested_workflow",
+          "gen_ai.workflow.nested": true
+        },
+        "value": 83
+      },
+      {
+        "attributes": {
+          "adk.experimental.root_agent.name": "my_workflow",
+          "gen_ai.workflow.name": "my_workflow"
+        },
+        "value": 408
+      }
+    ],
+    "gen_ai.execute_tool.duration": [
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_root_agent",
+          "gen_ai.tool.name": "some_tool",
+          "gen_ai.tool.type": "FunctionTool"
+        },
+        "value": "PRESENT"
+      }
+    ],
+    "gen_ai.invoke_agent.duration": [
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_nested_agent"
+        },
+        "value": "PRESENT"
+      },
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_root_agent"
+        },
+        "value": "PRESENT"
+      }
+    ],
+    "gen_ai.invoke_agent.inference_calls": [
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_nested_agent"
+        },
+        "value": 1
+      },
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_root_agent"
+        },
+        "value": 2
+      }
+    ],
+    "gen_ai.invoke_agent.tool_calls": [
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_nested_agent"
+        },
+        "value": 0
+      },
+      {
+        "attributes": {
+          "gen_ai.agent.name": "some_root_agent"
+        },
+        "value": 1
+      }
+    ],
+    "gen_ai.invoke_workflow.duration": [
+      {
+        "attributes": {
+          "gen_ai.operation.name": "invoke_workflow",
+          "gen_ai.workflow.name": "my_nested_workflow",
+          "gen_ai.workflow.nested": true
+        },
+        "value": "PRESENT"
+      },
+      {
+        "attributes": {
+          "gen_ai.operation.name": "invoke_workflow",
+          "gen_ai.workflow.name": "my_workflow"
+        },
+        "value": "PRESENT"
+      }
+    ]
+  }
 }
