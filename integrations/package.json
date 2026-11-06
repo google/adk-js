@@ -50,17 +50,30 @@
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^1.0.0",
-    "@anthropic-ai/vertex-sdk": "^1.0.0"
+    "@anthropic-ai/vertex-sdk": "^1.0.0",
+    "@google-cloud/bigquery": "^9.6.0",
+    "@google-cloud/bigquery-storage": "^6.3.0",
+    "@opentelemetry/context-async-hooks": "^2.12.0",
+    "@opentelemetry/sdk-trace-base": "^2.12.0"
   },
   "peerDependencies": {
     "@anthropic-ai/sdk": "^1.0.0",
-    "@anthropic-ai/vertex-sdk": "^1.0.0"
+    "@anthropic-ai/vertex-sdk": "^1.0.0",
+    "@google-cloud/bigquery": "^9.6.0",
+    "@google-cloud/bigquery-storage": "^6.3.0",
+    "@opentelemetry/api": "^1.9.1"
   },
   "peerDependenciesMeta": {
     "@anthropic-ai/sdk": {
       "optional": true
     },
     "@anthropic-ai/vertex-sdk": {
+      "optional": true
+    },
+    "@google-cloud/bigquery": {
+      "optional": true
+    },
+    "@google-cloud/bigquery-storage": {
       "optional": true
     }
   }
