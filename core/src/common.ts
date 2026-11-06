@@ -606,9 +606,15 @@ export * from './tools/base_tool.js';
 export {RUNNER_CLEANUP_TIMEOUT_MS, closeRunners} from './cli/utils/cleanup.js';
 export {
   convertSessionToEvalFormat,
+  convertSessionToEvalInvocations,
   createEmptyState,
 } from './cli/utils/evals.js';
 export type {
+  EvalCase,
+  EvalIntermediateData,
+  EvalInvocation,
+  EvalSessionInput,
+  EvalSet,
   EvaluationItem,
   IntermediateAgentResponseItem,
   ToolUseItem,

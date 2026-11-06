@@ -2511,6 +2511,63 @@ describe('AdkWebServer', () => {
         );
         expect(listEvalsRes.data).toEqual(['case_1']);
 
+        // 6b. Get, update, and delete individual eval cases
+        const getCaseRes = await evalClient.get<{
+          evalId: string;
+          conversation: Array<{userContent: {parts: Array<{text?: string}>}}>;
+        }>('/apps/testApp/eval_sets/set_one/evals/case_1');
+        expect(getCaseRes.status).toBe(200);
+        expect(getCaseRes.data?.evalId).toBe('case_1');
+        expect(getCaseRes.data?.conversation[0].userContent.parts[0].text).toBe(
+          'Hi',
+        );
+
+        await expect(
+          evalClient.get('/apps/testApp/eval_sets/set_one/evals/missing_case'),
+        ).rejects.toMatchObject({response: {status: 404}});
+
+        await expect(
+          evalClient.put('/apps/testApp/eval_sets/set_one/evals/case_1', {
+            evalId: 'wrong_id',
+            conversation: getCaseRes.data?.conversation ?? [],
+          }),
+        ).rejects.toMatchObject({response: {status: 400}});
+
+        await expect(
+          evalClient.put('/apps/testApp/eval_sets/set_one/evals/missing_case', {
+            conversation: [],
+          }),
+        ).rejects.toMatchObject({response: {status: 404}});
+
+        const putRes = await evalClient.put(
+          '/apps/testApp/eval_sets/set_one/evals/case_1',
+          {
+            evalId: '',
+            conversation: getCaseRes.data?.conversation ?? [],
+            sessionInput: {
+              appName: 'testApp',
+              userId: 'testUser',
+              state: {updated: true},
+            },
+          },
+        );
+        expect(putRes.status).toBe(200);
+
+        const updatedCaseRes = await evalClient.get<{
+          evalId: string;
+          sessionInput?: {state?: Record<string, unknown>};
+        }>('/apps/testApp/eval_sets/set_one/evals/case_1');
+        expect(updatedCaseRes.data?.evalId).toBe('case_1');
+        expect(updatedCaseRes.data?.sessionInput?.state).toEqual({
+          updated: true,
+        });
+
+        await expect(
+          evalClient.delete(
+            '/apps/testApp/eval_sets/set_one/evals/missing_case',
+          ),
+        ).rejects.toMatchObject({response: {status: 404}});
+
         // 7. Run the eval set
         const runEvalRes = await evalClient.post<
           Array<{evalId: string; finalEvalStatus: EvalStatus}>
@@ -2573,6 +2630,15 @@ describe('AdkWebServer', () => {
         await expect(
           evalClient.get('/apps/testApp/eval_results/corrupt_result'),
         ).rejects.toMatchObject({response: {status: 500}});
+
+        // 12. Delete the eval case and verify it is removed
+        const deleteCaseRes = await evalClient.delete(
+          '/apps/testApp/eval_sets/set_one/evals/case_1',
+        );
+        expect(deleteCaseRes.status).toBe(200);
+        await expect(
+          evalClient.get('/apps/testApp/eval_sets/set_one/evals/case_1'),
+        ).rejects.toMatchObject({response: {status: 404}});
       } finally {
         await evalServer.stop();
         fs.rmSync(tempAgentsDir, {recursive: true, force: true});

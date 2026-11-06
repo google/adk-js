@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Part} from '@google/genai';
+import {Content, FunctionCall, Part} from '@google/genai';
 
 import {BaseAgent} from '../../agents/base_agent.js';
 import {isLlmAgent} from '../../agents/llm_agent.js';
@@ -35,9 +35,61 @@ export interface EvaluationItem {
 }
 
 /**
+ * Container for intermediate tool uses and sub-agent responses generated
+ * during an invocation.
+ */
+export interface EvalIntermediateData {
+  toolUses: FunctionCall[];
+  intermediateResponses: IntermediateAgentResponseItem[];
+}
+
+/**
+ * Represents a single user-agent invocation within an {@link EvalCase}.
+ */
+export interface EvalInvocation {
+  invocationId?: string;
+  userContent: Content;
+  finalResponse?: Content;
+  intermediateData?: EvalIntermediateData;
+  creationTimestamp?: number;
+}
+
+/**
+ * Initial session configuration passed to an agent before running an {@link EvalCase}.
+ */
+export interface EvalSessionInput {
+  appName: string;
+  userId: string;
+  state?: Record<string, unknown>;
+}
+
+/**
+ * A single evaluation case containing a multi-turn conversation and optional
+ * initial session input.
+ */
+export interface EvalCase {
+  evalId: string;
+  conversation: EvalInvocation[];
+  sessionInput?: EvalSessionInput;
+  creationTimestamp?: number;
+}
+
+/**
+ * A collection of {@link EvalCase} items belonging to an evaluation dataset.
+ */
+export interface EvalSet {
+  evalSetId: string;
+  name?: string;
+  description?: string;
+  evalCases: EvalCase[];
+  creationTimestamp?: number;
+}
+
+/**
  * Converts a session into a list of evaluation items suitable for saving into
  * an evalset or running through `runEvals`.
  *
+ * @deprecated Use {@link convertSessionToEvalInvocations} instead.
  * @param session The session whose events should be converted.
  * @returns An array of `EvaluationItem` records, one per user turn.
  */
@@ -46,61 +98,68 @@ export function convertSessionToEvalFormat(
 ): EvaluationItem[] {
   const events = session && session.events ? session.events : [];
   const evalCases: EvaluationItem[] = [];
-  let i = 0;
 
-  while (i < events.length) {
+  for (let i = 0; i < events.length; i++) {
     const event = events[i];
     if (event.author === 'user') {
+      if (
+        !event.content ||
+        !event.content.parts ||
+        event.content.parts.length === 0
+      ) {
+        continue;
+      }
+
       let userQuery = '';
-      if (event.content && event.content.parts) {
-        for (const part of event.content.parts) {
-          if (part.text) {
-            userQuery = part.text;
-            break;
-          }
+      for (const part of event.content.parts) {
+        if (part.text) {
+          userQuery = part.text;
+          break;
         }
       }
 
       const expectedToolUse: ToolUseItem[] = [];
       const expectedIntermediateAgentResponses: IntermediateAgentResponseItem[] =
         [];
-      let finalResponse = '';
 
-      let j = i + 1;
-      while (j < events.length) {
+      for (let j = i + 1; j < events.length; j++) {
         const subsequentEvent = events[j];
         if (subsequentEvent.author === 'user') {
           break;
         }
 
-        if (subsequentEvent.content && subsequentEvent.content.parts) {
-          let hasToolAction = false;
-          for (const part of subsequentEvent.content.parts) {
-            if (part.functionCall) {
-              expectedToolUse.push({
-                tool_name: part.functionCall.name ?? '',
-                tool_input: (part.functionCall.args ?? {}) as Record<
-                  string,
-                  unknown
-                >,
-              });
-              hasToolAction = true;
-            } else if (part.functionResponse) {
-              hasToolAction = true;
-            }
-          }
+        if (
+          !subsequentEvent.content ||
+          !subsequentEvent.content.parts ||
+          subsequentEvent.content.parts.length === 0
+        ) {
+          continue;
+        }
 
-          if (!hasToolAction) {
-            expectedIntermediateAgentResponses.push([
-              subsequentEvent.author ?? '',
-              subsequentEvent.content.parts,
-            ]);
+        const textParts: Part[] = [];
+        for (const part of subsequentEvent.content.parts) {
+          if (part.functionCall) {
+            expectedToolUse.push({
+              tool_name: part.functionCall.name ?? '',
+              tool_input: (part.functionCall.args ?? {}) as Record<
+                string,
+                unknown
+              >,
+            });
+          } else if (part.text) {
+            textParts.push(part);
           }
         }
 
-        j += 1;
+        if (textParts.length > 0) {
+          expectedIntermediateAgentResponses.push([
+            subsequentEvent.author ?? '',
+            textParts,
+          ]);
+        }
       }
 
+      let finalResponse = '';
       if (expectedIntermediateAgentResponses.length > 0) {
         const lastResponse = expectedIntermediateAgentResponses.pop();
         if (lastResponse) {
@@ -119,13 +178,91 @@ export function convertSessionToEvalFormat(
           expectedIntermediateAgentResponses,
         reference: finalResponse,
       });
-      i = j;
-    } else {
-      i += 1;
     }
   }
 
   return evalCases;
+}
+
+/**
+ * Converts a session into a list of structured {@link EvalInvocation} items.
+ *
+ * @param session The session whose events should be converted.
+ * @returns An array of {@link EvalInvocation} records, one per user turn.
+ */
+export function convertSessionToEvalInvocations(
+  session?: Session,
+): EvalInvocation[] {
+  const events = session && session.events ? session.events : [];
+  const invocations: EvalInvocation[] = [];
+
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i];
+    if (event.author === 'user') {
+      if (
+        !event.content ||
+        !event.content.parts ||
+        event.content.parts.length === 0
+      ) {
+        continue;
+      }
+
+      const userContent = event.content;
+      const invocationId = event.invocationId;
+      const creationTimestamp = event.timestamp;
+      const toolUses: FunctionCall[] = [];
+      const intermediateResponses: IntermediateAgentResponseItem[] = [];
+
+      for (let j = i + 1; j < events.length; j++) {
+        const subsequentEvent = events[j];
+        const eventAuthor = subsequentEvent.author || 'agent';
+        if (eventAuthor === 'user') {
+          break;
+        }
+
+        if (
+          !subsequentEvent.content ||
+          !subsequentEvent.content.parts ||
+          subsequentEvent.content.parts.length === 0
+        ) {
+          continue;
+        }
+
+        const intermediateResponseParts: Part[] = [];
+        for (const subsequentPart of subsequentEvent.content.parts) {
+          if (subsequentPart.functionCall) {
+            toolUses.push(subsequentPart.functionCall);
+          } else if (subsequentPart.text) {
+            intermediateResponseParts.push(subsequentPart);
+          }
+        }
+
+        if (intermediateResponseParts.length > 0) {
+          intermediateResponses.push([eventAuthor, intermediateResponseParts]);
+        }
+      }
+
+      const finalResponse: Content | undefined =
+        intermediateResponses.length > 0
+          ? {
+              parts: intermediateResponses[intermediateResponses.length - 1][1],
+            }
+          : undefined;
+
+      invocations.push({
+        invocationId,
+        userContent,
+        ...(finalResponse ? {finalResponse} : {}),
+        intermediateData: {
+          toolUses,
+          intermediateResponses: intermediateResponses.slice(0, -1),
+        },
+        creationTimestamp,
+      });
+    }
+  }
+
+  return invocations;
 }
 
 function populateEmptyState(

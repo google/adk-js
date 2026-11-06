@@ -1,18 +1,18 @@
 # CLI and Evaluation Utilities
 
-The CLI utilities in `@google/adk` prepare an agent's environment, state, logging, runner lifecycle, and evaluation datasets when running from the command line, the development server, or an automated test harness. This guide covers `.env` discovery (`walkToRootUntilFound`, `loadDotenvForAgent`), session-to-eval conversion and state initialization (`convertSessionToEvalFormat`, `createEmptyState`), CLI log routing (`setupAdkLogger`, `logToTmpFolder`), runner cleanup (`closeRunners`), and batch evaluation (`runEvals`, `LocalEvalSetResultsManager`, `getEvaluationCriteriaOrDefault`, `parseAndGetEvalsToRun`).
+The CLI utilities in `@google/adk` prepare an agent's environment, state, logging, runner lifecycle, and evaluation datasets when running from the command line, the development server, or an automated test harness. This guide covers `.env` discovery (`walkToRootUntilFound`, `loadDotenvForAgent`), session-to-eval conversion and state initialization (`convertSessionToEvalInvocations`, `convertSessionToEvalFormat`, `createEmptyState`), CLI log routing (`setupAdkLogger`, `logToTmpFolder`), runner cleanup (`closeRunners`), and batch evaluation (`runEvals`, `LocalEvalSetsManager`, `LocalEvalSetResultsManager`, `getEvaluationCriteriaOrDefault`, `parseAndGetEvalsToRun`).
 
 - `walkToRootUntilFound` and `loadDotenvForAgent` - Locate a `.env` file by walking up from an agent directory to the filesystem root and load its variables into `process.env`.
-- `createEmptyState` and `convertSessionToEvalFormat` - Initialize `{var}` placeholders referenced in agent instructions and convert recorded `Session` events into `EvaluationItem` turns.
+- `createEmptyState`, `convertSessionToEvalInvocations`, and `convertSessionToEvalFormat` - Initialize `{var}` placeholders referenced in agent instructions and convert recorded `Session` events into structured `EvalInvocation` items or legacy `EvaluationItem` turns.
 - `setupAdkLogger` and `logToTmpFolder` - Route the global ADK logger to `stderr` or to a timestamped log file in the system temporary folder with a `.latest.log` symlink.
 - `closeRunners` - Close multiple `Runner` instances concurrently with a 30-second timeout (`RUNNER_CLEANUP_TIMEOUT_MS`).
-- `runEvals`, `LocalEvalSetResultsManager`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun` - Run multi-turn evaluation cases against an agent, score tool trajectory accuracy and ROUGE-1 response match, and persist `EvalSetResult` records on disk.
+- `runEvals`, `LocalEvalSetsManager`, `LocalEvalSetResultsManager`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun` - Manage `.evalset.json` datasets, run multi-turn evaluation cases against an agent, score tool trajectory accuracy and ROUGE-1 response match, and persist `EvalSetResult` records on disk.
 
 ## Introduction
 
 An agent run through `adk run`, `adk web`, `adk api_server`, or `adk eval` needs surrounding setup before the first turn starts. Environment variables often live in a `.env` file several directories above the agent file, instruction templates such as `'Answer questions about {topic}'` expect every placeholder key to exist in `session.state`, and interactive sessions captured during development need a way to become repeatable regression tests.
 
-`@google/adk` exports these building blocks directly so your own scripts and test suites can call the same functions the `@google/adk-devtools` CLI uses. Browser-safe helpers (`closeRunners`, `convertSessionToEvalFormat`, `createEmptyState`, and `isBaseRetrievalTool`) are also available from the `@google/adk` web entrypoint.
+`@google/adk` exports these building blocks directly so your own scripts and test suites can call the same functions the `@google/adk-devtools` CLI uses. Browser-safe helpers (`closeRunners`, `convertSessionToEvalInvocations`, `convertSessionToEvalFormat`, `createEmptyState`, and `isBaseRetrievalTool`) are also available from the `@google/adk` web entrypoint.
 
 ## Get started
 
@@ -117,11 +117,14 @@ Each helper handles one stage of preparing, observing, or evaluating an agent ru
 
 `createEmptyState(agent, initializedStates)` walks `agent.subAgents` recursively. For every `LlmAgent` whose `instruction` is a string, it finds `{var}` word placeholders (`/{([\w]+)}/g`) and sets each key to `''`. Keys passed in `initializedStates` are copied on top so caller-supplied values win over the empty defaults.
 
-`convertSessionToEvalFormat(session)` scans `session.events` in order and groups each `author === 'user'` event with all subsequent non-user events until the next user turn:
+`convertSessionToEvalInvocations(session)` scans `session.events` in order and groups each non-empty `author === 'user'` event with all subsequent non-user events until the next user turn into an `EvalInvocation`:
 
-- Every `part.functionCall` is appended to `expected_tool_use` as `{tool_name, tool_input}`.
-- Events that contain neither `functionCall` nor `functionResponse` parts are collected as `[author, parts]` tuples in `expected_intermediate_agent_responses`.
-- The last non-tool agent response is popped from `expected_intermediate_agent_responses` and its text parts are joined to form `reference`.
+- `userContent` holds the user event's `Content`, alongside `invocationId` and `creationTimestamp`.
+- `intermediateData.toolUses` collects every `part.functionCall` in chronological order.
+- `intermediateData.intermediateResponses` collects `[author, textParts]` tuples for non-empty agent text responses before the final response.
+- `finalResponse` holds the last agent text response in the turn.
+
+`convertSessionToEvalFormat(session)` (deprecated in favor of `convertSessionToEvalInvocations`) returns legacy `EvaluationItem` records (`{query, expected_tool_use, expected_intermediate_agent_responses, reference}`).
 
 ### Log routing
 
@@ -131,17 +134,22 @@ Each helper handles one stage of preparing, observing, or evaluating an agent ru
 
 ### Evaluation runner
 
-`runEvals` accepts either a `RunEvalsOptions` object or positional arguments. For each `EvalEntry` in `evalCasesByEvalSetId`, it:
+`runEvals` accepts either a `RunEvalsOptions` object or positional arguments. For each `EvalEntry` or `EvalCase` in `evalCasesByEvalSetId`, it:
 
 1. Calls `resetFunc()` when provided.
 2. Creates an isolated session whose id starts with `EVAL_SESSION_ID_PREFIX` (`'___eval___session___'`) and whose state is populated via `createEmptyState`.
-3. Runs every user turn in `evalCase.data` through a `Runner` and converts the recorded session with `convertSessionToEvalFormat`.
+3. Runs every user turn through a `Runner` and converts the recorded session with `convertSessionToEvalFormat`.
 4. Scores each requested `EvalMetric`:
    - `TOOL_TRAJECTORY_SCORE_KEY` (`'tool_trajectory_avg_score'`): `1.0` for a turn when the actual `expected_tool_use` list matches the expected list in length, `tool_name`, and deep `tool_input`; `0.0` otherwise.
    - `RESPONSE_MATCH_SCORE_KEY` (`'response_match_score'`): unigram ROUGE-1 F1 score between the expected `reference` and the actual `reference`.
 5. Yields an `EvalResult` (`EvalCaseResult`) with `eval_set_id`, `session_details`, per-invocation and overall metric results, and sets `final_eval_status` to `EvalStatus.PASSED`, `EvalStatus.FAILED`, or `EvalStatus.NOT_EVALUATED`.
 
-### Persisting evaluation results and closing runners
+### Managing eval sets and persisting evaluation results
+
+`LocalEvalSetsManager(agentsDir)` manages `<agentsDir>/<appName>/<evalSetId>.evalset.json` files (reading both structured `EvalSet` JSON and legacy `EvalEntry[]` files via `loadEvalSetFromFile` and `convertEvalSetToSchema`):
+
+- `createEvalSet(appName, evalSetId)`, `getEvalSet(appName, evalSetId)`, and `listEvalSets(appName)` create, load, and list eval sets.
+- `addEvalCase(appName, evalSetId, evalCase)`, `getEvalCase(appName, evalSetId, evalCaseId)`, `updateEvalCase(appName, evalSetId, updatedEvalCase)`, and `deleteEvalCase(appName, evalSetId, evalCaseId)` manage individual `EvalCase` records inside an eval set.
 
 `LocalEvalSetResultsManager(agentsDir)` persists, loads, and lists `EvalSetResult` records under `<agentsDir>/<appName>/.adk/eval_history/<evalSetResultName>.evalset_result.json`. `saveEvalSetResult({appName, evalSetId, evalCaseResults})` writes a new record and returns it; `getEvalSetResult(appName, evalSetResultId)` and `listEvalSetResults(appName)` read records back. It rejects an `appName`, `evalSetId`, or `evalSetResultId` that contains path separators or traversal segments. It writes each record as camelCase JSON (`evalSetResultId`, `evalSetResultName`, `evalSetId`, `evalCaseResults`, `creationTimestamp` in seconds). It reads files with camelCase or snake_case keys, including legacy double-encoded JSON strings.
 

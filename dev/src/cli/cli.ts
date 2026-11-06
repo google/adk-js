@@ -8,7 +8,7 @@
 import {
   BaseArtifactService,
   BaseSessionService,
-  EvalEntry,
+  EvalCase,
   EvalMetric,
   EvalResult,
   EvalStatus,
@@ -19,6 +19,7 @@ import {
   getRootAgent,
   getSessionServiceFromUri,
   loadDotenvForAgent,
+  loadEvalSetFromFile,
   logToTmpFolder,
   parseAndGetEvalsToRun,
   runEvals,
@@ -509,19 +510,20 @@ export function createProgram(): Command {
           const resetFunc = await tryGetResetFunc(absAgentPath);
 
           const evalSetToEvals = parseAndGetEvalsToRun(evalSetFilePaths);
-          const evalCasesByEvalSetId: Record<string, EvalEntry[]> = {};
+          const evalCasesByEvalSetId: Record<string, EvalCase[]> = {};
 
           for (const [evalSetFile, evalsToRun] of Object.entries(
             evalSetToEvals,
           )) {
-            const evalSetContent = JSON.parse(
-              fs.readFileSync(getAbsolutePath(evalSetFile), 'utf-8'),
-            ) as EvalEntry[];
+            const evalSet = loadEvalSetFromFile(
+              getAbsolutePath(evalSetFile),
+              evalSetFile,
+            );
 
-            evalCasesByEvalSetId[evalSetFile] =
+            evalCasesByEvalSetId[evalSet.evalSetId] =
               evalsToRun.length > 0
-                ? evalSetContent.filter((e) => evalsToRun.includes(e.name))
-                : evalSetContent;
+                ? evalSet.evalCases.filter((e) => evalsToRun.includes(e.evalId))
+                : evalSet.evalCases;
           }
 
           const evalResults: EvalResult[] = [];

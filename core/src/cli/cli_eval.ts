@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {Content, FunctionCall, Part} from '@google/genai';
 import {randomUUID} from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -28,7 +29,13 @@ import {logger} from '../utils/logger.js';
 import {
   convertSessionToEvalFormat,
   createEmptyState,
+  EvalCase,
+  EvalIntermediateData,
+  EvalInvocation,
+  EvalSessionInput,
+  EvalSet,
   EvaluationItem,
+  IntermediateAgentResponseItem,
   ToolUseItem,
 } from './utils/evals.js';
 
@@ -204,7 +211,7 @@ export type EvalSetItem = EvalEntry;
  * Options for running evaluations via `runEvals`.
  */
 export interface RunEvalsOptions {
-  evalCasesByEvalSetId: Record<string, EvalEntry[] | string[]>;
+  evalCasesByEvalSetId: Record<string, EvalEntry[] | EvalCase[] | string[]>;
   rootAgent: BaseAgent;
   resetFunc?: () => void | Promise<void>;
   evalMetrics?: EvalMetric[];
@@ -674,15 +681,70 @@ async function generateActualInvocations(
   return {actualInvocations, sessionId, userId, recordedSession};
 }
 
+function isEvalCase(item: EvalEntry | EvalCase): item is EvalCase {
+  return 'evalId' in item && 'conversation' in item;
+}
+
+function evalCaseToEvalEntry(evalCase: EvalCase): EvalEntry {
+  const data: EvaluationItem[] = evalCase.conversation.map((invocation) => {
+    const query =
+      invocation.userContent?.parts?.map((part) => part.text ?? '').join('') ??
+      '';
+    const expectedToolUse: ToolUseItem[] = (
+      invocation.intermediateData?.toolUses ?? []
+    ).map((fc) => ({
+      tool_name: fc.name ?? '',
+      tool_input: (fc.args ?? {}) as Record<string, unknown>,
+    }));
+    const expectedIntermediateAgentResponses: IntermediateAgentResponseItem[] =
+      invocation.intermediateData?.intermediateResponses ?? [];
+    const reference =
+      invocation.finalResponse?.parts
+        ?.filter((part) => Boolean(part.text))
+        .map((part) => part.text ?? '')
+        .join('') ?? '';
+    return {
+      query,
+      expected_tool_use: expectedToolUse,
+      expected_intermediate_agent_responses: expectedIntermediateAgentResponses,
+      reference,
+    };
+  });
+
+  return {
+    name: evalCase.evalId,
+    data,
+    ...(evalCase.sessionInput
+      ? {
+          initial_session: {
+            app_name: evalCase.sessionInput.appName,
+            user_id: evalCase.sessionInput.userId,
+            state: evalCase.sessionInput.state,
+          },
+        }
+      : {}),
+  };
+}
+
+function readEvalEntriesFromFile(evalSetFilePath: string): EvalEntry[] {
+  const parsed: unknown = JSON.parse(fs.readFileSync(evalSetFilePath, 'utf-8'));
+  if (Array.isArray(parsed)) {
+    return (parsed as Array<EvalEntry | EvalCase>).map((item) =>
+      isEvalCase(item) ? evalCaseToEvalEntry(item) : item,
+    );
+  }
+  const evalSetId = path.basename(evalSetFilePath, EVAL_SET_FILE_EXTENSION);
+  const evalSet = loadEvalSetFromFile(evalSetFilePath, evalSetId);
+  return evalSet.evalCases.map(evalCaseToEvalEntry);
+}
+
 function resolveEvalCasesForSet(
   evalSetId: string,
-  entries: EvalEntry[] | string[],
+  entries: EvalEntry[] | EvalCase[] | string[],
 ): EvalEntry[] {
   if (entries.length > 0 && typeof entries[0] === 'string') {
     const filterNames = entries as string[];
-    const fileData = JSON.parse(
-      fs.readFileSync(evalSetId, 'utf-8'),
-    ) as EvalEntry[];
+    const fileData = readEvalEntriesFromFile(evalSetId);
     return fileData.filter((e) => filterNames.includes(e.name));
   }
   if (
@@ -690,9 +752,11 @@ function resolveEvalCasesForSet(
     fs.existsSync(evalSetId) &&
     fs.statSync(evalSetId).isFile()
   ) {
-    return JSON.parse(fs.readFileSync(evalSetId, 'utf-8')) as EvalEntry[];
+    return readEvalEntriesFromFile(evalSetId);
   }
-  return entries as EvalEntry[];
+  return (entries as Array<EvalEntry | EvalCase>).map((item) =>
+    isEvalCase(item) ? evalCaseToEvalEntry(item) : item,
+  );
 }
 
 function printCaseDetailedResults(result: EvalResult): void {
@@ -711,7 +775,8 @@ function printCaseDetailedResults(result: EvalResult): void {
  * `EvalResult` for each case.
  */
 export async function* runEvals(
-  optionsOrMap: RunEvalsOptions | Record<string, EvalEntry[] | string[]>,
+  optionsOrMap:
+    RunEvalsOptions | Record<string, EvalEntry[] | EvalCase[] | string[]>,
   rootAgentArg?: BaseAgent,
   resetFuncArg?: () => void | Promise<void>,
   evalMetricsArg?: EvalMetric[],
@@ -719,7 +784,7 @@ export async function* runEvals(
   sessionServiceArg?: BaseSessionService,
   artifactServiceArg?: BaseArtifactService,
 ): AsyncGenerator<EvalResult, void, void> {
-  let evalCasesByEvalSetId: Record<string, EvalEntry[] | string[]>;
+  let evalCasesByEvalSetId: Record<string, EvalEntry[] | EvalCase[] | string[]>;
   let rootAgent: BaseAgent;
   let resetFunc: (() => void | Promise<void>) | undefined;
   let evalMetrics: EvalMetric[];
@@ -749,7 +814,7 @@ export async function* runEvals(
   } else {
     evalCasesByEvalSetId = optionsOrMap as Record<
       string,
-      EvalEntry[] | string[]
+      EvalEntry[] | EvalCase[] | string[]
     >;
     if (!rootAgentArg) {
       throw new Error('rootAgent is required to run evaluations.');
@@ -1064,4 +1129,525 @@ export class LocalEvalSetResultsManager {
     validatePathSegment(appName, 'appName');
     return path.join(this.agentsDir, appName, ADK_EVAL_HISTORY_DIR);
   }
+}
+
+const EVAL_SET_FILE_EXTENSION = '.evalset.json';
+const VALID_EVAL_ID_PATTERN = /^[a-zA-Z0-9_]+$/;
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function convertInvocationToSchema(
+  invocationInJsonFormat: unknown,
+): EvalInvocation {
+  if (
+    !isPlainRecord(invocationInJsonFormat) ||
+    typeof invocationInJsonFormat.query !== 'string'
+  ) {
+    throw new InputValidationError(
+      'Invalid invocation in eval set: expected an object with a string query.',
+    );
+  }
+  const query = invocationInJsonFormat.query;
+  const rawReference = invocationInJsonFormat.reference;
+  if (rawReference !== undefined && typeof rawReference !== 'string') {
+    throw new InputValidationError(
+      'Invalid invocation in eval set: reference must be a string.',
+    );
+  }
+  const reference = rawReference ?? '';
+
+  const rawToolUse =
+    invocationInJsonFormat.expected_tool_use ??
+    invocationInJsonFormat.expectedToolUse ??
+    [];
+  if (!Array.isArray(rawToolUse)) {
+    throw new InputValidationError(
+      'Invalid invocation in eval set: expected_tool_use must be an array.',
+    );
+  }
+  const toolUses: FunctionCall[] = [];
+  for (const oldToolUse of rawToolUse) {
+    if (
+      !isPlainRecord(oldToolUse) ||
+      typeof oldToolUse.tool_name !== 'string' ||
+      !isPlainRecord(oldToolUse.tool_input)
+    ) {
+      throw new InputValidationError(
+        'Invalid tool use in eval set: expected string tool_name and object tool_input.',
+      );
+    }
+    toolUses.push({
+      name: oldToolUse.tool_name,
+      args: oldToolUse.tool_input,
+    });
+  }
+
+  const rawIntermediateResponses =
+    invocationInJsonFormat.expected_intermediate_agent_responses ??
+    invocationInJsonFormat.expectedIntermediateAgentResponses ??
+    [];
+  if (!Array.isArray(rawIntermediateResponses)) {
+    throw new InputValidationError(
+      'Invalid invocation in eval set: expected_intermediate_agent_responses must be an array.',
+    );
+  }
+  const intermediateResponses: IntermediateAgentResponseItem[] = [];
+  for (const oldResp of rawIntermediateResponses) {
+    if (
+      Array.isArray(oldResp) &&
+      oldResp.length === 2 &&
+      typeof oldResp[0] === 'string' &&
+      Array.isArray(oldResp[1])
+    ) {
+      intermediateResponses.push([oldResp[0], oldResp[1] as Part[]]);
+    } else if (
+      isPlainRecord(oldResp) &&
+      typeof oldResp.author === 'string' &&
+      typeof oldResp.text === 'string'
+    ) {
+      intermediateResponses.push([oldResp.author, [{text: oldResp.text}]]);
+    } else {
+      throw new InputValidationError(
+        'Invalid intermediate response in eval set: expected [author, Part[]] or {author, text}.',
+      );
+    }
+  }
+
+  return {
+    invocationId: randomUUID(),
+    userContent: {
+      role: 'user',
+      parts: [{text: query}],
+    },
+    finalResponse: {
+      role: 'model',
+      parts: [{text: reference}],
+    },
+    intermediateData: {
+      toolUses,
+      intermediateResponses,
+    },
+    creationTimestamp: (performance.timeOrigin + performance.now()) / 1000,
+  };
+}
+
+/**
+ * Converts a legacy array of {@link EvalEntry} records into a structured
+ * {@link EvalSet} object.
+ *
+ * @param evalSetId Unique identifier for the eval set.
+ * @param evalSetInJsonFormat Array of legacy evaluation case entries.
+ * @returns The converted {@link EvalSet}.
+ */
+export function convertEvalSetToSchema(
+  evalSetId: string,
+  evalSetInJsonFormat: unknown,
+): EvalSet {
+  if (!Array.isArray(evalSetInJsonFormat)) {
+    throw new InputValidationError(
+      'Invalid eval set JSON format: expected an array of eval entries.',
+    );
+  }
+
+  const evalCases: EvalCase[] = [];
+  for (const oldEvalCase of evalSetInJsonFormat) {
+    if (
+      !isPlainRecord(oldEvalCase) ||
+      typeof oldEvalCase.name !== 'string' ||
+      !Array.isArray(oldEvalCase.data)
+    ) {
+      throw new InputValidationError(
+        'Invalid eval case in eval set: expected string name and array data.',
+      );
+    }
+
+    const newInvocations: EvalInvocation[] = [];
+    for (const oldInvocation of oldEvalCase.data) {
+      newInvocations.push(convertInvocationToSchema(oldInvocation));
+    }
+
+    let sessionInput: EvalSessionInput | undefined;
+    const rawInitialSession =
+      oldEvalCase.initial_session ?? oldEvalCase.initialSession;
+    if (rawInitialSession !== undefined) {
+      if (!isPlainRecord(rawInitialSession)) {
+        throw new InputValidationError(
+          'Invalid eval case in eval set: initial_session must be an object.',
+        );
+      }
+      if (Object.keys(rawInitialSession).length > 0) {
+        const rawAppName =
+          rawInitialSession.app_name ?? rawInitialSession.appName ?? '';
+        const rawUserId =
+          rawInitialSession.user_id ?? rawInitialSession.userId ?? '';
+        const rawState = rawInitialSession.state ?? {};
+        if (
+          typeof rawAppName !== 'string' ||
+          typeof rawUserId !== 'string' ||
+          !isPlainRecord(rawState)
+        ) {
+          throw new InputValidationError(
+            'Invalid initial_session in eval set: expected string app_name, string user_id, and object state.',
+          );
+        }
+        sessionInput = {
+          appName: rawAppName,
+          userId: rawUserId,
+          state: rawState,
+        };
+      }
+    }
+
+    evalCases.push({
+      evalId: oldEvalCase.name,
+      conversation: newInvocations,
+      ...(sessionInput ? {sessionInput} : {}),
+      creationTimestamp: (performance.timeOrigin + performance.now()) / 1000,
+    });
+  }
+
+  return {
+    evalSetId,
+    name: evalSetId,
+    evalCases,
+    creationTimestamp: (performance.timeOrigin + performance.now()) / 1000,
+  };
+}
+
+function normalizeEvalIntermediateData(
+  raw: unknown,
+): EvalIntermediateData | undefined {
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+  if (!isPlainRecord(raw)) {
+    throw new InputValidationError(
+      'Invalid EvalIntermediateData: expected an object.',
+    );
+  }
+  const rawToolUses = raw.toolUses ?? raw.tool_uses ?? [];
+  const rawIntermediateResponses =
+    raw.intermediateResponses ?? raw.intermediate_responses ?? [];
+  if (!Array.isArray(rawToolUses) || !Array.isArray(rawIntermediateResponses)) {
+    throw new InputValidationError(
+      'Invalid EvalIntermediateData: toolUses and intermediateResponses must be arrays.',
+    );
+  }
+  return {
+    toolUses: rawToolUses as FunctionCall[],
+    intermediateResponses:
+      rawIntermediateResponses as IntermediateAgentResponseItem[],
+  };
+}
+
+function normalizeEvalInvocation(raw: unknown): EvalInvocation {
+  if (!isPlainRecord(raw)) {
+    throw new InputValidationError(
+      'Invalid EvalInvocation: expected an object.',
+    );
+  }
+  const userContent = raw.userContent ?? raw.user_content;
+  if (!isPlainRecord(userContent)) {
+    throw new InputValidationError(
+      'Invalid EvalInvocation: userContent is required.',
+    );
+  }
+  const invocationId = raw.invocationId ?? raw.invocation_id;
+  const finalResponse = raw.finalResponse ?? raw.final_response;
+  const intermediateData = normalizeEvalIntermediateData(
+    raw.intermediateData ?? raw.intermediate_data,
+  );
+  const creationTimestamp = raw.creationTimestamp ?? raw.creation_timestamp;
+
+  return {
+    ...(typeof invocationId === 'string' ? {invocationId} : {}),
+    userContent: userContent as Content,
+    ...(isPlainRecord(finalResponse)
+      ? {finalResponse: finalResponse as Content}
+      : {}),
+    ...(intermediateData ? {intermediateData} : {}),
+    ...(typeof creationTimestamp === 'number' ? {creationTimestamp} : {}),
+  };
+}
+
+/**
+ * Normalizes a raw parsed JSON object into an {@link EvalCase}, accepting both
+ * camelCase and snake_case field names.
+ */
+export function normalizeEvalCase(raw: unknown): EvalCase {
+  if (!isPlainRecord(raw)) {
+    throw new InputValidationError('Invalid EvalCase: expected an object.');
+  }
+  const rawEvalId = raw.evalId ?? raw.eval_id;
+  const evalId = typeof rawEvalId === 'string' ? rawEvalId : '';
+  if (!Array.isArray(raw.conversation)) {
+    throw new InputValidationError(
+      'Invalid EvalCase: conversation must be an array.',
+    );
+  }
+  const conversation = raw.conversation.map(normalizeEvalInvocation);
+  const rawSessionInput = raw.sessionInput ?? raw.session_input;
+  let sessionInput: EvalSessionInput | undefined;
+  if (rawSessionInput !== undefined && rawSessionInput !== null) {
+    if (!isPlainRecord(rawSessionInput)) {
+      throw new InputValidationError(
+        'Invalid EvalCase: sessionInput must be an object.',
+      );
+    }
+    const appName = rawSessionInput.appName ?? rawSessionInput.app_name ?? '';
+    const userId = rawSessionInput.userId ?? rawSessionInput.user_id ?? '';
+    const state = rawSessionInput.state;
+    if (typeof appName !== 'string' || typeof userId !== 'string') {
+      throw new InputValidationError(
+        'Invalid EvalSessionInput: appName and userId must be strings.',
+      );
+    }
+    sessionInput = {
+      appName,
+      userId,
+      ...(isPlainRecord(state) ? {state} : {}),
+    };
+  }
+  const creationTimestamp = raw.creationTimestamp ?? raw.creation_timestamp;
+
+  return {
+    evalId,
+    conversation,
+    ...(sessionInput ? {sessionInput} : {}),
+    ...(typeof creationTimestamp === 'number' ? {creationTimestamp} : {}),
+  };
+}
+
+function tryParseStructuredEvalSet(raw: unknown): EvalSet | undefined {
+  if (!isPlainRecord(raw)) {
+    return undefined;
+  }
+  const evalSetId = raw.evalSetId ?? raw.eval_set_id;
+  const rawEvalCases = raw.evalCases ?? raw.eval_cases;
+  if (typeof evalSetId !== 'string' || !Array.isArray(rawEvalCases)) {
+    return undefined;
+  }
+  const evalCases = rawEvalCases.map(normalizeEvalCase);
+  const name = raw.name;
+  const description = raw.description;
+  const creationTimestamp = raw.creationTimestamp ?? raw.creation_timestamp;
+
+  return {
+    evalSetId,
+    ...(typeof name === 'string' ? {name} : {}),
+    ...(typeof description === 'string' ? {description} : {}),
+    evalCases,
+    ...(typeof creationTimestamp === 'number' ? {creationTimestamp} : {}),
+  };
+}
+
+/**
+ * Loads an {@link EvalSet} from a JSON file on disk, automatically converting
+ * legacy {@link EvalEntry} arrays via {@link convertEvalSetToSchema}.
+ *
+ * @param evalSetFilePath Path to the `.evalset.json` file.
+ * @param evalSetId Identifier of the eval set.
+ * @returns The loaded {@link EvalSet}.
+ */
+export function loadEvalSetFromFile(
+  evalSetFilePath: string,
+  evalSetId: string,
+): EvalSet {
+  const content = fs.readFileSync(evalSetFilePath, 'utf-8');
+  const parsed: unknown = JSON.parse(content);
+  const structured = tryParseStructuredEvalSet(parsed);
+  if (structured) {
+    return structured;
+  }
+  return convertEvalSetToSchema(evalSetId, parsed);
+}
+
+/**
+ * Manages persistence of {@link EvalSet} files (`<evalSetId>.evalset.json`)
+ * on the local filesystem under `<agentsDir>/<appName>/`.
+ */
+export class LocalEvalSetsManager {
+  constructor(private readonly agentsDir: string = process.cwd()) {}
+
+  /**
+   * Loads an {@link EvalSet} by `appName` and `evalSetId`, or returns
+   * `undefined` when the file does not exist.
+   */
+  getEvalSet(appName: string, evalSetId: string): EvalSet | undefined {
+    const evalSetFilePath = this.getEvalSetFilePath(appName, evalSetId);
+    if (!fs.existsSync(evalSetFilePath)) {
+      return undefined;
+    }
+    return loadEvalSetFromFile(evalSetFilePath, evalSetId);
+  }
+
+  /**
+   * Creates and persists an empty {@link EvalSet} for `appName` and `evalSetId`.
+   *
+   * @throws {InputValidationError} If `evalSetId` has an invalid format or already exists.
+   */
+  createEvalSet(appName: string, evalSetId: string): EvalSet {
+    validateId('Eval Set ID', evalSetId);
+    const newEvalSetPath = this.getEvalSetFilePath(appName, evalSetId);
+    logger.info(`Creating eval set file \`${newEvalSetPath}\``);
+
+    if (!fs.existsSync(newEvalSetPath)) {
+      logger.info("Eval set file doesn't exist, we will create a new one.");
+      const newEvalSet: EvalSet = {
+        evalSetId,
+        name: evalSetId,
+        evalCases: [],
+        creationTimestamp: (performance.timeOrigin + performance.now()) / 1000,
+      };
+      writeEvalSet(newEvalSetPath, newEvalSet);
+      return newEvalSet;
+    }
+
+    throw new InputValidationError(
+      `EvalSet ${evalSetId} already exists for app ${appName}.`,
+    );
+  }
+
+  /**
+   * Lists all eval set IDs stored for `appName`, sorted alphabetically.
+   */
+  listEvalSets(appName: string): string[] {
+    validatePathSegment(appName, 'appName');
+    const evalSetFolderPath = path.join(this.agentsDir, appName);
+    if (!fs.existsSync(evalSetFolderPath)) {
+      return [];
+    }
+    const evalSets: string[] = [];
+    for (const file of fs.readdirSync(evalSetFolderPath)) {
+      if (file.endsWith(EVAL_SET_FILE_EXTENSION)) {
+        evalSets.push(path.basename(file, EVAL_SET_FILE_EXTENSION));
+      }
+    }
+    return evalSets.sort();
+  }
+
+  /**
+   * Adds an {@link EvalCase} to an existing {@link EvalSet}.
+   *
+   * @throws {NotFoundError} If the eval set does not exist.
+   * @throws {InputValidationError} If the eval case ID is invalid or already exists in the set.
+   */
+  addEvalCase(appName: string, evalSetId: string, evalCase: EvalCase): void {
+    const evalCaseId = evalCase.evalId;
+    validateId('Eval Case ID', evalCaseId);
+
+    const evalSet = this.getEvalSet(appName, evalSetId);
+    if (!evalSet) {
+      throw new NotFoundError(`Eval set \`${evalSetId}\` not found.`);
+    }
+
+    if (evalSet.evalCases.some((x) => x.evalId === evalCaseId)) {
+      throw new InputValidationError(
+        `Eval id \`${evalCaseId}\` already exists in \`${evalSetId}\` eval set.`,
+      );
+    }
+
+    evalSet.evalCases.push(evalCase);
+    const evalSetFilePath = this.getEvalSetFilePath(appName, evalSetId);
+    writeEvalSet(evalSetFilePath, evalSet);
+  }
+
+  /**
+   * Returns a single {@link EvalCase} from `evalSetId`, or `undefined` if the
+   * eval set or eval case does not exist.
+   */
+  getEvalCase(
+    appName: string,
+    evalSetId: string,
+    evalCaseId: string,
+  ): EvalCase | undefined {
+    const evalSet = this.getEvalSet(appName, evalSetId);
+    if (!evalSet) {
+      return undefined;
+    }
+    return evalSet.evalCases.find((x) => x.evalId === evalCaseId);
+  }
+
+  /**
+   * Updates an existing {@link EvalCase} within `evalSetId`.
+   *
+   * @throws {NotFoundError} If the eval set or eval case does not exist.
+   */
+  updateEvalCase(
+    appName: string,
+    evalSetId: string,
+    updatedEvalCase: EvalCase,
+  ): void {
+    const evalCaseId = updatedEvalCase.evalId;
+    const evalSet = this.getEvalSet(appName, evalSetId);
+    if (!evalSet) {
+      throw new NotFoundError(
+        `Eval Set \`${evalSetId}\` or Eval id \`${evalCaseId}\` not found.`,
+      );
+    }
+
+    const index = evalSet.evalCases.findIndex((x) => x.evalId === evalCaseId);
+    if (index === -1) {
+      throw new NotFoundError(
+        `Eval Set \`${evalSetId}\` or Eval id \`${evalCaseId}\` not found.`,
+      );
+    }
+
+    evalSet.evalCases[index] = updatedEvalCase;
+    const evalSetFilePath = this.getEvalSetFilePath(appName, evalSetId);
+    writeEvalSet(evalSetFilePath, evalSet);
+  }
+
+  /**
+   * Deletes an {@link EvalCase} identified by `evalCaseId` from `evalSetId`.
+   *
+   * @throws {NotFoundError} If the eval set or eval case does not exist.
+   */
+  deleteEvalCase(appName: string, evalSetId: string, evalCaseId: string): void {
+    const evalSet = this.getEvalSet(appName, evalSetId);
+    if (!evalSet) {
+      throw new NotFoundError(
+        `Eval Set \`${evalSetId}\` or Eval id \`${evalCaseId}\` not found.`,
+      );
+    }
+
+    const index = evalSet.evalCases.findIndex((x) => x.evalId === evalCaseId);
+    if (index === -1) {
+      throw new NotFoundError(
+        `Eval Set \`${evalSetId}\` or Eval id \`${evalCaseId}\` not found.`,
+      );
+    }
+
+    logger.info(
+      `EvalCase \`${evalCaseId}\` was found in the eval set. It will be removed permanently.`,
+    );
+    evalSet.evalCases.splice(index, 1);
+    const evalSetFilePath = this.getEvalSetFilePath(appName, evalSetId);
+    writeEvalSet(evalSetFilePath, evalSet);
+  }
+
+  private getEvalSetFilePath(appName: string, evalSetId: string): string {
+    validatePathSegment(appName, 'appName');
+    validatePathSegment(evalSetId, 'evalSetId');
+    return path.join(
+      this.agentsDir,
+      appName,
+      `${evalSetId}${EVAL_SET_FILE_EXTENSION}`,
+    );
+  }
+}
+
+function validateId(idName: string, idValue: string): void {
+  if (!VALID_EVAL_ID_PATTERN.test(idValue)) {
+    throw new InputValidationError(
+      `Invalid ${idName}. ${idName} should have the \`${VALID_EVAL_ID_PATTERN}\` format`,
+    );
+  }
+}
+
+function writeEvalSet(evalSetPath: string, evalSet: EvalSet): void {
+  fs.mkdirSync(path.dirname(evalSetPath), {recursive: true});
+  fs.writeFileSync(evalSetPath, JSON.stringify(evalSet, null, 2), 'utf-8');
 }

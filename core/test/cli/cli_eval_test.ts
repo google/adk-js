@@ -8,12 +8,15 @@ import {
   BaseAgent,
   BaseTool,
   Context,
+  convertEvalSetToSchema,
   createEvent,
   DEFAULT_CRITERIA,
   EVAL_SESSION_ID_PREFIX,
+  EvalCase,
   EvalCaseResult,
   EvalEntry,
   EvalResult,
+  EvalSet,
   EvalStatus,
   Event,
   getEvaluationCriteriaOrDefault,
@@ -22,7 +25,9 @@ import {
   InputValidationError,
   InvocationContext,
   LlmAgent,
+  loadEvalSetFromFile,
   LocalEvalSetResultsManager,
+  LocalEvalSetsManager,
   MISSING_EVAL_DEPENDENCIES_MESSAGE,
   NotFoundError,
   parseAndGetEvalsToRun,
@@ -572,6 +577,466 @@ describe('cli/cli_eval', () => {
         parseEvalSetResultJson('{"unexpected_field": "value"}'),
       ).toThrow(/missing evalSetResultId or evalSetId/);
       expect(() => parseEvalSetResultJson('not valid json {')).toThrow();
+    });
+  });
+
+  describe('convertEvalSetToSchema', () => {
+    // reference: test_convert_eval_set_to_pydanctic_schema_complete
+    it('converts a complete legacy JSON eval set into an EvalSet object', () => {
+      const evalSetId = 'test_eval_set';
+      const evalSetInJsonFormat = [
+        {
+          name: 'roll_17_sided_dice_twice',
+          data: [
+            {
+              query: 'What can you do?',
+              expected_tool_use: [],
+              expected_intermediate_agent_responses: [],
+              reference:
+                'I can roll dice of different sizes and check if a number is prime. I can also use multiple tools in parallel.\n',
+            },
+            {
+              query: 'Roll a 17 sided dice twice for me',
+              expected_tool_use: [
+                {tool_name: 'roll_die', tool_input: {sides: 17}},
+                {tool_name: 'roll_die', tool_input: {sides: 17}},
+              ],
+              expected_intermediate_agent_responses: [
+                {author: 'agent1', text: 'thought1'},
+              ],
+              reference:
+                'I have rolled a 17 sided die twice. The first roll was 13 and the second roll was 4.\n',
+            },
+          ],
+          initial_session: {
+            state: {},
+            app_name: 'hello_world',
+            user_id: 'user',
+          },
+        },
+      ];
+
+      const evalSet = convertEvalSetToSchema(evalSetId, evalSetInJsonFormat);
+
+      expect(evalSet.evalSetId).toBe(evalSetId);
+      expect(evalSet.evalCases).toHaveLength(1);
+      expect(evalSet.evalCases[0].evalId).toBe('roll_17_sided_dice_twice');
+      expect(evalSet.evalCases[0].conversation).toHaveLength(2);
+      expect(evalSet.evalCases[0].sessionInput?.appName).toBe('hello_world');
+      expect(
+        evalSet.evalCases[0].conversation[1].intermediateData?.toolUses,
+      ).toHaveLength(2);
+      expect(
+        evalSet.evalCases[0].conversation[1].intermediateData
+          ?.intermediateResponses,
+      ).toHaveLength(1);
+    });
+
+    // reference: test_convert_eval_set_to_pydanctic_schema_minimal
+    it('converts a minimal legacy JSON eval set with only query and reference', () => {
+      const evalSetId = 'test_eval_set';
+      const evalSetInJsonFormat = [
+        {
+          name: 'minimal_case',
+          data: [{query: 'Hello', reference: 'World'}],
+        },
+      ];
+
+      const evalSet = convertEvalSetToSchema(evalSetId, evalSetInJsonFormat);
+
+      expect(evalSet.evalSetId).toBe(evalSetId);
+      expect(evalSet.evalCases).toHaveLength(1);
+      expect(evalSet.evalCases[0].evalId).toBe('minimal_case');
+      expect(evalSet.evalCases[0].conversation).toHaveLength(1);
+      expect(
+        evalSet.evalCases[0].conversation[0].userContent.parts?.[0]?.text,
+      ).toBe('Hello');
+      expect(
+        evalSet.evalCases[0].conversation[0].finalResponse?.parts?.[0]?.text,
+      ).toBe('World');
+    });
+
+    // reference: test_convert_eval_set_to_pydanctic_schema_empty_tool_use_and_intermediate_responses
+    it('converts a legacy JSON eval set with empty tool uses and intermediate responses', () => {
+      const evalSetId = 'test_eval_set';
+      const evalSetInJsonFormat = [
+        {
+          name: 'empty_lists',
+          data: [
+            {
+              query: 'Test',
+              reference: 'Test Ref',
+              expected_tool_use: [],
+              expected_intermediate_agent_responses: [],
+            },
+          ],
+        },
+      ];
+
+      const evalSet = convertEvalSetToSchema(evalSetId, evalSetInJsonFormat);
+
+      expect(evalSet.evalSetId).toBe(evalSetId);
+      expect(evalSet.evalCases).toHaveLength(1);
+      expect(
+        evalSet.evalCases[0].conversation[0].intermediateData?.toolUses,
+      ).toHaveLength(0);
+      expect(
+        evalSet.evalCases[0].conversation[0].intermediateData
+          ?.intermediateResponses,
+      ).toHaveLength(0);
+    });
+
+    // reference: test_convert_eval_set_to_pydanctic_schema_empty_initial_session
+    it('leaves sessionInput undefined when initial session is an empty object', () => {
+      const evalSetId = 'test_eval_set';
+      const evalSetInJsonFormat = [
+        {
+          name: 'empty_session',
+          data: [{query: 'Test', reference: 'Test Ref'}],
+          initial_session: {},
+        },
+      ];
+
+      const evalSet = convertEvalSetToSchema(evalSetId, evalSetInJsonFormat);
+
+      expect(evalSet.evalSetId).toBe(evalSetId);
+      expect(evalSet.evalCases[0].sessionInput).toBeUndefined();
+    });
+
+    // reference: test_convert_eval_set_to_pydanctic_schema_invalid_data
+    it('throws InputValidationError when legacy eval set data has invalid field types', () => {
+      const evalSetId = 'test_eval_set';
+      const evalSetInJsonFormat = [
+        {
+          name: 123,
+          data: [
+            {
+              query: 456,
+              reference: 789,
+              expected_tool_use: [{tool_name: 123, tool_input: 456}],
+              expected_intermediate_agent_responses: [{author: 123, text: 456}],
+            },
+          ],
+          initial_session: {
+            state: 'invalid',
+            app_name: 123,
+            user_id: 456,
+          },
+        },
+      ];
+
+      expect(() =>
+        convertEvalSetToSchema(evalSetId, evalSetInJsonFormat),
+      ).toThrow(InputValidationError);
+    });
+  });
+
+  describe('loadEvalSetFromFile', () => {
+    // reference: test_load_eval_set_from_file_new_format
+    it('loads a structured EvalSet JSON file directly', () => {
+      const evalSet: EvalSet = {
+        evalSetId: 'new_format_eval_set',
+        evalCases: [
+          {
+            evalId: 'new_format_case',
+            conversation: [
+              {
+                invocationId: 'inv-123',
+                userContent: {parts: [{text: 'New Format Query'}]},
+                finalResponse: {parts: [{text: 'New Format Reference'}]},
+              },
+            ],
+          },
+        ],
+      };
+      const filePath = path.join(tempDir, 'new_format.json');
+      fs.writeFileSync(filePath, JSON.stringify(evalSet), 'utf-8');
+
+      const loadedEvalSet = loadEvalSetFromFile(
+        filePath,
+        'new_format_eval_set',
+      );
+
+      expect(loadedEvalSet).toEqual(evalSet);
+    });
+
+    // reference: test_load_eval_set_from_file_old_format
+    it('loads a legacy array JSON file and converts it to an EvalSet', () => {
+      const oldFormatJson = [
+        {
+          name: 'old_format_case',
+          data: [
+            {query: 'Old Format Query', reference: 'Old Format Reference'},
+          ],
+        },
+      ];
+      const filePath = path.join(tempDir, 'old_format.json');
+      fs.writeFileSync(filePath, JSON.stringify(oldFormatJson), 'utf-8');
+
+      const loadedEvalSet = loadEvalSetFromFile(
+        filePath,
+        'old_format_eval_set',
+      );
+
+      expect(loadedEvalSet.evalSetId).toBe('old_format_eval_set');
+      expect(loadedEvalSet.name).toBe('old_format_eval_set');
+      expect(loadedEvalSet.evalCases).toHaveLength(1);
+      expect(loadedEvalSet.evalCases[0].evalId).toBe('old_format_case');
+      expect(loadedEvalSet.evalCases[0].conversation).toHaveLength(1);
+      expect(loadedEvalSet.evalCases[0].conversation[0].userContent).toEqual({
+        role: 'user',
+        parts: [{text: 'Old Format Query'}],
+      });
+      expect(loadedEvalSet.evalCases[0].conversation[0].finalResponse).toEqual({
+        role: 'model',
+        parts: [{text: 'Old Format Reference'}],
+      });
+      expect(
+        loadedEvalSet.evalCases[0].conversation[0].intermediateData,
+      ).toEqual({
+        toolUses: [],
+        intermediateResponses: [],
+      });
+    });
+
+    // reference: test_load_eval_set_from_file_nonexistent_file
+    it('throws when the eval set file does not exist', () => {
+      expect(() =>
+        loadEvalSetFromFile(
+          path.join(tempDir, 'nonexistent_file.json'),
+          'test_eval_set',
+        ),
+      ).toThrow();
+    });
+
+    // reference: test_load_eval_set_from_file_invalid_json
+    it('throws SyntaxError when the file contains invalid JSON', () => {
+      const filePath = path.join(tempDir, 'invalid.json');
+      fs.writeFileSync(filePath, 'invalid json', 'utf-8');
+
+      expect(() => loadEvalSetFromFile(filePath, 'test_eval_set')).toThrow(
+        SyntaxError,
+      );
+    });
+
+    // reference: test_load_eval_set_from_file_invalid_data
+    it('throws InputValidationError when JSON matches neither structured nor legacy format', () => {
+      const filePath = path.join(tempDir, 'invalid_data.json');
+      fs.writeFileSync(filePath, '{"invalid": "data"}', 'utf-8');
+
+      expect(() => loadEvalSetFromFile(filePath, 'test_eval_set')).toThrow(
+        InputValidationError,
+      );
+    });
+  });
+
+  describe('LocalEvalSetsManager', () => {
+    // reference: test_local_eval_sets_manager_get_eval_set_success
+    // reference: test_local_eval_sets_manager_get_eval_set_not_found
+    // reference: test_local_eval_sets_manager_create_eval_set_success
+    it('creates an eval set on disk and returns undefined when an eval set is missing', () => {
+      const manager = new LocalEvalSetsManager(tempDir);
+
+      expect(manager.getEvalSet('test_app', 'missing_set')).toBeUndefined();
+
+      const created = manager.createEvalSet('test_app', 'test_eval_set');
+      expect(created.evalSetId).toBe('test_eval_set');
+      expect(created.name).toBe('test_eval_set');
+      expect(created.evalCases).toEqual([]);
+
+      const loaded = manager.getEvalSet('test_app', 'test_eval_set');
+      expect(loaded).toEqual(created);
+
+      expect(() => manager.createEvalSet('test_app', 'test_eval_set')).toThrow(
+        InputValidationError,
+      );
+    });
+
+    // reference: test_local_eval_sets_manager_create_eval_set_invalid_id
+    it('rejects an invalid eval set ID when creating an eval set', () => {
+      const manager = new LocalEvalSetsManager(tempDir);
+
+      expect(() => manager.createEvalSet('test_app', 'invalid-id')).toThrow(
+        /Invalid Eval Set ID/,
+      );
+    });
+
+    // reference: test_local_eval_sets_manager_list_eval_sets_success
+    it('lists sorted eval set IDs for an app and ignores non-evalset files', () => {
+      const manager = new LocalEvalSetsManager(tempDir);
+      expect(manager.listEvalSets('test_app')).toEqual([]);
+
+      const appDir = path.join(tempDir, 'test_app');
+      fs.mkdirSync(appDir, {recursive: true});
+      fs.writeFileSync(
+        path.join(appDir, 'eval_set_2.evalset.json'),
+        '[]',
+        'utf-8',
+      );
+      fs.writeFileSync(
+        path.join(appDir, 'eval_set_1.evalset.json'),
+        '[]',
+        'utf-8',
+      );
+      fs.writeFileSync(
+        path.join(appDir, 'not_an_eval_set.txt'),
+        'hello',
+        'utf-8',
+      );
+
+      expect(manager.listEvalSets('test_app')).toEqual([
+        'eval_set_1',
+        'eval_set_2',
+      ]);
+    });
+
+    // reference: test_local_eval_sets_manager_add_eval_case_success
+    // reference: test_local_eval_sets_manager_add_eval_case_eval_set_not_found
+    // reference: test_local_eval_sets_manager_add_eval_case_eval_case_id_exists
+    // reference: test_local_eval_sets_manager_get_eval_case_success
+    // reference: test_local_eval_sets_manager_get_eval_case_eval_set_not_found
+    // reference: test_local_eval_sets_manager_get_eval_case_eval_case_not_found
+    it('adds and retrieves eval cases and rejects missing sets or duplicate case IDs', () => {
+      const manager = new LocalEvalSetsManager(tempDir);
+      const evalCase: EvalCase = {
+        evalId: 'test_eval_case',
+        conversation: [],
+      };
+
+      expect(
+        manager.getEvalCase('test_app', 'test_eval_set', 'test_eval_case'),
+      ).toBeUndefined();
+
+      expect(() =>
+        manager.addEvalCase('test_app', 'test_eval_set', evalCase),
+      ).toThrow(NotFoundError);
+
+      manager.createEvalSet('test_app', 'test_eval_set');
+      expect(
+        manager.getEvalCase('test_app', 'test_eval_set', 'test_eval_case'),
+      ).toBeUndefined();
+
+      manager.addEvalCase('test_app', 'test_eval_set', evalCase);
+      expect(
+        manager.getEvalCase('test_app', 'test_eval_set', 'test_eval_case'),
+      ).toEqual(evalCase);
+
+      expect(() =>
+        manager.addEvalCase('test_app', 'test_eval_set', evalCase),
+      ).toThrow(/Eval id `test_eval_case` already exists/);
+    });
+
+    // reference: test_local_eval_sets_manager_update_eval_case_success
+    // reference: test_local_eval_sets_manager_update_eval_case_eval_case_not_found
+    it('updates an existing eval case and throws NotFoundError when missing', () => {
+      const manager = new LocalEvalSetsManager(tempDir);
+      const initialCase: EvalCase = {
+        evalId: 'test_eval_case',
+        conversation: [],
+        creationTimestamp: 456,
+      };
+      const updatedCase: EvalCase = {
+        evalId: 'test_eval_case',
+        conversation: [
+          {
+            invocationId: 'inv-1',
+            userContent: {role: 'user', parts: [{text: 'Updated query'}]},
+          },
+        ],
+        creationTimestamp: 123,
+      };
+
+      expect(() =>
+        manager.updateEvalCase('test_app', 'test_eval_set', updatedCase),
+      ).toThrow(NotFoundError);
+
+      manager.createEvalSet('test_app', 'test_eval_set');
+      expect(() =>
+        manager.updateEvalCase('test_app', 'test_eval_set', updatedCase),
+      ).toThrow(
+        'Eval Set `test_eval_set` or Eval id `test_eval_case` not found.',
+      );
+
+      manager.addEvalCase('test_app', 'test_eval_set', initialCase);
+      manager.updateEvalCase('test_app', 'test_eval_set', updatedCase);
+
+      expect(
+        manager.getEvalCase('test_app', 'test_eval_set', 'test_eval_case'),
+      ).toEqual(updatedCase);
+    });
+
+    // reference: test_local_eval_sets_manager_delete_eval_case_success
+    // reference: test_local_eval_sets_manager_delete_eval_case_eval_case_not_found
+    it('deletes an existing eval case and throws NotFoundError when missing', () => {
+      const manager = new LocalEvalSetsManager(tempDir);
+      const evalCase: EvalCase = {
+        evalId: 'test_eval_case',
+        conversation: [],
+      };
+
+      expect(() =>
+        manager.deleteEvalCase('test_app', 'test_eval_set', 'test_eval_case'),
+      ).toThrow(NotFoundError);
+
+      manager.createEvalSet('test_app', 'test_eval_set');
+      expect(() =>
+        manager.deleteEvalCase('test_app', 'test_eval_set', 'test_eval_case'),
+      ).toThrow(
+        'Eval Set `test_eval_set` or Eval id `test_eval_case` not found.',
+      );
+
+      manager.addEvalCase('test_app', 'test_eval_set', evalCase);
+      manager.deleteEvalCase('test_app', 'test_eval_set', 'test_eval_case');
+
+      expect(
+        manager.getEvalCase('test_app', 'test_eval_set', 'test_eval_case'),
+      ).toBeUndefined();
+      expect(
+        manager.getEvalSet('test_app', 'test_eval_set')?.evalCases,
+      ).toEqual([]);
+    });
+
+    it('runs evaluations against structured EvalCase items saved by LocalEvalSetsManager', async () => {
+      const manager = new LocalEvalSetsManager(tempDir);
+      manager.createEvalSet('eval_app', 'structured_set');
+      manager.addEvalCase('eval_app', 'structured_set', {
+        evalId: 'structured_case',
+        conversation: [
+          {
+            invocationId: 'inv-1',
+            userContent: {role: 'user', parts: [{text: 'please use_tool now'}]},
+            finalResponse: {
+              role: 'model',
+              parts: [{text: 'Echo: please use_tool now'}],
+            },
+            intermediateData: {
+              toolUses: [{name: 'lookup_item', args: {id: 42}}],
+              intermediateResponses: [],
+            },
+          },
+        ],
+        sessionInput: {
+          appName: 'eval_app',
+          userId: 'eval_user',
+          state: {},
+        },
+      });
+
+      const evalSet = manager.getEvalSet('eval_app', 'structured_set');
+      expect(evalSet).toBeDefined();
+
+      const agent = new DeterministicEvalAgent();
+      const results: EvalResult[] = [];
+      for await (const res of runEvals({
+        evalCasesByEvalSetId: {structured_set: evalSet?.evalCases ?? []},
+        rootAgent: agent,
+      })) {
+        results.push(res);
+      }
+
+      expect(results).toHaveLength(1);
+      expect(results[0].eval_id).toBe('structured_case');
+      expect(results[0].final_eval_status).toBe(EvalStatus.PASSED);
     });
   });
 });

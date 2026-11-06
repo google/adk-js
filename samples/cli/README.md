@@ -9,7 +9,7 @@ This sample demonstrates how the CLI evaluation utilities prepare state placehol
 - A query containing `'order'` emits a `lookup_order` `functionCall` event, its `functionResponse` event, and the final text `'Order ORD-100 has shipped.'`.
 - Any other query replies with the active `locale` from `ctx.session.state`.
 
-The `main()` driver calls `createEmptyState(rootAgent, {locale: 'en-GB'})` to populate `{department: '', locale: 'en-GB'}`, runs two turns through `InMemoryRunner`, converts the stored session into `EvaluationItem` records with `convertSessionToEvalFormat`, parses an evalset selector with `parseAndGetEvalsToRun`, scores the agent with `runEvals`, persists and reloads the `EvalSetResult` with `LocalEvalSetResultsManager`, and cleans up the runner with `closeRunners`.
+The `main()` driver calls `createEmptyState(rootAgent, {locale: 'en-GB'})` to populate `{department: '', locale: 'en-GB'}`, runs two turns through `InMemoryRunner`, converts the stored session into `EvalInvocation` and `EvaluationItem` records with `convertSessionToEvalInvocations` and `convertSessionToEvalFormat`, parses an evalset selector with `parseAndGetEvalsToRun`, scores the agent with `runEvals`, manages eval cases with `LocalEvalSetsManager`, persists and reloads the `EvalSetResult` with `LocalEvalSetResultsManager`, and cleans up the runner with `closeRunners`.
 
 ## Sample Inputs
 

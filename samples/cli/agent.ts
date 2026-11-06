@@ -30,6 +30,7 @@ import {
   BaseAgent,
   closeRunners,
   convertSessionToEvalFormat,
+  convertSessionToEvalInvocations,
   createEmptyState,
   createEvent,
   EvalResult,
@@ -39,6 +40,7 @@ import {
   InvocationContext,
   LlmAgent,
   LocalEvalSetResultsManager,
+  LocalEvalSetsManager,
   parseAndGetEvalsToRun,
   runEvals,
   stringifyContent,
@@ -173,8 +175,9 @@ async function main() {
     sessionId: session.id,
   });
   const evalItems = convertSessionToEvalFormat(storedSession);
+  const evalInvocations = convertSessionToEvalInvocations(storedSession);
   process.stdout.write(
-    `Converted session turns: ${evalItems.length} (first tool: ${evalItems[0]?.expected_tool_use[0]?.tool_name})\n`,
+    `Converted session turns: ${evalItems.length} (invocations: ${evalInvocations.length}, first tool: ${evalItems[0]?.expected_tool_use[0]?.tool_name})\n`,
   );
 
   const parsedSpecs = parseAndGetEvalsToRun([
@@ -214,6 +217,22 @@ async function main() {
     path.join(os.tmpdir(), 'adk-cli-sample-'),
   );
   try {
+    const setsManager = new LocalEvalSetsManager(tempAgentsDir);
+    setsManager.createEvalSet(appName, 'support');
+    setsManager.addEvalCase(appName, 'support', {
+      evalId: 'order_flow',
+      conversation: evalInvocations,
+      sessionInput: {appName, userId, state: initialState},
+    });
+    const savedCase = setsManager.getEvalCase(appName, 'support', 'order_flow');
+    if (savedCase) {
+      setsManager.updateEvalCase(appName, 'support', {
+        ...savedCase,
+        creationTimestamp: 1,
+      });
+      setsManager.deleteEvalCase(appName, 'support', 'order_flow');
+    }
+
     const resultsManager = new LocalEvalSetResultsManager(tempAgentsDir);
     const savedSetResult = resultsManager.saveEvalSetResult({
       appName,
