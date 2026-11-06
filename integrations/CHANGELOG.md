@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.5.0](https://github.com/google/adk-js/compare/integrations-v2.4.0...integrations-v2.5.0) (2026-11-06)
+
+
+### Features
+
+* port adk-python v1.1.1 changes to agents, auth, code_executors (+12 more) ([#1190](https://github.com/google/adk-js/issues/1190)) ([d22e6de](https://github.com/google/adk-js/commit/d22e6de31b4b2e7ec34cd77402b2e751e89b6fb1))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^2.4.0 to ^2.5.0
+
 ## [2.4.0](https://github.com/google/adk-js/compare/integrations-v2.3.0...integrations-v2.4.0) (2026-10-28)
 
 
