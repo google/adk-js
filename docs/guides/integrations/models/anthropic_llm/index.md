@@ -97,7 +97,7 @@ When an `LlmAgent` is configured with tools, `Claude` translates ADK tool declar
 
 1. **Tool collection**: `Claude` collects `functionDeclarations` across every `Tool` entry in `llmRequest.config?.tools`.
 2. **Schema conversion**: `Claude` converts `FunctionDeclaration.parameters` (`@google/genai` `Schema` with uppercase `Type` enums) into lowercase JSON Schema via `genaiSchemaToJsonSchema` with `input_schema.type` set to `'object'`, or passes `FunctionDeclaration.parametersJsonSchema` through directly.
-3. **Sequential tool choice**: When `llmRequest.toolsDict` is non-empty, `Claude` sets `tool_choice` to `{type: 'auto', disable_parallel_tool_use: true}` so the model invokes at most one tool per turn.
+3. **Automatic tool choice**: When `llmRequest.toolsDict` is non-empty, `Claude` sets `tool_choice` to `{type: 'auto'}`.
 4. **Tool-use ID preservation and sanitization**: Client-generated `adk-*` function call and response IDs are preserved in `LlmRequest.contents` for Claude requests, and any missing or invalid `tool_use` / `tool_result` IDs (not matching `^[a-zA-Z0-9_-]+$`) are mapped consistently within each request to `toolu_fallback_<N>`.
 5. **Tool result serialization**: `Claude` converts each `functionResponse` part into a `tool_result` block:
    - When `'result' in response`, string values of `response.result` are sent unchanged, non-null structured values (`object`, `array`, `number`, `boolean`) are serialized with `JSON.stringify(response.result)`, and `null` or `undefined` becomes `''`.

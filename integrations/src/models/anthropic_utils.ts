@@ -10,6 +10,7 @@ import {
   genaiSchemaToJsonSchema,
   type LlmRequest,
   type LlmResponse,
+  logger,
 } from '@google/adk';
 import {
   type Content,
@@ -368,6 +369,7 @@ export function contentBlockToPart(contentBlock: Anthropic.ContentBlock): Part {
 export function messageToGenerateContentResponse(
   message: Anthropic.Message,
 ): LlmResponse {
+  logger.debug('Claude response:', JSON.stringify(message, null, 2));
   return {
     content: {
       role: 'model',
