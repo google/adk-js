@@ -20,6 +20,7 @@ import {
   GroundingMetadata,
 } from '@google/genai';
 import {isCompactedEvent} from '../events/compacted_event.js';
+import {formatError} from '../utils/error_utils.js';
 import {experimental} from '../utils/experimental.js';
 
 import {AuthConfig} from '../auth/auth_tool.js';
@@ -487,9 +488,16 @@ export class VertexAiSessionService extends BaseSessionService {
       return;
     }
 
-    await this.sessions.delete({
-      name: `reasoningEngines/${reasoningEngineId}/sessions/${sessionId}`,
-    });
+    try {
+      await this.sessions.delete({
+        name: `reasoningEngines/${reasoningEngineId}/sessions/${sessionId}`,
+      });
+    } catch (error: unknown) {
+      logger.error(
+        `Error deleting session ${sessionId}: ${formatError(error)}`,
+      );
+      throw error;
+    }
   }
 
   override async appendEvent({

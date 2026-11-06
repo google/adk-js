@@ -48,6 +48,48 @@ describe('BuiltInCodeExecutor', () => {
     expect(llmRequest.config?.tools).toEqual([{codeExecution: {}}]);
   });
 
+  it('processLlmRequest should set codeExecution tool when config.tools is undefined', () => {
+    const llmRequest: LlmRequest = {
+      model: 'gemini-2.0-pro',
+      config: {},
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+    executor.processLlmRequest(llmRequest);
+    expect(llmRequest.config?.tools).toEqual([{codeExecution: {}}]);
+  });
+
+  it('processLlmRequest should set codeExecution tool when config.tools is empty', () => {
+    const llmRequest: LlmRequest = {
+      model: 'gemini-2.0-ultra',
+      config: {tools: []},
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+    executor.processLlmRequest(llmRequest);
+    expect(llmRequest.config?.tools).toEqual([{codeExecution: {}}]);
+  });
+
+  it('processLlmRequest should append codeExecution tool to existing config.tools', () => {
+    const existingTool = {
+      functionDeclarations: [{name: 'test_func', description: 'A test func'}],
+    };
+    const llmRequest: LlmRequest = {
+      model: 'gemini-2.0-flash-001',
+      config: {tools: [existingTool]},
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+    executor.processLlmRequest(llmRequest);
+    expect(llmRequest.config?.tools).toEqual([
+      existingTool,
+      {codeExecution: {}},
+    ]);
+  });
+
   it('processLlmRequest should throw error if model is invalid', () => {
     const llmRequest: LlmRequest = {
       model: 'invalid-model',

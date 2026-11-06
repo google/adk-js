@@ -5,6 +5,7 @@
  */
 
 import type {Anthropic} from '@anthropic-ai/sdk';
+import {logger} from '@google/adk';
 import {FinishReason, Type} from '@google/genai';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
@@ -134,7 +135,7 @@ describe('Claude conversion helpers', () => {
       [null, FinishReason.FINISH_REASON_UNSPECIFIED],
       [undefined, FinishReason.FINISH_REASON_UNSPECIFIED],
     ])(
-      'test_to_google_genai_finish_reason (%s)',
+      'maps stop reason %s to the expected FinishReason',
       (stopReason, expectedFinishReason) => {
         expect(toGoogleGenaiFinishReason(stopReason)).toBe(
           expectedFinishReason,
@@ -380,7 +381,7 @@ describe('Claude conversion helpers', () => {
       }
     });
 
-    it('test_part_to_message_block_function_call_none_id', () => {
+    it('assigns a fallback id when functionCall id is undefined', () => {
       const result = partToMessageBlock({
         functionCall: {
           id: undefined,
@@ -396,7 +397,7 @@ describe('Claude conversion helpers', () => {
       });
     });
 
-    it('test_part_to_message_block_function_call_empty_id', () => {
+    it('assigns a fallback id when functionCall id is empty', () => {
       const result = partToMessageBlock({
         functionCall: {
           id: '',
@@ -412,7 +413,7 @@ describe('Claude conversion helpers', () => {
       });
     });
 
-    it('test_part_to_message_block_function_call_invalid_chars_id', () => {
+    it('assigns a fallback id when functionCall id contains invalid characters', () => {
       const result = partToMessageBlock({
         functionCall: {
           id: 'invalid id with spaces!',
@@ -428,7 +429,7 @@ describe('Claude conversion helpers', () => {
       });
     });
 
-    it('test_part_to_message_block_function_response_none_id', () => {
+    it('assigns a fallback toolUseId when functionResponse id is undefined', () => {
       const result = partToMessageBlock({
         functionResponse: {
           id: undefined,
@@ -444,7 +445,7 @@ describe('Claude conversion helpers', () => {
       });
     });
 
-    it('test_part_to_message_block_function_response_empty_id', () => {
+    it('assigns a fallback toolUseId when functionResponse id is empty', () => {
       const result = partToMessageBlock({
         functionResponse: {
           id: '',
@@ -845,6 +846,7 @@ describe('Claude conversion helpers', () => {
 
   describe('messageToGenerateContentResponse', () => {
     it('converts an Anthropic Message into an LlmResponse with usage metadata', () => {
+      const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
       const message = createSampleAnthropicMessage({
         content: [
           {type: 'text', text: 'Let me check that.', citations: null},
@@ -891,6 +893,11 @@ describe('Claude conversion helpers', () => {
           totalTokenCount: 60,
         },
       });
+      expect(debugSpy).toHaveBeenCalledWith(
+        'Claude response:',
+        JSON.stringify(message, null, 2),
+      );
+      debugSpy.mockRestore();
     });
 
     it.each<[Anthropic.StopReason | null, FinishReason]>([
@@ -903,7 +910,7 @@ describe('Claude conversion helpers', () => {
       ['refusal', FinishReason.SAFETY],
       [null, FinishReason.FINISH_REASON_UNSPECIFIED],
     ])(
-      'test_message_to_generate_content_response_maps_finish_reason (%s)',
+      'maps stop reason %s to FinishReason on the LlmResponse',
       (stopReason, expectedFinishReason) => {
         const message = createSampleAnthropicMessage({stop_reason: stopReason});
         const response = messageToGenerateContentResponse(message);
