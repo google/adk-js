@@ -4,7 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content, createUserContent, FunctionCall, Part} from '@google/genai';
+import {
+  Content,
+  createUserContent,
+  FunctionCall,
+  FunctionResponse,
+  Part,
+} from '@google/genai';
 import {isEmpty} from 'lodash-es';
 
 import {InvocationContext} from '../agents/invocation_context.js';
@@ -20,6 +26,7 @@ import {
   mergeEventActions,
 } from '../events/event_actions.js';
 import {BaseTool} from '../tools/base_tool.js';
+import {isComputerUseTool} from '../tools/computer_use/computer_use_tool.js';
 import {CallLiveToolRequest, isFunctionTool} from '../tools/function_tool.js';
 import {ResumeInputs} from '../tools/resume_inputs.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
@@ -264,6 +271,47 @@ function getToolResponseErrorType(result: unknown): string | undefined {
   }
 }
 
+/** A base64 string, as a computer use tool encodes its screenshot. */
+const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
+
+/**
+ * Builds the function response for a tool's result.
+ *
+ * A computer use tool returns its screenshot as `{image: {data, mimetype}}`.
+ * The image moves out of the response into the function response's `parts`,
+ * so the model receives it as an image rather than as text.
+ */
+function buildFunctionResponse({
+  tool,
+  id,
+  response,
+}: {
+  tool: BaseTool;
+  id: string | undefined;
+  response: Record<string, unknown> | undefined;
+}): FunctionResponse {
+  const image = isComputerUseTool(tool) ? response?.['image'] : undefined;
+  if (
+    typeof image !== 'object' ||
+    image === null ||
+    !('data' in image) ||
+    !('mimetype' in image) ||
+    typeof image.data !== 'string' ||
+    typeof image.mimetype !== 'string' ||
+    !BASE64.test(image.data)
+  ) {
+    return {id, name: tool.name, response};
+  }
+  const rest = {...response};
+  delete rest['image'];
+  return {
+    id,
+    name: tool.name,
+    response: rest,
+    parts: [{inlineData: {data: image.data, mimeType: image.mimetype}}],
+  };
+}
+
 function buildResponseEvent(
   tool: BaseTool,
   functionResult: unknown,
@@ -280,11 +328,11 @@ function buildResponseEvent(
   }
 
   const partFunctionResponse: Part = {
-    functionResponse: {
-      name: tool.name,
-      response: responseResult,
+    functionResponse: buildFunctionResponse({
+      tool,
       id: toolContext.functionCallId,
-    },
+      response: responseResult,
+    }),
   };
 
   const content: Content = {
@@ -744,11 +792,11 @@ export async function handleFunctionCallList({
       invocationId: invocationContext.invocationId,
       author: toolEventAuthor(invocationContext),
       content: createUserContent({
-        functionResponse: {
+        functionResponse: buildFunctionResponse({
+          tool,
           id: toolContext.functionCallId,
-          name: tool.name,
           response: functionResponse,
-        },
+        }),
       }),
       actions: toolContext.actions,
       branch: invocationContext.branch,

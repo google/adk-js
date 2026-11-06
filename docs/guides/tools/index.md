@@ -15,6 +15,7 @@ The `tools` subsystem provides core abstractions, ecosystem adapters, built-in m
 - [FilesRetrieval](retrieval/files_retrieval/index.md) - Client-side retrieval tool that indexes a local directory of documents.
 - [OpenAPI tool](openapi_tool/index.md) - `OpenAPIToolset` and `RestApiTool` for generating authenticated REST tools from an OpenAPI specification.
 - [API Hub tool](apihub_tool/index.md) - `APIHubToolset` for building REST tools from Google Cloud API Hub specifications.
+- [Computer use](computer_use/index.md) - `BaseComputer`, `ComputerUseTool`, and `ComputerUseToolset` for letting a computer use model operate a browser or another computer.
 
 ## Introduction
 

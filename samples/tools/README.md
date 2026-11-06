@@ -73,6 +73,7 @@ Left unset, the sample runs on the corpus written into the file.
 | `google_api_tool`                                                        | Google Discovery spec converted to OpenAPI, tool filtering, and OpenID Connect auth          | —   |                                            |
 | [`apihub_tool`](apihub_tool/README.md)                                   | An API Hub spec as a set of tools, from a local stand-in or a real API Hub resource          | ✅  |                                            |
 | [`mcp_tool`](mcp_tool/README.md)                                         | `MCPToolset` over stdio or SSE, `LoadMcpResourceTool`, and `genaiSchemaToJsonSchema`         | ✅  | `@modelcontextprotocol/sdk`                |
+| [`computer_use`](computer_use/README.md)                                 | `ComputerUseToolset` over an in-memory `BaseComputer` that needs no browser                  | ✅  |                                            |
 | `agent.ts`                                                               | `FunctionTool`, `AgentTool`, `CrewaiTool`, `LangchainTool`, `ToolboxToolset`, `EXIT_LOOP`    | —   | `npx tsx samples/tools/agent.ts`           |
 
 ## Worth knowing
