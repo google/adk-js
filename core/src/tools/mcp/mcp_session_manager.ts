@@ -61,11 +61,21 @@ export interface StreamableHTTPConnectionParams {
    * This field will be ignored if transportOptions is provided even if no headers are specified in transportOptions.
    */
   header?: Record<string, unknown>;
+  /**
+   * HTTP headers to send with the Streamable HTTP requests when
+   * `transportOptions.requestInit` is not provided.
+   */
+  headers?: Record<string, unknown>;
   timeout?: number;
   sseReadTimeout?: number;
   terminateOnClose?: boolean;
   transportOptions?: StreamableHTTPClientTransportOptions;
 }
+
+/**
+ * Alias for {@link StreamableHTTPConnectionParams}.
+ */
+export type StreamableHTTPServerParams = StreamableHTTPConnectionParams;
 
 /**
  * Defines the parameters for establishing a connection to an MCP server over
@@ -111,17 +121,17 @@ export type MCPConnectionParams =
  * Builds the options for a streamable HTTP transport, with the ADK tracking
  * headers merged into `requestInit.headers`.
  *
- * The deprecated `header` field is used only when
+ * The deprecated `header` field and `headers` field are used only when
  * `transportOptions.requestInit` is undefined. The result is a new object, so
  * the caller's `transportOptions` is never modified.
  */
 function buildTransportOptions(
   params: StreamableHTTPConnectionParams,
 ): StreamableHTTPClientTransportOptions {
-  const {transportOptions, header} = params;
+  const {transportOptions, header, headers} = params;
   const callerHeaders =
     transportOptions?.requestInit === undefined
-      ? (header as Record<string, string> | undefined)
+      ? ((header ?? headers) as Record<string, string> | undefined)
       : transportOptions.requestInit.headers;
   return {
     ...transportOptions,
