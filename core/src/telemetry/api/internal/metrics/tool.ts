@@ -10,7 +10,7 @@ import type {Skill} from '../../../../skills/skill.js';
 import {ERROR_TYPE_ATTR, GenAiAttr} from '../common/attributes.js';
 import {
   isExperimentalFeatureEnabled,
-  type TelemetryConfig,
+  type ResolvedTelemetryConfig,
 } from '../common/config.js';
 import {cachedInstruments, createHistogram} from './meters.js';
 
@@ -83,7 +83,7 @@ export interface RecordSkillLoadParams {
   readonly agentName: string;
   readonly skill?: Skill;
   readonly errorType?: string;
-  readonly config: TelemetryConfig;
+  readonly config: ResolvedTelemetryConfig;
 }
 
 /**
@@ -126,7 +126,7 @@ export interface RecordSkillScriptExecutionParams {
   readonly agentName: string;
   readonly skill?: Skill;
   readonly scriptPath: string;
-  readonly config: TelemetryConfig;
+  readonly config: ResolvedTelemetryConfig;
 }
 
 /**

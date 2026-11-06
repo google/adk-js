@@ -10,7 +10,7 @@ import type {Totals} from '../common/accumulators.js';
 import {AdkAttr, ERROR_TYPE_ATTR, GenAiAttr} from '../common/attributes.js';
 import {
   isExperimentalFeatureEnabled,
-  type TelemetryConfig,
+  type ResolvedTelemetryConfig,
 } from '../common/config.js';
 import {
   cachedInstruments,
@@ -117,7 +117,7 @@ export interface RecordWorkflowTotalsParams {
   readonly workflowName: string;
   readonly nested: boolean;
   readonly totals: Totals;
-  readonly config: TelemetryConfig;
+  readonly config: ResolvedTelemetryConfig;
 }
 
 /**

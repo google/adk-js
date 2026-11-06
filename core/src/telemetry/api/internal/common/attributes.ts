@@ -60,6 +60,27 @@ export enum GcpAttr {
   DATA = 'gcp.vertex.agent.data',
 }
 
+/** OpenTelemetry HTTP client semantic-convention keys. */
+export enum HttpAttr {
+  REQUEST_METHOD = 'http.request.method',
+  RESPONSE_STATUS_CODE = 'http.response.status_code',
+  REQUEST_BODY_CONTENT = 'http.request.body.content',
+  RESPONSE_BODY_CONTENT = 'http.response.body.content',
+  /** Prefix of `http.request.header.<lowercased name>`. */
+  REQUEST_HEADER_PREFIX = 'http.request.header.',
+  /** Prefix of `http.response.header.<lowercased name>`. */
+  RESPONSE_HEADER_PREFIX = 'http.response.header.',
+  URL_FULL = 'url.full',
+  SERVER_ADDRESS = 'server.address',
+  SERVER_PORT = 'server.port',
+}
+
+/** OpenTelemetry MCP semantic-convention keys. */
+export enum McpAttr {
+  SESSION_ID = 'mcp.session.id',
+  PROTOCOL_VERSION = 'mcp.protocol.version',
+}
+
 /** Standard OpenTelemetry error classification attribute key. */
 export const ERROR_TYPE_ATTR = 'error.type';
 

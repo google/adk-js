@@ -188,6 +188,89 @@ comma-separated list of `skills`, `workflow`, `context_cache`, `grounding`,
 adds `adk.experimental.grounding.*` attributes to a `generate_content` span
 whose response used a built-in grounding tool.
 
+### The MCP HTTP exchange record
+
+With the experimental `mcp` feature on, each HTTP response that a streamable
+HTTP or SSE MCP transport receives emits one DEBUG log record with the event
+name `adk.experimental.mcp.http.client.response.end`. The record carries the
+span that was active when the request was sent: `execute_tool` for a tool
+call, and `invoke_agent` for tool listing. Only the environment turns it on,
+because the transport does not know which run sent the request; the per-run
+overrides below do not apply to it.
+
+The attributes are `http.request.method`, `url.full`,
+`http.response.status_code`, `server.address`, `server.port` (when the URL names
+a port), `mcp.session.id`, `mcp.protocol.version`, and `error.type` (the status
+code) for a status of 400 or higher.
+
+| Variable                                                    | Effect                                                                       |
+| :---------------------------------------------------------- | :--------------------------------------------------------------------------- |
+| `ADK_CAPTURE_MCP_HTTP_BODIES`                               | `true` or `1` records the request and response bodies. Otherwise `<elided>`. |
+| `OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_REQUEST`  | Request headers to record, as comma-separated regular expressions.           |
+| `OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_RESPONSE` | Response headers to record, in the same form.                                |
+
+A header pattern must match the whole header name, ignoring case, and a header
+is recorded as `http.request.header.<name>` or `http.response.header.<name>`.
+No header is recorded unless a pattern names it.
+
+MCP payloads often carry user data and tool results, so bodies are off by
+default and are a separate decision from GenAI content capture. Even when they
+are on, ADK keeps these out of the record:
+
+- the values of `authorization`, `cookie`, `set-cookie`, `proxy-authorization`,
+  `api-key`, `x-api-key` and `x-goog-api-key`, which are recorded as
+  `<redacted>` even when a pattern names them;
+- user name and password in the URL, and every query value, which becomes
+  `REDACTED`;
+- the body of an event stream response, recorded as `<SSE stream>`, because the
+  stream does not end;
+- anything after the first 1000 characters of a body, which ends in
+  `... [truncated]`.
+
+The transport receives each response as soon as it arrives. ADK reads a copy of
+the body in the background, and a failure to write the record is logged, never
+thrown. A `fetch` you set in `transportOptions.fetch` still sends the requests.
+A `fetch` set in the SSE transport's `eventSourceInit` opens the event stream
+without passing through ADK, so that request is not reported.
+
+### Per-run overrides
+
+`RunConfig.telemetry` changes the telemetry of one run without changing the
+environment, for example to capture content for a single tenant. It is
+experimental. Each field overrides one environment variable, and a field left
+unset falls back to it.
+
+| Field                           | Overrides                                            |
+| :------------------------------ | :--------------------------------------------------- |
+| `captureMessageContent`         | `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` |
+| `adkExperimentalTelemetryOptIn` | `ADK_EXPERIMENTAL_TELEMETRY`                         |
+| `experimentalFeaturesOptIn`     | `ADK_EXPERIMENTAL_TELEMETRY_FEATURES`                |
+
+`adkExperimentalTelemetryOptIn: false` turns every experimental feature off for
+the run, also the ones the environment names. `experimentalFeaturesOptIn`
+enables exactly the features it lists; a list with no recognized feature falls
+back to the environment.
+
+```ts
+for await (const event of runner.runAsync({
+  userId,
+  sessionId,
+  newMessage,
+  runConfig: {
+    telemetry: {
+      captureMessageContent: 'SPAN_ONLY',
+      experimentalFeaturesOptIn: ['workflow', 'token_usage'],
+    },
+  },
+})) {
+  // ...
+}
+```
+
+An operator who must keep the environment in charge sets
+`ADK_TELEMETRY_IGNORE_RUN_CONFIG` to `true` or `1`. Every `RunConfig.telemetry`
+field is then ignored.
+
 ## Configuration options
 
 `maybeSetOtelProviders(otelHooksToSetup, otelResource)` takes a list of hooks
