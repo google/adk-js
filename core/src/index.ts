@@ -124,11 +124,11 @@ export {LOAD_WEB_PAGE, loadWebPage} from './tools/load_web_page.js';
 export type {LoadWebPageOptions} from './tools/load_web_page.js';
 export {
   credentialToParam,
-  dictToAuthScheme,
   INTERNAL_AUTH_PREFIX,
-  openidDictToSchemeCredential,
+  openidRecordToSchemeCredential,
   openidUrlToSchemeCredential,
-  serviceAccountDictToSchemeCredential,
+  recordToAuthScheme,
+  serviceAccountRecordToSchemeCredential,
   serviceAccountSchemeCredential,
   tokenToSchemeCredential,
 } from './tools/openapi_tool/auth/auth_helpers.js';

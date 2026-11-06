@@ -231,15 +231,15 @@ pair that does not agree fails at the first request with a header the service
 does not accept. The helpers exist so you state the intent once and get both
 halves back together, as a tuple, in the same order adk-python returns them.
 
-| Helper                                 | Returns                                                                  |
-| :------------------------------------- | :----------------------------------------------------------------------- |
-| `tokenToSchemeCredential`              | An `apiKey` or bearer scheme, and the matching credential.               |
-| `serviceAccountDictToSchemeCredential` | A bearer scheme, and a service-account credential built from a key file. |
-| `serviceAccountSchemeCredential`       | A bearer scheme, and a service-account credential you already built.     |
-| `openidDictToSchemeCredential`         | An `OpenIdConnectWithConfig` scheme, and an OpenID Connect credential.   |
-| `openidUrlToSchemeCredential`          | The same pair, from a discovery URL that the helper fetches.             |
-| `dictToAuthScheme`                     | One `AuthScheme`, validated against the shape its `type` requires.       |
-| `credentialToParam`                    | The tool parameter carrying a credential, and the value to send for it.  |
+| Helper                                   | Returns                                                                  |
+| :--------------------------------------- | :----------------------------------------------------------------------- |
+| `tokenToSchemeCredential`                | An `apiKey` or bearer scheme, and the matching credential.               |
+| `serviceAccountRecordToSchemeCredential` | A bearer scheme, and a service-account credential built from a key file. |
+| `serviceAccountSchemeCredential`         | A bearer scheme, and a service-account credential you already built.     |
+| `openidRecordToSchemeCredential`         | An `OpenIdConnectWithConfig` scheme, and an OpenID Connect credential.   |
+| `openidUrlToSchemeCredential`            | The same pair, from a discovery URL that the helper fetches.             |
+| `recordToAuthScheme`                     | One `AuthScheme`, validated against the shape its `type` requires.       |
+| `credentialToParam`                      | The tool parameter carrying a credential, and the value to send for it.  |
 
 Everything that ends as a bearer token pairs with one scheme,
 `{type: 'http', scheme: 'bearer', bearerFormat: 'JWT'}`. A service account, an

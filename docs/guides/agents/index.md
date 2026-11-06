@@ -6,7 +6,7 @@ The `agents` subsystem defines the executable agent hierarchy, orchestration she
 - `LlmAgent`, `Agent`, and `isLlmAgent` - Language-model agent supporting instructions, tools, structured schemas, context compactors, planners, code executors, and agent transfer.
 - `SequentialAgent`, `ParallelAgent`, and `LoopAgent` - Deterministic orchestration agents that run `subAgents` in sequence, concurrently on isolated branches, or repeatedly until escalation.
 - `LangGraphAgent`, `isLangGraphAgent`, `getLastHumanMessages`, `LangGraphHumanMessage`, `LangGraphAIMessage`, and `LangGraphSystemMessage` - Adapter agent that wraps a compiled LangGraph state graph (`CompiledGraphLike`) for single-turn and multi-turn execution.
-- `InvocationContext`, `ReadonlyContext`, `Context`, `CallbackContext`, `LlmCallsLimitExceededError`, and `isLlmCallsLimitExceededError` - Per-invocation state containers, callback and tool context wrappers, and shared LLM call budget enforcement.
+- `InvocationContext`, `ReadonlyContext`, `Context`, `CallbackContext`, `injectSessionState`, `LlmCallsLimitExceededError`, and `isLlmCallsLimitExceededError` - Per-invocation state containers, callback and tool context wrappers, instruction template interpolation, and shared LLM call budget enforcement.
 - `RunConfig`, `createRunConfig`, `StreamingMode`, `LiveRequestQueue`, `ActiveStreamingTool`, and `TranscriptionEntry` - Runtime configuration, bidirectional request queueing, live streaming tool tracking, and audio transcription buffering.
 
 ## Introduction
@@ -111,7 +111,7 @@ flowchart LR
 1. **Tree construction and cloning**: `new BaseAgent(config)` validates that `name` is a valid JavaScript identifier other than `'user'` and links each child in `subAgents` by setting `child.parentAgent = this`. An agent instance can belong to only one parent; calling `agent.clone(overrides)` constructs a detached copy with recursively cloned `subAgents`.
 2. **Context propagation and cost tracking**: `BaseAgent` creates a child `InvocationContext` for each agent call. The child context copies the parent's `invocationId`, `session`, `runConfig`, and internal cost manager so `ctx.incrementLlmCallCount()` enforces `runConfig.maxLlmCalls` across the entire invocation tree and throws `LlmCallsLimitExceededError` when exceeded.
 3. **Lifecycle callbacks and context layers**:
-   - `ReadonlyContext` exposes read-only `invocationId`, `agentName`, `userId`, `sessionId`, `userContent`, `state`, and `a2aMetadata` to `InstructionProvider` functions.
+   - `ReadonlyContext` exposes read-only `invocationId`, `agentName`, `userId`, `sessionId`, `userContent`, `state`, and `a2aMetadata` to `InstructionProvider` functions. Because `InstructionProvider` outputs bypass automatic `{state}` and `{artifact.*}` interpolation, call `await injectSessionState(template, readonlyContext)` inside custom `InstructionProvider` functions when you still want template placeholders populated.
    - `Context`, aliased as `CallbackContext`, extends `ReadonlyContext` with a delta-recording `state` (`State`), `actions` (`EventActions`), `loadArtifact`, `saveArtifact`, `listArtifacts`, `searchMemory`, `requestCredential`, `getAuthResponse`, and `requestConfirmation`.
    - `beforeAgentCallback` runs before `runAsyncImpl`. If any callback in the list returns a `Content` object, `BaseAgent` yields an event carrying that content and skips both `runAsyncImpl` and `afterAgentCallback`.
    - `afterAgentCallback` runs after `runAsyncImpl` finishes and can emit a trailing event by returning a `Content` object.

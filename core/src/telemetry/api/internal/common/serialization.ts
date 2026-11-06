@@ -14,7 +14,9 @@ import {getEnvVar} from '../../../../utils/env_aware_utils.js';
  */
 export function safeJsonSerialize(obj: unknown): string {
   try {
-    return JSON.stringify(obj);
+    return JSON.stringify(obj, (_key, value: unknown) =>
+      typeof value === 'bigint' ? '<not serializable>' : value,
+    );
   } catch (_e: unknown) {
     return '<not serializable>';
   }

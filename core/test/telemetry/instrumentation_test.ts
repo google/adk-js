@@ -530,6 +530,70 @@ describe('content capture', () => {
     ]);
   });
 
+  it('serializes functionResponse byte parts and replaces bigint values', async () => {
+    vi.stubEnv(CAPTURE_ENV, 'SPAN_ONLY');
+    const params = inferenceParams();
+    params.llmRequest.contents = [
+      {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              name: 'test_function_1',
+              response: {
+                result: new Uint8Array([116, 101, 115, 116]),
+                nonSerializableBigInt: BigInt(42),
+              },
+            },
+          },
+        ],
+      },
+      {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              name: 'test_function_2',
+              response: {
+                result: {
+                  inlineData: {
+                    data: Buffer.from('test_data').toString('base64'),
+                    mimeType: 'application/octet-stream',
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+    ];
+
+    await drain(
+      recordInference(params, () =>
+        streamOf([textResponse('done', {finishReason: FinishReason.STOP})]),
+      ),
+    );
+
+    const span = onlySpan(`generate_content ${MODEL}`);
+    const messages = parseJsonAttribute(
+      span,
+      'gen_ai.input.messages',
+    ) as Array<{
+      parts: Array<{response: Record<string, unknown>}>;
+    }>;
+    expect(messages).toHaveLength(2);
+    expect(messages[0].parts[0].response['nonSerializableBigInt']).toBe(
+      '<not serializable>',
+    );
+    expect(
+      (
+        messages[1].parts[0].response['result'] as {
+          inlineData: {mimeType: string};
+        }
+      ).inlineData.mimeType,
+    ).toBe('application/octet-stream');
+  });
+
   it('does not copy inline data bytes into the messages', async () => {
     vi.stubEnv(CAPTURE_ENV, 'SPAN_ONLY');
     const params = inferenceParams();
@@ -1153,5 +1217,37 @@ describe('recordSendData', () => {
     );
     expect(span.attributes['gcp.vertex.agent.event_id']).toBe(EVENT_ID);
     expect(parseJsonAttribute(span, 'gcp.vertex.agent.data')).toEqual(data);
+  });
+
+  it('replaces bigint values with <not serializable> when serializing span payloads', async () => {
+    const data = [
+      {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              name: 'test_function_1',
+              response: {
+                result: new Uint8Array([116, 101, 115, 116]),
+                nonSerializableBigInt: BigInt(42),
+              },
+            },
+          },
+        ],
+      },
+    ] as unknown as Content[];
+
+    await recordSendData(
+      {invocationContext: createInvocationContext(), eventId: EVENT_ID, data},
+      async () => {},
+    );
+
+    const span = onlySpan('send_data');
+    const parsed = parseJsonAttribute(span, 'gcp.vertex.agent.data') as Array<{
+      parts: Array<{functionResponse: {response: Record<string, unknown>}}>;
+    }>;
+    expect(
+      parsed[0].parts[0].functionResponse.response['nonSerializableBigInt'],
+    ).toBe('<not serializable>');
   });
 });

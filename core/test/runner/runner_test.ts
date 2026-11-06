@@ -8,23 +8,29 @@ import {
   App,
   BaseAgent,
   BasePlugin,
+  BaseTool,
+  BaseToolset,
   createEvent,
   createResumabilityConfig,
   determineAgentForResumption,
   Event,
   InMemoryArtifactService,
+  InMemoryRunner,
   InMemorySessionService,
   INTERNAL_METADATA_PREFIX,
   InvocationContext,
+  isParallelWorker,
   isRoutableLlmAgent,
   LlmAgent,
+  ParallelWorker,
   RESTORED_EVENT_KEY,
   Runner,
   ScopedArtifactService,
   SessionArtifactService,
+  Workflow,
 } from '@google/adk';
 import {Content, FunctionCall, FunctionResponse} from '@google/genai';
-import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {buildAbortEvents} from '../../src/events/abort_events.js';
 import {logger} from '../../src/utils/logger.js';
 
@@ -2260,5 +2266,172 @@ describe('Runner autoCreateSession', () => {
       userId: TEST_USER_ID,
       sessionId: MISSING_SESSION_ID,
     });
+  });
+});
+
+class MockCleanupToolset extends BaseToolset {
+  closeSpy = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+
+  constructor() {
+    super();
+  }
+
+  override async getTools(): Promise<BaseTool[]> {
+    return [];
+  }
+
+  override async close(): Promise<void> {
+    return this.closeSpy();
+  }
+}
+
+describe('Runner.close', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('closes toolsets across root agent, subAgents, and deduplicates shared toolsets', async () => {
+    const sharedToolset = new MockCleanupToolset();
+    const subToolset = new MockCleanupToolset();
+
+    const subAgent = new LlmAgent({
+      name: 'sub_agent',
+      model: 'gemini-flash-latest',
+      tools: [sharedToolset, subToolset],
+    });
+    const rootAgent = new LlmAgent({
+      name: 'root_agent',
+      model: 'gemini-flash-latest',
+      tools: [sharedToolset],
+      subAgents: [subAgent],
+    });
+
+    const runner = new InMemoryRunner({
+      agent: rootAgent,
+      appName: TEST_APP_ID,
+    });
+
+    await runner.close();
+
+    expect(sharedToolset.closeSpy).toHaveBeenCalledTimes(1);
+    expect(subToolset.closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes toolsets on agents inside a Workflow and ParallelWorker', async () => {
+    const workflowToolset = new MockCleanupToolset();
+    const parallelToolset = new MockCleanupToolset();
+
+    const workflowAgent = new LlmAgent({
+      name: 'workflow_agent',
+      model: 'gemini-flash-latest',
+      tools: [workflowToolset],
+    });
+    const parallelAgent = new LlmAgent({
+      name: 'parallel_agent',
+      model: 'gemini-flash-latest',
+      tools: [parallelToolset],
+    });
+    const workerNode = new ParallelWorker(parallelAgent);
+    expect(isParallelWorker(workerNode)).toBe(true);
+    expect(isParallelWorker(workflowAgent)).toBe(false);
+    expect(isParallelWorker(null)).toBe(false);
+    const workflow = new Workflow({
+      name: 'test_workflow',
+      edges: [
+        ['START', workflowAgent],
+        [workflowAgent, workerNode],
+      ],
+    });
+
+    const runner = new InMemoryRunner({
+      agent: workflow,
+      appName: TEST_APP_ID,
+    });
+
+    await runner.close();
+
+    expect(workflowToolset.closeSpy).toHaveBeenCalledTimes(1);
+    expect(parallelToolset.closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs an error and continues closing remaining toolsets when a toolset throws', async () => {
+    const failingToolset = new MockCleanupToolset();
+    failingToolset.closeSpy.mockRejectedValueOnce(new Error('close boom'));
+    const objectFailingToolset = new MockCleanupToolset();
+    objectFailingToolset.closeSpy.mockRejectedValueOnce({code: 'ERR_CLOSE'});
+    const healthyToolset = new MockCleanupToolset();
+    const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+
+    const rootAgent = new LlmAgent({
+      name: 'root_agent',
+      model: 'gemini-flash-latest',
+      tools: [failingToolset, objectFailingToolset, healthyToolset],
+    });
+
+    const runner = new InMemoryRunner({
+      agent: rootAgent,
+      appName: TEST_APP_ID,
+    });
+
+    await expect(runner.close()).resolves.toBeUndefined();
+
+    expect(failingToolset.closeSpy).toHaveBeenCalledTimes(1);
+    expect(objectFailingToolset.closeSpy).toHaveBeenCalledTimes(1);
+    expect(healthyToolset.closeSpy).toHaveBeenCalledTimes(1);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Error closing toolset MockCleanupToolset: close boom',
+      ),
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Error closing toolset MockCleanupToolset: {"code":"ERR_CLOSE"}',
+      ),
+    );
+    expect(debugSpy).toHaveBeenCalledWith(
+      'Closing toolset: MockCleanupToolset',
+    );
+    expect(debugSpy).toHaveBeenCalledWith(
+      'Successfully closed toolset: MockCleanupToolset',
+    );
+  });
+
+  it('times out multiple hanging toolsets concurrently within one 10-second window', async () => {
+    vi.useFakeTimers();
+    const firstHangingToolset = new MockCleanupToolset();
+    firstHangingToolset.closeSpy.mockImplementation(
+      () => new Promise<void>(() => {}),
+    );
+    const secondHangingToolset = new MockCleanupToolset();
+    secondHangingToolset.closeSpy.mockImplementation(
+      () => new Promise<void>(() => {}),
+    );
+    const healthyToolset = new MockCleanupToolset();
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    const rootAgent = new LlmAgent({
+      name: 'root_agent',
+      model: 'gemini-flash-latest',
+      tools: [firstHangingToolset, secondHangingToolset, healthyToolset],
+    });
+
+    const runner = new InMemoryRunner({
+      agent: rootAgent,
+      appName: TEST_APP_ID,
+    });
+
+    const closePromise = runner.close();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await closePromise;
+
+    expect(firstHangingToolset.closeSpy).toHaveBeenCalledTimes(1);
+    expect(secondHangingToolset.closeSpy).toHaveBeenCalledTimes(1);
+    expect(healthyToolset.closeSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledTimes(2);
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Toolset MockCleanupToolset cleanup timed out',
+    );
   });
 });

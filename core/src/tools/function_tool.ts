@@ -455,6 +455,11 @@ function annotateNullableFields(schema: Record<string, unknown>): void {
     if (!isPlainRecord(propertySchema)) {
       continue;
     }
+    const propType = propertySchema['type'];
+    if (propType === null || propType === 'null' || propType === Type.NULL) {
+      propertySchema['type'] = Type.OBJECT;
+      propertySchema['nullable'] = true;
+    }
     const anyOf = propertySchema['anyOf'];
     if (!Array.isArray(anyOf)) {
       continue;
@@ -570,9 +575,12 @@ function processParameterSchema(
 }
 
 function mapPropertySchemaType(propertySchema: Record<string, unknown>): void {
-  if (typeof propertySchema['type'] === 'string') {
-    propertySchema['type'] =
-      SCHEMA_TYPE_MAP[propertySchema['type']] ?? Type.TYPE_UNSPECIFIED;
+  const rawType = propertySchema['type'];
+  if (rawType === null || rawType === 'null' || rawType === Type.NULL) {
+    propertySchema['type'] = Type.OBJECT;
+    propertySchema['nullable'] = true;
+  } else if (typeof rawType === 'string') {
+    propertySchema['type'] = SCHEMA_TYPE_MAP[rawType] ?? Type.TYPE_UNSPECIFIED;
     if (
       propertySchema['type'] === Type.ARRAY &&
       isPlainRecord(propertySchema['items'])

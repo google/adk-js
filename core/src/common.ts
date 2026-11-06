@@ -24,6 +24,7 @@ export {
   handleFunctionCallsLive,
   isToolNotFound,
 } from './agents/functions.js';
+export {injectSessionState} from './agents/instructions.js';
 export {
   InvocationContext,
   LlmCallsLimitExceededError,
@@ -554,6 +555,7 @@ export {
   isNodeSchemaValidationError,
   isNodeState,
   isNodeTimeoutError,
+  isParallelWorker,
   isRequestInput,
   isRunnableRoot,
   isWorkflow,

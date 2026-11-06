@@ -11,6 +11,7 @@ import {
   AuthCredentialTypes,
 } from '../../auth/auth_credential.js';
 import {AuthScheme} from '../../auth/auth_schemes.js';
+import {toSnakeCaseName} from '../../utils/case_utils.js';
 import {experimental} from '../../utils/experimental.js';
 import {
   isJsonObject,
@@ -20,7 +21,7 @@ import {
 import {logger} from '../../utils/logger.js';
 import {BaseTool} from '../base_tool.js';
 import {BaseToolset, ToolPredicate} from '../base_toolset.js';
-import {serviceAccountDictToSchemeCredential} from '../openapi_tool/auth/auth_helpers.js';
+import {serviceAccountRecordToSchemeCredential} from '../openapi_tool/auth/auth_helpers.js';
 import {OpenApiSpecParser} from '../openapi_tool/openapi_spec_parser/openapi_spec_parser.js';
 import {OpenAPIToolset} from '../openapi_tool/openapi_toolset.js';
 import {createRestApiTool} from '../openapi_tool/rest_api_tool.js';
@@ -246,7 +247,9 @@ export class ApplicationIntegrationToolset extends BaseToolset {
     );
     const spec = toOpenApiDocument(specDict);
     addDynamicAuthConfigToConnectionSchemas(spec);
-    const operations = new OpenApiSpecParser().parse(spec);
+    const operations = new OpenApiSpecParser({
+      preservePropertyNames: true,
+    }).parse(spec);
     // A connection spec tells its operations apart by a URL fragment, such as
     // `…?triggerId=api_trigger/ExecuteConnection#list_Issues`. A fragment is
     // never sent, and a tool would carry it into the query string, so each
@@ -256,13 +259,17 @@ export class ApplicationIntegrationToolset extends BaseToolset {
       const operation = toStringValue(operationObject['x-operation']);
       const entity = toStringValue(operationObject['x-entity']);
       const action = toStringValue(operationObject['x-action']);
-      const restApiTool = createRestApiTool({
-        ...openApiOperation,
-        endpoint: {
-          ...openApiOperation.endpoint,
-          path: removeFragment(openApiOperation.endpoint.path),
+      const restApiTool = createRestApiTool(
+        {
+          ...openApiOperation,
+          name: toSnakeCaseName(openApiOperation.name),
+          endpoint: {
+            ...openApiOperation.endpoint,
+            path: removeFragment(openApiOperation.endpoint.path),
+          },
         },
-      });
+        {preservePropertyNames: true},
+      );
       restApiTool.configureAuthScheme(AUTH_SCHEME);
       restApiTool.configureAuthCredential(authCredential);
       const tool = new IntegrationConnectorTool({
@@ -300,7 +307,6 @@ function addDynamicAuthConfigToConnectionSchemas(
       schemaName.endsWith('_Request') &&
       isJsonObject(schema) &&
       isJsonObject(schema.properties) &&
-      !('query' in schema.properties) &&
       !('dynamicAuthConfig' in schema.properties)
     ) {
       schema.properties = {
@@ -341,7 +347,7 @@ function buildAuthCredential(serviceAccountJson?: string): AuthCredential {
   if (!isJsonObject(key)) {
     throw new Error('serviceAccountJson must hold a JSON object.');
   }
-  const [, authCredential] = serviceAccountDictToSchemeCredential(key, [
+  const [, authCredential] = serviceAccountRecordToSchemeCredential(key, [
     CLOUD_PLATFORM_SCOPE,
   ]);
   return authCredential;
