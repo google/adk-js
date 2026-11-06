@@ -45,7 +45,8 @@ describe('ToolboxToolset', () => {
 
     expect(
       () =>
-        new ToolboxToolset('http://127.0.0.1:5000', {
+        new ToolboxToolset({
+          serverUrl: 'http://127.0.0.1:5000',
           toolNames: [],
         }),
     ).toThrow('toolNames and toolsetName cannot both be undefined.');
@@ -149,7 +150,7 @@ describe('ToolboxToolset', () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 
-  it('supports snake_case client methods, prefix, and toolFilter', async () => {
+  it('applies prefix and toolFilter to tools from loadToolset and loadTool', async () => {
     const existingTool = new FunctionTool({
       name: 'pre_wrapped',
       description: 'Already wrapped tool',
@@ -160,14 +161,15 @@ describe('ToolboxToolset', () => {
       return 'raw_fn_ok';
     }
 
-    const toolset = new ToolboxToolset('http://127.0.0.1:5000', {
+    const toolset = new ToolboxToolset({
+      serverUrl: 'http://127.0.0.1:5000',
       toolsetName: 'travel',
       toolNames: ['single_op'],
       prefix: 'tbx',
       toolFilter: ['tbx_pre_wrapped', 'tbx_single_op'],
       client: {
-        load_toolset: async () => [existingTool, rawFunctionTool],
-        load_tool: async (name: string) => ({
+        loadToolset: async () => [existingTool, rawFunctionTool],
+        loadTool: async (name: string) => ({
           name,
           description: 'Single tool',
           execute: () => 'single_ok',
@@ -214,7 +216,7 @@ describe('ToolboxToolset', () => {
       client: {},
     });
     await expect(missingToolsetLoader.getTools()).rejects.toThrow(
-      /loadToolset or load_toolset/,
+      'ToolboxClient does not implement loadToolset.',
     );
 
     const missingToolLoader = new ToolboxToolset({
@@ -223,7 +225,7 @@ describe('ToolboxToolset', () => {
       client: {},
     });
     await expect(missingToolLoader.getTools()).rejects.toThrow(
-      /loadTool or load_tool/,
+      'ToolboxClient does not implement loadTool.',
     );
   });
 
@@ -247,19 +249,27 @@ describe('ToolboxToolset', () => {
     );
   });
 
-  it('test_toolbox_toolset_delegates_typed_lifecycle', async () => {
+  it('delegates loadToolset, loadTool, and close to the underlying ToolboxClient', async () => {
+    const toolsetTool = new FunctionTool({
+      name: 'lookup',
+      description: 'Lookup tool',
+      execute: () => 'ok',
+    });
     const dummyTool = new FunctionTool({
       name: 'search',
       description: 'Search tool',
       execute: () => 'ok',
     });
+    const loadToolset = vi.fn(async () => [toolsetTool]);
     const loadTool = vi.fn(async () => dummyTool);
     const close = vi.fn(async () => {});
 
     const toolset = new ToolboxToolset({
       serverUrl: 'https://toolbox.example',
+      toolsetName: 'travel',
       toolNames: ['search'],
       client: {
+        loadToolset,
         loadTool,
         close,
       },
@@ -268,7 +278,11 @@ describe('ToolboxToolset', () => {
     const tools = await toolset.getTools(readonlyContext);
     await toolset.close();
 
-    expect(tools).toEqual([dummyTool]);
+    expect(tools).toEqual([toolsetTool, dummyTool]);
+    expect(loadToolset).toHaveBeenCalledWith('travel', {
+      authTokenGetters: {},
+      boundParams: {},
+    });
     expect(loadTool).toHaveBeenCalledWith('search', {
       authTokenGetters: {},
       boundParams: {},
