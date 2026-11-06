@@ -6,6 +6,7 @@
 
 import {
   AddSessionToEvalSetRequest,
+  type AgentRuntimeRequestHooks,
   App,
   BaseArtifactService,
   BaseMemoryService,
@@ -64,6 +65,7 @@ import {
   setupTelemetry,
 } from '../utils/telemetry_utils.js';
 import {getAgentGraphAsDot, getWorkflowHighlights} from './agent_graph.js';
+import {createAgentRuntimeMiddleware} from './agent_runtime_middleware.js';
 import {
   collectSubWorkflows,
   GraphTarget,
@@ -234,18 +236,25 @@ export class AdkApiServer {
     this.app = express();
   }
 
-  private async setupTelemetry(): Promise<void> {
+  private async setupTelemetry(): Promise<
+    AgentRuntimeRequestHooks | undefined
+  > {
     const internalExporters = [
       new SimpleSpanProcessor(new ApiServerSpanExporter(this.traceDict)),
       new SimpleSpanProcessor(this.memoryExporter),
     ];
 
-    await setupTelemetry(this.otelToCloud, internalExporters);
+    const requestHooks = await setupTelemetry(
+      this.otelToCloud,
+      internalExporters,
+    );
 
     if (this.registerProcessors) {
       const tracerProvider = trace.getTracerProvider();
       this.registerProcessors(tracerProvider);
     }
+
+    return requestHooks;
   }
 
   private async initA2A() {
@@ -283,7 +292,19 @@ export class AdkApiServer {
 
   private async init() {
     const app = this.app;
-    await this.setupTelemetry();
+    const requestHooks = await this.setupTelemetry();
+
+    // On Agent Runtime the CPU is throttled once a request ends, so telemetry
+    // is exported from the request path. Registered first, so every route,
+    // including /health, A2A and rejected requests, is covered.
+    if (requestHooks) {
+      app.use(
+        createAgentRuntimeMiddleware({
+          hooks: requestHooks,
+          logger: this.logger,
+        }),
+      );
+    }
 
     // Registered before any route (including /health, /, /version) so the
     // DNS-rebinding guard applies to every endpoint, not just the ones

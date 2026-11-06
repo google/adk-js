@@ -5,6 +5,7 @@
  */
 
 import {AGENT_CARD_PATH, AgentCard} from '@a2a-js/sdk';
+import * as adk from '@google/adk';
 import {
   App,
   BaseArtifactService,
@@ -29,7 +30,8 @@ import {
   StreamingMode,
   Workflow,
 } from '@google/adk';
-import {ReadableSpan} from '@opentelemetry/sdk-trace-base';
+import {emptyResource} from '@opentelemetry/resources';
+import {ReadableSpan, SpanProcessor} from '@opentelemetry/sdk-trace-base';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as os from 'node:os';
@@ -2125,6 +2127,70 @@ describe('AdkWebServer', () => {
       } finally {
         await specificServer.stop();
       }
+    });
+  });
+
+  describe('Agent Runtime telemetry', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      vi.restoreAllMocks();
+    });
+
+    /** Starts a server, sends one request, and counts telemetry flushes. */
+    async function countFlushesForOneRequest({
+      agentEngineId,
+      otelToCloud,
+    }: {
+      agentEngineId?: string;
+      otelToCloud: boolean;
+    }): Promise<number> {
+      vi.stubEnv('GOOGLE_CLOUD_AGENT_ENGINE_ID', agentEngineId);
+      const forceFlush = vi.fn().mockResolvedValue(undefined);
+      vi.spyOn(adk, 'getGcpProjectId').mockResolvedValue('test-project');
+      vi.spyOn(adk, 'getGcpExporters').mockResolvedValue({
+        spanProcessors: [{forceFlush} as unknown as SpanProcessor],
+      });
+      vi.spyOn(adk, 'getGcpResource').mockResolvedValue(emptyResource());
+      vi.spyOn(adk, 'maybeSetOtelProviders').mockReturnValue(undefined);
+      const telemetryServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+        otelToCloud,
+      });
+      await telemetryServer.start();
+      try {
+        const response = await fetch(`${telemetryServer.url}/version`);
+        expect(response.status).toBe(200);
+      } finally {
+        await telemetryServer.stop();
+      }
+      return forceFlush.mock.calls.length;
+    }
+
+    it('flushes telemetry on each request on Agent Runtime with cloud export', async () => {
+      await expect(
+        countFlushesForOneRequest({
+          agentEngineId: 'agent-123',
+          otelToCloud: true,
+        }),
+      ).resolves.toBe(1);
+    });
+
+    it('installs no request hooks off Agent Runtime', async () => {
+      await expect(
+        countFlushesForOneRequest({otelToCloud: true}),
+      ).resolves.toBe(0);
+    });
+
+    it('installs no request hooks without cloud export', async () => {
+      await expect(
+        countFlushesForOneRequest({
+          agentEngineId: 'agent-123',
+          otelToCloud: false,
+        }),
+      ).resolves.toBe(0);
     });
   });
 

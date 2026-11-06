@@ -50,6 +50,7 @@
     "concurrently": "^10.0.6",
     "esbuild": "^0.28.1",
     "eslint": "^9.37.0",
+    "fast-check": "^4.10.2",
     "globals": "^17.13.0",
     "gts": "^7.0.0",
     "http-server": "^14.1.1",

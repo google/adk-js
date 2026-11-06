@@ -189,7 +189,15 @@ export {SkillToolset} from './tools/skill/skill_toolset.js';
 export type {JsonObject} from './utils/json_utils.js';
 
 export * from './integrations/agent_registry/agent_registry.js';
+export {
+  agentRuntimeRequestHooks,
+  type AgentRuntimeRequestHooks,
+} from './telemetry/export/agent_runtime.js';
 export * from './telemetry/export/google_cloud.js';
+export {
+  RequestDrivenMetricReader,
+  type RequestDrivenMetricReaderOptions,
+} from './telemetry/export/request_driven_metric_reader.js';
 export * from './telemetry/export/setup.js';
 export * from './tools/google_api_tool/index.js';
 // Also available as `@google/adk/tools/mcp`, which does not evaluate the rest
