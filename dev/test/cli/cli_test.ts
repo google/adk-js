@@ -13,6 +13,7 @@ import {runAgent} from '../../src/cli/cli_run.js';
 import {deployToAgentEngine} from '../../src/cli/deploy/cli_deploy_agent_engine.js';
 import {deployToCloudRun} from '../../src/cli/deploy/cli_deploy_cloud_run.js';
 import {AdkApiServer} from '../../src/server/adk_api_server.js';
+import {version} from '../../src/version.js';
 
 vi.mock('../../src/server/adk_api_server', () => {
   return {
@@ -389,7 +390,7 @@ describe('CLI Entrypoint', () => {
         expect.objectContaining({
           port: 8000,
           serviceName: 'adk-default-service-name',
-          adkVersion: 'latest',
+          adkVersion: version,
           withUi: false,
         }),
       );
@@ -469,7 +470,7 @@ describe('CLI Entrypoint', () => {
       expect(deployToAgentEngine).toHaveBeenCalledWith(
         expect.objectContaining({
           port: 8080,
-          adkVersion: 'latest',
+          adkVersion: version,
           withUi: false,
         }),
       );
@@ -621,7 +622,7 @@ describe('CLI Entrypoint', () => {
       expect(deployToAgentEngine).toHaveBeenCalledWith(
         expect.objectContaining({
           port: 8080,
-          adkVersion: 'latest',
+          adkVersion: version,
           withUi: false,
         }),
       );
