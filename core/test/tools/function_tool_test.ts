@@ -1121,7 +1121,7 @@ describe('FunctionTool', () => {
       return arg1;
     }
 
-    class AsyncCallableWith2ArgsAndNoToolContext {
+    class AsyncHandlerWith2ArgsAndNoToolContext {
       readonly prefix = '';
 
       async execute({
@@ -1146,7 +1146,7 @@ describe('FunctionTool', () => {
       return arg1;
     }
 
-    class AsyncCallableWith1ArgAndToolContext {
+    class AsyncHandlerWith1ArgAndToolContext {
       readonly prefix = '';
 
       async execute(
@@ -1219,15 +1219,15 @@ describe('FunctionTool', () => {
       expect(result).toBe('test_value_1');
     });
 
-    it('runs an async bound callable method with toolContext', async () => {
-      const callable = new AsyncCallableWith1ArgAndToolContext();
+    it('runs an async bound method with toolContext', async () => {
+      const handler = new AsyncHandlerWith1ArgAndToolContext();
       const tool = new FunctionTool({
-        name: 'AsyncCallableWith1ArgAndToolContext',
-        description: 'Async callable with 1 arg and tool context.',
+        name: 'AsyncHandlerWith1ArgAndToolContext',
+        description: 'Async handler with 1 arg and tool context.',
         parameters: z4.object({arg1: z4.string()}),
-        execute: callable.execute.bind(callable),
+        execute: handler.execute.bind(handler),
       });
-      expect(tool.name).toBe('AsyncCallableWith1ArgAndToolContext');
+      expect(tool.name).toBe('AsyncHandlerWith1ArgAndToolContext');
       const result = await tool.runAsync({
         args: {arg1: 'test_value_1'},
         toolContext: emptyContext,
@@ -1250,18 +1250,18 @@ describe('FunctionTool', () => {
       expect(result).toBe('test_value_1');
     });
 
-    it('runs async callable without tool context', async () => {
-      const callable = new AsyncCallableWith2ArgsAndNoToolContext();
+    it('runs an async handler without toolContext', async () => {
+      const handler = new AsyncHandlerWith2ArgsAndNoToolContext();
       const executeFn = (args: {arg1: string; arg2: string}) =>
-        callable.execute(args);
-      Object.defineProperty(executeFn, 'name', {value: 'Async callable name'});
+        handler.execute(args);
+      Object.defineProperty(executeFn, 'name', {value: 'Async handler name'});
       const tool = new FunctionTool({
-        description: 'Async callable doc',
+        description: 'Async handler doc',
         parameters: twoArgSchema,
         execute: executeFn,
       });
-      expect(tool.name).toBe('Async callable name');
-      expect(tool.description).toBe('Async callable doc');
+      expect(tool.name).toBe('Async handler name');
+      expect(tool.description).toBe('Async handler doc');
       const result = await tool.runAsync({
         args: {arg1: 'test_value_1', arg2: 'test_value_2'},
         toolContext: emptyContext,

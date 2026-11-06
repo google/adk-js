@@ -77,7 +77,7 @@ describe('GoogleApiToolset prebuilt service classes', () => {
     vi.restoreAllMocks();
   });
 
-  it('test_prebuilt_toolset_targets_its_documented_api_and_version', () => {
+  it('targets the documented api name and version for each prebuilt toolset', () => {
     for (const {ToolsetClass, apiName, apiVersion} of PREBUILT_TOOLSETS) {
       const toolset = new ToolsetClass();
       expect(isGoogleApiToolset(toolset)).toBe(true);
@@ -86,7 +86,7 @@ describe('GoogleApiToolset prebuilt service classes', () => {
     }
   });
 
-  it('test_prebuilt_toolset_forwards_constructor_arguments', async () => {
+  it('forwards constructor arguments from each prebuilt toolset', async () => {
     for (const {ToolsetClass, apiName, apiVersion} of PREBUILT_TOOLSETS) {
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
         ok: true,

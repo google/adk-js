@@ -515,7 +515,7 @@ describe('AgentTool', () => {
   });
 
   describe('inputSchema and outputSchema validation', () => {
-    it('test_custom_schema', async () => {
+    it('sends input as JSON and parses the output against custom input and output schemas', async () => {
       const subAgent = new LlmAgent({
         name: 'custom_schema_agent',
         description: 'Agent with custom input and output schemas',
@@ -644,7 +644,7 @@ describe('AgentTool', () => {
       ).rejects.toThrow();
     });
 
-    it('test_no_schema', async () => {
+    it('sends the request arg as plain text and returns the text response when the agent has no schemas', async () => {
       const toolAgent = new LlmAgent({
         name: 'tool_agent',
         description: 'Agent without explicit input or output schema',
@@ -694,7 +694,7 @@ describe('AgentTool', () => {
       expect(result).toBe('response1');
     });
 
-    it('test_update_state', async () => {
+    it('shares parent session state with the sub-agent and applies its state delta back to the parent', async () => {
       const toolAgent = new LlmAgent({
         name: 'tool_agent',
         instruction: 'input: {state_1}',
