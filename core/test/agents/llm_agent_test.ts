@@ -1045,6 +1045,111 @@ describe('LlmAgent long running tool termination', () => {
   });
 });
 
+describe('LlmAgent partial function call events', () => {
+  // Progressive SSE streaming yields a model's function calls in partial events
+  // before the final aggregated one. Partial events are not saved to the
+  // session, so running their calls ran every tool more than once and left
+  // function responses in history before the call they answer.
+  const callTurn = (
+    callId: string,
+    partial: boolean,
+    id?: string,
+  ): LlmResponse => ({
+    content: {
+      role: 'model',
+      parts: [{functionCall: {id, name: 'track', args: {callId}}}],
+    },
+    partial,
+  });
+
+  async function runTurns(
+    firstTurn: LlmResponse[],
+    streamingMode: StreamingMode,
+  ) {
+    const executed: string[] = [];
+    const track = new FunctionTool({
+      name: 'track',
+      description: 'Records each execution.',
+      parameters: z4.object({callId: z4.string()}),
+      execute: ({callId}) => {
+        executed.push(callId);
+        return {ok: true};
+      },
+    });
+    const model = new CountingMockLlm([
+      firstTurn,
+      [{content: {role: 'model', parts: [{text: 'done'}]}}],
+    ]);
+    const sessionService = new InMemorySessionService();
+    const runner = new Runner({
+      appName: 'test_app',
+      agent: new LlmAgent({name: 'test_agent', model, tools: [track]}),
+      sessionService,
+    });
+    const session = await sessionService.createSession({
+      appName: 'test_app',
+      userId: 'user',
+    });
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: 'user',
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'go'}]},
+      runConfig: createRunConfig({streamingMode}),
+    })) {
+      events.push(event);
+    }
+
+    const stored = await sessionService.getSession({
+      appName: 'test_app',
+      userId: 'user',
+      sessionId: session.id,
+    });
+    const history = stored!.events.flatMap((event) =>
+      (event.content?.parts ?? []).map((part) =>
+        part.functionCall
+          ? 'call'
+          : part.functionResponse
+            ? 'response'
+            : 'text',
+      ),
+    );
+    return {executed, events, history, callCount: model.callCount};
+  }
+
+  it.each([StreamingMode.SSE, StreamingMode.NONE])(
+    'runs only the final event function calls in %s mode',
+    async (streamingMode) => {
+      const {executed, events, history, callCount} = await runTurns(
+        [
+          callTurn('partial_1', true),
+          callTurn('partial_2', true),
+          callTurn('final', false),
+        ],
+        streamingMode,
+      );
+
+      expect(executed).toEqual(['final']);
+      expect(events.filter((event) => event.partial)).toHaveLength(2);
+      expect(callCount).toBe(2);
+      expect(history).toEqual(['text', 'call', 'response', 'text']);
+    },
+  );
+
+  // What progressive streaming sends: the final event repeats the call, with
+  // the same id, that the partial event already carried.
+  it('runs a call repeated in the final event once', async () => {
+    const {executed, history} = await runTurns(
+      [callTurn('only', true, 'call_1'), callTurn('only', false, 'call_1')],
+      StreamingMode.SSE,
+    );
+
+    expect(executed).toEqual(['only']);
+    expect(history).toEqual(['text', 'call', 'response', 'text']);
+  });
+});
+
 describe('LlmAgent Default Request Processors', () => {
   it('includes AUTH_PREPROCESSOR in default requestProcessors before CONTENT_REQUEST_PROCESSOR', () => {
     const agent = new LlmAgent({
