@@ -13,6 +13,8 @@ import {
   context,
   type Context,
   createContextKey,
+  defaultTextMapSetter,
+  propagation,
   type Span,
   SpanStatusCode,
   trace,
@@ -104,7 +106,10 @@ import {
   type SkillReport,
   type ToolCallOutcome,
 } from './internal/trace/tool.js';
-import {parseTraceparent} from './internal/trace/traceparent.js';
+import {
+  formatTraceparent,
+  parseTraceparent,
+} from './internal/trace/traceparent.js';
 import {
   bindOtelContextToAsyncGenerator,
   getTracer,
@@ -131,6 +136,14 @@ export interface AgentEngineTraceContext {
   readonly remoteParent?: string;
   /** The incoming traceparent string preserved as a support ID, or undefined if absent. */
   readonly supportId?: string;
+}
+
+/** Distributed trace context extracted from HTTP headers. */
+export interface ExtractedTraceContext {
+  /** The validated remote parent traceparent string, or undefined if absent or invalid. */
+  readonly remoteParent?: string;
+  /** The incoming tracestate string, or undefined if absent. */
+  readonly traceState?: string;
 }
 
 function getFirstHeaderValue(
@@ -185,6 +198,154 @@ export function extractAgentEngineContext(
   return {
     ...(remoteParent !== undefined ? {remoteParent} : {}),
     ...(supportId !== undefined ? {supportId} : {}),
+  };
+}
+
+/**
+ * Extracts W3C distributed trace context from HTTP request headers.
+ *
+ * Looks up headers case-insensitively. Validates `traceparent` syntax and
+ * returns it as `remoteParent` if valid; invalid headers are ignored.
+ * If present, `tracestate` is returned as `traceState`.
+ * Also falls back to `Google-Agent-Engine-Traceparent` if `traceparent` is absent.
+ *
+ * @param headers - Incoming HTTP headers object.
+ * @returns Extracted trace context.
+ */
+export function extractTraceContext(
+  headers?: Record<string, string | string[] | undefined> | null,
+): ExtractedTraceContext {
+  if (!headers || typeof headers !== 'object') {
+    return {};
+  }
+
+  let remoteParent: string | undefined;
+  const rawTraceparent = getFirstHeaderValue(headers, TRACEPARENT_HEADER);
+  if (rawTraceparent && parseTraceparent(rawTraceparent)) {
+    remoteParent = rawTraceparent;
+  } else if (!rawTraceparent) {
+    const rawAeTraceparent = getFirstHeaderValue(
+      headers,
+      AGENT_ENGINE_TRACEPARENT_HEADER,
+    );
+    if (rawAeTraceparent && parseTraceparent(rawAeTraceparent)) {
+      remoteParent = rawAeTraceparent;
+    }
+  }
+
+  let traceState: string | undefined;
+  const rawTraceState = getFirstHeaderValue(headers, 'tracestate');
+  if (rawTraceState && remoteParent !== undefined) {
+    traceState = rawTraceState;
+  }
+
+  return {
+    ...(remoteParent !== undefined ? {remoteParent} : {}),
+    ...(traceState !== undefined ? {traceState} : {}),
+  };
+}
+
+/**
+ * Injects W3C distributed trace context into an outgoing HTTP headers object.
+ *
+ * Uses the globally registered OpenTelemetry propagator via `propagation.inject`,
+ * falling back to formatting W3C `traceparent` and `tracestate` headers directly
+ * from the active span context if no `traceparent` header was set.
+ *
+ * If no trace is active, nothing is injected.
+ *
+ * @param headers - Optional HTTP headers object to mutate and return.
+ * @param ctx - Optional context to inject from. Defaults to the active context.
+ * @returns The headers object with injected trace context.
+ */
+export function injectTraceContext(
+  headers: Record<string, string> = {},
+  ctx: Context = context.active(),
+): Record<string, string> {
+  try {
+    propagation.inject(ctx, headers, defaultTextMapSetter);
+  } catch (error: unknown) {
+    logger.debug('propagation.inject failed:', error);
+  }
+
+  const hasTraceparent = Object.keys(headers).some(
+    (key) => key.toLowerCase() === TRACEPARENT_HEADER,
+  );
+
+  if (!hasTraceparent) {
+    const span = trace.getSpan(ctx);
+    if (span) {
+      const spanContext = span.spanContext();
+      if (trace.isSpanContextValid(spanContext)) {
+        const formatted = formatTraceparent(spanContext);
+        if (formatted) {
+          headers[TRACEPARENT_HEADER] = formatted;
+          if (spanContext.traceState) {
+            const serialized = spanContext.traceState.serialize();
+            if (serialized) {
+              headers['tracestate'] = serialized;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return headers;
+}
+
+/**
+ * Wraps a `fetch` function to inject active trace context headers into outgoing requests.
+ *
+ * @param customFetch - Optional fetch implementation to wrap. Defaults to global `fetch`.
+ * @returns A wrapped fetch function that injects trace context into headers.
+ */
+export function wrapFetchWithTraceContext(
+  customFetch?: typeof fetch,
+): typeof fetch {
+  return async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+  ): Promise<Response> => {
+    const baseFetch =
+      customFetch ?? (typeof fetch !== 'undefined' ? fetch : undefined);
+    if (!baseFetch) {
+      throw new Error(
+        'A `fetch` implementation was not provided and is not available in the global scope.',
+      );
+    }
+
+    const carrier: Record<string, string> = {};
+    injectTraceContext(carrier);
+
+    if (Object.keys(carrier).length === 0) {
+      return baseFetch(input, init);
+    }
+
+    if (typeof Headers !== 'undefined') {
+      const headers = new Headers(
+        init?.headers ??
+          (typeof Request !== 'undefined' && input instanceof Request
+            ? input.headers
+            : undefined),
+      );
+      for (const [key, value] of Object.entries(carrier)) {
+        if (!headers.has(key)) {
+          headers.set(key, value);
+        }
+      }
+      return baseFetch(input, {...init, headers});
+    }
+
+    const headers: Record<string, string> = {
+      ...(init?.headers as Record<string, string> | undefined),
+    };
+    for (const [key, value] of Object.entries(carrier)) {
+      if (!headers[key]) {
+        headers[key] = value;
+      }
+    }
+    return baseFetch(input, {...init, headers});
   };
 }
 

@@ -90,3 +90,28 @@ export function parseTraceparent(header: string): SpanContext | undefined {
 
   return spanContext;
 }
+
+/**
+ * Formats a span context into a W3C traceparent header string.
+ *
+ * Enforces W3C TraceContext formatting:
+ * - Version is `00`.
+ * - Trace ID is 32 hex digits.
+ * - Parent ID (span ID) is 16 hex digits.
+ * - Trace flags are 2 hex digits.
+ *
+ * @param spanContext The span context to format.
+ * @returns The formatted W3C traceparent string, or undefined if the span context is invalid.
+ */
+export function formatTraceparent(
+  spanContext: SpanContext,
+): string | undefined {
+  if (!trace.isSpanContextValid(spanContext)) {
+    return undefined;
+  }
+  const flags = (spanContext.traceFlags ?? 0)
+    .toString(16)
+    .padStart(2, '0')
+    .toLowerCase();
+  return `${VERSION_00}-${spanContext.traceId.toLowerCase()}-${spanContext.spanId.toLowerCase()}-${flags}`;
+}

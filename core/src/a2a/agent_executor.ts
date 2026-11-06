@@ -15,6 +15,7 @@ import {Event as AdkEvent} from '../events/event.js';
 import {isRunner, Runner, RunnerConfig} from '../runner/runner.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {Session} from '../sessions/session.js';
+import {extractTraceContext} from '../telemetry/api/instrumentation.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 import {
@@ -33,7 +34,10 @@ import {
   getA2ASessionMetadata,
 } from './metadata_converter_utils.js';
 import {toA2AParts, toGenAIContent} from './part_converter_utils.js';
-import {getA2aRequestMetadata} from './request_metadata.js';
+import {
+  getA2aRequestHeaders,
+  getA2aRequestMetadata,
+} from './request_metadata.js';
 
 /**
  * Represents a runner or a configuration for a runner.
@@ -109,6 +113,8 @@ export class A2AAgentExecutor implements AgentExecutor {
       adkRunner.appName,
     );
     const a2aMetadata = getA2aRequestMetadata(ctx);
+    const headers = getA2aRequestHeaders(ctx);
+    const {remoteParent} = extractTraceContext(headers);
     const executorContext = createExecutorContext({
       session,
       userContent: genAIUserMessage,
@@ -160,6 +166,9 @@ export class A2AAgentExecutor implements AgentExecutor {
         }),
       );
 
+      const effectiveRemoteParent =
+        remoteParent ?? this.config.runConfig?.remoteParent;
+
       const adkEvents: AdkEvent[] = [];
       for await (const adkEvent of adkRunner.runAsync({
         userId,
@@ -171,6 +180,9 @@ export class A2AAgentExecutor implements AgentExecutor {
         runConfig: {
           ...this.config.runConfig,
           remoteDelivered: true,
+          ...(effectiveRemoteParent
+            ? {remoteParent: effectiveRemoteParent}
+            : {}),
           ...(a2aMetadata ? {a2aMetadata} : {}),
         },
       })) {

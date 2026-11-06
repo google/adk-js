@@ -28,9 +28,16 @@ export type {
 } from './agent_executor.js';
 export {
   AdkDefaultRequestHandler,
+  deleteA2aRequestHeaders,
+  getA2aRequestHeaders,
   getA2aRequestMetadata,
+  setA2aRequestHeaders,
   toA2a,
 } from './agent_to_a2a.js';
-export type {A2aUserBuilder, ToA2aOptions} from './agent_to_a2a.js';
+export type {
+  A2aUserBuilder,
+  HttpHeadersRecord,
+  ToA2aOptions,
+} from './agent_to_a2a.js';
 export {bearerTokenUserBuilder} from './auth.js';
 export type {ExecutorContext} from './executor_context.js';
