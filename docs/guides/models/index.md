@@ -93,4 +93,3 @@ When the model is interrupted, the connection yields the text it has so far, and
 ## Related guides
 
 - [Claude on Vertex AI](../integrations/models/anthropic_llm/index.md) - Calling Anthropic Claude models on Vertex AI with `Claude` from `@google/adk-integrations`.
-- [Planners](../planners/index.md) - How a planner changes the `LlmRequest` before the model call and the response after it.
