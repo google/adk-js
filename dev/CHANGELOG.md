@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.5.0](https://github.com/google/adk-js/compare/devtools-v2.4.0...devtools-v2.5.0) (2026-11-06)
+
+
+### Features
+
+* **dev:** add --otel_to_cloud to deploy agent_engine ([#1162](https://github.com/google/adk-js/issues/1162)) ([0942574](https://github.com/google/adk-js/commit/09425745de3c2bd40267a3bd46c11da2ab4f852d))
+* **telemetry:** emit the v2 span tree and GenAI log records ([#1168](https://github.com/google/adk-js/issues/1168)) ([e8ef65b](https://github.com/google/adk-js/commit/e8ef65b77afeb69bcfee2d09c92de973d287a391))
+* **telemetry:** export traces, metrics and logs to telemetry.googleapis.com ([#1172](https://github.com/google/adk-js/issues/1172)) ([eedc561](https://github.com/google/adk-js/commit/eedc561304baedf4ff3587117df705dd0606eba1))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^2.4.0 to ^2.5.0
+
 ## [2.4.0](https://github.com/google/adk-js/compare/devtools-v2.3.0...devtools-v2.4.0) (2026-10-28)
 
 

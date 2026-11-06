@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.5.0](https://github.com/google/adk-js/compare/adk-v2.4.0...adk-v2.5.0) (2026-11-06)
+
+
+### Features
+
+* **core:** add setIdProvider to control generated IDs ([#1145](https://github.com/google/adk-js/issues/1145)) ([f6da02f](https://github.com/google/adk-js/commit/f6da02f5f653a2f356456605ce1ca68250de9f91))
+* port adk-python v1.1.1 changes to agents, auth, code_executors (+12 more) ([#1190](https://github.com/google/adk-js/issues/1190)) ([d22e6de](https://github.com/google/adk-js/commit/d22e6de31b4b2e7ec34cd77402b2e751e89b6fb1))
+* **telemetry:** add MCP HTTP exchange records and per-run telemetry overrides ([#1171](https://github.com/google/adk-js/issues/1171)) ([d48afb2](https://github.com/google/adk-js/commit/d48afb2f1a6ba4fb527fb7817336df7219689ad9))
+* **telemetry:** emit the v2 span tree and GenAI log records ([#1168](https://github.com/google/adk-js/issues/1168)) ([e8ef65b](https://github.com/google/adk-js/commit/e8ef65b77afeb69bcfee2d09c92de973d287a391))
+* **telemetry:** export traces, metrics and logs to telemetry.googleapis.com ([#1172](https://github.com/google/adk-js/issues/1172)) ([eedc561](https://github.com/google/adk-js/commit/eedc561304baedf4ff3587117df705dd0606eba1))
+* **telemetry:** record ADK duration, token and totals metrics ([#1170](https://github.com/google/adk-js/issues/1170)) ([842b96c](https://github.com/google/adk-js/commit/842b96c025fa7d1aac8fd7609497834a7c36e92e))
+* **tools:** add computer use tool and toolset with a BaseComputer interface ([#1166](https://github.com/google/adk-js/issues/1166)) ([7c2e81d](https://github.com/google/adk-js/commit/7c2e81d5a292ccd86c0e15875737c2a770c8dd4c))
+
+
+### Bug Fixes
+
+* **artifacts:** accept filenames starting with '..' in FileArtifactService ([#1189](https://github.com/google/adk-js/issues/1189)) ([06bc140](https://github.com/google/adk-js/commit/06bc140c501abb12525fab426bd8340d5e60b436))
+* **core:** read environment variables safely in the browser ([#1186](https://github.com/google/adk-js/issues/1186)) ([7595ed5](https://github.com/google/adk-js/commit/7595ed52c820335af4b5e62f5633ff433d40bd5c))
+* **skills:** key nested skill resources by forward-slash paths on Windows ([#1188](https://github.com/google/adk-js/issues/1188)) ([81eadef](https://github.com/google/adk-js/commit/81eadef13ed2948662a82fb7c0243a6c0c83620d))
+* **workflow:** stop storing a node's input as a user turn ([#1169](https://github.com/google/adk-js/issues/1169)) ([22a244e](https://github.com/google/adk-js/commit/22a244e60dc3c6243fc4e49e50abff0f3140ccff)), closes [#720](https://github.com/google/adk-js/issues/720)
+
 ## [2.4.0](https://github.com/google/adk-js/compare/adk-v2.3.0...adk-v2.4.0) (2026-10-28)
 
 
