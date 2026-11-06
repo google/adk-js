@@ -163,7 +163,7 @@ describe('GoogleLlm', () => {
     );
   });
 
-  describe('generateContentAsync streaming thoughtSignature propagation', () => {
+  describe('generateContentAsync streaming parallel function calls', () => {
     function makeStreamingChunk(
       parts: Record<string, unknown>[],
     ): GenerateContentResponse {
@@ -204,63 +204,20 @@ describe('GoogleLlm', () => {
       }
     }
 
-    it('should propagate thoughtSignature to subsequent function call parts missing it', async () => {
+    it('should emit parallel calls as one response, keeping the signature only on the first call', async () => {
       const signature = 'test-thought-signature-abc123';
 
-      // Chunk 1: function call WITH thoughtSignature
-      const chunk1 = makeStreamingChunk([
-        {
-          functionCall: {name: 'tool_a', args: {q: '1'}},
-          thoughtSignature: signature,
-        },
+      // Gemini streams parallel calls one per chunk and signs only the first.
+      const gemini = new GeminiWithStreamingChunks([
+        makeStreamingChunk([
+          {
+            functionCall: {name: 'tool_a', args: {q: '1'}},
+            thoughtSignature: signature,
+          },
+        ]),
+        makeStreamingChunk([{functionCall: {name: 'tool_b', args: {q: '2'}}}]),
+        makeStreamingChunk([{functionCall: {name: 'tool_c', args: {q: '3'}}}]),
       ]);
-      // Chunk 2: function call WITHOUT thoughtSignature
-      const chunk2 = makeStreamingChunk([
-        {functionCall: {name: 'tool_b', args: {q: '2'}}},
-      ]);
-      // Chunk 3: function call WITHOUT thoughtSignature
-      const chunk3 = makeStreamingChunk([
-        {functionCall: {name: 'tool_c', args: {q: '3'}}},
-      ]);
-
-      const gemini = new GeminiWithStreamingChunks([chunk1, chunk2, chunk3]);
-      const request: LlmRequest = {
-        contents: [{role: 'user', parts: [{text: 'do stuff'}]}],
-        config: {},
-        liveConnectConfig: {},
-        toolsDict: {},
-      };
-
-      const responses = [];
-      for await (const response of gemini.generateContentAsync(request, true)) {
-        responses.push(response);
-      }
-
-      // All function call parts should have the thoughtSignature
-      const functionCallResponses = responses.filter((r) =>
-        r.content?.parts?.some((p) => p.functionCall),
-      );
-
-      expect(functionCallResponses).toHaveLength(3);
-      for (const response of functionCallResponses) {
-        for (const part of response.content!.parts!) {
-          if (part.functionCall) {
-            expect(part.thoughtSignature).toBe(signature);
-          }
-        }
-      }
-    });
-
-    it('should not set thoughtSignature when no function call has one', async () => {
-      // All chunks lack thoughtSignature
-      const chunk1 = makeStreamingChunk([
-        {functionCall: {name: 'tool_a', args: {q: '1'}}},
-      ]);
-      const chunk2 = makeStreamingChunk([
-        {functionCall: {name: 'tool_b', args: {q: '2'}}},
-      ]);
-
-      const gemini = new GeminiWithStreamingChunks([chunk1, chunk2]);
       const request: LlmRequest = {
         contents: [{role: 'user', parts: [{text: 'do stuff'}]}],
         config: {},
@@ -276,15 +233,18 @@ describe('GoogleLlm', () => {
       const functionCallResponses = responses.filter((r) =>
         r.content?.parts?.some((p) => p.functionCall),
       );
-
-      expect(functionCallResponses).toHaveLength(2);
-      for (const response of functionCallResponses) {
-        for (const part of response.content!.parts!) {
-          if (part.functionCall) {
-            expect(part.thoughtSignature).toBeUndefined();
-          }
-        }
-      }
+      expect(functionCallResponses).toHaveLength(1);
+      expect(functionCallResponses[0].partial).toBeFalsy();
+      expect(
+        functionCallResponses[0].content!.parts!.map((p) => [
+          p.functionCall?.name,
+          p.thoughtSignature,
+        ]),
+      ).toEqual([
+        ['tool_a', signature],
+        ['tool_b', undefined],
+        ['tool_c', undefined],
+      ]);
     });
   });
 
@@ -871,16 +831,14 @@ describe('GoogleLlm', () => {
 
       const responses = await collectResponses(gemini, true);
 
-      expect(responses).toHaveLength(4);
+      expect(responses).toHaveLength(3);
       expect(responses[1].partial).toBe(false);
       expect(responses[1].content?.parts).toEqual([{text: 'Hello'}]);
       expect(responses[1].usageMetadata).toEqual(usageMetadata);
+      // The call is held until the stream ends, in case more calls follow.
       expect(responses[2].partial).toBe(false);
       expect(responses[2].content?.parts).toEqual([functionCallPart]);
       expect(responses[2].usageMetadata).toEqual(usageMetadata);
-      expect(responses[3].partial).toBe(false);
-      expect(responses[3].content).toBeUndefined();
-      expect(responses[3].usageMetadata).toEqual(usageMetadata);
     });
   });
 
