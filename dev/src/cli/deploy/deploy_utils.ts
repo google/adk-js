@@ -13,6 +13,7 @@ import {
   saveToFile,
   tryToFindFileRecursively,
 } from '../../utils/file_utils.js';
+import {version} from '../../version.js';
 
 export const execAsync = promisify(exec);
 export const spawnAsync = (
@@ -62,6 +63,12 @@ export interface CreateDockerFileContentOptions {
   otelToCloud?: boolean;
   a2a?: boolean;
   agentFileLoadOptions?: AgentFileOptions;
+  /**
+   * Version (or dist-tag) of `@google/adk-devtools` installed in the image.
+   * Defaults to the version of the CLI generating the Dockerfile, so the
+   * deployed server matches the tooling that staged and bundled the agent.
+   */
+  adkVersion?: string;
 }
 
 export interface BaseDeployOptions extends CreateDockerFileContentOptions {
@@ -72,7 +79,6 @@ export interface BaseDeployOptions extends CreateDockerFileContentOptions {
    * removes it when the deployment finishes.
    */
   tempFolder?: string;
-  adkVersion: string;
 }
 
 // Dockerfile instructions and the generated CMD's shell form have no
@@ -113,6 +119,11 @@ function assertNoDockerfileNewline(value: string, label: string): void {
   }
 }
 
+// An npm version, range or dist-tag ("2.4.0", "^2.4.0", "2.5.0-rc.1", "next").
+// It lands unquoted in a RUN line executed by /bin/sh, so whitespace and shell
+// metacharacters (including the `<`/`>` of comparator ranges) are rejected.
+const SAFE_NPM_VERSION_RE = /^[A-Za-z0-9_.+~^-]{1,128}$/;
+
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -126,6 +137,12 @@ export function createDockerFileContent(
   }
   if (options.appName) {
     assertSafeDockerfileToken(options.appName, 'appName');
+  }
+  const adkVersion = options.adkVersion || version;
+  if (!SAFE_NPM_VERSION_RE.test(adkVersion)) {
+    throw new Error(
+      `Invalid adkVersion ${JSON.stringify(adkVersion)}: must match ${SAFE_NPM_VERSION_RE} to be safely embedded in the generated Dockerfile.`,
+    );
   }
 
   const adkCommand = options.withUi ? 'web' : 'api_server';
@@ -201,7 +218,7 @@ COPY --chown=myuser:myuser "package.json" "/app/package.json"
 # Copy application files
 
 # Install Agent Deps - Start
-RUN npm install @google/adk-devtools@latest
+RUN npm install @google/adk-devtools@${adkVersion}
 RUN npm install --production
 # Install Agent Deps - End
 

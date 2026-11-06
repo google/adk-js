@@ -22,6 +22,7 @@ import {
   saveToFile,
   tryToFindFileRecursively,
 } from '../../src/utils/file_utils.js';
+import {version} from '../../src/version.js';
 
 type Callback = (error: Error | null, result?: unknown) => void;
 
@@ -292,6 +293,39 @@ describe('createDockerFileContent', () => {
     const content = createDockerFileContent(defaultOptions);
     expect(content).not.toMatch(/FROM node:(lts|latest|current)/);
   });
+
+  it('should pin adk-devtools to the version of the deploying CLI', () => {
+    const content = createDockerFileContent(defaultOptions);
+    expect(content).toContain(
+      `RUN npm install @google/adk-devtools@${version}`,
+    );
+    expect(content).not.toContain('@google/adk-devtools@latest');
+  });
+
+  it.each(['1.2.3', '^2.4.0', '~2.4', '2.5.0-rc.1', 'next', 'latest'])(
+    'should install the adk-devtools version given in adkVersion (%s)',
+    (adkVersion) => {
+      const content = createDockerFileContent({...defaultOptions, adkVersion});
+      expect(content).toContain(
+        `RUN npm install @google/adk-devtools@${adkVersion}\n`,
+      );
+    },
+  );
+
+  it.each([
+    '1.0.0 && curl evil',
+    '1.0.0\nRUN id',
+    '>=1.0.0',
+    '$(id)',
+    '1.0.0;id',
+  ])(
+    'should reject an adkVersion that is unsafe to embed (%j)',
+    (adkVersion) => {
+      expect(() =>
+        createDockerFileContent({...defaultOptions, adkVersion}),
+      ).toThrow(/Invalid adkVersion/);
+    },
+  );
 });
 
 describe('deployToCloudRun', () => {
@@ -559,6 +593,15 @@ describe('deployToCloudRun', () => {
 
     expect(consoleWarnSpy).toHaveBeenCalledWith(
       expect.stringContaining('WITHOUT authentication'),
+    );
+  });
+
+  it('should install the requested adkVersion in the Dockerfile', async () => {
+    await deployToCloudRun(defaultOptions);
+
+    expect(saveToFile).toHaveBeenCalledWith(
+      path.join('/tmp/test-deploy', 'Dockerfile'),
+      expect.stringContaining('RUN npm install @google/adk-devtools@1.0.0\n'),
     );
   });
 
