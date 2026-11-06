@@ -279,7 +279,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * When `type` is an array containing multiple non-null types, the first
  * non-null entry is selected as the primary Gemini schema type.
  */
-export function normalizeJsonSchemaType(
+function normalizeJsonSchemaType(
   jsonSchemaType?: unknown,
 ): [string | undefined, boolean] {
   if (typeof jsonSchemaType === 'string') {

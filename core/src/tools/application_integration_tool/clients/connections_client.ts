@@ -224,6 +224,12 @@ export const CONNECTOR_BASE_SPEC: ConnectorSpec = {
         default: 120,
         description: 'Timeout in seconds for execution of custom query',
       },
+      sortByColumns: {
+        type: 'array',
+        items: {type: 'string'},
+        default: [],
+        description: 'Column to sort the results by',
+      },
       connectorOutputPayload: {type: 'object'},
       nextPageToken: {type: 'string'},
       'execute-connector_Response': {
@@ -625,6 +631,7 @@ export function listOperationRequest(options?: {
     serviceName: schemaRef('serviceName'),
     host: schemaRef('host'),
     entity: schemaRef('entity'),
+    sortByColumns: schemaRef('sortByColumns'),
   };
   if (options?.includeDynamicAuthConfig) {
     properties['dynamicAuthConfig'] = schemaRef('dynamicAuthConfig');

@@ -36,10 +36,7 @@ import {
 } from '../../../src/tools/openapi_tool/rest_api_tool.js';
 // `openApiSchemaToGeminiSchema` is internal, like `toGeminiSchema`, so the test
 // imports it the way `core/test/utils/gemini_schema_util_test.ts` does.
-import {
-  normalizeJsonSchemaType,
-  openApiSchemaToGeminiSchema,
-} from '../../../src/utils/gemini_schema_util.js';
+import {openApiSchemaToGeminiSchema} from '../../../src/utils/gemini_schema_util.js';
 
 const sampleEndpoint: OperationEndpoint = {
   baseUrl: 'https://example.com',
@@ -803,7 +800,8 @@ describe('openApiSchemaToGeminiSchema parity with adk-python v0.1.0', () => {
 });
 
 describe('openApiSchemaToGeminiSchema type array normalization', () => {
-  it('test_to_gemini_schema_array_string_types', () => {
+  // reference: test_to_gemini_schema_array_string_types
+  it('converts array and string type definitions into Gemini schema types', () => {
     const openApiSchema = {
       type: 'object',
       properties: {
@@ -860,22 +858,38 @@ describe('openApiSchemaToGeminiSchema type array normalization', () => {
     ).toBeFalsy();
   });
 
-  it('normalizes JSON Schema type strings and arrays via normalizeJsonSchemaType', () => {
-    expect(normalizeJsonSchemaType(undefined)).toEqual([undefined, false]);
-    expect(normalizeJsonSchemaType(null)).toEqual([undefined, false]);
-    expect(normalizeJsonSchemaType('string')).toEqual(['string', false]);
-    expect(normalizeJsonSchemaType('null')).toEqual([undefined, true]);
-    expect(normalizeJsonSchemaType(['string'])).toEqual(['string', false]);
-    expect(normalizeJsonSchemaType(['string', 'null'])).toEqual([
-      'string',
-      true,
-    ]);
-    expect(normalizeJsonSchemaType(['null', 'integer'])).toEqual([
-      'integer',
-      true,
-    ]);
-    expect(normalizeJsonSchemaType(['null'])).toEqual([undefined, true]);
-    expect(normalizeJsonSchemaType([])).toEqual([undefined, false]);
+  it('normalizes JSON Schema type strings and arrays through openApiSchemaToGeminiSchema', () => {
+    expect(openApiSchemaToGeminiSchema({type: undefined})).toEqual({
+      type: Type.OBJECT,
+    });
+    expect(openApiSchemaToGeminiSchema({type: null})).toEqual({
+      type: Type.OBJECT,
+    });
+    expect(openApiSchemaToGeminiSchema({type: 'string'})).toEqual({
+      type: Type.STRING,
+    });
+    expect(openApiSchemaToGeminiSchema({type: 'null'})).toEqual({
+      type: Type.OBJECT,
+      nullable: true,
+    });
+    expect(openApiSchemaToGeminiSchema({type: ['string']})).toEqual({
+      type: Type.STRING,
+    });
+    expect(openApiSchemaToGeminiSchema({type: ['string', 'null']})).toEqual({
+      type: Type.STRING,
+      nullable: true,
+    });
+    expect(openApiSchemaToGeminiSchema({type: ['null', 'integer']})).toEqual({
+      type: Type.INTEGER,
+      nullable: true,
+    });
+    expect(openApiSchemaToGeminiSchema({type: ['null']})).toEqual({
+      type: Type.OBJECT,
+      nullable: true,
+    });
+    expect(openApiSchemaToGeminiSchema({type: []})).toEqual({
+      type: Type.OBJECT,
+    });
   });
 
   it('normalizes nested object, array, and anyOf schemas with nullable type arrays', () => {
