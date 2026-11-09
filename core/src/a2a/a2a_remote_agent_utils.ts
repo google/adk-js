@@ -23,16 +23,18 @@ export interface UserFunctionCall {
 
 /**
  * Returns a UserFunctionCall when the event at `index` contains a
- * FunctionResponse that can be traced back to a preceding FunctionCall event.
+ * FunctionResponse that can be traced back to this agent's FunctionCall event.
  *
  * @param session - The session whose event history to inspect.
  * @param index - Index of the candidate event to examine.
+ * @param agentName - The remote agent whose pending task to resume.
  * @returns The matching `UserFunctionCall`, or `undefined` if the event at
  *   `index` is not a user function-response event or has no preceding call.
  */
 export function getUserFunctionCallAt(
   session: Session,
   index: number,
+  agentName: string,
 ): UserFunctionCall | undefined {
   const events = session.events;
   if (index < 0 || index >= events.length) {
@@ -44,14 +46,19 @@ export function getUserFunctionCallAt(
     return undefined;
   }
 
-  const fnCallId = getFunctionResponseCallId(candidate);
-  if (!fnCallId) {
+  const fnCallIds = candidate.content?.parts
+    ?.map((part) => part.functionResponse?.id)
+    .filter((id): id is string => !!id);
+  if (!fnCallIds?.length) {
     return undefined;
   }
 
   for (let i = index - 1; i >= 0; i--) {
     const request = events[i];
-    if (!isFunctionCallEvent(request, fnCallId)) {
+    if (
+      request.author !== agentName ||
+      !fnCallIds.some((callId) => isFunctionCallEvent(request, callId))
+    ) {
       continue;
     }
 
