@@ -283,6 +283,29 @@ function encodePathParamValue(name: string, value: string): string {
 }
 
 /**
+ * Serializes a path, header, or cookie parameter value using OpenAPI's default
+ * `simple` style, matching `adk-python`'s `_to_param_string`.
+ *
+ * Arrays and plain objects are comma-joined while omitting `null` and
+ * `undefined` entries.
+ */
+function toParamString(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value
+      .filter((item) => item !== undefined && item !== null)
+      .map(toParamString)
+      .join(',');
+  }
+  if (typeof value === 'object' && value !== null) {
+    return Object.entries(value)
+      .filter(([, v]) => v !== undefined && v !== null)
+      .map(([k, v]) => `${k},${toParamString(v)}`)
+      .join(',');
+  }
+  return String(value);
+}
+
+/**
  * Serializes one element of a query parameter value.
  *
  * Plain objects have no string form, so they are JSON-encoded rather than
@@ -340,10 +363,12 @@ export function prepareRequestParams(
     const location = param.paramLocation;
 
     if (location === 'path') {
-      pathParams[originalName] = encodePathParamValue(
-        originalName,
-        String(argValue),
-      );
+      if (argValue !== undefined && argValue !== null) {
+        pathParams[originalName] = encodePathParamValue(
+          originalName,
+          toParamString(argValue),
+        );
+      }
     } else if (location === 'query') {
       // An unset query parameter is not sent. `0` and `false` are sent, unlike
       // the reference implementation, which drops every falsy value and so
@@ -352,9 +377,13 @@ export function prepareRequestParams(
         appendQueryParam(queryParams, originalName, argValue);
       }
     } else if (location === 'header') {
-      headers[originalName] = String(argValue);
+      if (argValue !== undefined && argValue !== null) {
+        headers[originalName] = toParamString(argValue);
+      }
     } else if (location === 'cookie') {
-      cookies[originalName] = String(argValue);
+      if (argValue !== undefined && argValue !== null) {
+        cookies[originalName] = toParamString(argValue);
+      }
     } else if (location === 'body') {
       if (
         originalName === 'body' ||

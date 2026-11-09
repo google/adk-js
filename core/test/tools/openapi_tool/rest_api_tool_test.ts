@@ -1262,6 +1262,95 @@ describe('RestApiTool Utilities', () => {
     });
   });
 
+  describe('path, header, and cookie parameter serialization', () => {
+    const itemFilterEndpoint = {
+      baseUrl: 'https://example.com',
+      path: '/items/{item_filter}',
+      method: 'GET',
+    };
+    const param = (name: string, paramLocation: string): ApiParameter => ({
+      name,
+      originalName: name,
+      paramLocation,
+      paramSchema: {},
+      required: false,
+    });
+    const parameters: ApiParameter[] = [
+      param('item_filter', 'path'),
+      param('X-Page-Size', 'header'),
+      param('page_size', 'cookie'),
+    ];
+
+    it.each([
+      [50, '50', '50'],
+      [1.5, '1.5', '1.5'],
+      [true, 'true', 'true'],
+      [false, 'false', 'false'],
+      [['a', 'b', 3], 'a,b,3', 'a%2Cb%2C3'],
+      [[true, false], 'true,false', 'true%2Cfalse'],
+      [[1, null, undefined, true], '1,true', '1%2Ctrue'],
+      [
+        {a: 1, b: null, d: undefined, c: true},
+        'a,1,c,true',
+        'a%2C1%2Cc%2Ctrue',
+      ],
+      ['already-a-string', 'already-a-string', 'already-a-string'],
+    ])(
+      'serializes %j using OpenAPI simple style across path, header, and cookie',
+      (value, expected, expectedPath) => {
+        const result = prepareRequestParams(itemFilterEndpoint, parameters, {
+          item_filter: value,
+          'X-Page-Size': value,
+          page_size: value,
+        });
+
+        expect(result.url).toBe(`https://example.com/items/${expectedPath}`);
+        expect(result.headers['X-Page-Size']).toBe(expected);
+        expect(result.cookies['page_size']).toBe(expected);
+      },
+    );
+
+    it('omits null and undefined header, cookie, and path values', () => {
+      const resultForNull = prepareRequestParams(
+        itemFilterEndpoint,
+        parameters,
+        {
+          item_filter: null,
+          'X-Page-Size': null,
+          page_size: null,
+        },
+      );
+
+      expect(resultForNull.url).toBe('https://example.com/items/{item_filter}');
+      expect(resultForNull.headers).toEqual({});
+      expect(resultForNull.cookies).toEqual({});
+
+      const resultForUndefined = prepareRequestParams(
+        itemFilterEndpoint,
+        parameters,
+        {
+          item_filter: undefined,
+          'X-Page-Size': undefined,
+          page_size: undefined,
+        },
+      );
+
+      expect(resultForUndefined.url).toBe(
+        'https://example.com/items/{item_filter}',
+      );
+      expect(resultForUndefined.headers).toEqual({});
+      expect(resultForUndefined.cookies).toEqual({});
+    });
+
+    it('still rejects dot-segment path parameters after array serialization', () => {
+      expect(() =>
+        prepareRequestParams(itemFilterEndpoint, parameters, {
+          item_filter: ['..', null],
+        }),
+      ).toThrow(/relative path segments/);
+    });
+  });
+
   describe('prepareRequestBody', () => {
     it('should format JSON body correctly', () => {
       const requestBody: OpenAPIV3.RequestBodyObject = {
