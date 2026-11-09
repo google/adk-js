@@ -461,6 +461,7 @@ export class DatabaseSessionService extends BaseSessionService {
       return event;
     }
 
+    const stateDelta = event.actions?.stateDelta ?? {};
     const trimmedEvent = trimTempDeltaState(event);
     let sessionWasStale = false;
 
@@ -576,6 +577,15 @@ export class DatabaseSessionService extends BaseSessionService {
         userStateModel.state,
         storageSession.state,
       );
+      // temp: keys are never stored, but stay in the in-memory session for the
+      // rest of the invocation: carry over earlier ones, then this event's
+      for (const source of [session.state, stateDelta]) {
+        for (const [key, value] of Object.entries(source)) {
+          if (key.startsWith(State.TEMP_PREFIX)) {
+            newMergedState[key] = value;
+          }
+        }
+      }
       session.state = newMergedState;
 
       upsertSessionEvent(session, event);

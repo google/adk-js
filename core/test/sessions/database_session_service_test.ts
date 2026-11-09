@@ -960,6 +960,51 @@ describe('DatabaseSessionService', () => {
       ).toBeUndefined();
     });
 
+    it('should keep temp state in the session for the invocation without storing it', async () => {
+      const key = {appName: 'test-app', userId: 'test-user', sessionId: 's1'};
+      const session = await service.createSession(key);
+      const event = createEvent({
+        timestamp: Date.now(),
+        actions: createEventActions({
+          stateDelta: {[State.TEMP_PREFIX + 'draft']: 'text', kept: 'value'},
+        }),
+      });
+
+      await service.appendEvent({session, event});
+
+      expect(session.state[State.TEMP_PREFIX + 'draft']).toBe('text');
+      expect((await service.getSession(key))?.state).toEqual({kept: 'value'});
+    });
+
+    it('should keep temp state from an earlier event after a later append', async () => {
+      const session = await service.createSession({
+        appName: 'test-app',
+        userId: 'test-user',
+      });
+      await service.appendEvent({
+        session,
+        event: createEvent({
+          timestamp: Date.now(),
+          actions: createEventActions({
+            stateDelta: {[State.TEMP_PREFIX + 'draft']: 'text'},
+          }),
+        }),
+      });
+
+      await service.appendEvent({
+        session,
+        event: createEvent({
+          timestamp: Date.now() + 1,
+          actions: createEventActions({stateDelta: {kept: 'value'}}),
+        }),
+      });
+
+      expect(session.state).toEqual({
+        [State.TEMP_PREFIX + 'draft']: 'text',
+        kept: 'value',
+      });
+    });
+
     it('should align session updateTime with event timestamp', async () => {
       const session = await service.createSession({
         appName: 'test-app',
