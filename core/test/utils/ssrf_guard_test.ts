@@ -8,6 +8,7 @@ import {describe, expect, it} from 'vitest';
 
 import {
   isHttpUrl,
+  isIpAddress,
   isLinkLocalAddress,
   isNonGlobalAddress,
 } from '../../src/utils/ssrf_guard.js';
@@ -109,5 +110,44 @@ describe('isNonGlobalAddress', () => {
     'not-an-ip',
   ])('blocks %s', (address) => {
     expect(isNonGlobalAddress(address)).toBe(true);
+  });
+});
+
+describe('isIpAddress', () => {
+  it.each([
+    '127.0.0.1',
+    '93.184.216.34',
+    '::1',
+    '2001:db8::1',
+    '::ffff:1.2.3.4',
+  ])('accepts %s', (address) => {
+    expect(isIpAddress(address)).toBe(true);
+  });
+
+  it.each([
+    'example.com',
+    '256.1.1.1',
+    '1.2.3',
+    '::1]/x[',
+    '1:2:3:4:5:6:7:8:9',
+    'fe80::1%eth0',
+    '',
+  ])('rejects %s', (address) => {
+    expect(isIpAddress(address)).toBe(false);
+  });
+});
+
+describe('isNonGlobalAddress at IPv6 prefix boundaries', () => {
+  it.each([
+    ['fc00::', true],
+    ['fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff', true],
+    ['fbff:ffff:ffff:ffff:ffff:ffff:ffff:ffff', false],
+    ['fe00::1', false],
+    ['2001:db8:ffff::1', true],
+    ['2001:db9::1', false],
+    ['100::ffff:ffff:ffff:ffff', true],
+    ['100:0:0:1::', false],
+  ])('classifies %s as non-global: %s', (address, expected) => {
+    expect(isNonGlobalAddress(address)).toBe(expected);
   });
 });

@@ -10,6 +10,7 @@ import {
   BaseLlmConnection,
   createSession,
   FunctionTool,
+  Gemini,
   InvocationContext,
   LlmAgent,
   LlmRequest,
@@ -195,12 +196,15 @@ describe('InstructionsLlmRequestProcessor', () => {
     });
 
     async function runWithOutputSchema(options: {
-      model: string;
+      model: string | BaseLlm;
       withTools: boolean;
     }): Promise<LlmRequest> {
       const agent = new LlmAgent({
         name: 'test_agent',
-        model: new MockLlm({model: options.model}),
+        model:
+          typeof options.model === 'string'
+            ? new MockLlm({model: options.model})
+            : options.model,
         instruction: 'Base instruction',
         outputSchema: OUTPUT_SCHEMA,
         tools: options.withTools
@@ -259,6 +263,44 @@ describe('InstructionsLlmRequestProcessor', () => {
       );
     });
 
+    it('should not append set_model_response instruction for a Gemini({ vertexai: true }) 2.0+ instance when env var is unset', async () => {
+      vi.stubEnv(VERTEX_ENV_VAR, undefined);
+
+      const llmRequest = await runWithOutputSchema({
+        model: new Gemini({
+          model: 'gemini-2.5-flash',
+          vertexai: true,
+          project: 'test-project',
+          location: 'us-central1',
+        }),
+        withTools: true,
+      });
+
+      expect(llmRequest.config?.systemInstruction).not.toContain(
+        'set_model_response',
+      );
+      expect(llmRequest.config?.systemInstruction).toContain(
+        'Base instruction',
+      );
+    });
+
+    it('should append set_model_response instruction for a Gemini({ vertexai: false }) instance even when env var is true', async () => {
+      vi.stubEnv(VERTEX_ENV_VAR, 'true');
+
+      const llmRequest = await runWithOutputSchema({
+        model: new Gemini({
+          model: 'gemini-2.5-flash',
+          vertexai: false,
+          apiKey: 'test-key',
+        }),
+        withTools: true,
+      });
+
+      expect(llmRequest.config?.systemInstruction).toContain(
+        SET_MODEL_RESPONSE_INSTRUCTION,
+      );
+    });
+
     it('should append set_model_response instruction on Vertex AI with a pre-2.0 model', async () => {
       vi.stubEnv(VERTEX_ENV_VAR, 'true');
 
@@ -282,6 +324,326 @@ describe('InstructionsLlmRequestProcessor', () => {
 
       expect(llmRequest.config?.systemInstruction).not.toContain(
         'set_model_response',
+      );
+    });
+  });
+
+  describe('state injection and instruction providers', () => {
+    function createContextWithState(
+      agent: BaseAgent,
+      state: Record<string, unknown>,
+    ): InvocationContext {
+      return new InvocationContext({
+        invocationId: 'test_id',
+        agent,
+        session: createSession({
+          id: 'test_id',
+          events: [],
+          appName: 'test_app',
+          userId: 'test_user',
+          state,
+        }),
+        pluginManager: new PluginManager([]),
+      });
+    }
+
+    it('test_build_system_instruction', async () => {
+      const request: LlmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [],
+        config: {systemInstruction: ''},
+        toolsDict: {},
+        liveConnectConfig: {},
+      };
+      const agent = new LlmAgent({
+        model: 'gemini-2.5-flash',
+        name: 'agent',
+        instruction:
+          'Use the echo_info tool to echo { customerId }, ' +
+          '{{customer_int  }, {  non-identifier-float}}, ' +
+          "{'key1': 'value1'} and {{'key2': 'value2'}}.",
+      });
+      const invocationContext = createContextWithState(agent, {
+        customerId: '1234567890',
+        customer_int: 30,
+      });
+
+      for await (const _ of INSTRUCTIONS_LLM_REQUEST_PROCESSOR.runAsync(
+        invocationContext,
+        request,
+      )) {
+        // intentionally empty
+      }
+
+      expect(request.config?.systemInstruction).toBe(
+        'Use the echo_info tool to echo 1234567890, 30, ' +
+          "{  non-identifier-float}}, {'key1': 'value1'} and {{'key2': 'value2'}}.",
+      );
+    });
+
+    it('test_function_system_instruction', async () => {
+      const buildFunctionInstruction = (readonlyContext: ReadonlyContext) =>
+        'This is the function agent instruction for invocation:' +
+        ' provider template intact { customerId }' +
+        ' provider template intact { customer_int }' +
+        ` ${readonlyContext.invocationId}.`;
+
+      const request: LlmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [],
+        config: {systemInstruction: ''},
+        toolsDict: {},
+        liveConnectConfig: {},
+      };
+      const agent = new LlmAgent({
+        model: 'gemini-2.5-flash',
+        name: 'agent',
+        instruction: buildFunctionInstruction,
+      });
+      const invocationContext = createContextWithState(agent, {
+        customerId: '1234567890',
+        customer_int: 30,
+      });
+
+      for await (const _ of INSTRUCTIONS_LLM_REQUEST_PROCESSOR.runAsync(
+        invocationContext,
+        request,
+      )) {
+        // intentionally empty
+      }
+
+      expect(request.config?.systemInstruction).toBe(
+        'This is the function agent instruction for invocation:' +
+          ' provider template intact { customerId }' +
+          ' provider template intact { customer_int }' +
+          ' test_id.',
+      );
+    });
+
+    it('test_async_function_system_instruction', async () => {
+      const buildFunctionInstruction = async (
+        readonlyContext: ReadonlyContext,
+      ) =>
+        'This is the function agent instruction for invocation:' +
+        ' provider template intact { customerId }' +
+        ' provider template intact { customer_int }' +
+        ` ${readonlyContext.invocationId}.`;
+
+      const request: LlmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [],
+        config: {systemInstruction: ''},
+        toolsDict: {},
+        liveConnectConfig: {},
+      };
+      const agent = new LlmAgent({
+        model: 'gemini-2.5-flash',
+        name: 'agent',
+        instruction: buildFunctionInstruction,
+      });
+      const invocationContext = createContextWithState(agent, {
+        customerId: '1234567890',
+        customer_int: 30,
+      });
+
+      for await (const _ of INSTRUCTIONS_LLM_REQUEST_PROCESSOR.runAsync(
+        invocationContext,
+        request,
+      )) {
+        // intentionally empty
+      }
+
+      expect(request.config?.systemInstruction).toBe(
+        'This is the function agent instruction for invocation:' +
+          ' provider template intact { customerId }' +
+          ' provider template intact { customer_int }' +
+          ' test_id.',
+      );
+    });
+
+    it('test_global_system_instruction', async () => {
+      const subAgent = new LlmAgent({
+        model: 'gemini-2.5-flash',
+        name: 'sub_agent',
+        instruction: 'This is the sub agent instruction.',
+      });
+      new LlmAgent({
+        model: 'gemini-2.5-flash',
+        name: 'root_agent',
+        globalInstruction: 'This is the global instruction.',
+        subAgents: [subAgent],
+      });
+      const request: LlmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [],
+        config: {systemInstruction: ''},
+        toolsDict: {},
+        liveConnectConfig: {},
+      };
+      const invocationContext = createContextWithState(subAgent, {
+        customerId: '1234567890',
+        customer_int: 30,
+      });
+
+      for await (const _ of INSTRUCTIONS_LLM_REQUEST_PROCESSOR.runAsync(
+        invocationContext,
+        request,
+      )) {
+        // intentionally empty
+      }
+
+      expect(request.config?.systemInstruction).toBe(
+        'This is the global instruction.\n\nThis is the sub agent instruction.',
+      );
+    });
+
+    it('test_function_global_system_instruction', async () => {
+      const subAgentSi = (_readonlyContext: ReadonlyContext) =>
+        'This is the sub agent instruction.';
+      const rootAgentGi = (_readonlyContext: ReadonlyContext) =>
+        'This is the global instruction.';
+
+      const subAgent = new LlmAgent({
+        model: 'gemini-2.5-flash',
+        name: 'sub_agent',
+        instruction: subAgentSi,
+      });
+      new LlmAgent({
+        model: 'gemini-2.5-flash',
+        name: 'root_agent',
+        globalInstruction: rootAgentGi,
+        subAgents: [subAgent],
+      });
+      const request: LlmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [],
+        config: {systemInstruction: ''},
+        toolsDict: {},
+        liveConnectConfig: {},
+      };
+      const invocationContext = createContextWithState(subAgent, {
+        customerId: '1234567890',
+        customer_int: 30,
+      });
+
+      for await (const _ of INSTRUCTIONS_LLM_REQUEST_PROCESSOR.runAsync(
+        invocationContext,
+        request,
+      )) {
+        // intentionally empty
+      }
+
+      expect(request.config?.systemInstruction).toBe(
+        'This is the global instruction.\n\nThis is the sub agent instruction.',
+      );
+    });
+
+    it('test_async_function_global_system_instruction', async () => {
+      const subAgentSi = async (_readonlyContext: ReadonlyContext) =>
+        'This is the sub agent instruction.';
+      const rootAgentGi = async (_readonlyContext: ReadonlyContext) =>
+        'This is the global instruction.';
+
+      const subAgent = new LlmAgent({
+        model: 'gemini-2.5-flash',
+        name: 'sub_agent',
+        instruction: subAgentSi,
+      });
+      new LlmAgent({
+        model: 'gemini-2.5-flash',
+        name: 'root_agent',
+        globalInstruction: rootAgentGi,
+        subAgents: [subAgent],
+      });
+      const request: LlmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [],
+        config: {systemInstruction: ''},
+        toolsDict: {},
+        liveConnectConfig: {},
+      };
+      const invocationContext = createContextWithState(subAgent, {
+        customerId: '1234567890',
+        customer_int: 30,
+      });
+
+      for await (const _ of INSTRUCTIONS_LLM_REQUEST_PROCESSOR.runAsync(
+        invocationContext,
+        request,
+      )) {
+        // intentionally empty
+      }
+
+      expect(request.config?.systemInstruction).toBe(
+        'This is the global instruction.\n\nThis is the sub agent instruction.',
+      );
+    });
+
+    it('does not inject session state into sync or async globalInstruction providers', async () => {
+      const subAgent = new LlmAgent({
+        model: 'gemini-2.5-flash',
+        name: 'sub_agent',
+        instruction: 'Local { customerId }',
+      });
+      new LlmAgent({
+        model: 'gemini-2.5-flash',
+        name: 'root_agent',
+        globalInstruction: async (readonlyContext: ReadonlyContext) =>
+          `Global template intact { customerId } ${readonlyContext.invocationId}`,
+        subAgents: [subAgent],
+      });
+      const request: LlmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [],
+        config: {systemInstruction: ''},
+        toolsDict: {},
+        liveConnectConfig: {},
+      };
+      const invocationContext = createContextWithState(subAgent, {
+        customerId: '1234567890',
+      });
+
+      for await (const _ of INSTRUCTIONS_LLM_REQUEST_PROCESSOR.runAsync(
+        invocationContext,
+        request,
+      )) {
+        // intentionally empty
+      }
+
+      expect(request.config?.systemInstruction).toBe(
+        'Global template intact { customerId } test_id\n\nLocal 1234567890',
+      );
+    });
+
+    it('test_build_system_instruction_with_namespace', async () => {
+      const request: LlmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [],
+        config: {systemInstruction: ''},
+        toolsDict: {},
+        liveConnectConfig: {},
+      };
+      const agent = new LlmAgent({
+        model: 'gemini-2.5-flash',
+        name: 'agent',
+        instruction:
+          'Use the echo_info tool to echo { customerId }, {app:key}, {user:key}, {a:key}.',
+      });
+      const invocationContext = createContextWithState(agent, {
+        customerId: '1234567890',
+        'app:key': 'app_value',
+        'user:key': 'user_value',
+      });
+
+      for await (const _ of INSTRUCTIONS_LLM_REQUEST_PROCESSOR.runAsync(
+        invocationContext,
+        request,
+      )) {
+        // intentionally empty
+      }
+
+      expect(request.config?.systemInstruction).toBe(
+        'Use the echo_info tool to echo 1234567890, app_value, user_value, {a:key}.',
       );
     });
   });

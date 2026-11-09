@@ -6,6 +6,7 @@
 
 import {FunctionDeclaration, Type} from '@google/genai';
 import path from 'node:path';
+import {recordSkillActivity} from '../../telemetry/api/instrumentation.js';
 import {experimental} from '../../utils/experimental.js';
 import {guessMimeType} from '../../utils/file_utils.js';
 import {
@@ -72,6 +73,11 @@ export class LoadSkillResourceTool extends BaseTool {
 
     resourcePath = path.posix.normalize(resourcePath);
 
+    const skillActivity = recordSkillActivity({
+      kind: 'resource',
+      skillName,
+      resourcePath,
+    });
     let skill;
     try {
       skill = await this.toolset.getOrFetchSkill(
@@ -91,6 +97,7 @@ export class LoadSkillResourceTool extends BaseTool {
         error_code: 'SKILL_NOT_FOUND',
       };
     }
+    skillActivity.recordSkill(skill);
 
     let content: string | Buffer | undefined;
     const skillResources = skill.resources || {};

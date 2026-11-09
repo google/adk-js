@@ -8,6 +8,7 @@ import {FunctionDeclaration, Part, Type} from '@google/genai';
 
 import {Context} from '../agents/context.js';
 import {appendInstructions, LlmRequest} from '../models/llm_request.js';
+import {base64Decode} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 import {
   BaseTool,
@@ -42,7 +43,26 @@ function isInlineMimeTypeSupported(mimeType?: string): boolean {
   );
 }
 
-function asSafePartForLlm(artifact: Part, artifactName: string): Part {
+/** Returns the number of bytes that the given base64 string encodes. */
+function base64ByteLength(data: string): number {
+  // Padding and line breaks carry no data.
+  const digits = data.replace(/[=\s]/g, '').length;
+  return Math.floor((digits * 3) / 4);
+}
+
+/**
+ * Returns a part that the model can read for the given artifact.
+ *
+ * Parts without inline data, and inline data that Gemini accepts (images,
+ * audio, video and PDF), are returned as they are. Other inline data becomes a
+ * text part: the decoded content for text-like types, and a placeholder for
+ * binary or missing data.
+ *
+ * @param artifact The artifact to convert.
+ * @param artifactName The artifact name used in the placeholder text.
+ * @return The artifact itself, or a text part that replaces it.
+ */
+export function asSafePartForLlm(artifact: Part, artifactName: string): Part {
   const inlineData = artifact.inlineData;
   if (!inlineData) {
     return artifact;
@@ -64,17 +84,17 @@ function asSafePartForLlm(artifact: Part, artifactName: string): Part {
   const isTextLike =
     mimeType.startsWith('text/') || TEXT_LIKE_MIME_TYPES.has(mimeType);
 
-  const decodedBuffer = Buffer.from(data, 'base64');
   if (isTextLike) {
     try {
-      const decoded = decodedBuffer.toString('utf8');
-      return {text: decoded};
+      // Browsers decode with atob, which rejects the URL-safe alphabet that
+      // Node's Buffer accepts. Map it to the standard one first.
+      return {text: base64Decode(data.replace(/-/g, '+').replace(/_/g, '/'))};
     } catch {
-      // Fallback
+      // window.atob rejects malformed base64. Use the placeholder below.
     }
   }
 
-  const sizeKb = decodedBuffer.length / 1024;
+  const sizeKb = base64ByteLength(data) / 1024;
   return {
     text: `[Binary artifact: ${artifactName}, type: ${mimeType}, size: ${sizeKb.toFixed(1)} KB. Content cannot be displayed inline.]`,
   };

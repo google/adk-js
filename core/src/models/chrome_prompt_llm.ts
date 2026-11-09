@@ -90,10 +90,7 @@ export {stripAdkIdentityPreamble} from './chrome_prompt_utils.js';
 
 /** Whether the on-device model can serve a request right now. */
 export type ChromeModelAvailability =
-  | 'unavailable'
-  | 'downloadable'
-  | 'downloading'
-  | 'available';
+  'unavailable' | 'downloadable' | 'downloading' | 'available';
 
 /** A modality declared at session creation. */
 export interface ChromeExpectedModality {

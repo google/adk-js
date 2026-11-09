@@ -5,10 +5,32 @@
  */
 
 import {Context, FunctionTool, isFunctionTool} from '@google/adk';
-import {Type} from '@google/genai';
+import {Schema, Type} from '@google/genai';
 import {beforeEach, describe, expect, it} from 'vitest';
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
+
+import {
+  buildFunctionDeclarationForLangchain,
+  buildFunctionDeclarationForParamsForCrewai,
+  buildFunctionDeclarationUtil,
+  functionsExportedForTestingOnly,
+  GoogleLLMVariant,
+  InvocationContext,
+  LlmAgent,
+  PluginManager,
+  Session,
+} from '@google/adk';
+
+/** The declaration a tool with the given response schema shows to the model. */
+function responseDeclaration(response: z3.ZodType | z4.ZodType | Schema) {
+  return new FunctionTool({
+    name: 'bounded',
+    description: 'Returns bounded data.',
+    response,
+    execute: () => ['a', 'b'],
+  })._getDeclaration().response;
+}
 
 describe('FunctionTool', () => {
   let emptyContext: Context;
@@ -488,6 +510,1121 @@ describe('FunctionTool', () => {
           "Error in tool 'errorTool': Test error",
         );
       }
+    });
+  });
+
+  describe('response schema and _callLive', () => {
+    it('includes response schema in _getDeclaration when configured', () => {
+      const toolWithZodResponse = new FunctionTool({
+        name: 'get_weather',
+        description: 'Gets weather.',
+        parameters: z4.object({city: z4.string()}),
+        response: z4.object({
+          temperature: z4.number(),
+          condition: z4.string(),
+        }),
+        execute: async ({city}) => ({temperature: 22, condition: city}),
+      });
+
+      const decl = toolWithZodResponse._getDeclaration();
+      expect(decl.response).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          temperature: {type: Type.NUMBER},
+          condition: {type: Type.STRING},
+        },
+        required: ['temperature', 'condition'],
+      });
+
+      const toolWithoutResponse = new FunctionTool({
+        name: 'ping',
+        description: 'Pings.',
+        execute: () => 'pong',
+      });
+      expect(toolWithoutResponse._getDeclaration().response).toBeUndefined();
+    });
+
+    describe.each([
+      {
+        version: 'Zod 3',
+        boundedArray: z3.array(z3.string()).min(2).max(3),
+        nestedArray: z3.array(z3.array(z3.string()).min(2)).max(4),
+        nullableArray: z3.array(z3.string()).min(2).max(3).nullable(),
+        union: z3.union([z3.array(z3.string()).min(2), z3.number()]),
+        boundedString: z3.string().min(3).max(5),
+        boundedNumber: z3.number().min(1).max(9),
+        boundedObject: z3.object({
+          tags: z3.array(z3.string()).min(1).max(10),
+          name: z3.string().min(2),
+          score: z3.number().min(0).max(100),
+        }),
+      },
+      {
+        version: 'Zod 4',
+        boundedArray: z4.array(z4.string()).min(2).max(3),
+        nestedArray: z4.array(z4.array(z4.string()).min(2)).max(4),
+        nullableArray: z4.array(z4.string()).min(2).max(3).nullable(),
+        union: z4.union([z4.array(z4.string()).min(2), z4.number()]),
+        boundedString: z4.string().min(3).max(5),
+        boundedNumber: z4.number().min(1).max(9),
+        boundedObject: z4.object({
+          tags: z4.array(z4.string()).min(1).max(10),
+          name: z4.string().min(2),
+          score: z4.number().min(0).max(100),
+        }),
+      },
+    ])('$version response schema constraints', (cases) => {
+      it('keeps root array bounds', () => {
+        expect(responseDeclaration(cases.boundedArray)).toEqual({
+          type: Type.ARRAY,
+          items: {type: Type.STRING},
+          minItems: '2',
+          maxItems: '3',
+        });
+      });
+
+      it('keeps nested array bounds', () => {
+        expect(responseDeclaration(cases.nestedArray)).toEqual({
+          type: Type.ARRAY,
+          maxItems: '4',
+          items: {
+            type: Type.ARRAY,
+            minItems: '2',
+            items: {type: Type.STRING},
+          },
+        });
+      });
+
+      it('keeps the bounds of a nullable array', () => {
+        expect(responseDeclaration(cases.nullableArray)).toEqual({
+          type: Type.ARRAY,
+          nullable: true,
+          items: {type: Type.STRING},
+          minItems: '2',
+          maxItems: '3',
+        });
+      });
+
+      it('keeps the bounds of an anyOf branch', () => {
+        expect(responseDeclaration(cases.union)).toEqual({
+          anyOf: [
+            {type: Type.ARRAY, items: {type: Type.STRING}, minItems: '2'},
+            {type: Type.NUMBER},
+          ],
+        });
+      });
+
+      it('keeps string length and number range bounds', () => {
+        expect(responseDeclaration(cases.boundedString)).toEqual({
+          type: Type.STRING,
+          minLength: '3',
+          maxLength: '5',
+        });
+        expect(responseDeclaration(cases.boundedNumber)).toEqual({
+          type: Type.NUMBER,
+          minimum: 1,
+          maximum: 9,
+        });
+      });
+
+      it('keeps the bounds of a Zod object response', () => {
+        expect(responseDeclaration(cases.boundedObject)).toEqual({
+          type: Type.OBJECT,
+          properties: {
+            tags: {
+              type: Type.ARRAY,
+              items: {type: Type.STRING},
+              minItems: '1',
+              maxItems: '10',
+            },
+            name: {type: Type.STRING, minLength: '2'},
+            score: {type: Type.NUMBER, minimum: 0, maximum: 100},
+          },
+          required: ['tags', 'name', 'score'],
+        });
+      });
+    });
+
+    it('returns a directly supplied genai response schema unchanged', () => {
+      const response: Schema = {
+        type: Type.ARRAY,
+        items: {type: Type.STRING},
+        minItems: '2',
+        maxItems: '3',
+        description: 'Bounded items',
+      };
+
+      expect(responseDeclaration(response)).toBe(response);
+    });
+
+    it('streams async generator items and injects inputStream in _callLive', async () => {
+      const receivedStreams: unknown[] = [];
+      const liveTool = new FunctionTool({
+        name: 'live_stream_tool',
+        description: 'Streams live chunks.',
+        parameters: z4.object({
+          prefix: z4.string(),
+        }),
+        execute: async function* (args: Record<string, unknown>) {
+          receivedStreams.push(args['inputStream']);
+          yield `${args['prefix']}-1`;
+          yield `${args['prefix']}-2`;
+        },
+      });
+
+      const fakeStream = {id: 'live-request-queue'};
+      const callerArgs = {prefix: 'chunk'};
+      const chunks: unknown[] = [];
+      for await (const item of liveTool._callLive({
+        args: callerArgs,
+        toolContext: emptyContext,
+        invocationContext: {
+          activeStreamingTools: {
+            live_stream_tool: {stream: fakeStream},
+          },
+        } as unknown as Context['invocationContext'],
+      })) {
+        chunks.push(item);
+      }
+
+      expect(chunks).toEqual(['chunk-1', 'chunk-2']);
+      expect(receivedStreams).toEqual([fakeStream]);
+      expect(callerArgs).toEqual({prefix: 'chunk'});
+    });
+
+    it('yields single resolved value and validates args in _callLive', async () => {
+      const singleValueTool = new FunctionTool({
+        name: 'single_live_tool',
+        description: 'Returns single value.',
+        parameters: z4.object({count: z4.number()}),
+        execute: async ({count}) => count * 2,
+      });
+
+      const results: unknown[] = [];
+      for await (const item of singleValueTool._callLive({
+        args: {count: 5},
+        toolContext: emptyContext,
+        invocationContext: {} as unknown as Context['invocationContext'],
+      })) {
+        results.push(item);
+      }
+      expect(results).toEqual([10]);
+
+      const invalidGenerator = singleValueTool._callLive({
+        args: {count: 'not-a-number'},
+        toolContext: emptyContext,
+        invocationContext: {} as unknown as Context['invocationContext'],
+      });
+      await expect(invalidGenerator.next()).rejects.toThrow();
+    });
+  });
+
+  describe('declaration building utilities', () => {
+    it('maps a string parameter schema to Type.STRING', () => {
+      const decl = buildFunctionDeclarationUtil(
+        false,
+        'simple_function',
+        'Simple function description',
+        function simpleFunction() {},
+        {
+          properties: {
+            input_str: {type: 'str'},
+          },
+          required: ['input_str'],
+        },
+      );
+      expect(decl).toEqual({
+        name: 'simple_function',
+        description: 'Simple function description',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {input_str: {type: Type.STRING}},
+          required: ['input_str'],
+        },
+      });
+    });
+
+    it('maps an integer parameter and returnType to Type.INTEGER', () => {
+      const decl = buildFunctionDeclarationUtil(
+        true,
+        'simple_function',
+        'Int function',
+        Object.assign(function simpleFunction() {}, {returnType: 'int'}),
+        {
+          properties: {
+            input_str: {type: 'int'},
+          },
+          required: ['input_str'],
+        },
+      );
+      expect(decl).toEqual({
+        name: 'simple_function',
+        description: 'Int function',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {input_str: {type: Type.INTEGER}},
+          required: ['input_str'],
+        },
+        response: {type: Type.INTEGER},
+      });
+    });
+
+    it('maps a float parameter and returnType to Type.NUMBER', () => {
+      const decl = buildFunctionDeclarationUtil(
+        true,
+        'simple_function',
+        'Float function',
+        Object.assign(function simpleFunction() {}, {returnType: 'float'}),
+        {
+          properties: {
+            input_str: {type: 'float'},
+          },
+          required: ['input_str'],
+        },
+      );
+      expect(decl).toEqual({
+        name: 'simple_function',
+        description: 'Float function',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {input_str: {type: Type.NUMBER}},
+          required: ['input_str'],
+        },
+        response: {type: Type.NUMBER},
+      });
+    });
+
+    it('maps a boolean parameter and returnType to Type.BOOLEAN', () => {
+      const decl = buildFunctionDeclarationUtil(
+        true,
+        'simple_function',
+        'Bool function',
+        Object.assign(function simpleFunction() {}, {returnType: 'bool'}),
+        {
+          properties: {
+            input_str: {type: 'bool'},
+          },
+          required: ['input_str'],
+        },
+      );
+      expect(decl).toEqual({
+        name: 'simple_function',
+        description: 'Bool function',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {input_str: {type: Type.BOOLEAN}},
+          required: ['input_str'],
+        },
+        response: {type: Type.BOOLEAN},
+      });
+    });
+
+    it('maps list and tuple parameters to Type.ARRAY with typed items', () => {
+      const decl = buildFunctionDeclarationUtil(
+        false,
+        'simple_function',
+        'Array function',
+        function simpleFunction() {},
+        {
+          properties: {
+            input_str: {type: 'List', items: {type: 'str'}},
+            tuple_items: {type: 'tuple', items: {type: 'int'}},
+          },
+          required: ['input_str', 'tuple_items'],
+        },
+      );
+      expect(decl.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          input_str: {type: Type.ARRAY, items: {type: Type.STRING}},
+          tuple_items: {type: Type.ARRAY, items: {type: Type.INTEGER}},
+        },
+        required: ['input_str', 'tuple_items'],
+      });
+    });
+
+    it('maps object and any parameters to Type.OBJECT and Type.TYPE_UNSPECIFIED', () => {
+      const decl = buildFunctionDeclarationUtil(
+        false,
+        'simple_function',
+        'Dict function',
+        function simpleFunction() {},
+        {
+          properties: {
+            input_str: {type: 'Dict'},
+            any_val: {type: 'Any'},
+          },
+          required: ['input_str'],
+        },
+      );
+      expect(decl.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          input_str: {type: Type.OBJECT},
+          any_val: {type: Type.TYPE_UNSPECIFIED},
+        },
+        required: ['input_str'],
+      });
+    });
+
+    it('maps a nested object schema input to Type.OBJECT', () => {
+      const decl = buildFunctionDeclarationUtil(
+        false,
+        'simple_function',
+        'Object schema input',
+        function simpleFunction() {},
+        {
+          properties: {
+            input: {
+              type: 'object',
+              properties: {
+                input_str: {type: 'str'},
+              },
+            },
+          },
+          required: ['input'],
+        },
+      );
+      expect(decl.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          input: {
+            type: Type.OBJECT,
+            properties: {
+              input_str: {type: Type.STRING},
+            },
+          },
+        },
+        required: ['input'],
+      });
+    });
+
+    it('omits parameters when properties is empty', () => {
+      const decl = buildFunctionDeclarationUtil(
+        false,
+        'simple_function',
+        'No parameters when empty',
+        function simpleFunction() {},
+        {properties: {}},
+      );
+      expect(decl).toEqual({
+        name: 'simple_function',
+        description: 'No parameters when empty',
+      });
+      expect(decl.parameters).toBeUndefined();
+    });
+
+    it('builds a standalone schema with unspecified response type for Vertex AI', () => {
+      const decl = buildFunctionDeclarationUtil(
+        true,
+        'SimpleFunction',
+        'Standalone schema',
+        function simpleFunction() {},
+        {
+          properties: {
+            input_str: {type: 'string'},
+          },
+          required: ['input_str'],
+        },
+      );
+      expect(decl).toEqual({
+        name: 'SimpleFunction',
+        description: 'Standalone schema',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            input_str: {type: Type.STRING},
+          },
+          required: ['input_str'],
+        },
+        response: {type: Type.TYPE_UNSPECIFIED},
+      });
+    });
+
+    it('maps deeply nested object parameter schemas to Type.OBJECT', () => {
+      const decl = buildFunctionDeclarationUtil(
+        false,
+        'simple_function',
+        'Nested object schema input',
+        function simpleFunction() {},
+        {
+          properties: {
+            input: {
+              type: 'object',
+              properties: {
+                child: {
+                  type: 'object',
+                  properties: {
+                    input_str: {type: 'str'},
+                  },
+                },
+              },
+            },
+          },
+        },
+      );
+      expect(decl.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          input: {
+            type: Type.OBJECT,
+            properties: {
+              child: {
+                type: Type.OBJECT,
+                properties: {
+                  input_str: {type: Type.STRING},
+                },
+              },
+            },
+          },
+        },
+      });
+    });
+
+    it('maps a custom schema with a nested child object', () => {
+      const decl = buildFunctionDeclarationUtil(
+        false,
+        'CustomInput',
+        'Custom nested schema',
+        undefined,
+        {
+          properties: {
+            child: {
+              type: 'object',
+              properties: {
+                input_str: {type: 'string'},
+              },
+            },
+          },
+        },
+      );
+      expect(decl.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          child: {
+            type: Type.OBJECT,
+            properties: {
+              input_str: {type: Type.STRING},
+            },
+          },
+        },
+      });
+    });
+
+    it('maps array schemas of strings and objects', () => {
+      const decl = buildFunctionDeclarationUtil(
+        false,
+        'simple_function',
+        'List of strings and dicts',
+        function simpleFunction() {},
+        {
+          properties: {
+            input_str: {type: 'list', items: {type: 'str'}},
+            input_dir: {type: 'list', items: {type: 'Dict'}},
+          },
+        },
+      );
+      expect(decl.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          input_str: {type: Type.ARRAY, items: {type: Type.STRING}},
+          input_dir: {type: Type.ARRAY, items: {type: Type.OBJECT}},
+        },
+      });
+    });
+
+    it('maps an array of nested objects to Type.ARRAY with nested Type.OBJECT items', () => {
+      const decl = buildFunctionDeclarationUtil(
+        false,
+        'simple_function',
+        'List of nested objects',
+        function simpleFunction() {},
+        {
+          properties: {
+            input_str: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  child: {
+                    type: 'object',
+                    properties: {
+                      input_str: {type: 'string'},
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      );
+      expect(decl.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          input_str: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                child: {
+                  type: Type.OBJECT,
+                  properties: {
+                    input_str: {type: Type.STRING},
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+    });
+
+    it('normalizes nullable, default, title, and anyOf fields for CrewAI and LangChain schemas', () => {
+      const crewaiSchema = {
+        properties: {
+          mandatory_str: {type: 'string', title: 'Mandatory'},
+          nullable_int: {
+            anyOf: [{type: 'integer'}, {type: 'null'}],
+            default: null,
+          },
+          default_bool: {type: 'boolean', default: true},
+        },
+      };
+
+      const geminiDecl = buildFunctionDeclarationForParamsForCrewai(
+        false,
+        'crew_tool',
+        'Crew description',
+        function run() {},
+        crewaiSchema,
+      );
+      expect(geminiDecl).toEqual({
+        name: 'crew_tool',
+        description: 'Crew description',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            mandatory_str: {type: Type.STRING},
+            nullable_int: {type: Type.INTEGER},
+            default_bool: {type: Type.BOOLEAN},
+          },
+          required: ['mandatory_str'],
+        },
+      });
+      expect(geminiDecl.response).toBeUndefined();
+
+      const vertexDecl = buildFunctionDeclarationForLangchain(
+        true,
+        'lc_tool',
+        'LC description',
+        function _run() {},
+        crewaiSchema.properties,
+      );
+      expect(vertexDecl.name).toBe('lc_tool');
+      expect(vertexDecl.parameters?.required).toEqual(['mandatory_str']);
+      expect(vertexDecl.parameters?.properties?.['nullable_int']).toEqual({
+        type: Type.INTEGER,
+        anyOf: [{type: Type.INTEGER}],
+        nullable: true,
+        default: null,
+      });
+      expect(vertexDecl.response).toEqual({type: Type.TYPE_UNSPECIFIED});
+      expect(GoogleLLMVariant.VERTEX_AI).toBe('VERTEX_AI');
+    });
+
+    it('maps null parameter types to OBJECT with nullable true', () => {
+      const vertexUtilDecl = buildFunctionDeclarationUtil(
+        true,
+        'nullParamFn',
+        'Handles null parameter annotation',
+        function nullParamFn() {},
+        {
+          properties: {
+            nullStrParam: {type: 'null'},
+            nullParam: {type: null},
+          },
+        },
+      );
+      expect(vertexUtilDecl.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          nullStrParam: {type: Type.OBJECT, nullable: true},
+          nullParam: {type: Type.OBJECT, nullable: true},
+        },
+      });
+
+      const vertexLangchainDecl = buildFunctionDeclarationForLangchain(
+        true,
+        'lcNullFn',
+        'LangChain null parameter',
+        function lcNullFn() {},
+        {
+          nullParam: {type: null},
+          requiredStr: {type: 'string'},
+        },
+      );
+      expect(vertexLangchainDecl.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          nullParam: {type: Type.OBJECT, nullable: true},
+          requiredStr: {type: Type.STRING},
+        },
+        required: ['requiredStr'],
+      });
+
+      const geminiCrewaiDecl = buildFunctionDeclarationForParamsForCrewai(
+        false,
+        'crewNullFn',
+        'CrewAI null parameter',
+        function crewNullFn() {},
+        {
+          properties: {
+            nullParam: {type: null},
+            requiredStr: {type: 'string'},
+          },
+        },
+      );
+      expect(geminiCrewaiDecl.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          nullParam: {type: Type.OBJECT},
+          requiredStr: {type: Type.STRING},
+        },
+        required: ['requiredStr'],
+      });
+    });
+  });
+
+  describe('execution and mandatory parameter validation', () => {
+    const {handleFunctionCallList} = functionsExportedForTestingOnly;
+
+    const twoArgSchema = z4.object({
+      arg1: z4.string(),
+      arg2: z4.string(),
+    });
+
+    const fourArgSchema = z4.object({
+      arg1: z4.string(),
+      arg2: z4.string(),
+      arg3: z4.string(),
+      arg4: z4.string(),
+    });
+
+    function createTestInvocationContext(): InvocationContext {
+      return new InvocationContext({
+        invocationId: 'inv_func_tool_test',
+        session: {} as Session,
+        agent: new LlmAgent({name: 'test_agent', model: 'gemini-flash-latest'}),
+        pluginManager: new PluginManager(),
+      });
+    }
+
+    function functionForTestingWithNoArgs(): undefined {
+      return undefined;
+    }
+
+    async function asyncFunctionForTestingWith1ArgAndToolContext(
+      {arg1}: {arg1: string},
+      toolContext?: Context,
+    ): Promise<string> {
+      expect(arg1).toBeTruthy();
+      expect(toolContext).toBeDefined();
+      return arg1;
+    }
+
+    async function asyncFunctionForTestingWith2ArgAndNoToolContext({
+      arg1,
+      arg2,
+    }: {
+      arg1: string;
+      arg2: string;
+    }): Promise<string> {
+      expect(arg1).toBeTruthy();
+      expect(arg2).toBeTruthy();
+      return arg1;
+    }
+
+    class AsyncCallableWith2ArgsAndNoToolContext {
+      readonly prefix = '';
+
+      async execute({
+        arg1,
+        arg2,
+      }: {
+        arg1: string;
+        arg2: string;
+      }): Promise<string> {
+        expect(arg1).toBeTruthy();
+        expect(arg2).toBeTruthy();
+        return `${this.prefix}${arg1}`;
+      }
+    }
+
+    function functionForTestingWith1ArgAndToolContext(
+      {arg1}: {arg1: string},
+      toolContext?: Context,
+    ): string {
+      expect(arg1).toBeTruthy();
+      expect(toolContext).toBeDefined();
+      return arg1;
+    }
+
+    class AsyncCallableWith1ArgAndToolContext {
+      readonly prefix = '';
+
+      async execute(
+        {arg1}: {arg1: string},
+        toolContext?: Context,
+      ): Promise<string> {
+        expect(arg1).toBeTruthy();
+        expect(toolContext).toBeDefined();
+        return `${this.prefix}${arg1}`;
+      }
+    }
+
+    function functionForTestingWith2ArgAndNoToolContext({
+      arg1,
+      arg2,
+    }: {
+      arg1: string;
+      arg2: string;
+    }): string {
+      expect(arg1).toBeTruthy();
+      expect(arg2).toBeTruthy();
+      return arg1;
+    }
+
+    async function asyncFunctionForTestingWith4ArgAndNoToolContext(
+      _args: z4.infer<typeof fourArgSchema>,
+    ): Promise<void> {}
+
+    function functionForTestingWith4ArgAndNoToolContext(
+      _args: z4.infer<typeof fourArgSchema>,
+    ): void {}
+
+    it('initializes a FunctionTool with no arguments and rejects an empty tool name', async () => {
+      const tool = new FunctionTool({
+        name: 'function_for_testing_with_no_args',
+        description: 'Function for testing with no args.',
+        execute: functionForTestingWithNoArgs,
+      });
+      expect(tool.name).toBe('function_for_testing_with_no_args');
+      expect(tool.description).toBe('Function for testing with no args.');
+      const result = await tool.runAsync({
+        args: {},
+        toolContext: emptyContext,
+      });
+      expect(result).toBeUndefined();
+
+      expect(
+        () =>
+          new FunctionTool({
+            description: 'Anonymous function without a name.',
+            execute: (
+              () => () =>
+                'ok'
+            )(),
+          }),
+      ).toThrow('Tool name cannot be empty');
+    });
+
+    it('runs an async function with toolContext', async () => {
+      const tool = new FunctionTool({
+        name: 'async_function_for_testing_with_1_arg_and_tool_context',
+        description: 'Async function for testing with 1 arg and tool context.',
+        parameters: z4.object({arg1: z4.string()}),
+        execute: asyncFunctionForTestingWith1ArgAndToolContext,
+      });
+      const result = await tool.runAsync({
+        args: {arg1: 'test_value_1'},
+        toolContext: emptyContext,
+      });
+      expect(result).toBe('test_value_1');
+    });
+
+    it('runs an async bound callable method with toolContext', async () => {
+      const callable = new AsyncCallableWith1ArgAndToolContext();
+      const tool = new FunctionTool({
+        name: 'AsyncCallableWith1ArgAndToolContext',
+        description: 'Async callable with 1 arg and tool context.',
+        parameters: z4.object({arg1: z4.string()}),
+        execute: callable.execute.bind(callable),
+      });
+      expect(tool.name).toBe('AsyncCallableWith1ArgAndToolContext');
+      const result = await tool.runAsync({
+        args: {arg1: 'test_value_1'},
+        toolContext: emptyContext,
+      });
+      expect(result).toBe('test_value_1');
+    });
+
+    it('runs an async function without toolContext', async () => {
+      const tool = new FunctionTool({
+        name: 'async_function_for_testing_with_2_arg_and_no_tool_context',
+        description:
+          'Async function for testing with 2 args and no tool context.',
+        parameters: twoArgSchema,
+        execute: asyncFunctionForTestingWith2ArgAndNoToolContext,
+      });
+      const result = await tool.runAsync({
+        args: {arg1: 'test_value_1', arg2: 'test_value_2'},
+        toolContext: emptyContext,
+      });
+      expect(result).toBe('test_value_1');
+    });
+
+    it('runs async callable without tool context', async () => {
+      const callable = new AsyncCallableWith2ArgsAndNoToolContext();
+      const executeFn = (args: {arg1: string; arg2: string}) =>
+        callable.execute(args);
+      Object.defineProperty(executeFn, 'name', {value: 'Async callable name'});
+      const tool = new FunctionTool({
+        description: 'Async callable doc',
+        parameters: twoArgSchema,
+        execute: executeFn,
+      });
+      expect(tool.name).toBe('Async callable name');
+      expect(tool.description).toBe('Async callable doc');
+      const result = await tool.runAsync({
+        args: {arg1: 'test_value_1', arg2: 'test_value_2'},
+        toolContext: emptyContext,
+      });
+      expect(result).toBe('test_value_1');
+    });
+
+    it('runs a synchronous function with toolContext', async () => {
+      const tool = new FunctionTool({
+        name: 'function_for_testing_with_1_arg_and_tool_context',
+        description: 'Function for testing with 1 arg and tool context.',
+        parameters: z4.object({arg1: z4.string()}),
+        execute: functionForTestingWith1ArgAndToolContext,
+      });
+      const result = await tool.runAsync({
+        args: {arg1: 'test_value_1'},
+        toolContext: emptyContext,
+      });
+      expect(result).toBe('test_value_1');
+    });
+
+    it('runs a synchronous function without toolContext', async () => {
+      const tool = new FunctionTool({
+        name: 'function_for_testing_with_2_arg_and_no_tool_context',
+        description: 'Function for testing with 2 args and no tool context.',
+        parameters: twoArgSchema,
+        execute: functionForTestingWith2ArgAndNoToolContext,
+      });
+      const result = await tool.runAsync({
+        args: {arg1: 'test_value_1', arg2: 'test_value_2'},
+        toolContext: emptyContext,
+      });
+      expect(result).toBe('test_value_1');
+    });
+
+    it('rejects a synchronous function call when 1 required argument is missing', async () => {
+      const tool = new FunctionTool({
+        name: 'function_for_testing_with_2_arg_and_no_tool_context',
+        description: 'Function for testing with 2 args and no tool context.',
+        parameters: twoArgSchema,
+        execute: functionForTestingWith2ArgAndNoToolContext,
+      });
+      const args = {arg1: 'test_value_1'};
+      await expect(
+        tool.runAsync({args, toolContext: emptyContext}),
+      ).rejects.toThrow(
+        /Error in tool 'function_for_testing_with_2_arg_and_no_tool_context':[\s\S]*arg2/,
+      );
+
+      const event = await handleFunctionCallList({
+        invocationContext: createTestInvocationContext(),
+        functionCalls: [{id: 'call-1', name: tool.name, args}],
+        toolsDict: {[tool.name]: tool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+      expect(event?.content?.parts?.[0]?.functionResponse?.response).toEqual({
+        error: expect.stringMatching(
+          /Error in tool 'function_for_testing_with_2_arg_and_no_tool_context':[\s\S]*arg2/,
+        ),
+      });
+    });
+
+    it('rejects an async function call when 1 required argument is missing', async () => {
+      const tool = new FunctionTool({
+        name: 'async_function_for_testing_with_2_arg_and_no_tool_context',
+        description:
+          'Async function for testing with 2 args and no tool context.',
+        parameters: twoArgSchema,
+        execute: asyncFunctionForTestingWith2ArgAndNoToolContext,
+      });
+      const args = {arg2: 'test_value_1'};
+      await expect(
+        tool.runAsync({args, toolContext: emptyContext}),
+      ).rejects.toThrow(
+        /Error in tool 'async_function_for_testing_with_2_arg_and_no_tool_context':[\s\S]*arg1/,
+      );
+
+      const event = await handleFunctionCallList({
+        invocationContext: createTestInvocationContext(),
+        functionCalls: [{id: 'call-1', name: tool.name, args}],
+        toolsDict: {[tool.name]: tool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+      expect(event?.content?.parts?.[0]?.functionResponse?.response).toEqual({
+        error: expect.stringMatching(
+          /Error in tool 'async_function_for_testing_with_2_arg_and_no_tool_context':[\s\S]*arg1/,
+        ),
+      });
+    });
+
+    it('rejects a synchronous function call when 3 required arguments are missing', async () => {
+      const tool = new FunctionTool({
+        name: 'function_for_testing_with_4_arg_and_no_tool_context',
+        description: 'Function for testing with 4 args.',
+        parameters: fourArgSchema,
+        execute: functionForTestingWith4ArgAndNoToolContext,
+      });
+      const args = {arg2: 'test_value_1'};
+      await expect(
+        tool.runAsync({args, toolContext: emptyContext}),
+      ).rejects.toThrow(
+        /Error in tool 'function_for_testing_with_4_arg_and_no_tool_context':[\s\S]*arg1[\s\S]*arg3[\s\S]*arg4/,
+      );
+
+      const event = await handleFunctionCallList({
+        invocationContext: createTestInvocationContext(),
+        functionCalls: [{id: 'call-1', name: tool.name, args}],
+        toolsDict: {[tool.name]: tool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+      expect(event?.content?.parts?.[0]?.functionResponse?.response).toEqual({
+        error: expect.stringMatching(
+          /Error in tool 'function_for_testing_with_4_arg_and_no_tool_context':[\s\S]*arg1[\s\S]*arg3[\s\S]*arg4/,
+        ),
+      });
+    });
+
+    it('rejects an async function call when 3 required arguments are missing', async () => {
+      const tool = new FunctionTool({
+        name: 'async_function_for_testing_with_4_arg_and_no_tool_context',
+        description: 'Async function for testing with 4 args.',
+        parameters: fourArgSchema,
+        execute: asyncFunctionForTestingWith4ArgAndNoToolContext,
+      });
+      const args = {arg3: 'test_value_1'};
+      await expect(
+        tool.runAsync({args, toolContext: emptyContext}),
+      ).rejects.toThrow(
+        /Error in tool 'async_function_for_testing_with_4_arg_and_no_tool_context':[\s\S]*arg1[\s\S]*arg2[\s\S]*arg4/,
+      );
+
+      const event = await handleFunctionCallList({
+        invocationContext: createTestInvocationContext(),
+        functionCalls: [{id: 'call-1', name: tool.name, args}],
+        toolsDict: {[tool.name]: tool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+      expect(event?.content?.parts?.[0]?.functionResponse?.response).toEqual({
+        error: expect.stringMatching(
+          /Error in tool 'async_function_for_testing_with_4_arg_and_no_tool_context':[\s\S]*arg1[\s\S]*arg2[\s\S]*arg4/,
+        ),
+      });
+    });
+
+    it('rejects a synchronous function call when all required arguments are missing', async () => {
+      const tool = new FunctionTool({
+        name: 'function_for_testing_with_4_arg_and_no_tool_context',
+        description: 'Function for testing with 4 args.',
+        parameters: fourArgSchema,
+        execute: functionForTestingWith4ArgAndNoToolContext,
+      });
+      const args = {};
+      await expect(
+        tool.runAsync({args, toolContext: emptyContext}),
+      ).rejects.toThrow(
+        /Error in tool 'function_for_testing_with_4_arg_and_no_tool_context':[\s\S]*arg1[\s\S]*arg2[\s\S]*arg3[\s\S]*arg4/,
+      );
+
+      const event = await handleFunctionCallList({
+        invocationContext: createTestInvocationContext(),
+        functionCalls: [{id: 'call-1', name: tool.name, args}],
+        toolsDict: {[tool.name]: tool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+      expect(event?.content?.parts?.[0]?.functionResponse?.response).toEqual({
+        error: expect.stringMatching(
+          /Error in tool 'function_for_testing_with_4_arg_and_no_tool_context':[\s\S]*arg1[\s\S]*arg2[\s\S]*arg3[\s\S]*arg4/,
+        ),
+      });
+    });
+
+    it('rejects an async function call when all required arguments are missing', async () => {
+      const tool = new FunctionTool({
+        name: 'async_function_for_testing_with_4_arg_and_no_tool_context',
+        description: 'Async function for testing with 4 args.',
+        parameters: fourArgSchema,
+        execute: asyncFunctionForTestingWith4ArgAndNoToolContext,
+      });
+      const args = {};
+      await expect(
+        tool.runAsync({args, toolContext: emptyContext}),
+      ).rejects.toThrow(
+        /Error in tool 'async_function_for_testing_with_4_arg_and_no_tool_context':[\s\S]*arg1[\s\S]*arg2[\s\S]*arg3[\s\S]*arg4/,
+      );
+
+      const event = await handleFunctionCallList({
+        invocationContext: createTestInvocationContext(),
+        functionCalls: [{id: 'call-1', name: tool.name, args}],
+        toolsDict: {[tool.name]: tool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+      expect(event?.content?.parts?.[0]?.functionResponse?.response).toEqual({
+        error: expect.stringMatching(
+          /Error in tool 'async_function_for_testing_with_4_arg_and_no_tool_context':[\s\S]*arg1[\s\S]*arg2[\s\S]*arg3[\s\S]*arg4/,
+        ),
+      });
+    });
+
+    it('runs a synchronous function when optional arguments are omitted', async () => {
+      const tool = new FunctionTool({
+        name: 'func_with_optional_args',
+        description: 'Sync function with optional args.',
+        parameters: z4.object({
+          arg1: z4.string(),
+          arg2: z4.string().optional(),
+          arg3: z4.string(),
+          arg4: z4.string().optional(),
+        }),
+        execute: ({arg1, arg3}) => `${arg1},${arg3}`,
+      });
+      const result = await tool.runAsync({
+        args: {arg1: 'test_value_1', arg3: 'test_value_3'},
+        toolContext: emptyContext,
+      });
+      expect(result).toBe('test_value_1,test_value_3');
+    });
+
+    it('runs an async function when optional arguments are omitted', async () => {
+      const tool = new FunctionTool({
+        name: 'async_func_with_optional_args',
+        description: 'Async function with optional args.',
+        parameters: z4.object({
+          arg1: z4.string(),
+          arg2: z4.string().optional(),
+          arg3: z4.string(),
+          arg4: z4.string().optional(),
+        }),
+        execute: async ({arg1, arg3}) => `${arg1},${arg3}`,
+      });
+      const result = await tool.runAsync({
+        args: {arg1: 'test_value_1', arg3: 'test_value_3'},
+        toolContext: emptyContext,
+      });
+      expect(result).toBe('test_value_1,test_value_3');
     });
   });
 });

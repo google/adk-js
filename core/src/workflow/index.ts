@@ -37,7 +37,7 @@ export type {
 } from './nodes/function_node.js';
 export {JoinNode} from './nodes/join_node.js';
 export {NodeTool} from './nodes/node_tool.js';
-export {ParallelWorker} from './nodes/parallel_worker.js';
+export {ParallelWorker, isParallelWorker} from './nodes/parallel_worker.js';
 export type {ParallelWorkerConfig} from './nodes/parallel_worker.js';
 export {ToolNode} from './nodes/tool_node.js';
 export type {ToolNodeConfig} from './nodes/tool_node.js';

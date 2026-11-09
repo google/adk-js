@@ -7,21 +7,19 @@ import {exec, spawn} from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import {promisify} from 'node:util';
 import {afterAll, beforeAll, describe, expect, it} from 'vitest';
-import {getResponse, sendInput} from '../test_case_utils.js';
+import {
+  getResponse,
+  PLATFORM_TIMEOUT_MULTIPLIER,
+  sendInput,
+} from '../test_case_utils.js';
 
 const execAsync = promisify(exec);
 const dirname = process.cwd();
 
-const TEST_EXECUTION_TIMEOUT = 20000;
-
-// These hooks run `npm install` (plus `npm run build` for ts_* setups) and the
-// recursive node_modules teardown, overrunning vitest's default 10s hookTimeout
-// and causing flaky "Hook timed out in 10000ms" failures. All twelve hook runs
-// take ~16s combined on ubuntu-latest, but a cold, network-bound install has
-// been measured at ~70s, so 120s covers the worst case. Don't raise
-// TEST_EXECUTION_TIMEOUT for hook flakes; that stays the 20s per-test budget.
-// Trade-off: a stuck hook now takes this long to surface.
-const HOOK_TIMEOUT = 120000;
+// Hooks do the install/build using the project's 120s hookTimeout; each test
+// spawns the CLI inside the installed fixture (bundling via AgentLoader on
+// `npm run start`), scaled by PLATFORM_TIMEOUT_MULTIPLIER on Windows.
+const TEST_EXECUTION_TIMEOUT = 60000 * PLATFORM_TIMEOUT_MULTIPLIER;
 
 describe('Build setup', () => {
   describe.each([
@@ -52,7 +50,7 @@ describe('Build setup', () => {
         expect(buildResult.stderr).toBe('');
         expect(buildResult.stdout).toContain('\nBuild complete');
       }
-    }, HOOK_TIMEOUT);
+    });
 
     it(
       'should build and run agent successfully',
@@ -128,6 +126,6 @@ describe('Build setup', () => {
           .rm(`${projectPath}/dist`, {recursive: true, force: true})
           .catch(() => {});
       }
-    }, HOOK_TIMEOUT);
+    });
   });
 });

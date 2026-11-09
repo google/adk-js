@@ -21,6 +21,11 @@ import {BaseToolset, ToolPredicate} from '../base_toolset.js';
 import {MCPConnectionParams, MCPSessionManager} from './mcp_session_manager.js';
 import {MCPTool} from './mcp_tool.js';
 
+export type {
+  SseConnectionParams,
+  SseServerParams,
+} from './mcp_session_manager.js';
+
 /**
  * A toolset that dynamically discovers and provides tools from a Model Context
  * Protocol (MCP) server.
@@ -49,6 +54,20 @@ import {MCPTool} from './mcp_tool.js';
  *
  * const mcpToolset = new MCPToolset(connectionParams);
  * const tools = await mcpToolset.getTools();
+ * ```
+ *
+ * @example
+ * ```ts
+ * import {MCPToolset} from '@google/adk';
+ * import type {SseConnectionParams} from '@google/adk';
+ *
+ * const sseParams: SseConnectionParams = {
+ *   type: 'SseConnectionParams',
+ *   url: 'http://localhost:8090/sse',
+ * };
+ *
+ * const sseToolset = new MCPToolset(sseParams);
+ * const sseTools = await sseToolset.getTools();
  * ```
  */
 export class MCPToolset extends BaseToolset {
@@ -86,30 +105,7 @@ export class MCPToolset extends BaseToolset {
       return new MCPTool(toolWithPrefix, this.mcpSessionManager, tool.name);
     });
 
-    // Apply toolFilter when specified.
-    // An empty array (the default) means no filter — all tools are returned.
-    const filter = this.toolFilter;
-    if (!filter || (Array.isArray(filter) && filter.length === 0)) {
-      return tools;
-    }
-
-    if (Array.isArray(filter)) {
-      // String-array filter: match against the (possibly-prefixed) tool name.
-      return tools.filter((tool) => (filter as string[]).includes(tool.name));
-    }
-
-    if (context) {
-      // Predicate filter: requires a ReadonlyContext to evaluate.
-      return tools.filter((tool) => filter(tool, context));
-    }
-
-    // Predicate filter requested but no context provided — return all tools
-    // and log a warning so callers are aware the filter was not applied.
-    logger.warn(
-      'MCPToolset: a ToolPredicate toolFilter was provided but getTools() ' +
-        'was called without a ReadonlyContext. The filter will not be applied.',
-    );
-    return tools;
+    return tools.filter((tool) => this.isToolSelected(tool, context));
   }
 
   /**

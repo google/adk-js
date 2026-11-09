@@ -22,6 +22,7 @@ import {
   saveToFile,
   tryToFindFileRecursively,
 } from '../../src/utils/file_utils.js';
+import {version} from '../../src/version.js';
 
 type Callback = (error: Error | null, result?: unknown) => void;
 
@@ -50,13 +51,15 @@ vi.mock('node:fs/promises', () => {
 });
 
 vi.mock('../../src/utils/agent_loader.js', () => ({
-  AgentLoader: vi.fn().mockImplementation(() => ({
-    listAgents: vi.fn().mockResolvedValue(['agent1']),
-    getAgentFile: vi.fn().mockResolvedValue({
-      getFilePath: vi.fn().mockReturnValue('path/to/agent1.ts'),
-    }),
-    disposeAll: vi.fn().mockResolvedValue(undefined),
-  })),
+  AgentLoader: vi.fn().mockImplementation(function () {
+    return {
+      listAgents: vi.fn().mockResolvedValue(['agent1']),
+      getAgentFile: vi.fn().mockResolvedValue({
+        getFilePath: vi.fn().mockReturnValue('path/to/agent1.ts'),
+      }),
+      disposeAll: vi.fn().mockResolvedValue(undefined),
+    };
+  }),
 }));
 
 vi.mock('../../src/utils/file_utils.js', () => ({
@@ -89,6 +92,30 @@ describe('createDockerFileContent', () => {
       a2a: true,
     });
     expect(content).toContain('--a2a');
+  });
+
+  it('should skip container compile/bundle when the staged file is already an esbuild output (default)', () => {
+    const content = createDockerFileContent(defaultOptions);
+    expect(content).toContain('--compile=false');
+    expect(content).toContain('--bundle=false');
+  });
+
+  it('should skip container compile/bundle when agentFileLoadOptions had compile or bundle on', () => {
+    const content = createDockerFileContent({
+      ...defaultOptions,
+      agentFileLoadOptions: {compile: false, bundle: true},
+    });
+    expect(content).toContain('--compile=false');
+    expect(content).toContain('--bundle=false');
+  });
+
+  it('should leave container compile/bundle at their own defaults when staging did neither', () => {
+    const content = createDockerFileContent({
+      ...defaultOptions,
+      agentFileLoadOptions: {compile: false, bundle: false},
+    });
+    expect(content).not.toContain('--compile=');
+    expect(content).not.toContain('--bundle=');
   });
 
   it('should use web command when withUi is true', () => {
@@ -140,6 +167,28 @@ describe('createDockerFileContent', () => {
         createDockerFileContent({...defaultOptions, ...value}),
       ).toThrow(new RegExp(`Invalid ${label}`));
     }
+  });
+
+  it('should not echo a credentialed sessionServiceUri in the rejection message', () => {
+    // The deploy commands log this Error's message, and a session service URI
+    // carries its password in the userinfo, so the message must identify the
+    // option without reproducing the value.
+    const password = 'sw0rdf1sh';
+    const uri = `postgres://adk:${password}` + `@db.example.com/agents\nRUN id`;
+
+    let message: string | undefined;
+    try {
+      createDockerFileContent({...defaultOptions, sessionServiceUri: uri});
+    } catch (error) {
+      if (error instanceof Error) {
+        message = error.message;
+      }
+    }
+
+    expect(message).toContain('Invalid sessionServiceUri');
+    expect(message).toContain(`index ${uri.indexOf('\n')}`);
+    expect(message).not.toContain(password);
+    expect(message).not.toContain('db.example.com');
   });
 
   it('should shell-quote logLevel/allowOrigins/sessionServiceUri/artifactServiceUri in the CMD line', () => {
@@ -232,6 +281,51 @@ describe('createDockerFileContent', () => {
     expect(content).toContain('agents/my-agent_v2.1/');
     expect(content).toContain('GOOGLE_CLOUD_PROJECT=my-project.example-123');
   });
+
+  it('should pin the base image to an explicit Node major', () => {
+    // The tag is spelled out here rather than imported from the source, so
+    // that changing the pin has to be a deliberate edit of this expectation.
+    const content = createDockerFileContent(defaultOptions);
+    expect(content.trimStart().split('\n')[0]).toBe('FROM node:24-alpine');
+  });
+
+  it('should not use a floating Node base image tag', () => {
+    const content = createDockerFileContent(defaultOptions);
+    expect(content).not.toMatch(/FROM node:(lts|latest|current)/);
+  });
+
+  it('should pin adk-devtools to the version of the deploying CLI', () => {
+    const content = createDockerFileContent(defaultOptions);
+    expect(content).toContain(
+      `RUN npm install @google/adk-devtools@${version}`,
+    );
+    expect(content).not.toContain('@google/adk-devtools@latest');
+  });
+
+  it.each(['1.2.3', '^2.4.0', '~2.4', '2.5.0-rc.1', 'next', 'latest'])(
+    'should install the adk-devtools version given in adkVersion (%s)',
+    (adkVersion) => {
+      const content = createDockerFileContent({...defaultOptions, adkVersion});
+      expect(content).toContain(
+        `RUN npm install @google/adk-devtools@${adkVersion}\n`,
+      );
+    },
+  );
+
+  it.each([
+    '1.0.0 && curl evil',
+    '1.0.0\nRUN id',
+    '>=1.0.0',
+    '$(id)',
+    '1.0.0;id',
+  ])(
+    'should reject an adkVersion that is unsafe to embed (%j)',
+    (adkVersion) => {
+      expect(() =>
+        createDockerFileContent({...defaultOptions, adkVersion}),
+      ).toThrow(/Invalid adkVersion/);
+    },
+  );
 });
 
 describe('deployToCloudRun', () => {
@@ -265,13 +359,15 @@ describe('deployToCloudRun', () => {
       },
     });
 
-    (AgentLoader as Mock).mockImplementation(() => ({
-      listAgents: vi.fn().mockResolvedValue(['agent1']),
-      getAgentFile: vi.fn().mockResolvedValue({
-        getFilePath: vi.fn().mockReturnValue('path/to/agent1.ts'),
-      }),
-      disposeAll: vi.fn().mockResolvedValue(undefined),
-    }));
+    (AgentLoader as Mock).mockImplementation(function () {
+      return {
+        listAgents: vi.fn().mockResolvedValue(['agent1']),
+        getAgentFile: vi.fn().mockResolvedValue({
+          getFilePath: vi.fn().mockReturnValue('path/to/agent1.ts'),
+        }),
+        disposeAll: vi.fn().mockResolvedValue(undefined),
+      };
+    });
 
     execMock.mockImplementation((cmd: string, callback: Callback) => {
       if (cmd.includes('config get-value project')) {
@@ -500,6 +596,15 @@ describe('deployToCloudRun', () => {
     );
   });
 
+  it('should install the requested adkVersion in the Dockerfile', async () => {
+    await deployToCloudRun(defaultOptions);
+
+    expect(saveToFile).toHaveBeenCalledWith(
+      path.join('/tmp/test-deploy', 'Dockerfile'),
+      expect.stringContaining('RUN npm install @google/adk-devtools@1.0.0\n'),
+    );
+  });
+
   it('should not stage an empty node_modules or package-lock.json', async () => {
     await deployToCloudRun(defaultOptions);
 
@@ -538,5 +643,36 @@ describe('deployToCloudRun', () => {
       expect.stringContaining('Command failed with exit code 1'),
       expect.stringContaining('\x1b[0m'),
     );
+  });
+
+  describe('appName option', () => {
+    it('uses options.appName when provided instead of deriving from agentPath', async () => {
+      await deployToCloudRun({
+        ...defaultOptions,
+        appName: 'custom-app-name',
+      });
+
+      expect(saveToFile).toHaveBeenCalledWith(
+        path.join('/tmp/test-deploy', 'Dockerfile'),
+        expect.stringContaining('agents/custom-app-name'),
+      );
+    });
+  });
+
+  describe('service URI options', () => {
+    it('forwards sessionServiceUri and artifactServiceUri into the generated Dockerfile CMD', async () => {
+      await deployToCloudRun({
+        ...defaultOptions,
+        sessionServiceUri: 'sqlite:///tmp/sessions.db',
+        artifactServiceUri: 'gs://my-artifact-bucket',
+      });
+
+      expect(saveToFile).toHaveBeenCalledWith(
+        path.join('/tmp/test-deploy', 'Dockerfile'),
+        expect.stringContaining(
+          "--artifact_service_uri='gs://my-artifact-bucket' --session_service_uri='sqlite:///tmp/sessions.db'",
+        ),
+      );
+    });
   });
 });

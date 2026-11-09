@@ -18,6 +18,7 @@ import {
   LlmResponse,
   RunAsyncToolRequest,
   Runner,
+  SequentialAgent,
 } from '@google/adk';
 import {Blob, Content, FunctionDeclaration, Modality} from '@google/genai';
 import {beforeEach, describe, expect, it} from 'vitest';
@@ -112,8 +113,7 @@ class FakeLiveLlm extends BaseLlm {
 
   constructor(
     private readonly responses:
-      | Array<LlmResponse | Error>
-      | Array<Array<LlmResponse | Error>>,
+      Array<LlmResponse | Error> | Array<Array<LlmResponse | Error>>,
     model = 'fake-live-llm',
   ) {
     super({model});
@@ -1116,5 +1116,209 @@ describe('Runner.runLive', () => {
     }).rejects.toThrow('Simulated outbound connection error on empty receive');
 
     expect(llm.connection!.closed).toBe(true);
+  });
+
+  it('executes a SequentialAgent root agent across sub-agents in live mode', async () => {
+    const sub1Content: Content = {
+      role: 'model',
+      parts: [{text: 'step 1 done'}],
+    };
+    const sub2Content: Content = {
+      role: 'model',
+      parts: [{text: 'step 2 done'}],
+    };
+    const sub1Llm = new FakeLiveLlm([
+      {content: sub1Content},
+      {turnComplete: true},
+    ]);
+    const sub2Llm = new FakeLiveLlm([
+      {content: sub2Content},
+      {turnComplete: true},
+    ]);
+    const sub1 = new LlmAgent({
+      name: 'sub1',
+      model: sub1Llm,
+      instruction: 'First step.',
+    });
+    const sub2 = new LlmAgent({
+      name: 'sub2',
+      model: sub2Llm,
+      instruction: 'Second step.',
+    });
+    const sequentialAgent = new SequentialAgent({
+      name: 'seq_root',
+      subAgents: [sub1, sub2],
+    });
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: sequentialAgent,
+      sessionService,
+      artifactService,
+    });
+
+    const queue = new LiveRequestQueue();
+    queue.close();
+    const events: Event[] = [];
+    for await (const event of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+    })) {
+      events.push(event);
+    }
+
+    const contentEvents = events.filter((e) => e.content);
+    expect(contentEvents.map((e) => e.author)).toEqual(['sub1', 'sub2']);
+    expect(contentEvents.map((e) => e.content)).toEqual([
+      sub1Content,
+      sub2Content,
+    ]);
+    expect(sub1Llm.connection?.closed).toBe(true);
+    expect(sub2Llm.connection?.closed).toBe(true);
+  });
+
+  it('defaults inputAudioTranscription and outputAudioTranscription to empty objects when the root agent has sub-agents', async () => {
+    const parentLlm = new FakeLiveLlm([{turnComplete: true}]);
+    const childLlm = new FakeLiveLlm([{turnComplete: true}]);
+    const child = new LlmAgent({name: 'child', model: childLlm});
+    const parent = new LlmAgent({
+      name: 'parent',
+      model: parentLlm,
+      subAgents: [child],
+    });
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: parent,
+      sessionService,
+      artifactService,
+    });
+
+    const queue = new LiveRequestQueue();
+    queue.close();
+    for await (const _ of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+    })) {
+      // drain
+    }
+
+    const liveConfig = parentLlm.llmRequestSeen?.liveConnectConfig;
+    expect(liveConfig?.inputAudioTranscription).toEqual({});
+    expect(liveConfig?.outputAudioTranscription).toEqual({});
+  });
+});
+
+/**
+ * A connection whose `receive()` ends after each `turnComplete` response and
+ * continues with the next turn on the following call.
+ */
+class TurnByTurnConnection implements BaseLlmConnection {
+  closed = false;
+  receiveCalls = 0;
+  private readonly queue = new AsyncQueue<LlmResponse>();
+  private readonly iterator = this.queue[Symbol.asyncIterator]();
+
+  constructor(responses: LlmResponse[]) {
+    for (const response of responses) {
+      this.queue.push(response);
+    }
+  }
+
+  async sendHistory(_history: Content[]): Promise<void> {}
+  async sendContent(_content: Content): Promise<void> {}
+  async sendRealtime(_blob: Blob): Promise<void> {}
+
+  async *receive(): AsyncGenerator<LlmResponse, void, void> {
+    this.receiveCalls += 1;
+    while (true) {
+      const next = await this.iterator.next();
+      if (next.done) {
+        return;
+      }
+      yield next.value;
+      if (next.value.turnComplete) {
+        return;
+      }
+    }
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    this.queue.close();
+  }
+}
+
+class TurnByTurnLiveLlm extends FakeLiveLlm {
+  turnConnection?: TurnByTurnConnection;
+
+  constructor(private readonly turnResponses: LlmResponse[]) {
+    super([], 'turn-by-turn-live-llm');
+  }
+
+  override async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+    this.turnConnection = new TurnByTurnConnection(this.turnResponses);
+    return this.turnConnection;
+  }
+}
+
+describe('Runner.runLive with a connection that ends receive() per turn', () => {
+  let sessionService: InMemorySessionService;
+
+  beforeEach(async () => {
+    sessionService = new InMemorySessionService();
+    await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+  });
+
+  async function runLive(llm: TurnByTurnLiveLlm): Promise<Event[]> {
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: new LlmAgent({name: 'agent', model: llm}),
+      sessionService,
+    });
+    const queue = new LiveRequestQueue();
+    queue.close();
+    const events: Event[] = [];
+    for await (const event of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+    })) {
+      events.push(event);
+    }
+    return events;
+  }
+
+  it('keeps receiving the events of later turns', async () => {
+    const firstTurn: Content = {role: 'model', parts: [{text: 'first'}]};
+    const secondTurn: Content = {role: 'model', parts: [{text: 'second'}]};
+    const llm = new TurnByTurnLiveLlm([
+      {content: firstTurn},
+      {turnComplete: true},
+      {content: secondTurn},
+      {turnComplete: true},
+    ]);
+
+    const events = await runLive(llm);
+
+    const firstIndex = events.findIndex((e) => e.content === firstTurn);
+    const secondIndex = events.findIndex((e) => e.content === secondTurn);
+    expect(firstIndex).toBeGreaterThanOrEqual(0);
+    expect(secondIndex).toBeGreaterThan(firstIndex);
+    expect(events.filter((e) => e.turnComplete)).toHaveLength(2);
+  });
+
+  it('ends the flow once the connection closes and receive() yields nothing', async () => {
+    const llm = new TurnByTurnLiveLlm([{turnComplete: true}]);
+
+    const events = await runLive(llm);
+
+    expect(events.filter((e) => e.turnComplete)).toHaveLength(1);
+    expect(llm.turnConnection?.closed).toBe(true);
+    expect(llm.turnConnection?.receiveCalls).toBe(2);
   });
 });

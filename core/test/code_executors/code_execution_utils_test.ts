@@ -13,6 +13,8 @@ import {
   buildExecutableCodePart,
   convertCodeExecutionParts,
   extractCodeAndTruncateContent,
+  extractCodeBlockAndTruncateContent,
+  getCodeBlockLanguage,
   getEncodedFileContent,
 } from '../../src/code_executors/code_execution_utils.js';
 import {base64Encode} from '../../src/utils/env_aware_utils.js';
@@ -43,10 +45,10 @@ describe('getEncodedFileContent', () => {
 // buildExecutableCodePart
 // ---------------------------------------------------------------------------
 describe('buildExecutableCodePart', () => {
-  it('builds a part with text and executableCode fields', () => {
+  it('builds a part with only the executableCode field', () => {
     const code = 'print("hello")';
     const part = buildExecutableCodePart(code);
-    expect(part.text).toBe(code);
+    expect(part.text).toBeUndefined();
     expect(part.executableCode).toBeDefined();
     expect(part.executableCode!.code).toBe(code);
   });
@@ -58,7 +60,7 @@ describe('buildExecutableCodePart', () => {
 
   it('handles empty code string', () => {
     const part = buildExecutableCodePart('');
-    expect(part.text).toBe('');
+    expect(part.text).toBeUndefined();
     expect(part.executableCode!.code).toBe('');
   });
 });
@@ -74,7 +76,7 @@ describe('buildCodeExecutionResultPart', () => {
       outputFiles: [],
     });
     expect(part.codeExecutionResult!.outcome).toBe(Outcome.OUTCOME_FAILED);
-    expect(part.text).toBe('NameError: x');
+    expect(part.codeExecutionResult!.output).toBe('NameError: x');
   });
 
   it('returns OUTCOME_OK with stdout when no stderr', () => {
@@ -84,7 +86,7 @@ describe('buildCodeExecutionResultPart', () => {
       outputFiles: [],
     });
     expect(part.codeExecutionResult!.outcome).toBe(Outcome.OUTCOME_OK);
-    expect(part.text).toContain('42');
+    expect(part.codeExecutionResult!.output).toContain('42');
   });
 
   it('includes output file names in successful result', () => {
@@ -97,8 +99,8 @@ describe('buildCodeExecutionResultPart', () => {
       ],
     });
     expect(part.codeExecutionResult!.outcome).toBe(Outcome.OUTCOME_OK);
-    expect(part.text).toContain('chart.png');
-    expect(part.text).toContain('data.csv');
+    expect(part.codeExecutionResult!.output).toContain('chart.png');
+    expect(part.codeExecutionResult!.output).toContain('data.csv');
   });
 
   it('includes both stdout and saved artifacts when both present', () => {
@@ -107,8 +109,8 @@ describe('buildCodeExecutionResultPart', () => {
       stderr: '',
       outputFiles: [{name: 'out.txt', content: '', mimeType: 'text/plain'}],
     });
-    expect(part.text).toContain('done');
-    expect(part.text).toContain('out.txt');
+    expect(part.codeExecutionResult!.output).toContain('done');
+    expect(part.codeExecutionResult!.output).toContain('out.txt');
   });
 
   it('prefers stderr over stdout when both are set', () => {
@@ -118,7 +120,106 @@ describe('buildCodeExecutionResultPart', () => {
       outputFiles: [],
     });
     expect(part.codeExecutionResult!.outcome).toBe(Outcome.OUTCOME_FAILED);
-    expect(part.text).toBe('error occurred');
+    expect(part.codeExecutionResult!.output).toBe('error occurred');
+  });
+
+  it('sets codeExecutionResult.output to stderr on failure', () => {
+    const part = buildCodeExecutionResultPart({
+      stdout: '',
+      stderr: 'NameError: x',
+      outputFiles: [],
+    });
+    expect(part.codeExecutionResult!.output).toBe('NameError: x');
+  });
+
+  it('sets codeExecutionResult.output to the result text on success', () => {
+    const part = buildCodeExecutionResultPart({
+      stdout: '42',
+      stderr: '',
+      outputFiles: [],
+    });
+    expect(part.codeExecutionResult!.output).toBe(
+      'Code execution result:\n42\n',
+    );
+    expect(part.text).toBeUndefined();
+  });
+
+  it('renders empty stdout with no output files as an empty result', () => {
+    const part = buildCodeExecutionResultPart({
+      stdout: '',
+      stderr: '',
+      outputFiles: [],
+    });
+    expect(part.codeExecutionResult!.output).toBe('Code execution result:\n\n');
+  });
+
+  it('omits the saved artifacts section when there are no output files', () => {
+    const part = buildCodeExecutionResultPart({
+      stdout: 'done',
+      stderr: '',
+      outputFiles: [],
+    });
+    expect(part.codeExecutionResult!.output).not.toContain('Saved artifacts');
+  });
+
+  it('omits the empty stdout section when there are output files', () => {
+    const part = buildCodeExecutionResultPart({
+      stdout: '',
+      stderr: '',
+      outputFiles: [{name: 'chart.png', content: 'abc', mimeType: 'image/png'}],
+    });
+    expect(part.codeExecutionResult!.output).toBe(
+      'Saved artifacts:\n`chart.png`',
+    );
+  });
+
+  it('wraps each saved artifact name in backticks and joins them with commas', () => {
+    const part = buildCodeExecutionResultPart({
+      stdout: 'done',
+      stderr: '',
+      outputFiles: [
+        {name: 'a.png', content: 'abc', mimeType: 'image/png'},
+        {name: 'b.csv', content: 'xyz', mimeType: 'text/csv'},
+      ],
+    });
+    expect(part.codeExecutionResult!.output).toBe(
+      'Code execution result:\ndone\n\n\nSaved artifacts:\n`a.png`,`b.csv`',
+    );
+    expect(part.text).toBeUndefined();
+  });
+
+  it('sets no text on a failed result part', () => {
+    const part = buildCodeExecutionResultPart({
+      stdout: '',
+      stderr: 'boom',
+      outputFiles: [],
+    });
+    expect(part.text).toBeUndefined();
+  });
+
+  it('round-trips through convertCodeExecutionParts into tool output text', () => {
+    const resultDelimiters: [string, string] = ['```tool_output\n', '\n```'];
+    for (const stderr of ['', 'Traceback: boom']) {
+      const part = buildCodeExecutionResultPart({
+        stdout: 'hello',
+        stderr,
+        outputFiles: [],
+      });
+      const output = part.codeExecutionResult!.output!;
+      const content: Content = {role: 'model', parts: [part]};
+
+      convertCodeExecutionParts(
+        content,
+        ['```python\n', '\n```'],
+        resultDelimiters,
+      );
+
+      expect(content.role).toBe('user');
+      expect(content.parts![0].text).toBe(
+        '```tool_output\n' + output + '\n```',
+      );
+      expect(content.parts![0].text).toContain(stderr || 'hello');
+    }
   });
 });
 
@@ -248,6 +349,109 @@ describe('extractCodeAndTruncateContent', () => {
     };
     const result = extractCodeAndTruncateContent(content, PYTHON_DELIMITERS);
     expect(result).toBe('my_code()');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getCodeBlockLanguage and extractCodeBlockAndTruncateContent
+// ---------------------------------------------------------------------------
+const DEFAULT_DELIMITERS: Array<[string, string]> = [
+  ['```tool_code\n', '\n```'],
+  ['```python\n', '\n```'],
+  ['```javascript\n', '\n```'],
+  ['```typescript\n', '\n```'],
+  ['```bash\n', '\n```'],
+  ['```sh\n', '\n```'],
+];
+
+describe('getCodeBlockLanguage', () => {
+  it.each([
+    ['```tool_code\n', CodeExecutionLanguage.PYTHON],
+    ['```python\n', CodeExecutionLanguage.PYTHON],
+    ['```javascript\n', CodeExecutionLanguage.JAVASCRIPT],
+    ['```js\n', CodeExecutionLanguage.JAVASCRIPT],
+    ['```typescript\n', CodeExecutionLanguage.TYPESCRIPT],
+    ['```ts\n', CodeExecutionLanguage.TYPESCRIPT],
+    ['```bash\n', CodeExecutionLanguage.SHELL],
+    ['```sh\n', CodeExecutionLanguage.SHELL],
+    ['```shell\n', CodeExecutionLanguage.SHELL],
+    ['```Bash\n', CodeExecutionLanguage.SHELL],
+    ['```py\n', CodeExecutionLanguage.PYTHON],
+    ['```Python\n', CodeExecutionLanguage.PYTHON],
+    ['```unknown\n', CodeExecutionLanguage.UNSPECIFIED],
+    ['<code>', CodeExecutionLanguage.UNSPECIFIED],
+    ['', CodeExecutionLanguage.UNSPECIFIED],
+  ])('maps %j to %s', (delimiter, language) => {
+    expect(getCodeBlockLanguage(delimiter)).toBe(language);
+  });
+});
+
+describe('extractCodeBlockAndTruncateContent', () => {
+  it.each([
+    ['tool_code', 'print(1)', CodeExecutionLanguage.PYTHON],
+    ['python', 'print(1)', CodeExecutionLanguage.PYTHON],
+    ['javascript', 'console.log(1)', CodeExecutionLanguage.JAVASCRIPT],
+    [
+      'typescript',
+      'console.log(1 as number)',
+      CodeExecutionLanguage.TYPESCRIPT,
+    ],
+    ['bash', 'echo 1', CodeExecutionLanguage.SHELL],
+    ['sh', 'echo 1', CodeExecutionLanguage.SHELL],
+  ])('returns the language of a %s block', (tag, code, language) => {
+    const content: Content = {
+      role: 'model',
+      parts: [{text: `Here:\n\`\`\`${tag}\n${code}\n\`\`\`\nDone.`}],
+    };
+
+    expect(
+      extractCodeBlockAndTruncateContent(content, DEFAULT_DELIMITERS),
+    ).toEqual({code, language});
+    expect(content.parts).toEqual([
+      {text: 'Here:\n'},
+      {executableCode: {code, language: Language.PYTHON}},
+    ]);
+  });
+
+  it('uses the language of the first block when blocks differ', () => {
+    const content: Content = {
+      role: 'model',
+      parts: [{text: '```bash\necho 1\n```\n```python\nprint(2)\n```'}],
+    };
+
+    expect(
+      extractCodeBlockAndTruncateContent(content, DEFAULT_DELIMITERS),
+    ).toEqual({code: 'echo 1', language: CodeExecutionLanguage.SHELL});
+  });
+
+  it('returns Python for an executableCode part', () => {
+    const content: Content = {
+      role: 'model',
+      parts: [{executableCode: {code: 'print(1)', language: Language.PYTHON}}],
+    };
+
+    expect(
+      extractCodeBlockAndTruncateContent(content, DEFAULT_DELIMITERS),
+    ).toEqual({code: 'print(1)', language: CodeExecutionLanguage.PYTHON});
+  });
+
+  it('returns empty code when there is no block', () => {
+    const content: Content = {role: 'model', parts: [{text: 'No code here.'}]};
+
+    expect(
+      extractCodeBlockAndTruncateContent(content, DEFAULT_DELIMITERS),
+    ).toEqual({code: '', language: CodeExecutionLanguage.UNSPECIFIED});
+  });
+
+  it('returns an unspecified language for a custom delimiter with an unknown tag', () => {
+    const content: Content = {
+      role: 'model',
+      parts: [{text: '```ruby\nputs 1\n```'}],
+    };
+
+    expect(
+      extractCodeBlockAndTruncateContent(content, [['```ruby\n', '\n```']]),
+    ).toEqual({code: 'puts 1', language: CodeExecutionLanguage.UNSPECIFIED});
   });
 });
 

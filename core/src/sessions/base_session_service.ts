@@ -174,12 +174,7 @@ export abstract class BaseSessionService {
     event = trimTempDeltaState(event);
 
     this.updateSessionState({session, event});
-    const index = session.events.findIndex((e) => e.id === event.id);
-    if (index >= 0) {
-      session.events[index] = event;
-    } else {
-      session.events.push(event);
-    }
+    upsertSessionEvent(session, event);
 
     return event;
   }
@@ -218,6 +213,19 @@ export abstract class BaseSessionService {
         configurable: true,
       });
     }
+  }
+}
+
+/**
+ * Places `event` into `session.events`, replacing the entry with the same id
+ * if one is already there and appending it otherwise.
+ */
+export function upsertSessionEvent(session: Session, event: Event): void {
+  const index = session.events.findIndex((e) => e.id === event.id);
+  if (index >= 0) {
+    session.events[index] = event;
+  } else {
+    session.events.push(event);
   }
 }
 

@@ -148,7 +148,7 @@ export class AgentRegistrySingleMCPToolset extends BaseToolset {
       return tools;
     }
 
-    return tools.filter((t) => this.isToolSelected(t, context!));
+    return tools.filter((t) => this.isToolSelected(t, context));
   }
 
   async close(): Promise<void> {}

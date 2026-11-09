@@ -4,26 +4,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/**
- * The `auth_helpers` suite. The `describe('auth_helpers')` block is ported from
- * google/adk-python at tag v0.1.0,
- * `src/google/adk/tests/unittests/tools/openapi_tool/auth/test_auth_helper.py`,
- * and each `it()` in it keeps the Python test name so the two suites stay
- * greppable against each other. The blocks after it cover the error and edge
- * paths the reference suite does not reach.
- */
-
 import {
   AuthCredential,
   AuthCredentialTypes,
   AuthScheme,
   credentialToParam,
-  dictToAuthScheme,
   INTERNAL_AUTH_PREFIX,
-  openidDictToSchemeCredential,
+  OpenIdConfig,
+  openidRecordToSchemeCredential,
   openidUrlToSchemeCredential,
+  recordToAuthScheme,
   ServiceAccount,
-  serviceAccountDictToSchemeCredential,
+  serviceAccountRecordToSchemeCredential,
   serviceAccountSchemeCredential,
   tokenToSchemeCredential,
 } from '@google/adk';
@@ -35,7 +27,7 @@ const BEARER_JWT_SCHEME = {
   bearerFormat: 'JWT',
 };
 
-const OPENID_CREDENTIAL_DICT = {
+const OPENID_CREDENTIAL_RECORD = {
   client_id: 'client_id',
   client_secret: 'client_secret',
   redirect_uri: 'redirect_uri',
@@ -50,8 +42,8 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
-describe('auth_helpers', () => {
-  it('test_token_to_scheme_credential_api_key_header', () => {
+describe('auth helpers', () => {
+  it('builds an apiKey header scheme and credential', () => {
     const [scheme, credential] = tokenToSchemeCredential(
       'apikey',
       'header',
@@ -66,7 +58,7 @@ describe('auth_helpers', () => {
     });
   });
 
-  it('test_token_to_scheme_credential_api_key_query', () => {
+  it('builds an apiKey query scheme and credential', () => {
     const [scheme, credential] = tokenToSchemeCredential(
       'apikey',
       'query',
@@ -81,7 +73,7 @@ describe('auth_helpers', () => {
     });
   });
 
-  it('test_token_to_scheme_credential_api_key_cookie', () => {
+  it('builds an apiKey cookie scheme and credential', () => {
     const [scheme, credential] = tokenToSchemeCredential(
       'apikey',
       'cookie',
@@ -96,7 +88,7 @@ describe('auth_helpers', () => {
     });
   });
 
-  it('test_token_to_scheme_credential_api_key_no_credential', () => {
+  it('builds an apiKey scheme without a credential when value is omitted', () => {
     const [scheme, credential] = tokenToSchemeCredential(
       'apikey',
       'cookie',
@@ -107,7 +99,7 @@ describe('auth_helpers', () => {
     expect(credential).toBeUndefined();
   });
 
-  it('test_token_to_scheme_credential_oauth2_token', () => {
+  it('builds a bearer JWT scheme and HTTP credential for an oauth2Token', () => {
     const [scheme, credential] = tokenToSchemeCredential(
       'oauth2Token',
       'header',
@@ -122,7 +114,7 @@ describe('auth_helpers', () => {
     });
   });
 
-  it('test_token_to_scheme_credential_oauth2_no_credential', () => {
+  it('builds a bearer JWT scheme without a credential when oauth2Token value is omitted', () => {
     const [scheme, credential] = tokenToSchemeCredential(
       'oauth2Token',
       'header',
@@ -133,7 +125,7 @@ describe('auth_helpers', () => {
     expect(credential).toBeUndefined();
   });
 
-  it('test_service_account_dict_to_scheme_credential', () => {
+  it('builds a bearer scheme and service-account credential from a key record', () => {
     const config = {
       type: 'service_account',
       project_id: 'project_id',
@@ -148,7 +140,7 @@ describe('auth_helpers', () => {
       universe_domain: 'universe_domain',
     };
 
-    const [scheme, credential] = serviceAccountDictToSchemeCredential(
+    const [scheme, credential] = serviceAccountRecordToSchemeCredential(
       config,
       SCOPES,
     );
@@ -156,13 +148,12 @@ describe('auth_helpers', () => {
     expect(scheme).toEqual(BEARER_JWT_SCHEME);
     expect(credential.authType).toBe(AuthCredentialTypes.SERVICE_ACCOUNT);
     expect(credential.serviceAccount?.scopes).toEqual(SCOPES);
-    // Divergence 7: adk-js `ServiceAccountCredential` fields are camelCase.
     expect(credential.serviceAccount?.serviceAccountCredential?.projectId).toBe(
       'project_id',
     );
   });
 
-  it('test_service_account_scheme_credential', () => {
+  it('builds a bearer scheme and service-account credential from a ServiceAccount object', () => {
     const config: ServiceAccount = {
       serviceAccountCredential: {
         type: 'service_account',
@@ -187,20 +178,19 @@ describe('auth_helpers', () => {
     expect(credential.serviceAccount).toEqual(config);
   });
 
-  it('test_openid_dict_to_scheme_credential', () => {
-    const configDict = {
+  it('builds an OpenID Connect scheme and credential from config and credential records', () => {
+    const configRecord = {
       authorization_endpoint: 'auth_url',
       token_endpoint: 'token_url',
       openIdConnectUrl: 'openid_url',
     };
 
-    const [scheme, credential] = openidDictToSchemeCredential(
-      configDict,
+    const [scheme, credential] = openidRecordToSchemeCredential(
+      configRecord,
       SCOPES,
-      OPENID_CREDENTIAL_DICT,
+      OPENID_CREDENTIAL_RECORD,
     );
 
-    // Divergence 7: adk-js `OpenIdConnectWithConfig` fields are camelCase.
     expect(scheme.authorizationEndpoint).toBe('auth_url');
     expect(scheme.tokenEndpoint).toBe('token_url');
     expect(scheme.scopes).toEqual(SCOPES);
@@ -210,33 +200,33 @@ describe('auth_helpers', () => {
     expect(credential.oauth2?.redirectUri).toBe('redirect_uri');
   });
 
-  it('test_openid_dict_to_scheme_credential_no_openid_url', () => {
-    const configDict = {
+  it('defaults openIdConnectUrl to an empty string when omitted from configRecord', () => {
+    const configRecord = {
       authorization_endpoint: 'auth_url',
       token_endpoint: 'token_url',
     };
 
-    const [scheme] = openidDictToSchemeCredential(
-      configDict,
+    const [scheme] = openidRecordToSchemeCredential(
+      configRecord,
       SCOPES,
-      OPENID_CREDENTIAL_DICT,
+      OPENID_CREDENTIAL_RECORD,
     );
 
     expect(scheme.openIdConnectUrl).toBe('');
   });
 
-  it('test_openid_dict_to_scheme_credential_google_oauth_credential', () => {
-    const configDict = {
+  it('unwraps a Google OAuth web client credential record', () => {
+    const configRecord = {
       authorization_endpoint: 'auth_url',
       token_endpoint: 'token_url',
       openIdConnectUrl: 'openid_url',
     };
-    const credentialDict = {web: OPENID_CREDENTIAL_DICT};
+    const credentialRecord = {web: OPENID_CREDENTIAL_RECORD};
 
-    const [scheme, credential] = openidDictToSchemeCredential(
-      configDict,
+    const [scheme, credential] = openidRecordToSchemeCredential(
+      configRecord,
       SCOPES,
-      credentialDict,
+      credentialRecord,
     );
 
     expect(scheme.type).toBe('openIdConnect');
@@ -246,26 +236,26 @@ describe('auth_helpers', () => {
     expect(credential.oauth2?.redirectUri).toBe('redirect_uri');
   });
 
-  it('test_openid_dict_to_scheme_credential_invalid_config', () => {
+  it('throws when the OpenID Connect configuration is invalid', () => {
     expect(() =>
-      openidDictToSchemeCredential({invalid_field: 'value'}, SCOPES, {
+      openidRecordToSchemeCredential({invalid_field: 'value'}, SCOPES, {
         client_id: 'client_id',
         client_secret: 'client_secret',
       }),
     ).toThrow(/Invalid OpenID Connect configuration/);
   });
 
-  it('test_openid_dict_to_scheme_credential_missing_credential_fields', () => {
-    const configDict = {
+  it('throws when required credential fields are missing from credentialRecord', () => {
+    const configRecord = {
       authorization_endpoint: 'auth_url',
       token_endpoint: 'token_url',
     };
 
     expect(() =>
-      openidDictToSchemeCredential(configDict, SCOPES, {
+      openidRecordToSchemeCredential(configRecord, SCOPES, {
         client_id: 'client_id',
       }),
-    ).toThrow('Missing required fields in credential_dict: client_secret');
+    ).toThrow('Missing required fields in credentialRecord: client_secret');
   });
 
   describe('openidUrlToSchemeCredential', () => {
@@ -277,7 +267,7 @@ describe('auth_helpers', () => {
       vi.unstubAllGlobals();
     });
 
-    it('test_openid_url_to_scheme_credential', async () => {
+    it('fetches discovery configuration and builds the OpenID scheme and credential', async () => {
       vi.mocked(fetch).mockResolvedValue(
         jsonResponse({
           authorization_endpoint: 'auth_url',
@@ -289,7 +279,7 @@ describe('auth_helpers', () => {
       const [scheme, credential] = await openidUrlToSchemeCredential(
         'openid_url',
         SCOPES,
-        OPENID_CREDENTIAL_DICT,
+        OPENID_CREDENTIAL_RECORD,
       );
 
       expect(scheme.authorizationEndpoint).toBe('auth_url');
@@ -299,14 +289,12 @@ describe('auth_helpers', () => {
       expect(credential.oauth2?.clientId).toBe('client_id');
       expect(credential.oauth2?.clientSecret).toBe('client_secret');
       expect(credential.oauth2?.redirectUri).toBe('redirect_uri');
-      // Adapted from `mock_get.assert_called_once_with("openid_url",
-      // timeout=10)`: fetch carries its deadline on an AbortSignal instead.
       expect(fetch).toHaveBeenCalledTimes(1);
       expect(vi.mocked(fetch).mock.calls[0][0]).toBe('openid_url');
       expect(vi.mocked(fetch).mock.calls[0][1]?.signal).toBeDefined();
     });
 
-    it('test_openid_url_to_scheme_credential_no_openid_url', async () => {
+    it('sets openIdConnectUrl on the scheme to the fetched URL', async () => {
       vi.mocked(fetch).mockResolvedValue(
         jsonResponse({
           authorization_endpoint: 'auth_url',
@@ -318,13 +306,13 @@ describe('auth_helpers', () => {
       const [scheme] = await openidUrlToSchemeCredential(
         'openid_url',
         SCOPES,
-        OPENID_CREDENTIAL_DICT,
+        OPENID_CREDENTIAL_RECORD,
       );
 
       expect(scheme.openIdConnectUrl).toBe('openid_url');
     });
 
-    it('test_openid_url_to_scheme_credential_request_exception', async () => {
+    it('throws when the discovery request rejects', async () => {
       vi.mocked(fetch).mockRejectedValue(new Error('Test Error'));
 
       await expect(
@@ -335,7 +323,7 @@ describe('auth_helpers', () => {
       ).rejects.toThrow('Failed to fetch OpenID configuration from openid_url');
     });
 
-    it('test_openid_url_to_scheme_credential_invalid_json', async () => {
+    it('throws when the discovery response body is not valid JSON', async () => {
       vi.mocked(fetch).mockResolvedValue(
         new Response('not json', {status: 200}),
       );
@@ -351,7 +339,7 @@ describe('auth_helpers', () => {
     });
   });
 
-  it('test_credential_to_param_api_key_header', () => {
+  it('converts an apiKey header credential into an auth parameter', () => {
     const authScheme: AuthScheme = {
       type: 'apiKey',
       in: 'header',
@@ -362,14 +350,16 @@ describe('auth_helpers', () => {
       apiKey: 'test_key',
     };
 
-    const [param, kwargs] = credentialToParam(authScheme, authCredential);
+    const [param, paramValues] = credentialToParam(authScheme, authCredential);
 
     expect(param?.originalName).toBe('X-API-Key');
     expect(param?.paramLocation).toBe('header');
-    expect(kwargs).toEqual({[`${INTERNAL_AUTH_PREFIX}X-API-Key`]: 'test_key'});
+    expect(paramValues).toEqual({
+      [`${INTERNAL_AUTH_PREFIX}X-API-Key`]: 'test_key',
+    });
   });
 
-  it('test_credential_to_param_api_key_query', () => {
+  it('converts an apiKey query credential into an auth parameter', () => {
     const authScheme: AuthScheme = {
       type: 'apiKey',
       in: 'query',
@@ -380,14 +370,16 @@ describe('auth_helpers', () => {
       apiKey: 'test_key',
     };
 
-    const [param, kwargs] = credentialToParam(authScheme, authCredential);
+    const [param, paramValues] = credentialToParam(authScheme, authCredential);
 
     expect(param?.originalName).toBe('api_key');
     expect(param?.paramLocation).toBe('query');
-    expect(kwargs).toEqual({[`${INTERNAL_AUTH_PREFIX}api_key`]: 'test_key'});
+    expect(paramValues).toEqual({
+      [`${INTERNAL_AUTH_PREFIX}api_key`]: 'test_key',
+    });
   });
 
-  it('test_credential_to_param_api_key_cookie', () => {
+  it('converts an apiKey cookie credential into an auth parameter', () => {
     const authScheme: AuthScheme = {
       type: 'apiKey',
       in: 'cookie',
@@ -398,14 +390,16 @@ describe('auth_helpers', () => {
       apiKey: 'test_key',
     };
 
-    const [param, kwargs] = credentialToParam(authScheme, authCredential);
+    const [param, paramValues] = credentialToParam(authScheme, authCredential);
 
     expect(param?.originalName).toBe('session_id');
     expect(param?.paramLocation).toBe('cookie');
-    expect(kwargs).toEqual({[`${INTERNAL_AUTH_PREFIX}session_id`]: 'test_key'});
+    expect(paramValues).toEqual({
+      [`${INTERNAL_AUTH_PREFIX}session_id`]: 'test_key',
+    });
   });
 
-  it('test_credential_to_param_http_bearer', () => {
+  it('converts an HTTP bearer credential into an Authorization header parameter', () => {
     const authScheme: AuthScheme = {
       type: 'http',
       scheme: 'bearer',
@@ -416,16 +410,16 @@ describe('auth_helpers', () => {
       http: {scheme: 'bearer', credentials: {token: 'test_token'}},
     };
 
-    const [param, kwargs] = credentialToParam(authScheme, authCredential);
+    const [param, paramValues] = credentialToParam(authScheme, authCredential);
 
     expect(param?.originalName).toBe('Authorization');
     expect(param?.paramLocation).toBe('header');
-    expect(kwargs).toEqual({
+    expect(paramValues).toEqual({
       [`${INTERNAL_AUTH_PREFIX}Authorization`]: 'Bearer test_token',
     });
   });
 
-  it('test_credential_to_param_http_basic_not_supported', () => {
+  it('rejects HTTP basic authentication in credentialToParam', () => {
     const authScheme: AuthScheme = {type: 'http', scheme: 'basic'};
     const authCredential: AuthCredential = {
       authType: AuthCredentialTypes.HTTP,
@@ -435,14 +429,12 @@ describe('auth_helpers', () => {
       },
     };
 
-    // Divergence 3: the reference raises NotImplementedError; TypeScript has
-    // no equivalent, so the message is what carries over.
     expect(() => credentialToParam(authScheme, authCredential)).toThrow(
       'Basic Authentication is not supported.',
     );
   });
 
-  it('test_credential_to_param_http_invalid_credentials_no_http', () => {
+  it('rejects an HTTP credential with no http field', () => {
     const authScheme: AuthScheme = {type: 'http', scheme: 'basic'};
     const authCredential: AuthCredential = {
       authType: AuthCredentialTypes.HTTP,
@@ -453,23 +445,23 @@ describe('auth_helpers', () => {
     );
   });
 
-  it('test_credential_to_param_oauth2', () => {
+  it('converts an exchanged OAuth2 bearer token into an Authorization header parameter', () => {
     const authScheme: AuthScheme = {type: 'oauth2', flows: {}};
     const authCredential: AuthCredential = {
       authType: AuthCredentialTypes.HTTP,
       http: {scheme: 'bearer', credentials: {token: 'test_token'}},
     };
 
-    const [param, kwargs] = credentialToParam(authScheme, authCredential);
+    const [param, paramValues] = credentialToParam(authScheme, authCredential);
 
     expect(param?.originalName).toBe('Authorization');
     expect(param?.paramLocation).toBe('header');
-    expect(kwargs).toEqual({
+    expect(paramValues).toEqual({
       [`${INTERNAL_AUTH_PREFIX}Authorization`]: 'Bearer test_token',
     });
   });
 
-  it('test_credential_to_param_openid_connect', () => {
+  it('converts an exchanged OpenID Connect bearer token into an Authorization header parameter', () => {
     const authScheme: AuthScheme = {
       type: 'openIdConnect',
       openIdConnectUrl: 'openid_url',
@@ -479,50 +471,48 @@ describe('auth_helpers', () => {
       http: {scheme: 'bearer', credentials: {token: 'test_token'}},
     };
 
-    const [param, kwargs] = credentialToParam(authScheme, authCredential);
+    const [param, paramValues] = credentialToParam(authScheme, authCredential);
 
     expect(param?.originalName).toBe('Authorization');
     expect(param?.paramLocation).toBe('header');
-    expect(kwargs).toEqual({
+    expect(paramValues).toEqual({
       [`${INTERNAL_AUTH_PREFIX}Authorization`]: 'Bearer test_token',
     });
   });
 
-  it('test_credential_to_param_openid_no_credential', () => {
+  it('returns undefined pair for an OpenID Connect scheme when credential is omitted', () => {
     const authScheme: AuthScheme = {
       type: 'openIdConnect',
       openIdConnectUrl: 'openid_url',
     };
 
-    const [param, kwargs] = credentialToParam(authScheme, undefined);
+    const [param, paramValues] = credentialToParam(authScheme, undefined);
 
     expect(param).toBeUndefined();
-    expect(kwargs).toBeUndefined();
+    expect(paramValues).toBeUndefined();
   });
 
-  it('test_credential_to_param_oauth2_no_credential', () => {
+  it('returns undefined pair for an OAuth2 scheme when credential is omitted', () => {
     const authScheme: AuthScheme = {type: 'oauth2', flows: {}};
 
-    const [param, kwargs] = credentialToParam(authScheme, undefined);
+    const [param, paramValues] = credentialToParam(authScheme, undefined);
 
     expect(param).toBeUndefined();
-    expect(kwargs).toBeUndefined();
+    expect(paramValues).toBeUndefined();
   });
 
-  it('test_dict_to_auth_scheme_api_key', () => {
-    const scheme = dictToAuthScheme({
+  it('parses an apiKey security scheme object', () => {
+    const scheme = recordToAuthScheme({
       type: 'apiKey',
       in: 'header',
       name: 'X-API-Key',
     });
 
-    // Divergence 2: adk-js schemes are structural, so the test asserts the
-    // shape where the reference asserts the pydantic class.
     expect(scheme).toEqual({type: 'apiKey', in: 'header', name: 'X-API-Key'});
   });
 
-  it('test_dict_to_auth_scheme_http_bearer', () => {
-    const scheme = dictToAuthScheme({
+  it('parses an HTTP bearer security scheme object', () => {
+    const scheme = recordToAuthScheme({
       type: 'http',
       scheme: 'bearer',
       bearerFormat: 'JWT',
@@ -531,14 +521,14 @@ describe('auth_helpers', () => {
     expect(scheme).toEqual(BEARER_JWT_SCHEME);
   });
 
-  it('test_dict_to_auth_scheme_http_base', () => {
-    const scheme = dictToAuthScheme({type: 'http', scheme: 'basic'});
+  it('parses an HTTP basic security scheme object', () => {
+    const scheme = recordToAuthScheme({type: 'http', scheme: 'basic'});
 
     expect(scheme).toEqual({type: 'http', scheme: 'basic'});
   });
 
-  it('test_dict_to_auth_scheme_oauth2', () => {
-    const scheme = dictToAuthScheme({
+  it('parses an OAuth2 security scheme object and defaults flow scopes', () => {
+    const scheme = recordToAuthScheme({
       type: 'oauth2',
       flows: {
         authorizationCode: {
@@ -560,8 +550,8 @@ describe('auth_helpers', () => {
     });
   });
 
-  it('test_dict_to_auth_scheme_openid_connect', () => {
-    const scheme = dictToAuthScheme({
+  it('parses an OpenID Connect security scheme object', () => {
+    const scheme = recordToAuthScheme({
       type: 'openIdConnect',
       openIdConnectUrl: 'https://example.com/.well-known/openid-configuration',
     });
@@ -572,32 +562,32 @@ describe('auth_helpers', () => {
     });
   });
 
-  it('test_dict_to_auth_scheme_missing_type', () => {
-    expect(() => dictToAuthScheme({in: 'header', name: 'X-API-Key'})).toThrow(
-      "Missing 'type' field in security scheme dictionary.",
+  it('throws when the security scheme object omits type', () => {
+    expect(() => recordToAuthScheme({in: 'header', name: 'X-API-Key'})).toThrow(
+      "Missing 'type' field in security scheme object.",
     );
   });
 
-  it('test_dict_to_auth_scheme_invalid_type', () => {
+  it('throws when the security scheme type is unsupported', () => {
     expect(() =>
-      dictToAuthScheme({type: 'invalid', in: 'header', name: 'X-API-Key'}),
+      recordToAuthScheme({type: 'invalid', in: 'header', name: 'X-API-Key'}),
     ).toThrow('Invalid security scheme type: invalid');
   });
 
-  it('test_dict_to_auth_scheme_invalid_data', () => {
-    expect(() => dictToAuthScheme({type: 'apiKey', in: 'header'})).toThrow(
+  it('throws when the security scheme object fails schema validation', () => {
+    expect(() => recordToAuthScheme({type: 'apiKey', in: 'header'})).toThrow(
       /Invalid security scheme data/,
     );
   });
 });
 
-const CREDENTIAL_DICT = {
+const CREDENTIAL_RECORD = {
   client_id: 'client_id',
   client_secret: 'client_secret',
 };
 
 describe('INTERNAL_AUTH_PREFIX', () => {
-  it('matches the value adk-python uses', () => {
+  it('uses the expected internal auth parameter prefix', () => {
     // Every other assertion builds its expectation from the constant, so only
     // this one catches a change to the value itself.
     expect(INTERNAL_AUTH_PREFIX).toBe('_auth_prefix_vaf_');
@@ -630,7 +620,7 @@ describe('tokenToSchemeCredential', () => {
   });
 });
 
-describe('openidDictToSchemeCredential', () => {
+describe('openidRecordToSchemeCredential', () => {
   it('accepts a snake_case discovery document and its camelCase equivalent', () => {
     const snakeCase = {
       authorization_endpoint: 'auth_url',
@@ -649,15 +639,15 @@ describe('openidDictToSchemeCredential', () => {
       revocationEndpoint: 'revoke_url',
     };
 
-    const [fromSnakeCase] = openidDictToSchemeCredential(
+    const [fromSnakeCase] = openidRecordToSchemeCredential(
       snakeCase,
       ['openid'],
-      CREDENTIAL_DICT,
+      CREDENTIAL_RECORD,
     );
-    const [fromCamelCase] = openidDictToSchemeCredential(
+    const [fromCamelCase] = openidRecordToSchemeCredential(
       camelCase,
       ['openid'],
-      CREDENTIAL_DICT,
+      CREDENTIAL_RECORD,
     );
 
     expect(fromSnakeCase).toEqual(fromCamelCase);
@@ -668,10 +658,10 @@ describe('openidDictToSchemeCredential', () => {
   });
 
   it('leaves redirectUri undefined when the credential omits it', () => {
-    const [, credential] = openidDictToSchemeCredential(
+    const [, credential] = openidRecordToSchemeCredential(
       {authorization_endpoint: 'auth_url', token_endpoint: 'token_url'},
       [],
-      CREDENTIAL_DICT,
+      CREDENTIAL_RECORD,
     );
 
     expect(credential.oauth2?.redirectUri).toBeUndefined();
@@ -679,25 +669,25 @@ describe('openidDictToSchemeCredential', () => {
 
   it('keeps a single-valued credential that is not a client-secret wrapper', () => {
     expect(() =>
-      openidDictToSchemeCredential(
+      openidRecordToSchemeCredential(
         {authorization_endpoint: 'auth_url', token_endpoint: 'token_url'},
         [],
         {installed: {client_id: 'client_id'}},
       ),
     ).toThrow(
-      'Missing required fields in credential_dict: client_id, client_secret',
+      'Missing required fields in credentialRecord: client_id, client_secret',
     );
   });
 
   it('keeps a single-valued credential whose value is not an object', () => {
     expect(() =>
-      openidDictToSchemeCredential(
+      openidRecordToSchemeCredential(
         {authorization_endpoint: 'auth_url', token_endpoint: 'token_url'},
         [],
         {web: 'not an object'},
       ),
     ).toThrow(
-      'Missing required fields in credential_dict: client_id, client_secret',
+      'Missing required fields in credentialRecord: client_id, client_secret',
     );
   });
 });
@@ -715,9 +705,9 @@ describe('openidUrlToSchemeCredential', () => {
     vi.mocked(fetch).mockResolvedValue(new Response('', {status: 500}));
 
     await expect(
-      openidUrlToSchemeCredential('openid_url', [], CREDENTIAL_DICT),
+      openidUrlToSchemeCredential('openid_url', [], CREDENTIAL_RECORD),
     ).rejects.toThrow(
-      'Failed to fetch OpenID configuration from openid_url: Error: responded with status 500',
+      'Failed to fetch OpenID configuration from openid_url: responded with status 500',
     );
   });
 
@@ -725,7 +715,7 @@ describe('openidUrlToSchemeCredential', () => {
     vi.mocked(fetch).mockResolvedValue(new Response('[1, 2]', {status: 200}));
 
     await expect(
-      openidUrlToSchemeCredential('openid_url', [], CREDENTIAL_DICT),
+      openidUrlToSchemeCredential('openid_url', [], CREDENTIAL_RECORD),
     ).rejects.toThrow(
       'Invalid JSON response from OpenID configuration endpoint openid_url',
     );
@@ -791,10 +781,10 @@ describe('credentialToParam', () => {
       apiKey: 'test_key',
     };
 
-    const [param, kwargs] = credentialToParam(authScheme, authCredential);
+    const [param, paramValues] = credentialToParam(authScheme, authCredential);
 
     expect(param?.originalName).toBe('');
-    expect(kwargs).toEqual({[INTERNAL_AUTH_PREFIX]: 'test_key'});
+    expect(paramValues).toEqual({[INTERNAL_AUTH_PREFIX]: 'test_key'});
   });
 
   it('uses the scheme description for a bearer parameter', () => {
@@ -848,10 +838,10 @@ describe('credentialToParam', () => {
       http: {scheme: 'bearer', credentials: {token: 'test_token'}},
     };
 
-    const [param, kwargs] = credentialToParam(authScheme, authCredential);
+    const [param, paramValues] = credentialToParam(authScheme, authCredential);
 
     expect(param?.originalName).toBe('Authorization');
-    expect(kwargs).toEqual({
+    expect(paramValues).toEqual({
       [`${INTERNAL_AUTH_PREFIX}Authorization`]: 'Bearer test_token',
     });
   });
@@ -863,10 +853,10 @@ describe('credentialToParam', () => {
       oauth2: {clientId: 'client_id'},
     };
 
-    const [param, kwargs] = credentialToParam(authScheme, authCredential);
+    const [param, paramValues] = credentialToParam(authScheme, authCredential);
 
     expect(param).toBeUndefined();
-    expect(kwargs).toBeUndefined();
+    expect(paramValues).toBeUndefined();
   });
 
   it('rejects an apiKey scheme paired with a service-account credential', () => {
@@ -886,39 +876,39 @@ describe('credentialToParam', () => {
   });
 });
 
-describe('dictToAuthScheme', () => {
+describe('recordToAuthScheme', () => {
   it('rejects oauth2 with no flows', () => {
-    expect(() => dictToAuthScheme({type: 'oauth2'})).toThrow(
+    expect(() => recordToAuthScheme({type: 'oauth2'})).toThrow(
       /Invalid security scheme data/,
     );
   });
 
   it('rejects openIdConnect with no openIdConnectUrl', () => {
-    expect(() => dictToAuthScheme({type: 'openIdConnect'})).toThrow(
+    expect(() => recordToAuthScheme({type: 'openIdConnect'})).toThrow(
       /Invalid security scheme data/,
     );
   });
 
   it('rejects an apiKey location outside header, query and cookie', () => {
     expect(() =>
-      dictToAuthScheme({type: 'apiKey', in: 'body', name: 'X-API-Key'}),
+      recordToAuthScheme({type: 'apiKey', in: 'body', name: 'X-API-Key'}),
     ).toThrow(/Invalid security scheme data/);
   });
 
   it('rejects a bearer scheme whose bearerFormat is not a string', () => {
     expect(() =>
-      dictToAuthScheme({type: 'http', scheme: 'bearer', bearerFormat: 7}),
+      recordToAuthScheme({type: 'http', scheme: 'bearer', bearerFormat: 7}),
     ).toThrow(/Invalid security scheme data/);
   });
 
   it('rejects an http scheme with no scheme field', () => {
-    expect(() => dictToAuthScheme({type: 'http'})).toThrow(
+    expect(() => recordToAuthScheme({type: 'http'})).toThrow(
       /Invalid security scheme data/,
     );
   });
 
   it('keeps unknown keys on a validated scheme', () => {
-    const scheme = dictToAuthScheme({
+    const scheme = recordToAuthScheme({
       type: 'apiKey',
       in: 'header',
       name: 'X-API-Key',
@@ -931,5 +921,69 @@ describe('dictToAuthScheme', () => {
       name: 'X-API-Key',
       'x-vendor-hint': 'keep me',
     });
+  });
+});
+
+describe('credentialToParam bearer description', () => {
+  const bearerCredential: AuthCredential = {
+    authType: AuthCredentialTypes.HTTP,
+    http: {scheme: 'bearer', credentials: {token: 'test_token'}},
+  };
+
+  it('falls back to Bearer token for an empty HTTP scheme description', () => {
+    const authScheme: AuthScheme = {
+      type: 'http',
+      scheme: 'bearer',
+      description: '',
+    };
+
+    const [param] = credentialToParam(authScheme, bearerCredential);
+
+    expect(param?.description).toBe('Bearer token');
+  });
+
+  it('falls back to Bearer token for an empty OAuth2 scheme description', () => {
+    const authScheme: AuthScheme = {type: 'oauth2', flows: {}, description: ''};
+
+    const [param] = credentialToParam(authScheme, bearerCredential);
+
+    expect(param?.description).toBe('Bearer token');
+  });
+
+  it('keeps a non-empty scheme description', () => {
+    const authScheme: AuthScheme = {
+      type: 'http',
+      scheme: 'bearer',
+      description: 'Service token',
+    };
+
+    const [param] = credentialToParam(authScheme, bearerCredential);
+
+    expect(param?.description).toBe('Service token');
+  });
+});
+
+describe('OpenIdConfig', () => {
+  it('accepts a config without a redirect URI', () => {
+    const config: OpenIdConfig = {
+      clientId: 'client_id',
+      authUri: 'https://example.com/auth',
+      tokenUri: 'https://example.com/token',
+      clientSecret: 'client_secret',
+    };
+
+    expect(config.redirectUri).toBeUndefined();
+  });
+
+  it('accepts a config with a redirect URI', () => {
+    const config: OpenIdConfig = {
+      clientId: 'client_id',
+      authUri: 'https://example.com/auth',
+      tokenUri: 'https://example.com/token',
+      clientSecret: 'client_secret',
+      redirectUri: 'https://example.com/callback',
+    };
+
+    expect(config.redirectUri).toBe('https://example.com/callback');
   });
 });

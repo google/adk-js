@@ -133,8 +133,7 @@ export class GcsArtifactService implements BaseArtifactService {
       const [metadata] = await file.getMetadata();
       const customMeta = (metadata.metadata ?? {}) as Record<string, unknown>;
       const fileUri = customMeta[GCS_FILE_URI_METADATA_KEY] as
-        | string
-        | undefined;
+        string | undefined;
 
       if (fileUri) {
         const mimeType =
@@ -147,8 +146,7 @@ export class GcsArtifactService implements BaseArtifactService {
       const [rawDataBuffer] = await file.download();
 
       const displayName = customMeta[GCS_DISPLAY_NAME_METADATA_KEY] as
-        | string
-        | undefined;
+        string | undefined;
       if (displayName) {
         return {
           inlineData: {

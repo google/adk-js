@@ -6,7 +6,10 @@
 
 import {RemoteA2AAgent} from '@google/adk';
 
-const port = process.env.TEST_API_SERVER_PORT || '40000';
+const port =
+  process.env.ADK_API_SERVER_PORT ||
+  process.env.TEST_API_SERVER_PORT ||
+  '40000';
 
 export const rootAgent = new RemoteA2AAgent({
   name: 'multi_hop',

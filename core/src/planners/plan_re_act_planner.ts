@@ -66,7 +66,7 @@ export class PlanReActPlanner extends BasePlanner {
       handleNonFunctionCallPart(part, preservedParts);
     }
 
-    if (firstFcPartIndex > 0) {
+    if (firstFcPartIndex >= 0) {
       for (let j = firstFcPartIndex + 1; j < responseParts.length; j++) {
         if (!responseParts[j].functionCall) {
           break;

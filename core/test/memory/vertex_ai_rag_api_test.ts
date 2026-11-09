@@ -11,13 +11,15 @@ const CORPUS = 'projects/test-project/locations/us-central1/ragCorpora/1';
 const HOST = 'https://us-central1-aiplatform.googleapis.com';
 
 vi.mock('google-auth-library', () => ({
-  GoogleAuth: vi.fn(() => ({
-    getClient: vi.fn().mockResolvedValue({
-      getRequestHeaders: vi
-        .fn()
-        .mockResolvedValue(new Headers({Authorization: 'Bearer fake-token'})),
-    }),
-  })),
+  GoogleAuth: vi.fn(function () {
+    return {
+      getClient: vi.fn().mockResolvedValue({
+        getRequestHeaders: vi
+          .fn()
+          .mockResolvedValue(new Headers({Authorization: 'Bearer fake-token'})),
+      }),
+    };
+  }),
 }));
 
 const fetchMock = vi.fn<typeof fetch>();

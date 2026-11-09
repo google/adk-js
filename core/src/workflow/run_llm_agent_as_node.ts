@@ -54,9 +54,9 @@ export async function* runLlmAgentAsNode(
     agent.includeContents = 'none';
   }
 
-  if (!isTaskMode) {
-    await appendNodeInputAsUserTurn(ctx, nodeInput);
-  }
+  const inputEvent = isTaskMode
+    ? undefined
+    : pushNodeInputAsUserTurn(ctx, nodeInput);
 
   const agentIc = withWorkflowInstructionScope(ctx.getInvocationContext(), {
     input: nodeInput,
@@ -68,22 +68,22 @@ export async function* runLlmAgentAsNode(
     return;
   }
 
-  for await (const event of agent.runAsync(agentIc)) {
-    maybeSetOutput(agent, event);
-    yield event;
+  try {
+    for await (const event of agent.runAsync(agentIc)) {
+      maybeSetOutput(agent, event);
+      yield event;
+    }
+  } finally {
+    removeEvent(ctx.session.events, inputEvent);
   }
 }
 
-/**
- * Appends the node input to the session as a user turn, so the agent responds
- * to it.
- */
-async function appendNodeInputAsUserTurn(
+function pushNodeInputAsUserTurn(
   ctx: NodeContext,
   nodeInput: unknown,
-): Promise<void> {
+): Event | undefined {
   if (nodeInput === undefined || nodeInput === null) {
-    return;
+    return undefined;
   }
   const userEvent = createEvent({
     author: 'user',
@@ -94,11 +94,14 @@ async function appendNodeInputAsUserTurn(
   if (ctx.isolationScope !== undefined) {
     userEvent.isolationScope = ctx.isolationScope;
   }
-  const sessionService = ctx.invocationContext.sessionService;
-  if (sessionService) {
-    await sessionService.appendEvent({session: ctx.session, event: userEvent});
-  } else {
-    ctx.session.events.push(userEvent);
+  ctx.session.events.push(userEvent);
+  return userEvent;
+}
+
+function removeEvent(events: Event[], event: Event | undefined): void {
+  const index = event ? events.indexOf(event) : -1;
+  if (index !== -1) {
+    events.splice(index, 1);
   }
 }
 

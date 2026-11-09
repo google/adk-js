@@ -9,11 +9,13 @@ import {
   createEventActions,
   DatabaseSessionService,
   Event,
+  isStaleSessionError,
+  StaleSessionError,
   State,
 } from '@google/adk';
 import {MikroORM} from '@mikro-orm/core';
 import {SqliteDriver} from '@mikro-orm/sqlite';
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {isDatabaseConnectionString} from '../../src/sessions/database_session_service.js';
 import {validateDatabaseSchemaVersion} from '../../src/sessions/db/operations.js';
 import {
@@ -297,6 +299,241 @@ describe('DatabaseSessionService', () => {
     });
     expect(after2?.events.length).toBe(1);
     expect(after2?.events[0].id).toBe(e3.id);
+  });
+
+  it('should refresh events on a stale session object in appendEvent when configured with staleSession reload', async () => {
+    const reloadService = new DatabaseSessionService({
+      dbName: ':memory:',
+      driver: SqliteDriver,
+      allowGlobalContext: true,
+      staleSession: 'reload',
+    });
+    await reloadService.init();
+
+    try {
+      const session = await reloadService.createSession({
+        appName: 'test-app',
+        userId: 'user1',
+        sessionId: 's1',
+      });
+
+      // A second handle on the same session appends an event, making the
+      // first handle stale.
+      const otherHandle = await reloadService.getSession({
+        appName: 'test-app',
+        userId: 'user1',
+        sessionId: 's1',
+      });
+      const now = Date.now();
+      const concurrentEvent = createEvent({timestamp: now + 10});
+      await reloadService.appendEvent({
+        session: otherHandle!,
+        event: concurrentEvent,
+      });
+
+      // Older than the concurrent event: this is the contended case, where the
+      // caller built its event and then waited on the row lock while another
+      // handle committed. Reloading after the commit sorts the caller's event
+      // into its timestamp position instead of appending it at the tail.
+      const ownEvent = createEvent({timestamp: now + 5});
+      await reloadService.appendEvent({session, event: ownEvent});
+
+      // The stale handle must see both events in timestamp order, without
+      // duplicates, and keep its own event object.
+      expect(session.events.map((e) => e.id)).toEqual([
+        ownEvent.id,
+        concurrentEvent.id,
+      ]);
+      expect(session.events[0]).toBe(ownEvent);
+    } finally {
+      const orm = (reloadService as unknown as {orm: MikroORM}).orm;
+      if (orm) {
+        await orm.close();
+      }
+    }
+  });
+
+  it('should keep a stale session usable when the event reload fails', async () => {
+    const reloadService = new DatabaseSessionService({
+      dbName: ':memory:',
+      driver: SqliteDriver,
+      allowGlobalContext: true,
+      staleSession: 'reload',
+    });
+    await reloadService.init();
+
+    try {
+      const session = await reloadService.createSession({
+        appName: 'test-app',
+        userId: 'user1',
+        sessionId: 's1',
+      });
+
+      const otherHandle = await reloadService.getSession({
+        appName: 'test-app',
+        userId: 'user1',
+        sessionId: 's1',
+      });
+      const now = Date.now();
+      await reloadService.appendEvent({
+        session: otherHandle!,
+        event: createEvent({timestamp: now + 10}),
+      });
+
+      const orm = (reloadService as unknown as {orm: MikroORM}).orm;
+      const fork = orm.em.fork.bind(orm.em);
+      vi.spyOn(orm.em, 'fork').mockImplementation((...args) => {
+        const em = fork(...args);
+        vi.spyOn(em, 'find').mockRejectedValue(new Error('reload failed'));
+        return em;
+      });
+
+      const ownEvent = createEvent({timestamp: now + 20});
+      await expect(
+        reloadService.appendEvent({session, event: ownEvent}),
+      ).resolves.toBe(ownEvent);
+
+      vi.restoreAllMocks();
+
+      // The append committed even though the in-memory reload could not run.
+      const reloaded = await reloadService.getSession({
+        appName: 'test-app',
+        userId: 'user1',
+        sessionId: 's1',
+      });
+      expect(reloaded?.events.map((e) => e.id)).toContain(ownEvent.id);
+    } finally {
+      const orm = (reloadService as unknown as {orm: MikroORM}).orm;
+      if (orm) {
+        await orm.close();
+      }
+    }
+  });
+
+  it('should reject a stale session object in appendEvent by default', async () => {
+    const session = await service.createSession({
+      appName: 'test-app',
+      userId: 'user1',
+      sessionId: 's1',
+    });
+
+    const otherHandle = await service.getSession({
+      appName: 'test-app',
+      userId: 'user1',
+      sessionId: 's1',
+    });
+    const now = Date.now();
+    const concurrentEvent = createEvent({timestamp: now + 10});
+    await service.appendEvent({session: otherHandle!, event: concurrentEvent});
+
+    const ownEvent = createEvent({
+      timestamp: now + 5,
+      actions: createEventActions({stateDelta: {key: 'value'}}),
+    });
+    await expect(
+      service.appendEvent({session, event: ownEvent}),
+    ).rejects.toThrow(StaleSessionError);
+
+    // Verify type guard and message
+    try {
+      await service.appendEvent({session, event: ownEvent});
+      expect.fail('Expected StaleSessionError to be thrown');
+    } catch (e: unknown) {
+      expect(isStaleSessionError(e)).toBe(true);
+      expect((e as Error).message).toMatch(
+        /is earlier than the update_time in the storage_session/,
+      );
+    }
+
+    // Verify session in memory was not modified
+    expect(session.events).toHaveLength(0);
+    expect(session.state['key']).toBeUndefined();
+
+    // Verify storage was not modified by the failed append
+    const stored = await service.getSession({
+      appName: 'test-app',
+      userId: 'user1',
+      sessionId: 's1',
+    });
+    expect(stored?.events.map((e) => e.id)).toEqual([concurrentEvent.id]);
+    expect(stored?.state['key']).toBeUndefined();
+  });
+
+  it('should reject appending an event to a stale session after a concurrent update', async () => {
+    const appName = 'my_app';
+    const userId = 'user';
+    const currentTime = Date.now();
+
+    const originalSession = await service.createSession({
+      appName,
+      userId,
+    });
+    const event1 = createEvent({
+      invocationId: 'inv1',
+      author: 'user',
+      timestamp: currentTime + 1000,
+      actions: createEventActions({stateDelta: {sk1: 'v1'}}),
+    });
+    await service.appendEvent({session: originalSession, event: event1});
+
+    const updatedSession = (await service.getSession({
+      appName,
+      userId,
+      sessionId: originalSession.id,
+    }))!;
+    const event2 = createEvent({
+      invocationId: 'inv2',
+      author: 'user',
+      timestamp: currentTime + 2000,
+      actions: createEventActions({stateDelta: {sk2: 'v2'}}),
+    });
+    await service.appendEvent({session: updatedSession, event: event2});
+
+    // originalSession is now stale
+    expect(originalSession.lastUpdateTime).toBeLessThan(
+      updatedSession.lastUpdateTime,
+    );
+    expect(originalSession.events.length).toBe(1);
+    expect(originalSession.state['sk2']).toBeUndefined();
+
+    // Appending another event to stale originalSession should be rejected.
+    const event3 = createEvent({
+      invocationId: 'inv3',
+      author: 'user',
+      timestamp: currentTime + 3000,
+      actions: createEventActions({stateDelta: {sk3: 'v3'}}),
+    });
+    await expect(
+      service.appendEvent({session: originalSession, event: event3}),
+    ).rejects.toThrow(StaleSessionError);
+
+    // If we fetch session from DB, it should only contain the committed events.
+    const sessionFinal = (await service.getSession({
+      appName,
+      userId,
+      sessionId: originalSession.id,
+    }))!;
+    expect(sessionFinal.events.length).toBe(2);
+    expect(sessionFinal.state['sk1']).toBe('v1');
+    expect(sessionFinal.state['sk2']).toBe('v2');
+    expect(sessionFinal.state['sk3']).toBeUndefined();
+    expect(sessionFinal.events.map((e) => e.invocationId)).toEqual([
+      'inv1',
+      'inv2',
+    ]);
+  });
+
+  it('identifies StaleSessionError with isStaleSessionError', () => {
+    const error = new StaleSessionError('stale');
+    expect(isStaleSessionError(error)).toBe(true);
+    expect(isStaleSessionError(new Error('other'))).toBe(false);
+    expect(isStaleSessionError(null)).toBe(false);
+    expect(isStaleSessionError(undefined)).toBe(false);
+    expect(
+      isStaleSessionError({
+        [Symbol.for('google.adk.staleSessionError')]: true,
+      }),
+    ).toBe(true);
   });
 
   it('should filter sessions by userId in listSessions', async () => {
@@ -745,6 +982,158 @@ describe('DatabaseSessionService', () => {
       expect(storedSession.updateTime.getTime()).toBe(timestamp);
     });
   });
+
+  describe('appendEvent event payload persistence', () => {
+    it('should preserve inlineData parts when appending and retrieving events', async () => {
+      const session = await service.createSession({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 's-inline-data',
+      });
+      const inlinePart = {
+        inlineData: {
+          data: Buffer.from('test_image_data').toString('base64'),
+          mimeType: 'image/png',
+        },
+      };
+      const event = createEvent({
+        invocationId: 'invocation',
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [inlinePart],
+        },
+      });
+
+      await service.appendEvent({session, event});
+
+      expect(session.events).toHaveLength(1);
+      expect(session.events[0].content?.parts?.[0]).toEqual(inlinePart);
+
+      const loadedSession = await service.getSession({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: session.id,
+      });
+      expect(loadedSession?.events).toHaveLength(1);
+      expect(loadedSession?.events[0].content?.parts?.[0]).toEqual(inlinePart);
+    });
+
+    it('should persist and restore event inlineData bytes and groundingMetadata sdkBlob', async () => {
+      const session = await service.createSession({
+        appName: 'my_app',
+        userId: 'user',
+      });
+      const testContent = {
+        role: 'user',
+        parts: [
+          {
+            inlineData: {
+              data: Buffer.from('test_image_data').toString('base64'),
+              mimeType: 'image/png',
+            },
+          },
+        ],
+      };
+      const testGroundingMetadata = {
+        searchEntryPoint: {
+          sdkBlob: Buffer.from('test_sdk_blob').toString('base64'),
+        },
+      };
+      const event = createEvent({
+        invocationId: 'invocation',
+        author: 'user',
+        content: testContent,
+        groundingMetadata: testGroundingMetadata,
+      });
+
+      await service.appendEvent({session, event});
+
+      expect(session.events[0].content).toEqual(testContent);
+
+      const loadedSession = await service.getSession({
+        appName: 'my_app',
+        userId: 'user',
+        sessionId: session.id,
+      });
+      const events = loadedSession?.events ?? [];
+      expect(events).toHaveLength(1);
+      expect(events[0].content).toEqual(testContent);
+      expect(events[0].groundingMetadata).toEqual(testGroundingMetadata);
+    });
+
+    it('should persist and restore a complete event with all metadata and actions fields', async () => {
+      const session = await service.createSession({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 's-complete-event',
+      });
+      const event = createEvent({
+        invocationId: 'invocation',
+        author: 'user',
+        branch: 'main',
+        content: {
+          role: 'user',
+          parts: [{text: 'test_text'}],
+        },
+        turnComplete: true,
+        partial: false,
+        actions: createEventActions({
+          artifactDelta: {file: 0},
+          transferToAgent: 'agent',
+          escalate: true,
+        }),
+        longRunningToolIds: ['tool1'],
+        errorCode: 'error_code',
+        errorMessage: 'error_message',
+        interrupted: true,
+        groundingMetadata: {
+          webSearchQueries: ['query1'],
+        },
+      });
+
+      await service.appendEvent({session, event});
+
+      const loadedSession = await service.getSession({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: session.id,
+      });
+
+      expect(loadedSession?.events).toHaveLength(1);
+      expect(loadedSession?.events[0]).toEqual(
+        Object.fromEntries(Object.entries(event)),
+      );
+    });
+
+    it('should skip persistence when appending a partial event with content', async () => {
+      const session = await service.createSession({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 's-partial-event',
+      });
+      const event = createEvent({
+        invocationId: 'invocation',
+        author: 'model',
+        content: {
+          role: 'model',
+          parts: [{text: 'partial_text'}],
+        },
+        partial: true,
+      });
+
+      await service.appendEvent({session, event});
+
+      expect(session.events).toEqual([]);
+
+      const loadedSession = await service.getSession({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: session.id,
+      });
+      expect(loadedSession?.events).toEqual([]);
+    });
+  });
 });
 
 describe('DatabaseSessionService entities', () => {
@@ -770,6 +1159,133 @@ describe('DatabaseSessionService entities', () => {
     });
 
     expect(session.id).toBe('entities-override');
+  });
+});
+
+describe('DatabaseSessionService stale-session reload', () => {
+  const key = {appName: 'test-app', userId: 'test-user', sessionId: 's1'};
+  let service: DatabaseSessionService;
+
+  beforeEach(async () => {
+    service = new DatabaseSessionService({
+      dbName: ':memory:',
+      driver: SqliteDriver,
+      allowGlobalContext: true,
+      staleSession: 'reload',
+    });
+    await service.createSession({...key, state: {count: 0}});
+  });
+
+  afterEach(async () => {
+    await (service as unknown as {orm?: MikroORM}).orm?.close();
+  });
+
+  it('reloads stored events and state into a stale copy before appending', async () => {
+    const copyA = (await service.getSession(key))!;
+    const copyB = (await service.getSession(key))!;
+
+    const eventA = createEvent({
+      timestamp: copyA.lastUpdateTime + 1000,
+      actions: createEventActions({
+        stateDelta: {
+          count: 1,
+          fromA: 'yes',
+          [`${State.USER_PREFIX}pref`]: 'A',
+          [`${State.APP_PREFIX}theme`]: 'dark',
+        },
+      }),
+    });
+    await service.appendEvent({session: copyA, event: eventA});
+
+    const eventB = createEvent({
+      timestamp: copyA.lastUpdateTime + 2000,
+      actions: createEventActions({
+        stateDelta: {
+          count: 2,
+          fromB: 'yes',
+        },
+      }),
+    });
+    await service.appendEvent({session: copyB, event: eventB});
+
+    expect(copyB.events.map((event) => event.id)).toEqual([
+      eventA.id,
+      eventB.id,
+    ]);
+    expect(copyB.state['count']).toBe(2);
+    expect(copyB.state['fromA']).toBe('yes');
+    expect(copyB.state['fromB']).toBe('yes');
+    expect(copyB.state[`${State.USER_PREFIX}pref`]).toBe('A');
+    expect(copyB.state[`${State.APP_PREFIX}theme`]).toBe('dark');
+    expect(copyB.lastUpdateTime).toBe(eventB.timestamp);
+
+    const stored = (await service.getSession(key))!;
+    expect(stored.events.map((event) => event.id)).toEqual([
+      eventA.id,
+      eventB.id,
+    ]);
+    expect(stored.state).toEqual(copyB.state);
+  });
+});
+
+describe('DatabaseSessionService with sqlite:///:memory:', () => {
+  const services: DatabaseSessionService[] = [];
+
+  afterEach(async () => {
+    for (const service of services.splice(0)) {
+      await (service as unknown as {orm?: MikroORM}).orm?.close();
+    }
+  });
+
+  it('opens an in-memory database that is not shared', async () => {
+    const first = new DatabaseSessionService('sqlite:///:memory:');
+    services.push(first);
+    await first.init();
+    await first.createSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'memory-session',
+      state: {key: 'value'},
+    });
+
+    const readBack = await first.getSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'memory-session',
+    });
+    expect(readBack?.state['key']).toBe('value');
+
+    const second = new DatabaseSessionService('sqlite:///:memory:');
+    services.push(second);
+    await second.init();
+    const unseen = await second.getSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'memory-session',
+    });
+    expect(unseen).toBeUndefined();
+  });
+
+  it('forwards additional MikroORM options when constructed with a URI string', async () => {
+    const initSpy = vi.spyOn(MikroORM, 'init');
+    const customService = new DatabaseSessionService('sqlite:///:memory:', {
+      debug: false,
+      allowGlobalContext: true,
+      staleSession: 'reload',
+    });
+    services.push(customService);
+
+    await customService.init();
+
+    expect(initSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dbName: ':memory:',
+        debug: false,
+        allowGlobalContext: true,
+      }),
+    );
+    expect(initSpy.mock.calls[0]?.[0]).not.toHaveProperty('staleSession');
+    initSpy.mockRestore();
   });
 });
 

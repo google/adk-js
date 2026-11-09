@@ -21,6 +21,7 @@ import {
 } from '@google/genai';
 import {Event as AdkEvent, createEvent} from '../events/event.js';
 import {createEventActions} from '../events/event_actions.js';
+import {withoutInternalMetadata} from '../events/internal_metadata.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
 import {
   A2AEvent,
@@ -295,10 +296,10 @@ function createAdkEventFromMetadata(a2aEvent: A2AEvent): AdkEvent {
       A2AMetadataKeys.GROUNDING_METADATA
     ] as GroundingMetadata,
     usageMetadata: metadata[A2AMetadataKeys.USAGE_METADATA] as UsageMetadata,
-    customMetadata: metadata[A2AMetadataKeys.CUSTOM_METADATA] as Record<
-      string,
-      unknown
-    >,
+    // A remote peer cannot set ADK-internal keys on the events we emit for it.
+    customMetadata: withoutInternalMetadata(
+      metadata[A2AMetadataKeys.CUSTOM_METADATA] as Record<string, unknown>,
+    ),
     // Only fields in PEER_SETTABLE_ACTION_FIELDS may be restored from
     // metadata a remote A2A peer controls. Every other action field either
     // mutates the caller's own session or drives the caller's own control

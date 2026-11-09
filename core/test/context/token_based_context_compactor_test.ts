@@ -242,6 +242,23 @@ describe('TokenBasedContextCompactor', () => {
     expect(await compactor.shouldCompact(context)).toBe(false);
   });
 
+  it('uses the initial prompt token count of a resumed generation', async () => {
+    const compactor = new TokenBasedContextCompactor({
+      tokenThreshold: 10,
+      eventRetentionSize: 2,
+      summarizer: new MockSummarizer(),
+    });
+    const resumed = createMockEvent('3');
+    resumed.usageMetadata = {promptTokenCount: 27, initialPromptTokenCount: 9};
+    const context = createMockInvocationContext([
+      createMockEvent('1', 6),
+      createMockEvent('2', 7),
+      resumed,
+    ]);
+
+    expect(await compactor.shouldCompact(context)).toBe(false);
+  });
+
   it('should prefer the newest usage metadata over older events', async () => {
     const compactor = new TokenBasedContextCompactor({
       tokenThreshold: 10,

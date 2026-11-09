@@ -24,9 +24,14 @@ import * as path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {materializeFiles} from '../../../src/utils/file_utils.js';
 
-vi.mock('../../../src/utils/file_utils.js', () => ({
-  materializeFiles: vi.fn(),
-}));
+vi.mock('../../../src/utils/file_utils.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../../src/utils/file_utils.js')>();
+  return {
+    ...actual,
+    materializeFiles: vi.fn(),
+  };
+});
 
 class MockCodeExecutor extends BaseCodeExecutor {
   mockResult: CodeExecutionResult = {
@@ -226,6 +231,40 @@ describe('RunSkillScriptTool', () => {
 
     const binaryFile = inputFiles?.find((f) => f.name === 'assets/binary.dat');
     expect(binaryFile?.contentEncoding).toBe('base64');
+  });
+
+  it('sends a TypeScript script resource as UTF-8 text', async () => {
+    const typescriptSkill: Skill = {
+      frontmatter: {
+        name: 'typescript-skill',
+        description: 'A skill with a TypeScript script',
+      },
+      instructions: 'Test instructions',
+      resources: {
+        scripts: {'helper.ts': {src: 'export const x = 1;'}},
+      },
+    };
+    const mockExecutor = new MockCodeExecutor();
+    const toolset = new SkillToolset([typescriptSkill], {
+      codeExecutor: mockExecutor,
+    });
+    const tool = new RunSkillScriptTool(toolset);
+
+    await tool.runAsync({
+      args: {
+        skill_name: 'typescript-skill',
+        script_path: 'scripts/helper.ts',
+      },
+      toolContext: createMockContext(),
+    });
+
+    const helper =
+      mockExecutor.executeCodeParams?.codeExecutionInput.inputFiles?.find(
+        (f) => f.name === 'scripts/helper.ts',
+      );
+    expect(helper?.contentEncoding).toBe(FileContentEncoding.UTF8);
+    expect(helper?.mimeType).toBe('text/javascript');
+    expect(helper?.content).toBe('export const x = 1;');
   });
 
   it('calls materializeFiles with output files from executor', async () => {

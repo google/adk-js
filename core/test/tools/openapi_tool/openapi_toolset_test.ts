@@ -9,8 +9,9 @@ import {
   OpenApiSpecParser,
   OpenAPIToolset,
   ReadonlyContext,
+  RestApiTool,
 } from '@google/adk';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import {OpenAPIV3} from 'openapi-types';
 import {describe, expect, it, vi} from 'vitest';
 import {logger} from '../../../src/utils/logger.js';
@@ -158,6 +159,17 @@ describe('OpenAPIToolset', () => {
       toolFilter: (tool) => tool.name === 'get_users',
     });
     const tools = await toolset.getTools({} as unknown as ReadonlyContext);
+
+    expect(tools.length).toBe(1);
+    expect(tools[0].name).toBe('get_users');
+  });
+
+  it('should apply a predicate toolFilter when no context is provided', async () => {
+    const toolset = new OpenAPIToolset({
+      specDict: mockSpec,
+      toolFilter: (tool) => tool.name === 'get_users',
+    });
+    const tools = await toolset.getTools();
 
     expect(tools.length).toBe(1);
     expect(tools[0].name).toBe('get_users');
@@ -481,8 +493,7 @@ describe('OpenApiSpecParser', () => {
 
     expect(operations.length).toBe(1);
     const response = operations[0].operation.responses?.['200'] as
-      | OpenAPIV3.ResponseObject
-      | undefined;
+      OpenAPIV3.ResponseObject | undefined;
     const schema = response?.content?.['application/json']
       ?.schema as OpenAPIV3.SchemaObject;
     const invalidPropSchema = schema.properties?.[
@@ -528,13 +539,73 @@ describe('OpenApiSpecParser', () => {
 
     expect(operations.length).toBe(1);
     const response = operations[0].operation.responses?.['200'] as
-      | OpenAPIV3.ResponseObject
-      | undefined;
+      OpenAPIV3.ResponseObject | undefined;
     const schema = response?.content?.['application/json']
       ?.schema as OpenAPIV3.SchemaObject;
     const multiPropSchema = schema.properties?.[
       'multiProp'
     ] as OpenAPIV3.SchemaObject;
     expect(multiPropSchema.type).toEqual(['string', 'integer']);
+  });
+
+  it('should omit whole-body parameter for empty object request body by default', async () => {
+    const specWithEmptyObjectBody: OpenAPIV3.Document = {
+      openapi: '3.0.0',
+      info: {title: 'Test', version: '1.0.0'},
+      servers: [{url: 'https://api.example.com'}],
+      paths: {
+        '/items': {
+          post: {
+            operationId: 'createItem',
+            requestBody: {
+              content: {
+                'application/json': {
+                  schema: {type: 'object'},
+                },
+              },
+            },
+            responses: {'200': {description: 'OK'}},
+          },
+        },
+      },
+    };
+
+    const toolset = new OpenAPIToolset({specDict: specWithEmptyObjectBody});
+    const tools = await toolset.getTools();
+    expect(tools.length).toBe(1);
+    const decl = (tools[0] as RestApiTool)._getDeclaration();
+    expect(decl.parameters?.properties).toEqual({});
+  });
+
+  it('should emit whole-body parameter for empty object request body when unconstrainedObjectBodyAsParameter is true', async () => {
+    const specWithEmptyObjectBody: OpenAPIV3.Document = {
+      openapi: '3.0.0',
+      info: {title: 'Test', version: '1.0.0'},
+      servers: [{url: 'https://api.example.com'}],
+      paths: {
+        '/items': {
+          post: {
+            operationId: 'createItem',
+            requestBody: {
+              content: {
+                'application/json': {
+                  schema: {type: 'object'},
+                },
+              },
+            },
+            responses: {'200': {description: 'OK'}},
+          },
+        },
+      },
+    };
+
+    const toolset = new OpenAPIToolset({
+      specDict: specWithEmptyObjectBody,
+      unconstrainedObjectBodyAsParameter: true,
+    });
+    const tools = await toolset.getTools();
+    expect(tools.length).toBe(1);
+    const decl = (tools[0] as RestApiTool)._getDeclaration();
+    expect(decl.parameters?.properties).toHaveProperty('body');
   });
 });

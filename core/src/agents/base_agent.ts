@@ -5,15 +5,10 @@
  */
 
 import {Content} from '@google/genai';
-import {context, trace} from '@opentelemetry/api';
 
 import {createEvent, Event} from '../events/event.js';
 
-import {
-  runAsyncGeneratorWithOtelContext,
-  traceAgentInvocation,
-  tracer,
-} from '../telemetry/tracing.js';
+import {recordAgentInvocation} from '../telemetry/api/instrumentation.js';
 import {BaseNode, BaseNodeConfig} from '../workflow/base_node.js';
 import type {NodeContext} from '../workflow/node_context.js';
 import {Context} from './context.js';
@@ -254,44 +249,37 @@ export abstract class BaseAgent<
   async *runAsync(
     parentContext: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    const span = tracer.startSpan(`invoke_agent ${this.name}`);
-    const ctx = trace.setSpan(context.active(), span);
-    try {
-      yield* runAsyncGeneratorWithOtelContext<BaseAgent, Event>(
-        ctx,
-        this,
-        async function* () {
-          const context = this.createInvocationContext(parentContext);
+    const agentCtx = this;
+    yield* recordAgentInvocation(
+      {agent: this, invocationContext: parentContext},
+      async function* () {
+        const context = agentCtx.createInvocationContext(parentContext);
 
-          const beforeAgentCallbackEvent =
-            await this.handleBeforeAgentCallback(context);
-          if (beforeAgentCallbackEvent) {
-            yield beforeAgentCallbackEvent;
-          }
+        const beforeAgentCallbackEvent =
+          await agentCtx.handleBeforeAgentCallback(context);
+        if (beforeAgentCallbackEvent) {
+          yield beforeAgentCallbackEvent;
+        }
 
-          if (context.endInvocation || parentContext.abortSignal?.aborted) {
-            return;
-          }
+        if (context.endInvocation || parentContext.abortSignal?.aborted) {
+          return;
+        }
 
-          traceAgentInvocation({agent: this, invocationContext: context});
-          for await (const event of this.runAsyncImpl(context)) {
-            yield event;
-          }
+        for await (const event of agentCtx.runAsyncImpl(context)) {
+          yield event;
+        }
 
-          if (context.endInvocation || parentContext.abortSignal?.aborted) {
-            return;
-          }
+        if (context.endInvocation || parentContext.abortSignal?.aborted) {
+          return;
+        }
 
-          const afterAgentCallbackEvent =
-            await this.handleAfterAgentCallback(context);
-          if (afterAgentCallbackEvent) {
-            yield afterAgentCallbackEvent;
-          }
-        },
-      );
-    } finally {
-      span.end();
-    }
+        const afterAgentCallbackEvent =
+          await agentCtx.handleAfterAgentCallback(context);
+        if (afterAgentCallbackEvent) {
+          yield afterAgentCallbackEvent;
+        }
+      },
+    );
   }
 
   /**
@@ -333,43 +321,37 @@ export abstract class BaseAgent<
   async *runLive(
     parentContext: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    const span = tracer.startSpan(`invoke_agent ${this.name}`);
-    const ctx = trace.setSpan(context.active(), span);
-    try {
-      yield* runAsyncGeneratorWithOtelContext<BaseAgent, Event>(
-        ctx,
-        this,
-        async function* () {
-          const context = this.createInvocationContext(parentContext);
+    const agentCtx = this;
+    yield* recordAgentInvocation(
+      {agent: this, invocationContext: parentContext},
+      async function* () {
+        const context = agentCtx.createInvocationContext(parentContext);
 
-          const beforeAgentCallbackEvent =
-            await this.handleBeforeAgentCallback(context);
-          if (beforeAgentCallbackEvent) {
-            yield beforeAgentCallbackEvent;
-          }
+        const beforeAgentCallbackEvent =
+          await agentCtx.handleBeforeAgentCallback(context);
+        if (beforeAgentCallbackEvent) {
+          yield beforeAgentCallbackEvent;
+        }
 
-          if (context.endInvocation || parentContext.abortSignal?.aborted) {
-            return;
-          }
+        if (context.endInvocation || parentContext.abortSignal?.aborted) {
+          return;
+        }
 
-          for await (const event of this.runLiveImpl(context)) {
-            yield event;
-          }
+        for await (const event of agentCtx.runLiveImpl(context)) {
+          yield event;
+        }
 
-          if (context.endInvocation || parentContext.abortSignal?.aborted) {
-            return;
-          }
+        if (context.endInvocation || parentContext.abortSignal?.aborted) {
+          return;
+        }
 
-          const afterAgentCallbackEvent =
-            await this.handleAfterAgentCallback(context);
-          if (afterAgentCallbackEvent) {
-            yield afterAgentCallbackEvent;
-          }
-        },
-      );
-    } finally {
-      span.end();
-    }
+        const afterAgentCallbackEvent =
+          await agentCtx.handleAfterAgentCallback(context);
+        if (afterAgentCallbackEvent) {
+          yield afterAgentCallbackEvent;
+        }
+      },
+    );
   }
 
   /**
@@ -441,6 +423,24 @@ export abstract class BaseAgent<
   }
 
   /**
+   * The resolved beforeAgentCallback field as a list of SingleAgentCallback.
+   *
+   * This method is only for use by Agent Development Kit.
+   */
+  get canonicalBeforeAgentCallbacks(): SingleAgentCallback[] {
+    return this.beforeAgentCallback;
+  }
+
+  /**
+   * The resolved afterAgentCallback field as a list of SingleAgentCallback.
+   *
+   * This method is only for use by Agent Development Kit.
+   */
+  get canonicalAfterAgentCallbacks(): SingleAgentCallback[] {
+    return this.afterAgentCallback;
+  }
+
+  /**
    * Runs the before agent callback if it exists.
    *
    * @param invocationContext The invocation context of the agent.
@@ -450,12 +450,12 @@ export abstract class BaseAgent<
   protected async handleBeforeAgentCallback(
     invocationContext: InvocationContext,
   ): Promise<Event | undefined> {
-    if (this.beforeAgentCallback.length === 0) {
+    if (this.canonicalBeforeAgentCallbacks.length === 0) {
       return undefined;
     }
 
     const callbackContext = new Context({invocationContext});
-    for (const callback of this.beforeAgentCallback) {
+    for (const callback of this.canonicalBeforeAgentCallbacks) {
       const content = await callback(callbackContext);
 
       if (invocationContext.abortSignal?.aborted) {
@@ -497,12 +497,12 @@ export abstract class BaseAgent<
   protected async handleAfterAgentCallback(
     invocationContext: InvocationContext,
   ): Promise<Event | undefined> {
-    if (this.afterAgentCallback.length === 0) {
+    if (this.canonicalAfterAgentCallbacks.length === 0) {
       return undefined;
     }
 
     const callbackContext = new Context({invocationContext});
-    for (const callback of this.afterAgentCallback) {
+    for (const callback of this.canonicalAfterAgentCallbacks) {
       const content = await callback(callbackContext);
 
       if (invocationContext.abortSignal?.aborted) {
