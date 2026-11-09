@@ -74,7 +74,7 @@ describe('CrewaiTool', () => {
     expect(wrapped.description).toBe('Custom description override');
   });
 
-  it('test_crewai_tool', () => {
+  it('builds a function declaration from a zod or JSON schema args schema', () => {
     const zodCrewTool = new CrewaiTool({
       name: 'serper_dev_tool',
       description: 'Search the internet with Serper',

@@ -86,7 +86,7 @@ describe('GoogleApiToolset', () => {
     vi.restoreAllMocks();
   });
 
-  it('test_init', () => {
+  it('stores the api name, version and tool filter from the constructor options', () => {
     const toolset = new GoogleApiToolset({
       apiName: 'calendar',
       apiVersion: 'v3',
@@ -101,7 +101,7 @@ describe('GoogleApiToolset', () => {
     expect(toolset.toolFilter).toEqual(['calendar_calendars_get']);
   });
 
-  it('test_get_tools', async () => {
+  it('creates a GoogleApiTool for every method in the discovery spec', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
       status: 200,
@@ -122,7 +122,7 @@ describe('GoogleApiToolset', () => {
     ]);
   });
 
-  it('test_get_tools_with_filter_list', async () => {
+  it('returns only the tools named in a tool filter list', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
       status: 200,
@@ -140,7 +140,7 @@ describe('GoogleApiToolset', () => {
     expect(tools[0].name).toBe('calendar_calendars_get');
   });
 
-  it('test_get_tools_with_filter_predicate', async () => {
+  it('returns only the tools that match a tool filter predicate', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
       status: 200,
@@ -167,7 +167,7 @@ describe('GoogleApiToolset', () => {
     expect(tools[0].name).toBe('calendar_calendars_insert');
   });
 
-  it('test_configure_auth', async () => {
+  it('applies configured auth credentials to the tools it creates and to existing tools', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
       status: 200,
@@ -192,7 +192,7 @@ describe('GoogleApiToolset', () => {
     expect(configureSpy).toHaveBeenCalledWith('updated-id', 'updated-secret');
   });
 
-  it('test_set_tool_filter', async () => {
+  it('applies a list or predicate filter set after construction', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
       status: 200,
@@ -220,7 +220,7 @@ describe('GoogleApiToolset', () => {
     ]);
   });
 
-  it('test_close', async () => {
+  it('closes the underlying OpenAPI toolset only after tools are loaded', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
       status: 200,
