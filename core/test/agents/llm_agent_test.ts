@@ -2839,7 +2839,7 @@ describe('LlmAgent model callbacks', () => {
 
     const MODEL_CALLBACK_CHAIN_CASES: ModelCallbackChainSpec[] = [
       {
-        name: 'middle_async_callback_returns',
+        name: 'when middle async callback returns content',
         callbacks: [
           {response: undefined, isAsync: false},
           {response: 'callback_2_response', isAsync: true},
@@ -2850,7 +2850,7 @@ describe('LlmAgent model callbacks', () => {
         expectedCalls: [1, 1, 0, 0],
       },
       {
-        name: 'all_callbacks_return_undefined',
+        name: 'when all callbacks return undefined',
         callbacks: [
           {response: undefined, isAsync: false},
           {response: undefined, isAsync: true},
@@ -2861,7 +2861,7 @@ describe('LlmAgent model callbacks', () => {
         expectedCalls: [1, 1, 1, 1],
       },
       {
-        name: 'first_sync_callback_returns',
+        name: 'when first sync callback returns content',
         callbacks: [
           {response: 'callback_1_response', isAsync: false},
           {response: 'callback_2_response', isAsync: true},
@@ -2979,7 +2979,7 @@ describe('LlmAgent canonical fields and config validation', () => {
     vi.unstubAllEnvs();
   });
 
-  it('test_canonical_model_empty', () => {
+  it('throws when no model is set on the agent or its ancestors', () => {
     const agent = new LlmAgent({name: 'test_agent'});
 
     expect(() => agent.canonicalModel).toThrow(
@@ -2987,7 +2987,7 @@ describe('LlmAgent canonical fields and config validation', () => {
     );
   });
 
-  it('test_canonical_model_str', () => {
+  it('resolves a model name string to an LLM instance', () => {
     vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
     vi.stubEnv('GOOGLE_API_KEY', 'test-key');
     const agent = new LlmAgent({
@@ -2998,14 +2998,14 @@ describe('LlmAgent canonical fields and config validation', () => {
     expect(agent.canonicalModel.model).toBe('gemini-flash-latest');
   });
 
-  it('test_canonical_model_llm', () => {
+  it('returns the BaseLlm instance passed as model', () => {
     const llm = new MockLlm(null);
     const agent = new LlmAgent({name: 'test_agent', model: llm});
 
     expect(agent.canonicalModel).toBe(llm);
   });
 
-  it('test_canonical_model_inherit', () => {
+  it('inherits the canonical model from the parent agent', () => {
     vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
     vi.stubEnv('GOOGLE_API_KEY', 'test-key');
     const subAgent = new LlmAgent({name: 'sub_agent'});
@@ -3018,7 +3018,7 @@ describe('LlmAgent canonical fields and config validation', () => {
     expect(subAgent.canonicalModel).toEqual(parentAgent.canonicalModel);
   });
 
-  it('test_canonical_instruction_str', async () => {
+  it('returns a string instruction with state injection required', async () => {
     const agent = new LlmAgent({
       name: 'test_agent',
       instruction: 'instruction',
@@ -3031,7 +3031,7 @@ describe('LlmAgent canonical fields and config validation', () => {
     });
   });
 
-  it('test_canonical_instruction', async () => {
+  it('resolves an instruction provider without state injection', async () => {
     const agent = new LlmAgent({
       name: 'test_agent',
       instruction: (ctx: ReadonlyContext) =>
@@ -3047,7 +3047,7 @@ describe('LlmAgent canonical fields and config validation', () => {
     });
   });
 
-  it('test_async_canonical_instruction', async () => {
+  it('resolves an async instruction provider without state injection', async () => {
     const agent = new LlmAgent({
       name: 'test_agent',
       instruction: async (ctx: ReadonlyContext) =>
@@ -3063,7 +3063,7 @@ describe('LlmAgent canonical fields and config validation', () => {
     });
   });
 
-  it('test_canonical_global_instruction_str', async () => {
+  it('returns a string global instruction with state injection required', async () => {
     const agent = new LlmAgent({
       name: 'test_agent',
       globalInstruction: 'global instruction',
@@ -3076,7 +3076,7 @@ describe('LlmAgent canonical fields and config validation', () => {
     });
   });
 
-  it('test_canonical_global_instruction', async () => {
+  it('resolves a global instruction provider without state injection', async () => {
     const agent = new LlmAgent({
       name: 'test_agent',
       globalInstruction: (ctx: ReadonlyContext) =>
@@ -3092,7 +3092,7 @@ describe('LlmAgent canonical fields and config validation', () => {
     });
   });
 
-  it('test_async_canonical_global_instruction', async () => {
+  it('resolves an async global instruction provider without state injection', async () => {
     const agent = new LlmAgent({
       name: 'test_agent',
       globalInstruction: async (ctx: ReadonlyContext) =>
@@ -3108,7 +3108,7 @@ describe('LlmAgent canonical fields and config validation', () => {
     });
   });
 
-  it('test_validate_generate_content_config_tools_throw', () => {
+  it('throws when generateContentConfig sets tools', () => {
     expect(
       () =>
         new LlmAgent({
@@ -3120,7 +3120,7 @@ describe('LlmAgent canonical fields and config validation', () => {
     ).toThrow('All tools must be set via LlmAgent.tools.');
   });
 
-  it('test_validate_generate_content_config_system_instruction_throw', () => {
+  it('throws when generateContentConfig sets systemInstruction', () => {
     expect(
       () =>
         new LlmAgent({
@@ -3132,7 +3132,7 @@ describe('LlmAgent canonical fields and config validation', () => {
     ).toThrow('System instruction must be set via LlmAgent.instruction.');
   });
 
-  it('test_validate_generate_content_config_response_schema_throw', () => {
+  it('throws when generateContentConfig sets responseSchema', () => {
     expect(
       () =>
         new LlmAgent({
@@ -3141,10 +3141,10 @@ describe('LlmAgent canonical fields and config validation', () => {
             responseSchema: {type: Type.OBJECT},
           },
         }),
-    ).toThrow('Response schema must be set via LlmAgent.output_schema.');
+    ).toThrow('Response schema must be set via LlmAgent.outputSchema.');
   });
 
-  it('test_allow_transfer_by_default', () => {
+  it('allows transfer to parent and peers by default', () => {
     const subAgent = new LlmAgent({name: 'sub_agent'});
     const agent = new LlmAgent({name: 'test_agent', subAgents: [subAgent]});
 

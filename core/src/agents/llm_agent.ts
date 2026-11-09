@@ -632,7 +632,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       }
       if (config.generateContentConfig.responseSchema) {
         throw new Error(
-          'Response schema must be set via LlmAgent.output_schema.',
+          'Response schema must be set via LlmAgent.outputSchema.',
         );
       }
       if (
