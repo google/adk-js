@@ -17,7 +17,12 @@ import {
 } from '../../src/workflow/errors.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
 import {executeChildNode} from '../../src/workflow/node_runner.js';
-import {createIc, driveNode, FnNode} from './test_helpers.js';
+import {
+  createIc,
+  drainInBackground,
+  driveNode,
+  FnNode,
+} from './test_helpers.js';
 
 // --- Tests ----------------------------------------------------------------
 
@@ -107,6 +112,7 @@ describe('Phase 1 — node execution & the push/pull bridge', () => {
       nodePath: '',
       runId: 'root',
     });
+    drainInBackground(channel);
     // executeChildNode returns the concrete child NodeContext (runNode's return
     // type widens to NodeContext | NodeResult for the resume fast-forward case).
     const child = await executeChildNode({
@@ -183,6 +189,7 @@ describe('Phase 1 — node execution & the push/pull bridge', () => {
       nodePath: '',
       runId: 'root',
     });
+    drainInBackground(channel);
     const child = await executeChildNode({
       parent: root,
       node,

@@ -783,6 +783,163 @@ describe('toGeminiSchema', () => {
   });
 });
 
+describe('toGeminiSchema constraint preservation', () => {
+  it('keeps array bounds on the root and on nested arrays', () => {
+    const schema = toGeminiSchema({
+      type: 'array',
+      maxItems: 4,
+      items: {type: 'array', minItems: 2, items: {type: 'string'}},
+    } as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.ARRAY,
+      maxItems: '4',
+      items: {
+        type: Type.ARRAY,
+        minItems: '2',
+        items: {type: Type.STRING},
+      },
+    });
+  });
+
+  it('keeps array bounds through a nullable anyOf branch', () => {
+    const schema = toGeminiSchema({
+      anyOf: [
+        {type: 'array', minItems: 2, maxItems: 3, items: {type: 'string'}},
+        {type: 'null'},
+      ],
+    } as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.ARRAY,
+      nullable: true,
+      minItems: '2',
+      maxItems: '3',
+      items: {type: Type.STRING},
+    });
+  });
+
+  it('keeps array bounds through a nullable type array', () => {
+    const schema = toGeminiSchema({
+      type: ['array', 'null'],
+      minItems: 2,
+      items: {type: 'string'},
+    } as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.ARRAY,
+      nullable: true,
+      minItems: '2',
+      items: {type: Type.STRING},
+    });
+  });
+
+  it('keeps the bounds of every anyOf branch', () => {
+    const schema = toGeminiSchema({
+      anyOf: [
+        {type: 'array', minItems: 2, items: {type: 'string'}},
+        {type: 'number', minimum: 1},
+      ],
+    } as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      anyOf: [
+        {type: Type.ARRAY, minItems: '2', items: {type: Type.STRING}},
+        {type: Type.NUMBER, minimum: 1},
+      ],
+    });
+  });
+
+  it('keeps string length bounds and pattern', () => {
+    const schema = toGeminiSchema({
+      type: 'object',
+      properties: {
+        name: {type: 'string', minLength: 3, maxLength: 5, pattern: '^[a-z]+$'},
+      },
+      required: ['name'],
+    } as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.OBJECT,
+      properties: {
+        name: {
+          type: Type.STRING,
+          minLength: '3',
+          maxLength: '5',
+          pattern: '^[a-z]+$',
+        },
+      },
+      required: ['name'],
+    });
+  });
+
+  it('keeps numeric range bounds as numbers', () => {
+    const schema = toGeminiSchema({
+      type: 'object',
+      properties: {age: {type: 'number', minimum: 1, maximum: 9}},
+      required: ['age'],
+    } as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.OBJECT,
+      properties: {age: {type: Type.NUMBER, minimum: 1, maximum: 9}},
+      required: ['age'],
+    });
+  });
+
+  it('keeps object property-count bounds as string counts', () => {
+    const schema = toGeminiSchema({
+      type: 'object',
+      minProperties: 1,
+      maxProperties: 3,
+      properties: {name: {type: 'string'}},
+    } as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.OBJECT,
+      properties: {name: {type: Type.STRING}},
+      minProperties: '1',
+      maxProperties: '3',
+    });
+  });
+
+  it('normalizes string counts already in the genai dialect', () => {
+    const schema = toGeminiSchema({
+      type: 'array',
+      minItems: '2',
+      items: {type: 'string'},
+    } as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.ARRAY,
+      minItems: '2',
+      items: {type: Type.STRING},
+    });
+  });
+
+  it('leaves an unbounded schema without constraint fields', () => {
+    const schema = toGeminiSchema({
+      type: 'array',
+      items: {type: 'string'},
+    } as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.ARRAY,
+      items: {type: Type.STRING},
+    });
+  });
+
+  it('drops the generated pattern that only restates an email format', () => {
+    const schema = toGeminiSchema({
+      type: 'string',
+      format: 'email',
+      pattern: '^[^@]+@[^@]+$',
+    } as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({type: Type.STRING});
+  });
+});
+
 describe('openApiSchemaToGeminiSchema', () => {
   it('normalizes a nullable type array into the non-null type with nullable set', () => {
     const schema = openApiSchemaToGeminiSchema({type: ['string', 'null']});

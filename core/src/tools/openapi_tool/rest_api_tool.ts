@@ -100,6 +100,11 @@ export class RestApiTool extends BaseTool {
       headerProvider?: (context: ReadonlyContext) => Record<string, string>;
       credentialKey?: string;
       operationParser?: OperationParser;
+      /**
+       * @deprecated Emits a whole-body parameter for unconstrained object schemas.
+       * Will be removed in a future release.
+       */
+      unconstrainedObjectBodyAsParameter?: boolean;
     } = {},
   ) {
     super({name: name.slice(0, MAX_TOOL_NAME_LENGTH), description});
@@ -277,6 +282,65 @@ function encodePathParamValue(name: string, value: string): string {
   return encodeURIComponent(value);
 }
 
+/**
+ * Serializes a path, header, or cookie parameter value using OpenAPI's default
+ * `simple` style, matching `adk-python`'s `_to_param_string`.
+ *
+ * Arrays and plain objects are comma-joined while omitting `null` and
+ * `undefined` entries.
+ */
+function toParamString(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value
+      .filter((item) => item !== undefined && item !== null)
+      .map(toParamString)
+      .join(',');
+  }
+  if (typeof value === 'object' && value !== null) {
+    return Object.entries(value)
+      .filter(([, v]) => v !== undefined && v !== null)
+      .map(([k, v]) => `${k},${toParamString(v)}`)
+      .join(',');
+  }
+  return String(value);
+}
+
+/**
+ * Serializes one element of a query parameter value.
+ *
+ * Plain objects have no string form, so they are JSON-encoded rather than
+ * rendered as `[object Object]`.
+ */
+function serializeQueryValue(value: unknown): string {
+  return typeof value === 'object' && value !== null
+    ? JSON.stringify(value)
+    : String(value);
+}
+
+/**
+ * Appends a model-supplied query parameter value to `queryParams`.
+ *
+ * OpenAPI query parameters default to `style: form` and `explode: true`, so an
+ * array is sent as one `name=value` pair per element (`id=1&id=2&id=3`), the
+ * same as adk-python, which hands the list to httpx. `null` and `undefined`
+ * elements are skipped and an empty array sends nothing.
+ */
+function appendQueryParam(
+  queryParams: URLSearchParams,
+  name: string,
+  value: unknown,
+): void {
+  if (!Array.isArray(value)) {
+    queryParams.append(name, serializeQueryValue(value));
+    return;
+  }
+  for (const item of value) {
+    if (item !== undefined && item !== null) {
+      queryParams.append(name, serializeQueryValue(item));
+    }
+  }
+}
+
 export function prepareRequestParams(
   endpoint: OperationEndpoint,
   parameters: ApiParameter[],
@@ -299,21 +363,27 @@ export function prepareRequestParams(
     const location = param.paramLocation;
 
     if (location === 'path') {
-      pathParams[originalName] = encodePathParamValue(
-        originalName,
-        String(argValue),
-      );
+      if (argValue !== undefined && argValue !== null) {
+        pathParams[originalName] = encodePathParamValue(
+          originalName,
+          toParamString(argValue),
+        );
+      }
     } else if (location === 'query') {
       // An unset query parameter is not sent. `0` and `false` are sent, unlike
       // the reference implementation, which drops every falsy value and so
       // loses `?count=0` and `?flag=false`.
       if (argValue !== undefined && argValue !== null && argValue !== '') {
-        queryParams.append(originalName, String(argValue));
+        appendQueryParam(queryParams, originalName, argValue);
       }
     } else if (location === 'header') {
-      headers[originalName] = String(argValue);
+      if (argValue !== undefined && argValue !== null) {
+        headers[originalName] = toParamString(argValue);
+      }
     } else if (location === 'cookie') {
-      cookies[originalName] = String(argValue);
+      if (argValue !== undefined && argValue !== null) {
+        cookies[originalName] = toParamString(argValue);
+      }
     } else if (location === 'body') {
       if (
         originalName === 'body' ||
@@ -440,6 +510,11 @@ export function createRestApiTool(
     preservePropertyNames?: boolean;
     headerProvider?: (context: ReadonlyContext) => Record<string, string>;
     credentialKey?: string;
+    /**
+     * @deprecated Emits a whole-body parameter for unconstrained object schemas.
+     * Will be removed in a future release.
+     */
+    unconstrainedObjectBodyAsParameter?: boolean;
   } = {},
 ): RestApiTool {
   const operationParser = parsed.parameters

@@ -677,7 +677,22 @@ export function actionResponse(action: string): JsonObject {
 }
 
 /** Builds the request schema of the `ExecuteCustomQuery` action. */
-export function executeCustomQueryRequest(): JsonObject {
+export function executeCustomQueryRequest(options?: {
+  includeDynamicAuthConfig?: boolean;
+}): JsonObject {
+  const properties: JsonObject = {
+    operation: schemaRef('operation'),
+    connectionName: schemaRef('connectionName'),
+    serviceName: schemaRef('serviceName'),
+    host: schemaRef('host'),
+    action: schemaRef('action'),
+    query: schemaRef('query'),
+    timeout: schemaRef('timeout'),
+    pageSize: schemaRef('pageSize'),
+  };
+  if (options?.includeDynamicAuthConfig) {
+    properties['dynamicAuthConfig'] = schemaRef('dynamicAuthConfig');
+  }
   return {
     type: 'object',
     required: [
@@ -690,16 +705,7 @@ export function executeCustomQueryRequest(): JsonObject {
       'timeout',
       'pageSize',
     ],
-    properties: {
-      operation: schemaRef('operation'),
-      connectionName: schemaRef('connectionName'),
-      serviceName: schemaRef('serviceName'),
-      host: schemaRef('host'),
-      action: schemaRef('action'),
-      query: schemaRef('query'),
-      timeout: schemaRef('timeout'),
-      pageSize: schemaRef('pageSize'),
-    },
+    properties,
   };
 }
 

@@ -213,6 +213,7 @@ export async function deployToCloudRun(options: DeployToCloudRunOptions) {
       otelToCloud: options.otelToCloud,
       a2a: options.a2a,
       agentFileLoadOptions: options.agentFileLoadOptions,
+      adkVersion: options.adkVersion,
     });
 
     console.info('Deploying to Cloud Run...');

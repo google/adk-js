@@ -1,10 +1,10 @@
 # CLI and Evaluation Utilities
 
-The CLI utilities in `@google/adk` prepare an agent's environment, state, logging, and evaluation datasets when running from the command line, the development server, or an automated test harness. This guide covers `.env` discovery (`walkToRootUntilFound`, `loadDotenvForAgent`), session-to-eval conversion and state initialization (`convertSessionToEvalFormat`, `createEmptyState`), CLI log routing (`setupAdkLogger`, `logToStderr`, `logToTmpFolder`), and batch evaluation (`runEvals`, `getEvaluationCriteriaOrDefault`, `parseAndGetEvalsToRun`).
+The CLI utilities in `@google/adk` prepare an agent's environment, state, logging, and evaluation datasets when running from the command line, the development server, or an automated test harness. This guide covers `.env` discovery (`walkToRootUntilFound`, `loadDotenvForAgent`), session-to-eval conversion and state initialization (`convertSessionToEvalFormat`, `createEmptyState`), CLI log routing (`setupAdkLogger`, `logToTmpFolder`), and batch evaluation (`runEvals`, `getEvaluationCriteriaOrDefault`, `parseAndGetEvalsToRun`).
 
 - `walkToRootUntilFound` and `loadDotenvForAgent` - Locate a `.env` file by walking up from an agent directory to the filesystem root and load its variables into `process.env`.
 - `createEmptyState` and `convertSessionToEvalFormat` - Initialize `{var}` placeholders referenced in agent instructions and convert recorded `Session` events into `EvaluationItem` turns.
-- `setupAdkLogger`, `logToStderr`, and `logToTmpFolder` - Route the global ADK logger to `stderr` or to a timestamped log file in the system temporary folder with a `.latest.log` symlink.
+- `setupAdkLogger` and `logToTmpFolder` - Route the global ADK logger to `stderr` or to a timestamped log file in the system temporary folder with a `.latest.log` symlink.
 - `runEvals`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun` - Run multi-turn evaluation cases against an agent and score tool trajectory accuracy and ROUGE-1 response match.
 
 ## Introduction
@@ -124,7 +124,7 @@ Each helper handles one stage of preparing, observing, or evaluating an agent ru
 
 ### Log routing
 
-`setupAdkLogger(level)` and `logToStderr(level)` install a logger via `setLogger` that formats records with an ISO timestamp and level name and writes them to `process.stderr`.
+`setupAdkLogger(level)` installs a logger via `setLogger` that formats records with an ISO timestamp and level name and writes them to `process.stderr`.
 
 `logToTmpFolder(options)` creates `<os.tmpdir()>/<subFolder>/<logFilePrefix>.<timestamp>.log`, routes the global ADK logger to append to that file, and updates `<logFilePrefix>.latest.log` in the same folder as a symbolic link pointing to the newest log file.
 
@@ -197,7 +197,7 @@ const mapping = parseAndGetEvalsToRun([
 ## Limitations
 
 - `createEmptyState` only inspects `LlmAgent` instances whose `instruction` is a static `string`. Placeholders inside an `InstructionProvider` function are not extracted statically.
-- `loadDotenvForAgent`, `logToTmpFolder`, `logToStderr`, and `runEvals` use Node.js filesystem and process modules (`node:fs`, `node:os`, `node:path`) and are exported from the Node `@google/adk` entrypoint, not the browser bundle.
+- `loadDotenvForAgent`, `logToTmpFolder`, `setupAdkLogger`, and `runEvals` use Node.js filesystem and process modules (`node:fs`, `node:os`, `node:path`) and are exported from the Node `@google/adk` entrypoint, not the browser bundle.
 - `getAgentGraph(rootAgent, highlightsPairs, true)` requires the Graphviz `dot` binary to be installed on `PATH` when rendering a PNG buffer.
 
 ## Related samples

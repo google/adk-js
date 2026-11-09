@@ -325,7 +325,7 @@ describe('RestApiTool', () => {
       description: 'description',
       parameters: {
         type: Type.OBJECT,
-        properties: {dummy_DO_NOT_GENERATE: {type: Type.STRING}},
+        properties: {},
       },
     });
   });
@@ -1182,6 +1182,175 @@ describe('RestApiTool Utilities', () => {
     });
   });
 
+  describe('query parameter serialization', () => {
+    const itemsEndpoint = {
+      baseUrl: 'https://example.com',
+      path: '/items',
+      method: 'GET',
+    };
+    const queryParam = (name: string, paramSchema: object) => ({
+      name,
+      originalName: name,
+      paramLocation: 'query',
+      paramSchema,
+      required: false,
+    });
+    const parameters = [
+      queryParam('id', {type: 'array', items: {type: 'integer'}}),
+      queryParam('filter', {type: 'object'}),
+      queryParam('tag', {type: 'array', items: {type: 'string'}}),
+    ];
+    const queryOf = (args: Record<string, unknown>) =>
+      new URL(prepareRequestParams(itemsEndpoint, parameters, args).url)
+        .searchParams;
+
+    it('repeats the key once per array element (form, explode: true)', () => {
+      const result = prepareRequestParams(itemsEndpoint, parameters, {
+        id: [1, 2, 3],
+      });
+
+      expect(result.url).toBe('https://example.com/items?id=1&id=2&id=3');
+    });
+
+    it('keeps array elements that contain reserved characters intact', () => {
+      const query = queryOf({tag: ['a,b', 'c&d', 'e f']});
+
+      expect(query.getAll('tag')).toEqual(['a,b', 'c&d', 'e f']);
+    });
+
+    it('sends falsy array elements but skips null and undefined ones', () => {
+      const query = queryOf({id: [0, null, undefined, 2]});
+
+      expect(query.getAll('id')).toEqual(['0', '2']);
+    });
+
+    it('sends nothing for an empty array', () => {
+      const result = prepareRequestParams(itemsEndpoint, parameters, {id: []});
+
+      expect(result.url).toBe('https://example.com/items');
+    });
+
+    it('JSON-encodes an object instead of "[object Object]"', () => {
+      const query = queryOf({filter: {a: 1, b: ['x']}});
+
+      expect(query.getAll('filter')).toEqual(['{"a":1,"b":["x"]}']);
+    });
+
+    it('JSON-encodes object elements of an array', () => {
+      const query = queryOf({filter: [{a: 1}, {a: 2}]});
+
+      expect(query.getAll('filter')).toEqual(['{"a":1}', '{"a":2}']);
+    });
+
+    it('still sends scalar values as before', () => {
+      const result = prepareRequestParams(itemsEndpoint, parameters, {
+        id: 7,
+        tag: 'x',
+      });
+
+      expect(result.url).toBe('https://example.com/items?id=7&tag=x');
+    });
+
+    it('merges array parameters with query parameters from the path', () => {
+      const result = prepareRequestParams(
+        {...itemsEndpoint, path: '/items?v=2'},
+        parameters,
+        {id: [1, 2]},
+      );
+
+      expect(result.url).toBe('https://example.com/items?id=1&id=2&v=2');
+    });
+  });
+
+  describe('path, header, and cookie parameter serialization', () => {
+    const itemFilterEndpoint = {
+      baseUrl: 'https://example.com',
+      path: '/items/{item_filter}',
+      method: 'GET',
+    };
+    const param = (name: string, paramLocation: string): ApiParameter => ({
+      name,
+      originalName: name,
+      paramLocation,
+      paramSchema: {},
+      required: false,
+    });
+    const parameters: ApiParameter[] = [
+      param('item_filter', 'path'),
+      param('X-Page-Size', 'header'),
+      param('page_size', 'cookie'),
+    ];
+
+    it.each([
+      [50, '50', '50'],
+      [1.5, '1.5', '1.5'],
+      [true, 'true', 'true'],
+      [false, 'false', 'false'],
+      [['a', 'b', 3], 'a,b,3', 'a%2Cb%2C3'],
+      [[true, false], 'true,false', 'true%2Cfalse'],
+      [[1, null, undefined, true], '1,true', '1%2Ctrue'],
+      [
+        {a: 1, b: null, d: undefined, c: true},
+        'a,1,c,true',
+        'a%2C1%2Cc%2Ctrue',
+      ],
+      ['already-a-string', 'already-a-string', 'already-a-string'],
+    ])(
+      'serializes %j using OpenAPI simple style across path, header, and cookie',
+      (value, expected, expectedPath) => {
+        const result = prepareRequestParams(itemFilterEndpoint, parameters, {
+          item_filter: value,
+          'X-Page-Size': value,
+          page_size: value,
+        });
+
+        expect(result.url).toBe(`https://example.com/items/${expectedPath}`);
+        expect(result.headers['X-Page-Size']).toBe(expected);
+        expect(result.cookies['page_size']).toBe(expected);
+      },
+    );
+
+    it('omits null and undefined header, cookie, and path values', () => {
+      const resultForNull = prepareRequestParams(
+        itemFilterEndpoint,
+        parameters,
+        {
+          item_filter: null,
+          'X-Page-Size': null,
+          page_size: null,
+        },
+      );
+
+      expect(resultForNull.url).toBe('https://example.com/items/{item_filter}');
+      expect(resultForNull.headers).toEqual({});
+      expect(resultForNull.cookies).toEqual({});
+
+      const resultForUndefined = prepareRequestParams(
+        itemFilterEndpoint,
+        parameters,
+        {
+          item_filter: undefined,
+          'X-Page-Size': undefined,
+          page_size: undefined,
+        },
+      );
+
+      expect(resultForUndefined.url).toBe(
+        'https://example.com/items/{item_filter}',
+      );
+      expect(resultForUndefined.headers).toEqual({});
+      expect(resultForUndefined.cookies).toEqual({});
+    });
+
+    it('still rejects dot-segment path parameters after array serialization', () => {
+      expect(() =>
+        prepareRequestParams(itemFilterEndpoint, parameters, {
+          item_filter: ['..', null],
+        }),
+      ).toThrow(/relative path segments/);
+    });
+  });
+
   describe('prepareRequestBody', () => {
     it('should format JSON body correctly', () => {
       const requestBody: OpenAPIV3.RequestBodyObject = {
@@ -1623,5 +1792,54 @@ describe('RestApiTool v0.1.0 parity behaviour', () => {
       '[object Object]',
     );
     expect(headers['Content-Type']).toBe('application/octet-stream');
+  });
+
+  it('should omit whole-body parameter for empty object request body by default', () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/test',
+      method: 'POST',
+    };
+    const operation: OpenAPIV3.OperationObject = {
+      operationId: 'testEmptyObj',
+      requestBody: {
+        content: {'application/json': {schema: {type: 'object'}}},
+      },
+      responses: {},
+    };
+    const tool = createRestApiTool({
+      name: 'test_tool',
+      description: 'description',
+      endpoint,
+      operation,
+    });
+    const declaration = tool._getDeclaration();
+    expect(declaration.parameters?.properties).toEqual({});
+  });
+
+  it('should include whole-body parameter for empty object request body when unconstrainedObjectBodyAsParameter is true', () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/test',
+      method: 'POST',
+    };
+    const operation: OpenAPIV3.OperationObject = {
+      operationId: 'testEmptyObj',
+      requestBody: {
+        content: {'application/json': {schema: {type: 'object'}}},
+      },
+      responses: {},
+    };
+    const tool = createRestApiTool(
+      {
+        name: 'test_tool',
+        description: 'description',
+        endpoint,
+        operation,
+      },
+      {unconstrainedObjectBodyAsParameter: true},
+    );
+    const declaration = tool._getDeclaration();
+    expect(declaration.parameters?.properties).toHaveProperty('body');
   });
 });

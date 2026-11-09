@@ -40,10 +40,10 @@ export async function* runWithRouting<T, C, TYield>(
   const triedKeys = new Set<string>([selectedKey]);
 
   while (true) {
-    const generatorOrPromise = runFn(selectedItem);
     let firstYielded = false;
 
     try {
+      const generatorOrPromise = runFn(selectedItem);
       if (isAsyncGenerator(generatorOrPromise)) {
         for await (const result of generatorOrPromise) {
           yield result;

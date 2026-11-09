@@ -42,6 +42,19 @@ describe('GoogleSearchTool', () => {
       expect(req.config!.tools).toEqual([{googleSearchRetrieval: {}}]);
     });
 
+    it('adds googleSearchRetrieval for path-based Gemini 1.x model', async () => {
+      const tool = new GoogleSearchTool();
+      const req = makeRequest(
+        'projects/test-proj/locations/us-central1/publishers/google/models/gemini-1.5-pro',
+      );
+      await tool.processLlmRequest({
+        llmRequest: req,
+        toolContext: {} as never,
+      });
+
+      expect(req.config!.tools).toEqual([{googleSearchRetrieval: {}}]);
+    });
+
     it('throws when Gemini 1.x model already has other tools', async () => {
       const tool = new GoogleSearchTool();
       const req = makeRequest('gemini-1.5-pro', [{functionDeclarations: []}]);
@@ -58,6 +71,19 @@ describe('GoogleSearchTool', () => {
     it('adds googleSearch for Gemini 2+ model', async () => {
       const tool = new GoogleSearchTool();
       const req = makeRequest('gemini-2.0-flash');
+      await tool.processLlmRequest({
+        llmRequest: req,
+        toolContext: {} as never,
+      });
+
+      expect(req.config!.tools).toEqual([{googleSearch: {}}]);
+    });
+
+    it('adds googleSearch for path-based Gemini 2+ model', async () => {
+      const tool = new GoogleSearchTool();
+      const req = makeRequest(
+        'projects/test-proj/locations/us-central1/publishers/google/models/gemini-2.0-flash',
+      );
       await tool.processLlmRequest({
         llmRequest: req,
         toolContext: {} as never,

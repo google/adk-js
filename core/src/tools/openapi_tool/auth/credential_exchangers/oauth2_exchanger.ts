@@ -97,10 +97,7 @@ export function exchangeCredential(
     return authCredential;
   }
 
-  if (
-    authCredential.oauth2?.accessToken ||
-    authCredential.oauth2?.refreshToken
-  ) {
+  if (authCredential.oauth2?.accessToken) {
     return generateAuthToken(authCredential);
   }
 

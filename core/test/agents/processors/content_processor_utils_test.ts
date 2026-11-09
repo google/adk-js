@@ -1542,3 +1542,160 @@ describe('removeClientFunctionCallId', () => {
     expect(() => removeClientFunctionCallId(noParts)).not.toThrow();
   });
 });
+
+describe('preserveFunctionCallIds', () => {
+  it('should strip adk-* client function call and response IDs by default in getContents', () => {
+    const events = [
+      createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'Weather in Paris?'}]},
+      }),
+      createEvent({
+        author: 'my_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                name: 'get_weather',
+                id: 'adk-12345',
+                args: {city: 'Paris'},
+              },
+            },
+          ],
+        },
+      }),
+      createEvent({
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'get_weather',
+                id: 'adk-12345',
+                response: {result: 'Sunny'},
+              },
+            },
+          ],
+        },
+      }),
+    ];
+
+    const contents = getContents(events, 'my_agent');
+    expect(contents).toHaveLength(3);
+    expect(contents[1]?.parts?.[0]?.functionCall?.id).toBeUndefined();
+    expect(contents[2]?.parts?.[0]?.functionResponse?.id).toBeUndefined();
+  });
+
+  it('should preserve adk-* client function call and response IDs when preserveFunctionCallIds is true in getContents', () => {
+    const events = [
+      createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'Weather in Paris?'}]},
+      }),
+      createEvent({
+        author: 'my_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                name: 'get_weather',
+                id: 'adk-12345',
+                args: {city: 'Paris'},
+              },
+            },
+          ],
+        },
+      }),
+      createEvent({
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'get_weather',
+                id: 'adk-12345',
+                response: {result: 'Sunny'},
+              },
+            },
+          ],
+        },
+      }),
+    ];
+
+    const contents = getContents(
+      events,
+      'my_agent',
+      undefined,
+      undefined,
+      true,
+    );
+    expect(contents).toHaveLength(3);
+    expect(contents[1]?.parts?.[0]?.functionCall?.id).toBe('adk-12345');
+    expect(contents[2]?.parts?.[0]?.functionResponse?.id).toBe('adk-12345');
+  });
+
+  it('should forward preserveFunctionCallIds from getCurrentTurnContents to getContents', () => {
+    const events = [
+      createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'Check weather'}]},
+      }),
+      createEvent({
+        author: 'my_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                name: 'get_weather',
+                id: 'adk-67890',
+                args: {city: 'London'},
+              },
+            },
+          ],
+        },
+      }),
+      createEvent({
+        author: 'my_agent',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'get_weather',
+                id: 'adk-67890',
+                response: {result: 'Cloudy'},
+              },
+            },
+          ],
+        },
+      }),
+    ];
+
+    const preserved = getCurrentTurnContents(
+      events,
+      'my_agent',
+      undefined,
+      undefined,
+      true,
+    );
+    expect(preserved).toHaveLength(3);
+    expect(preserved[1]?.parts?.[0]?.functionCall?.id).toBe('adk-67890');
+    expect(preserved[2]?.parts?.[0]?.functionResponse?.id).toBe('adk-67890');
+
+    const stripped = getCurrentTurnContents(
+      events,
+      'my_agent',
+      undefined,
+      undefined,
+      false,
+    );
+    expect(stripped).toHaveLength(3);
+    expect(stripped[1]?.parts?.[0]?.functionCall?.id).toBeUndefined();
+    expect(stripped[2]?.parts?.[0]?.functionResponse?.id).toBeUndefined();
+  });
+});

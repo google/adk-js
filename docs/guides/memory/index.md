@@ -161,7 +161,7 @@ const ragMemoryService = new VertexAiRagMemoryService({
 
 - **`InMemoryMemoryService` matches alphabetic tokens only**: `InMemoryMemoryService` extracts tokens with `/[A-Za-z]+/g` and does not index numeric literals or perform semantic embedding similarity. Use `VertexAiRagMemoryService` or `VertexAiMemoryBankService` for semantic search.
 - **`VertexAiRagMemoryService` corpus listing budget**: `searchMemory` lists at most `10` pages of `100` files (`1,000` files total) when pre-filtering `ragFileIds` by tenant. If a shared corpus exceeds `1,000` files or listing fails, retrieval runs against the whole corpus and `tenantSource` still filters every returned chunk on `sourceDisplayName` so another user's memories are never returned.
-- **Text-only indexing in `LOAD_MEMORY`, `PRELOAD_MEMORY`, and RAG transcripts**: `serializeSessionTranscript`, `LoadMemoryTool`, and `PreloadMemoryTool` read only `part.text` values from `Event.content.parts`; binary `inlineData` and `fileData` payloads belong in `BaseArtifactService`.
+- **Text-only indexing in `PRELOAD_MEMORY` and RAG transcripts**: `serializeSessionTranscript` and `PreloadMemoryTool` read only `part.text` values from `Event.content.parts`; binary `inlineData` and `fileData` payloads belong in `BaseArtifactService`.
 
 ## Related samples
 
