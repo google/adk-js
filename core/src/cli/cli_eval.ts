@@ -306,8 +306,11 @@ export function parseAndGetEvalsToRun(
   for (const inputEvalSet of evalSetFilePaths) {
     let evalSetFile: string;
     let evals: string[] = [];
-    if (inputEvalSet.includes(':')) {
-      const colonIndex = inputEvalSet.indexOf(':');
+    // Skip the colon of a Windows drive prefix (`C:\` or `C:/`), as
+    // adk-python does, so an absolute Windows path is not split at the drive.
+    const hasDrivePrefix = /^[A-Za-z]:[\\/]/.test(inputEvalSet);
+    const colonIndex = inputEvalSet.indexOf(':', hasDrivePrefix ? 3 : 0);
+    if (colonIndex !== -1) {
       evalSetFile = inputEvalSet.slice(0, colonIndex);
       evals = inputEvalSet
         .slice(colonIndex + 1)
