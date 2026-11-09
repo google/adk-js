@@ -28,9 +28,7 @@
               "gen_ai.operation.name": "generate_content",
               "gen_ai.provider.name": "gcp.gemini",
               "gen_ai.request.model": "gemini-2.5-flash",
-              "gen_ai.response.finish_reasons": [
-                "stop"
-              ],
+              "gen_ai.response.finish_reasons": ["stop"],
               "gen_ai.tool.definitions": [
                 {
                   "description": "Transfer the question to another agent. This tool hands off control to another agent when it is more suitable to answer the user question according to the agent description.",
@@ -55,9 +53,7 @@
                   "gen_ai.agent.name": "some_root_agent",
                   "gen_ai.conversation.id": "PRESENT",
                   "gen_ai.provider.name": "gcp.gemini",
-                  "gen_ai.response.finish_reasons": [
-                    "stop"
-                  ],
+                  "gen_ai.response.finish_reasons": ["stop"],
                   "gen_ai.tool.definitions": [
                     {
                       "description": "Transfer the question to another agent. This tool hands off control to another agent when it is more suitable to answer the user question according to the agent description.",
@@ -108,9 +104,7 @@
                   "gen_ai.operation.name": "generate_content",
                   "gen_ai.provider.name": "gcp.gemini",
                   "gen_ai.request.model": "gemini-2.5-flash",
-                  "gen_ai.response.finish_reasons": [
-                    "stop"
-                  ],
+                  "gen_ai.response.finish_reasons": ["stop"],
                   "gen_ai.tool.definitions": [
                     {
                       "description": "Transfer the question to another agent. This tool hands off control to another agent when it is more suitable to answer the user question according to the agent description.",
@@ -135,9 +129,7 @@
                       "gen_ai.agent.name": "some_specialist_agent",
                       "gen_ai.conversation.id": "PRESENT",
                       "gen_ai.provider.name": "gcp.gemini",
-                      "gen_ai.response.finish_reasons": [
-                        "stop"
-                      ],
+                      "gen_ai.response.finish_reasons": ["stop"],
                       "gen_ai.tool.definitions": [
                         {
                           "description": "Transfer the question to another agent. This tool hands off control to another agent when it is more suitable to answer the user question according to the agent description.",

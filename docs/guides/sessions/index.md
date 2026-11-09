@@ -61,13 +61,13 @@ A service stores sessions under a key of three parts: `appName`, `userId` and se
 
 `Session` is an interface with six fields. The `createSession` function builds one from a partial object, and it fills `userId` with `''`, `state` with `{}`, `events` with `[]` and `lastUpdateTime` with `0` when they are not given.
 
-| Field            | Type                      | Description                                                                                                |
-| :--------------- | :------------------------ | :--------------------------------------------------------------------------------------------------------- |
-| `id`             | `string`                  | The session id.                                                                                            |
-| `appName`        | `string`                  | The application the session belongs to.                                                                    |
-| `userId`         | `string`                  | The user the session belongs to.                                                                           |
+| Field            | Type                      | Description                                                                                               |
+| :--------------- | :------------------------ | :-------------------------------------------------------------------------------------------------------- |
+| `id`             | `string`                  | The session id.                                                                                           |
+| `appName`        | `string`                  | The application the session belongs to.                                                                   |
+| `userId`         | `string`                  | The user the session belongs to.                                                                          |
 | `state`          | `Record<string, unknown>` | The merged state: session keys as they are, and app and user keys with their `app:` and `user:` prefixes. |
-| `events`         | `Event[]`                 | The events of the session, oldest first.                                                                   |
+| `events`         | `Event[]`                 | The events of the session, oldest first.                                                                  |
 | `lastUpdateTime` | `number`                  | When the session was last written, in milliseconds since the epoch.                                       |
 
 ### State and its prefixes
@@ -95,13 +95,13 @@ Inside an agent, the delta is what reaches storage. The `stateDelta` on an event
 
 `BaseSessionService` declares the methods every service implements.
 
-| Method                        | Returns                         | Description                                                                                       |
-| :---------------------------- | :------------------------------ | :------------------------------------------------------------------------------------------------ |
-| `createSession(request)`      | `Promise<Session>`              | Creates a session. The id is generated when `sessionId` is omitted.                              |
-| `getSession(request)`         | `Promise<Session \| undefined>` | Reads a session, or `undefined` when it does not exist.                                           |
-| `getOrCreateSession(request)` | `Promise<Session>`              | Reads the session named by `sessionId`, and creates it when it is missing or no id is given.      |
-| `listSessions(request)`       | `Promise<ListSessionsResponse>` | Lists sessions of an application, or of one user when `userId` is set.                            |
-| `deleteSession(request)`      | `Promise<void>`                 | Deletes a session.                                                                                |
+| Method                        | Returns                         | Description                                                                                        |
+| :---------------------------- | :------------------------------ | :------------------------------------------------------------------------------------------------- |
+| `createSession(request)`      | `Promise<Session>`              | Creates a session. The id is generated when `sessionId` is omitted.                                |
+| `getSession(request)`         | `Promise<Session \| undefined>` | Reads a session, or `undefined` when it does not exist.                                            |
+| `getOrCreateSession(request)` | `Promise<Session>`              | Reads the session named by `sessionId`, and creates it when it is missing or no id is given.       |
+| `listSessions(request)`       | `Promise<ListSessionsResponse>` | Lists sessions of an application, or of one user when `userId` is set.                             |
+| `deleteSession(request)`      | `Promise<void>`                 | Deletes a session.                                                                                 |
 | `appendEvent(request)`        | `Promise<Event>`                | Applies the event's `stateDelta` to the session and appends the event. Partial events are skipped. |
 
 `getSession` takes an optional `config` of type `GetSessionConfig`. `numRecentEvents` keeps only that many of the most recent events, and `afterTimestamp` keeps only events after that time in milliseconds. Use them to bound the size of a long session when you only need its tail.
@@ -122,20 +122,20 @@ Each service has its own constructor, so the options are listed per service.
 
 `DatabaseSessionService` takes either a connection URI or a MikroORM options object.
 
-| Argument                    | Type               | Description                                                                                                 |
-| :-------------------------- | :----------------- | :---------------------------------------------------------------------------------------------------------- |
-| `connectionStringOrOptions` | `string`           | A connection URI. The scheme selects the driver.                                                            |
+| Argument                    | Type               | Description                                                                                                |
+| :-------------------------- | :----------------- | :--------------------------------------------------------------------------------------------------------- |
+| `connectionStringOrOptions` | `string`           | A connection URI. The scheme selects the driver.                                                           |
 | `connectionStringOrOptions` | MikroORM `Options` | Options passed to `MikroORM.init`. `driver` is required, and the service supplies its own `entities` list. |
 
 The supported URI schemes and the driver package each one needs are below. The drivers are optional peer dependencies, loaded the first time the service connects, so an application that never opens a database does not install them.
 
-| Scheme                          | Driver package          |
-| :------------------------------ | :---------------------- |
-| `postgres://`, `postgresql://`  | `@mikro-orm/postgresql` |
-| `mysql://`                      | `@mikro-orm/mysql`      |
-| `mariadb://`                    | `@mikro-orm/mariadb`    |
-| `mssql://`                      | `@mikro-orm/mssql`      |
-| `sqlite://`                     | `@mikro-orm/sqlite`     |
+| Scheme                         | Driver package          |
+| :----------------------------- | :---------------------- |
+| `postgres://`, `postgresql://` | `@mikro-orm/postgresql` |
+| `mysql://`                     | `@mikro-orm/mysql`      |
+| `mariadb://`                   | `@mikro-orm/mariadb`    |
+| `mssql://`                     | `@mikro-orm/mssql`      |
+| `sqlite://`                    | `@mikro-orm/sqlite`     |
 
 For SQLite, `sqlite://:memory:` and `sqlite:///:memory:` both open a private in-memory database, so two services on that URI do not see each other's sessions. For any other SQLite URI, everything after `sqlite://` is the file path. `sqlite:///var/data/sessions.db` opens the absolute path `/var/data/sessions.db`, and `sqlite://sessions.db` opens `sessions.db` relative to the working directory.
 
@@ -145,13 +145,13 @@ The service connects, creates missing tables and checks the schema version the f
 
 `VertexAiSessionService` takes a `VertexAiSessionServiceOptions` object. Pass `{}` to take every value from the environment.
 
-| Option              | Type       | Default                              | Description                                                                 |
-| :------------------ | :--------- | :----------------------------------- | :-------------------------------------------------------------------------- |
-| `projectId`         | `string`   | `process.env.GOOGLE_CLOUD_PROJECT`   | The Google Cloud project.                                                   |
-| `location`          | `string`   | `process.env.GOOGLE_CLOUD_LOCATION`  | The Google Cloud location, for example `us-central1`.                       |
-| `agentEngineId`     | `string`   | none                                 | The reasoning engine that holds the sessions.                               |
-| `expressModeApiKey` | `string`   | none                                 | An API key for Vertex AI Express Mode, which this service does not support. |
-| `sessions`          | `Sessions` | none                                 | A preconfigured Agent Engine sessions client.                               |
+| Option              | Type       | Default                             | Description                                                                 |
+| :------------------ | :--------- | :---------------------------------- | :-------------------------------------------------------------------------- |
+| `projectId`         | `string`   | `process.env.GOOGLE_CLOUD_PROJECT`  | The Google Cloud project.                                                   |
+| `location`          | `string`   | `process.env.GOOGLE_CLOUD_LOCATION` | The Google Cloud location, for example `us-central1`.                       |
+| `agentEngineId`     | `string`   | none                                | The reasoning engine that holds the sessions.                               |
+| `expressModeApiKey` | `string`   | none                                | An API key for Vertex AI Express Mode, which this service does not support. |
+| `sessions`          | `Sessions` | none                                | A preconfigured Agent Engine sessions client.                               |
 
 An explicit `projectId` or `location` wins over the environment, and each one falls back on its own. The constructor throws `Project ID and Location are required.` when it still lacks either one. The service authenticates with Application Default Credentials.
 
@@ -167,10 +167,10 @@ The Agent Engine client cannot send an API key, so the constructor throws when i
 
 `getSessionServiceFromUri(uri)` builds a service from one string, which suits a command-line flag or an environment variable.
 
-| URI                                    | Service                                                                                                                 |
-| :------------------------------------- | :---------------------------------------------------------------------------------------------------------------------- |
-| `memory://`                            | `InMemorySessionService`                                                                                                |
-| Any database scheme in the table above | `DatabaseSessionService`, with the URI passed through                                                                   |
+| URI                                    | Service                                                                                                                      |
+| :------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------- |
+| `memory://`                            | `InMemorySessionService`                                                                                                     |
+| Any database scheme in the table above | `DatabaseSessionService`, with the URI passed through                                                                        |
 | `vertexai://...`                       | `VertexAiSessionService`, configured from `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION` and `GOOGLE_CLOUD_AGENT_ENGINE_ID` |
 
 The rest of a `vertexai://` URI is not read. Any other URI throws `Unsupported session service URI`, with a password in the URI redacted from the message.

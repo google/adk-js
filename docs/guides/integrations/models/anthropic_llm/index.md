@@ -122,9 +122,9 @@ Current Claude model identifiers on Vertex AI include:
 
 `ClaudeParams` (`new Claude(params)`):
 
-| Option      | Type     | Default                       | Description                                                                                             |
-| :---------- | :------- | :---------------------------- | :------------------------------------------------------------------------------------------------------ |
-| `model`     | `string` | `'claude-sonnet-4-6@default'` | The Vertex AI Claude model identifier passed to `client.messages.create`.                               |
+| Option      | Type     | Default                       | Description                                                                                                 |
+| :---------- | :------- | :---------------------------- | :---------------------------------------------------------------------------------------------------------- |
+| `model`     | `string` | `'claude-sonnet-4-6@default'` | The Vertex AI Claude model identifier passed to `client.messages.create`.                                   |
 | `maxTokens` | `number` | `8192`                        | Default `max_tokens` passed to `client.messages.create` when `llmRequest.config?.maxOutputTokens` is unset. |
 
 Each call requests `llmRequest.config?.maxOutputTokens ?? maxTokens` output tokens (`max_tokens`, defaulting to `8192`). When `generateContentAsync` receives an `AbortSignal`, it forwards `{signal: abortSignal}` to `client.messages.create`.
