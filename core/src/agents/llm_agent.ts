@@ -852,7 +852,9 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       return;
     }
 
+    // Thoughts are the model's reasoning, not its output.
     const resultStr: string = event.content.parts
+      .filter((part) => !part.thought)
       .map((part) => (part.text ? part.text : ''))
       .join('');
     let result: unknown = resultStr;
