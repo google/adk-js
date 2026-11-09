@@ -420,6 +420,45 @@ export function functionDeclarationToToolParam(
   };
 }
 
+const MISSING_ANTHROPIC_CREDENTIAL_ERROR_MESSAGE =
+  'No Anthropic credential was found for AnthropicLlm. ' +
+  'Set ANTHROPIC_API_KEY (for example, `export ANTHROPIC_API_KEY=<your-key>`), ' +
+  'or use Claude to call Claude models on Vertex AI.';
+
+/**
+ * Dynamically imports `@anthropic-ai/sdk` and constructs an `Anthropic` client
+ * configured from `ANTHROPIC_API_KEY` or other credentials resolved by the SDK.
+ */
+export async function createDirectAnthropicClient(): Promise<Anthropic> {
+  let AnthropicClass: typeof Anthropic;
+  try {
+    const anthropicSdk = await import('@anthropic-ai/sdk');
+    if (typeof anthropicSdk.Anthropic !== 'function') {
+      throw new Error("Missing 'Anthropic' export.");
+    }
+    AnthropicClass = anthropicSdk.Anthropic;
+  } catch (cause: unknown) {
+    throw new Error(
+      "AnthropicLlm requires the optional '@anthropic-ai/sdk' package. " +
+        'Install it with: npm install @anthropic-ai/sdk',
+      {cause},
+    );
+  }
+
+  let client: Anthropic;
+  try {
+    client = new AnthropicClass();
+  } catch (cause: unknown) {
+    throw new Error(MISSING_ANTHROPIC_CREDENTIAL_ERROR_MESSAGE, {cause});
+  }
+
+  if (!client.apiKey && !client.authToken && !client.credentials) {
+    throw new Error(MISSING_ANTHROPIC_CREDENTIAL_ERROR_MESSAGE);
+  }
+
+  return client;
+}
+
 /**
  * Dynamically imports `@anthropic-ai/vertex-sdk` and constructs an
  * `AnthropicVertex` client configured from `GOOGLE_CLOUD_PROJECT` and
@@ -445,7 +484,8 @@ export async function createAnthropicClient(): Promise<AnthropicVertex> {
   const region = process.env['GOOGLE_CLOUD_LOCATION'];
   if (!projectId || !region) {
     throw new Error(
-      'GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION must be set for using Anthropic on Vertex.',
+      'GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION must be set for using Anthropic on Vertex. ' +
+        'To call the Anthropic API directly with an ANTHROPIC_API_KEY instead, use AnthropicLlm.',
     );
   }
 
