@@ -1783,6 +1783,12 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       return;
     }
 
+    // Partial events are not saved to the session, and the final event repeats
+    // their function calls, so only the final event runs them.
+    if (mergedEvent.partial) {
+      return;
+    }
+
     if (invocationContext.runConfig?.pauseOnToolCalls) {
       invocationContext.endInvocation = true;
       return;
