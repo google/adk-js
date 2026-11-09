@@ -242,6 +242,7 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
       otelToCloud,
       a2a: options.a2a,
       agentFileLoadOptions: options.agentFileLoadOptions,
+      adkVersion: options.adkVersion,
     });
 
     const imageTag = `${options.region}-docker.pkg.dev/${options.project}/${options.repository}/agent-engine-${appName}:latest`;

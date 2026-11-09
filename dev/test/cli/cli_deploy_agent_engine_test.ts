@@ -318,6 +318,15 @@ describe('deployToAgentEngine', () => {
     await expect(fs.access(createdTempFolder)).rejects.toThrow();
   });
 
+  it('should install the requested adkVersion in the Dockerfile', async () => {
+    await deployToAgentEngine(defaultOptions);
+
+    expect(saveToFile).toHaveBeenCalledWith(
+      path.join(tempFolder, 'Dockerfile'),
+      expect.stringContaining('RUN npm install @google/adk-devtools@1.0.0\n'),
+    );
+  });
+
   it('should not stage an empty node_modules or package-lock.json', async () => {
     await deployToAgentEngine(defaultOptions);
 
