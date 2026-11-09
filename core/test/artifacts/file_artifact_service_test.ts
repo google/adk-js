@@ -102,6 +102,71 @@ describe('FileArtifactService', () => {
       }
     });
 
+    it.runIf(process.platform === 'win32')(
+      'stores names with characters Windows rejects',
+      async () => {
+        rootDir = await fs.mkdtemp(
+          path.join(os.tmpdir(), 'adk-artifacts-test-'),
+        );
+        const service = new FileArtifactService(rootDir);
+        const request = {appName: 'app', userId: 'user', sessionId: 'session'};
+        const names = ['report_2026-10-30T11:22:32.txt', 'a?b<c>d|e*f".txt'];
+
+        try {
+          for (const filename of names) {
+            await service.saveArtifact({
+              ...request,
+              filename,
+              artifact: {text: filename},
+            });
+            const loaded = await service.loadArtifact({...request, filename});
+            expect(loaded?.text).toBe(filename);
+          }
+          expect(await service.listArtifactKeys(request)).toEqual(
+            [...names].sort(),
+          );
+        } finally {
+          await fs.rm(rootDir, {recursive: true, force: true});
+        }
+      },
+    );
+
+    it('does not store names that differ only in case as one artifact', async () => {
+      rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-artifacts-test-'));
+      const service = new FileArtifactService(rootDir);
+      const request = {appName: 'app', userId: 'user', sessionId: 'session'};
+
+      try {
+        await service.saveArtifact({
+          ...request,
+          filename: 'Report.txt',
+          artifact: {text: 'upper'},
+        });
+        const caseInsensitive = await fs
+          .access(path.join(rootDir, 'USERS'))
+          .then(() => true)
+          .catch(() => false);
+
+        const saveLower = service.saveArtifact({
+          ...request,
+          filename: 'report.txt',
+          artifact: {text: 'lower'},
+        });
+        if (caseInsensitive) {
+          await expect(saveLower).rejects.toThrow(/same location/);
+        } else {
+          expect(await saveLower).toBe(0);
+        }
+        const loaded = await service.loadArtifact({
+          ...request,
+          filename: 'Report.txt',
+        });
+        expect(loaded?.text).toBe('upper');
+      } finally {
+        await fs.rm(rootDir, {recursive: true, force: true});
+      }
+    });
+
     it('allows filenames that only start with two dots', async () => {
       rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-artifacts-test-'));
       const service = new FileArtifactService(rootDir);

@@ -23,6 +23,9 @@ import {
 
 const USER_NAMESPACE_PREFIX = 'user:';
 
+// Characters Windows does not allow in a file or directory name.
+const WINDOWS_INVALID_NAME_CHARS = /[<>:"|?*]/g;
+
 /**
  * Metadata for a file artifact version.
  */
@@ -90,6 +93,20 @@ export class FileArtifactService implements BaseArtifactService {
     await fs.mkdir(artifactDir, {recursive: true});
 
     const versions = await getArtifactVersionsFromDir(artifactDir);
+    if (versions.length > 0) {
+      // On a case-insensitive file system, `Report.txt` and `report.txt` share
+      // a directory; refuse to append one as a new version of the other.
+      const existing = await getLatestMetadata(artifactDir);
+      if (
+        existing?.fileName &&
+        normalizeArtifactName(existing.fileName) !==
+          normalizeArtifactName(filename)
+      ) {
+        throw new Error(
+          `Artifact filename ${filename} maps to the same location as existing artifact ${existing.fileName} on this file system.`,
+        );
+      }
+    }
     const nextVersion =
       versions.length > 0 ? versions[versions.length - 1] + 1 : 0;
 
@@ -498,6 +515,14 @@ function getArtifactDir(
     cleanFilename = cleanFilename.substring(USER_NAMESPACE_PREFIX.length);
   }
   cleanFilename = cleanFilename.trim();
+  if (process.platform === 'win32') {
+    // Percent-encode characters Windows rejects in names, such as the colons
+    // of an ISO timestamp, so they can be stored at all.
+    cleanFilename = cleanFilename.replace(
+      WINDOWS_INVALID_NAME_CHARS,
+      (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+    );
+  }
 
   if (path.isAbsolute(cleanFilename)) {
     throw new Error(`Absolute artifact filename ${filename} is not permitted.`);
@@ -517,6 +542,20 @@ function getArtifactDir(
   }
 
   return artifactDir;
+}
+
+/**
+ * Normalizes an artifact filename the way getArtifactDir does before it maps
+ * the name to a directory, so two spellings of one artifact compare equal.
+ */
+function normalizeArtifactName(filename: string): string {
+  let name = filename.startsWith(USER_NAMESPACE_PREFIX)
+    ? filename.substring(USER_NAMESPACE_PREFIX.length)
+    : filename;
+  name = name.trim();
+  return process.platform === 'win32'
+    ? name.split(path.win32.sep).join('/')
+    : name;
 }
 
 /**
