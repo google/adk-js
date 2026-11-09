@@ -5,7 +5,7 @@
  */
 
 import {Context, FunctionTool, isFunctionTool} from '@google/adk';
-import {Type} from '@google/genai';
+import {Schema, Type} from '@google/genai';
 import {beforeEach, describe, expect, it} from 'vitest';
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
@@ -21,6 +21,16 @@ import {
   PluginManager,
   Session,
 } from '@google/adk';
+
+/** The declaration a tool with the given response schema shows to the model. */
+function responseDeclaration(response: z3.ZodType | z4.ZodType | Schema) {
+  return new FunctionTool({
+    name: 'bounded',
+    description: 'Returns bounded data.',
+    response,
+    execute: () => ['a', 'b'],
+  })._getDeclaration().response;
+}
 
 describe('FunctionTool', () => {
   let emptyContext: Context;
@@ -532,6 +542,119 @@ describe('FunctionTool', () => {
         execute: () => 'pong',
       });
       expect(toolWithoutResponse._getDeclaration().response).toBeUndefined();
+    });
+
+    describe.each([
+      {
+        version: 'Zod 3',
+        boundedArray: z3.array(z3.string()).min(2).max(3),
+        nestedArray: z3.array(z3.array(z3.string()).min(2)).max(4),
+        nullableArray: z3.array(z3.string()).min(2).max(3).nullable(),
+        union: z3.union([z3.array(z3.string()).min(2), z3.number()]),
+        boundedString: z3.string().min(3).max(5),
+        boundedNumber: z3.number().min(1).max(9),
+        boundedObject: z3.object({
+          tags: z3.array(z3.string()).min(1).max(10),
+          name: z3.string().min(2),
+          score: z3.number().min(0).max(100),
+        }),
+      },
+      {
+        version: 'Zod 4',
+        boundedArray: z4.array(z4.string()).min(2).max(3),
+        nestedArray: z4.array(z4.array(z4.string()).min(2)).max(4),
+        nullableArray: z4.array(z4.string()).min(2).max(3).nullable(),
+        union: z4.union([z4.array(z4.string()).min(2), z4.number()]),
+        boundedString: z4.string().min(3).max(5),
+        boundedNumber: z4.number().min(1).max(9),
+        boundedObject: z4.object({
+          tags: z4.array(z4.string()).min(1).max(10),
+          name: z4.string().min(2),
+          score: z4.number().min(0).max(100),
+        }),
+      },
+    ])('$version response schema constraints', (cases) => {
+      it('keeps root array bounds', () => {
+        expect(responseDeclaration(cases.boundedArray)).toEqual({
+          type: Type.ARRAY,
+          items: {type: Type.STRING},
+          minItems: '2',
+          maxItems: '3',
+        });
+      });
+
+      it('keeps nested array bounds', () => {
+        expect(responseDeclaration(cases.nestedArray)).toEqual({
+          type: Type.ARRAY,
+          maxItems: '4',
+          items: {
+            type: Type.ARRAY,
+            minItems: '2',
+            items: {type: Type.STRING},
+          },
+        });
+      });
+
+      it('keeps the bounds of a nullable array', () => {
+        expect(responseDeclaration(cases.nullableArray)).toEqual({
+          type: Type.ARRAY,
+          nullable: true,
+          items: {type: Type.STRING},
+          minItems: '2',
+          maxItems: '3',
+        });
+      });
+
+      it('keeps the bounds of an anyOf branch', () => {
+        expect(responseDeclaration(cases.union)).toEqual({
+          anyOf: [
+            {type: Type.ARRAY, items: {type: Type.STRING}, minItems: '2'},
+            {type: Type.NUMBER},
+          ],
+        });
+      });
+
+      it('keeps string length and number range bounds', () => {
+        expect(responseDeclaration(cases.boundedString)).toEqual({
+          type: Type.STRING,
+          minLength: '3',
+          maxLength: '5',
+        });
+        expect(responseDeclaration(cases.boundedNumber)).toEqual({
+          type: Type.NUMBER,
+          minimum: 1,
+          maximum: 9,
+        });
+      });
+
+      it('keeps the bounds of a Zod object response', () => {
+        expect(responseDeclaration(cases.boundedObject)).toEqual({
+          type: Type.OBJECT,
+          properties: {
+            tags: {
+              type: Type.ARRAY,
+              items: {type: Type.STRING},
+              minItems: '1',
+              maxItems: '10',
+            },
+            name: {type: Type.STRING, minLength: '2'},
+            score: {type: Type.NUMBER, minimum: 0, maximum: 100},
+          },
+          required: ['tags', 'name', 'score'],
+        });
+      });
+    });
+
+    it('returns a directly supplied genai response schema unchanged', () => {
+      const response: Schema = {
+        type: Type.ARRAY,
+        items: {type: Type.STRING},
+        minItems: '2',
+        maxItems: '3',
+        description: 'Bounded items',
+      };
+
+      expect(responseDeclaration(response)).toBe(response);
     });
 
     it('streams async generator items and injects inputStream in _callLive', async () => {
