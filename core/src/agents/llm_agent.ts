@@ -1865,6 +1865,10 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       // stored once: the responses keep the state and artifact changes, and
       // the gate keeps the confirmation request and stays the final event.
       if (hasSettledResponses(functionResponseEvent)) {
+        // Only requestedToolConfirmations and skipSummarization move to the
+        // gate. Every other field (stateDelta, artifactDelta,
+        // requestedAuthConfigs, transferToAgent, escalate, agentState, ...)
+        // intentionally stays on functionResponseEvent.
         const {requestedToolConfirmations, skipSummarization, ...settled} =
           functionResponseEvent.actions;
         functionResponseEvent.actions = createEventActions(settled);
