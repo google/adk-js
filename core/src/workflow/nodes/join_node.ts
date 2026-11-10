@@ -28,6 +28,11 @@ import {NodeContext} from '../node_context.js';
  * fires only in the first iteration. A join after a loop, not on it, fires
  * once.
  *
+ * A predecessor that routes away from the join never arrives, so the join does
+ * not fire. If the loop restarts before the join fires, the arrivals already
+ * recorded carry over, and the next firing can combine outputs from different
+ * iterations.
+ *
  * Ported from `google/adk-python` `workflow/_join_node.py`.
  */
 export class JoinNode extends BaseNode {

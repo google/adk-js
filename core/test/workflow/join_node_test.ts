@@ -214,6 +214,29 @@ describe('JoinNode after a loop', () => {
   });
 });
 
+describe('JoinNode with a predecessor that routes away', () => {
+  it('does not fire', async () => {
+    const a = new FnNode('a', () => createEvent({output: 'A1', route: 'away'}));
+    const b = new FnNode('b', () => 'B1');
+    const join = new JoinNode({name: 'join'});
+    const otherInputs: unknown[] = [];
+    const received: unknown[] = [];
+    const wf = new Workflow({
+      name: 'wf',
+      edges: [
+        ['START', [a, b]],
+        [a, {to_join: join, away: capturing('other', otherInputs)}],
+        [b, join, capturing('capture', received)],
+      ],
+    });
+
+    await driveNode(wf, 'start');
+
+    expect(otherInputs).toEqual(['A1']);
+    expect(received).toEqual([]);
+  });
+});
+
 describe('JoinNode in a loop across a resume', () => {
   it('waits for a predecessor that paused for input in a later iteration', async () => {
     const joinInputs: JoinInput[] = [];
