@@ -156,6 +156,26 @@ export function isToolboxToolset(obj: unknown): obj is ToolboxToolset {
   );
 }
 
+// Held outside the tools so that a client's own BaseTool instances are
+// returned as they are, with their state and private fields intact. Shared
+// through globalThis so the ESM and CommonJS builds see the same registry.
+const TOOLBOX_TOOLS_REGISTRY_SYMBOL = Symbol.for('google.adk.toolboxTools');
+const toolboxTools = ((globalThis as Record<symbol, unknown>)[
+  TOOLBOX_TOOLS_REGISTRY_SYMBOL
+] ??= new WeakSet<object>()) as WeakSet<object>;
+
+/**
+ * Whether `obj` is a tool loaded by a {@link ToolboxToolset}.
+ */
+export function isToolboxTool(obj: unknown): boolean {
+  return typeof obj === 'object' && obj !== null && toolboxTools.has(obj);
+}
+
+function markToolboxTool(tool: BaseTool): BaseTool {
+  toolboxTools.add(tool);
+  return tool;
+}
+
 function createUnconfiguredToolboxToolsetClient(
   serverUrl: string,
 ): ToolboxToolsetClientLike {
@@ -210,6 +230,10 @@ interface ToolboxSdkFunction {
 }
 
 function wrapLoadedTool(rawTool: unknown, prefix?: string): BaseTool {
+  return markToolboxTool(createLoadedTool(rawTool, prefix));
+}
+
+function createLoadedTool(rawTool: unknown, prefix?: string): BaseTool {
   if (isBaseTool(rawTool)) {
     const name = prefix ? `${prefix}_${rawTool.name}` : rawTool.name;
     if (name === rawTool.name) {
