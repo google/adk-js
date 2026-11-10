@@ -18,7 +18,6 @@ import {
   ListSessionsRequest,
   ListSessionsResponse,
   mergeStates,
-  trimTempState,
 } from './base_session_service.js';
 import {createSession, Session} from './session.js';
 import {State} from './state.js';
@@ -68,14 +67,27 @@ export class InMemorySessionService extends BaseSessionService {
     state,
     sessionId,
   }: CreateSessionRequest): Promise<Session> {
-    const filteredState = state ? trimTempState(state) : undefined;
+    const sessionState: Record<string, unknown> = Object.create(null);
+    for (const [key, value] of Object.entries(state ?? {})) {
+      if (key.startsWith(State.APP_PREFIX)) {
+        this.appState[appName] ??= Object.create(null);
+        this.appState[appName][key.slice(State.APP_PREFIX.length)] = value;
+      } else if (key.startsWith(State.USER_PREFIX)) {
+        this.userState[appName] ??= Object.create(null);
+        this.userState[appName][userId] ??= Object.create(null);
+        this.userState[appName][userId][key.slice(State.USER_PREFIX.length)] =
+          value;
+      } else if (!key.startsWith(State.TEMP_PREFIX)) {
+        sessionState[key] = value;
+      }
+    }
     const session = createSession({
       // Surrounding whitespace is dropped so that a later lookup by the bare
       // id finds the session, and a blank id gets a generated one.
       id: sessionId?.trim() || newId(),
       appName,
       userId,
-      state: filteredState,
+      state: sessionState,
       events: [],
       lastUpdateTime: Date.now(),
     });
@@ -88,25 +100,6 @@ export class InMemorySessionService extends BaseSessionService {
     }
 
     this.sessions[appName][userId][session.id] = session;
-
-    for (const [key, value] of Object.entries(session.state)) {
-      let sharedState: Record<string, unknown>;
-      let sharedKey: string;
-      if (key.startsWith(State.APP_PREFIX)) {
-        sharedState = this.appState[appName] ??= Object.create(null);
-        sharedKey = key.slice(State.APP_PREFIX.length);
-      } else if (key.startsWith(State.USER_PREFIX)) {
-        this.userState[appName] ??= Object.create(null);
-        sharedState = this.userState[appName][userId] ??= Object.create(null);
-        sharedKey = key.slice(State.USER_PREFIX.length);
-      } else {
-        continue;
-      }
-      // Shared state already takes precedence over initial session values.
-      if (!Object.hasOwn(sharedState, sharedKey)) {
-        sharedState[sharedKey] = value;
-      }
-    }
 
     const copiedSession = cloneDeep(session);
     copiedSession.state = mergeStates(
