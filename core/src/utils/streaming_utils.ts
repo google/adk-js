@@ -14,7 +14,6 @@ import {
   Part,
   PartialArg,
 } from '@google/genai';
-import {JSONPath} from 'jsonpath-plus';
 import {generateClientFunctionCallId} from '../events/event.js';
 import {FeatureName, isFeatureEnabled} from '../features/feature_registry.js';
 import {createLlmResponse, LlmResponse} from '../models/llm_response.js';
@@ -31,6 +30,10 @@ interface StreamingStrategy {
  * path, to prevent prototype pollution of `Object.prototype`.
  */
 const UNSAFE_PROPERTY_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const MAX_ARRAY_INDEX = 10_000;
+// Bound model-controlled paths and cumulative padding before JSON snapshotting.
+const MAX_ARGUMENT_PATH_DEPTH = 256;
+const MAX_ARGUMENT_ARRAY_ELEMENTS = 100_000;
 
 /**
  * Progressive strategy for SSE streaming mode: flushes parts as they arrive.
@@ -43,7 +46,7 @@ class ProgressiveStrategy implements StreamingStrategy {
   // For streaming function call arguments
   private currentFcName?: string;
   private currentFcArgs: Record<string, unknown> = {};
-  private readonly arrayCandidates = new WeakSet<object>();
+  private currentFcArrayElements = 0;
   private currentFcId?: string;
   private currentThoughtSignature?: string | Uint8Array;
 
@@ -68,39 +71,45 @@ class ProgressiveStrategy implements StreamingStrategy {
   }
 
   private getArgumentPath(jsonPath: string): Array<string | number> {
-    // toPathArray strips quotes, so mark array indices before parsing to
-    // distinguish [0] from the object member ['0']. Leave quoted text alone.
-    let prefix = '_adkArrayIndex';
-    while (jsonPath.includes(prefix)) prefix += '_';
-    const indices = new Map<string, number>();
-    const markedPath = jsonPath.replace(
-      /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\[\s*(0|[1-9]\d*)\s*\]/g,
-      (match, index: string | undefined) => {
-        if (index === undefined) return match;
-        const value = Number(index);
-        // Other numeric properties cannot be represented as JS array elements.
-        if (!Number.isSafeInteger(value) || value > 2 ** 32 - 2) return match;
-        const marker = `${prefix}${indices.size}`;
-        indices.set(marker, value);
-        return `['${marker}']`;
-      },
-    );
-    const parse = (path: string) =>
-      JSONPath.toPathArray(path).filter(
-        (part) => part !== '$' && part !== '$[',
+    const path = jsonPath.startsWith('$.')
+      ? jsonPath.slice(2)
+      : jsonPath.startsWith('$')
+        ? jsonPath.slice(1)
+        : jsonPath;
+    const tokens =
+      /\[\s*(\d+)\s*\]|\['((?:[^'\\]|\\.)*)'\]|\["((?:[^"\\]|\\.)*)"\]|\.?((?:[^.[\]\\]|\\.)+)/g;
+    const unescape = (value: string) =>
+      value.replace(
+        /\\u([0-9a-fA-F]{4})|\\(.)/g,
+        (_, unicode: string | undefined, char: string) => {
+          if (unicode !== undefined) {
+            return String.fromCharCode(parseInt(unicode, 16));
+          }
+          const escapes: Record<string, string> = {
+            n: '\n',
+            r: '\r',
+            t: '\t',
+            b: '\b',
+            f: '\f',
+          };
+          return escapes[char] ?? char;
+        },
       );
-    const parts = parse(markedPath);
-    // Preserve existing parsing for expressions where an index was not a
-    // standalone path segment, rather than leaking an internal marker.
-    if (parts.filter((part) => indices.has(part)).length !== indices.size) {
-      return parse(jsonPath);
+    const parts: Array<string | number> = [];
+    for (const match of path.matchAll(tokens)) {
+      if (parts.length === MAX_ARGUMENT_PATH_DEPTH) return [];
+      parts.push(
+        match[1] !== undefined
+          ? Number(match[1])
+          : unescape(match[2] ?? match[3] ?? match[4]),
+      );
     }
-    return parts.map((part) => indices.get(part) ?? part);
+    return parts;
   }
 
   private getValueFromPartialArg(
     partialArg: PartialArg,
-    jsonPath: string,
+    pathParts: Array<string | number>,
   ): [unknown, boolean] {
     let value: unknown = null;
     let hasValue = false;
@@ -114,14 +123,15 @@ class ProgressiveStrategy implements StreamingStrategy {
       const stringChunk = stringValue;
       hasValue = true;
 
-      const pathParts = this.getArgumentPath(jsonPath);
-
       let existingValue: unknown = this.currentFcArgs;
       for (const part of pathParts) {
         if (
-          existingValue &&
+          existingValue !== null &&
           typeof existingValue === 'object' &&
-          part in existingValue
+          (typeof part === 'number'
+            ? Array.isArray(existingValue) && part < existingValue.length
+            : !Array.isArray(existingValue) &&
+              Object.hasOwn(existingValue, part))
         ) {
           existingValue = (existingValue as Record<string, unknown>)[part];
         } else {
@@ -149,9 +159,24 @@ class ProgressiveStrategy implements StreamingStrategy {
     return [value, hasValue];
   }
 
-  private setValueByJsonPath(jsonPath: string, value: unknown): void {
-    const pathParts = this.getArgumentPath(jsonPath);
+  private extendArray(array: unknown[], index: number): boolean {
+    const additional = index + 1 - array.length;
+    if (additional <= 0) return true;
+    if (
+      this.currentFcArrayElements + additional >
+      MAX_ARGUMENT_ARRAY_ELEMENTS
+    ) {
+      return false;
+    }
+    this.currentFcArrayElements += additional;
+    while (array.length <= index) array.push(null);
+    return true;
+  }
 
+  private setValueByPath(
+    pathParts: Array<string | number>,
+    value: unknown,
+  ): void {
     // Reject model-controlled paths that target prototype-chain properties,
     // which would otherwise pollute `Object.prototype` (e.g.
     // `$.__proto__.polluted`).
@@ -159,20 +184,47 @@ class ProgressiveStrategy implements StreamingStrategy {
       return;
     }
 
-    let current = this.currentFcArgs;
+    let current: unknown = this.currentFcArgs;
     for (let i = 0; i < pathParts.length - 1; i++) {
       const part = pathParts[i];
-      if (!Object.prototype.hasOwnProperty.call(current, part)) {
-        current[part] = {};
-        if (typeof pathParts[i + 1] === 'number') {
-          this.arrayCandidates.add(current[part] as object);
+      const nextIsIndex = typeof pathParts[i + 1] === 'number';
+      if (typeof part === 'string') {
+        if (
+          current === null ||
+          typeof current !== 'object' ||
+          Array.isArray(current)
+        ) {
+          return;
         }
+        const record = current as Record<string, unknown>;
+        if (!Object.hasOwn(record, part)) {
+          record[part] = nextIsIndex ? [] : {};
+        }
+        current = record[part];
+      } else {
+        if (!Array.isArray(current) || part > MAX_ARRAY_INDEX) return;
+        if (!this.extendArray(current, part)) return;
+        if (current[part] === null) current[part] = nextIsIndex ? [] : {};
+        current = current[part];
       }
-      current = current[part] as Record<string, unknown>;
     }
 
-    if (pathParts.length > 0) {
-      current[pathParts[pathParts.length - 1]] = value;
+    const last = pathParts.at(-1);
+    if (typeof last === 'string') {
+      if (
+        current !== null &&
+        typeof current === 'object' &&
+        !Array.isArray(current)
+      ) {
+        (current as Record<string, unknown>)[last] = value;
+      }
+    } else if (
+      last !== undefined &&
+      Array.isArray(current) &&
+      last <= MAX_ARRAY_INDEX
+    ) {
+      if (!this.extendArray(current, last)) return;
+      current[last] = value;
     }
   }
 
@@ -181,25 +233,7 @@ class ProgressiveStrategy implements StreamingStrategy {
       const fcPart: Part = {
         functionCall: {
           name: this.currentFcName,
-          args: JSON.parse(
-            JSON.stringify(this.currentFcArgs, (_key, value: unknown) => {
-              if (
-                value !== null &&
-                typeof value === 'object' &&
-                this.arrayCandidates.has(value)
-              ) {
-                const keys = Object.keys(value);
-                // Only complete index sequences become arrays. Accumulating
-                // as objects preserves sparse and named members like length.
-                if (keys.every((key, index) => key === String(index))) {
-                  return keys.map(
-                    (key) => (value as Record<string, unknown>)[key],
-                  );
-                }
-              }
-              return value;
-            }),
-          ),
+          args: JSON.parse(JSON.stringify(this.currentFcArgs)),
           id: this.currentFcId ?? generateClientFunctionCallId(),
         } as FunctionCall,
       };
@@ -212,6 +246,7 @@ class ProgressiveStrategy implements StreamingStrategy {
 
       this.currentFcName = undefined;
       this.currentFcArgs = {};
+      this.currentFcArrayElements = 0;
       this.currentFcId = undefined;
       this.currentThoughtSignature = undefined;
     }
@@ -227,17 +262,19 @@ class ProgressiveStrategy implements StreamingStrategy {
 
     for (const partialArg of fc.partialArgs || []) {
       const jsonPath = partialArg.jsonPath;
-      if (!jsonPath) {
+      if (typeof jsonPath !== 'string' || !jsonPath) {
         continue;
       }
 
+      const pathParts = this.getArgumentPath(jsonPath);
+      if (pathParts.length === 0) continue;
       const [value, hasValue] = this.getValueFromPartialArg(
         partialArg,
-        jsonPath,
+        pathParts,
       );
 
       if (hasValue) {
-        this.setValueByJsonPath(jsonPath, value);
+        this.setValueByPath(pathParts, value);
       }
     }
 
