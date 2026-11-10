@@ -50,13 +50,19 @@ export function isInvocationCancellation(
   error: unknown,
   signal?: AbortSignal,
 ): boolean {
-  if (!signal?.aborted) return false;
+  if (!signal?.aborted) {
+    return false;
+  }
   const seen = new Set<unknown>();
   for (let depth = 0; depth < 32 && !seen.has(error); depth++) {
-    if (Object.is(error, signal.reason)) return true;
+    if (Object.is(error, signal.reason)) {
+      return true;
+    }
     seen.add(error);
     const record = asRecord(error);
-    if (!record) return false;
+    if (!record) {
+      return false;
+    }
     // Custom thrown objects can have getters that fail. Inspection must not
     // replace the original execution failure.
     try {
@@ -64,7 +70,9 @@ export function isInvocationCancellation(
       if (name === 'AbortError' || name === 'InvocationAbortedError') {
         return true;
       }
-      if (!('cause' in record)) return false;
+      if (!('cause' in record)) {
+        return false;
+      }
       error = record['cause'];
     } catch {
       return false;

@@ -321,7 +321,9 @@ describe('isInvocationCancellation', () => {
     const freshCause = (): object => ({
       get cause() {
         // Fail safely if the classifier ever loses its bound.
-        if (++reads > 32) throw new Error('Cause walk exceeded its limit.');
+        if (++reads > 32) {
+          throw new Error('Cause walk exceeded its limit.');
+        }
         return freshCause();
       },
     });

@@ -89,17 +89,42 @@ an event or as a thrown error.
    `model`, yields it, and never starts the agent.
 7. The agent runs. Each event it produces goes through `onEventCallback`, is
    appended to the session unless it is partial, and is then yielded.
-8. Plugins see the finished run through `afterRunCallback`.
+8. Plugins receive `afterRunCallback` when the started run finishes normally,
+   aborts, or is closed early, including when `beforeRunCallback` returns a
+   response. An execution error instead triggers the error callbacks described
+   below.
 
 Partial events are yielded but not stored. A streaming model emits the same
 text several times as it grows, and storing every partial event would record
 the same sentence repeatedly, so only the completed event reaches the session.
 
-The whole call runs inside an OpenTelemetry span named `invocation`. When the
-generator finishes, including the path where the caller abandons it, the runner
-calls `await this.close()` to close every `BaseToolset` reachable across the
-root agent, sub-agents, and workflow nodes with a 10-second per-toolset
-timeout.
+The invocation runs inside an OpenTelemetry span named
+`invoke_workflow <entrypoint name>`. Plugin callbacks run within this telemetry
+scope. When the `runAsync` generator finishes, including when the caller closes
+it early, the runner calls `await this.close()` to close every `BaseToolset`
+reachable across the root agent, sub-agents, and workflow nodes with a
+10-second per-toolset timeout. `afterRunCallback` finishes before this cleanup.
+
+### Plugin completion and errors
+
+`afterRunCallback` signals completion of a started plugin lifecycle, not proof
+that the run succeeded. It runs once on normal completion, abort, or early
+iterator close. The lifecycle starts at `beforeRunCallback`; session setup and
+user-message preprocessing happen before it. An iterator that is never started,
+or a run aborted before entering that lifecycle, receives no completion callback.
+
+When an error escapes an agent's execution or lifecycle callbacks,
+`onAgentErrorCallback` notifies plugins for that agent. If the error also escapes
+the run lifecycle, `onRunErrorCallback` notifies plugins for the run, and
+`afterRunCallback` is skipped. A parent agent can handle a child's error and
+still complete the run normally. Errors handled internally as model or tool
+responses do not trigger these execution-error hooks.
+
+Both error callbacks are notifications: they do not replace the original thrown
+value, and a failing error callback is logged without preventing notification of
+the remaining plugins. If `afterRunCallback` itself fails, `onRunErrorCallback`
+is notified. That failure propagates on normal completion; during early close or
+thrown cancellation, it is logged while preserving the close or cancellation.
 
 ### The entry points
 
@@ -265,7 +290,12 @@ when the root is a bare node.
 ### Cancelling a run
 
 `runAsync` and `runLive` accept an `abortSignal`. The runner checks it between
-steps and returns, which ends the generator without an error.
+steps and can end the generator without an error. Executing code may instead
+throw a cancellation. With an aborted invocation signal, the exact signal
+reason, an `AbortError`, or an `InvocationAbortedError` is recognized as
+cancellation, including through wrapped causes. It still propagates to the
+caller, but runs `afterRunCallback` instead of the execution-error callbacks.
+An unrelated error after abort remains an error.
 
 ```ts
 const controller = new AbortController();

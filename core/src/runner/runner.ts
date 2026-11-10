@@ -583,7 +583,9 @@ export class Runner {
       await this.notifyRunError(invocationContext, error);
       // Caller return() and thrown cancellation both skip the assignment after
       // yield*. Preserve that close or cancellation if completion fails.
-      if (!closingEarly) throw error;
+      if (!closingEarly) {
+        throw error;
+      }
       logger.error(
         `afterRunCallback failed while closing invocation ${invocationContext.invocationId}.`,
         error,

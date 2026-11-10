@@ -9,15 +9,24 @@ import {
   BaseAgentConfig,
   BaseNode,
   BasePlugin,
+  BaseToolset,
   Context,
   createEvent,
   Event,
   InMemorySessionService,
   InvocationContext,
   LiveRequestQueue,
+  LlmAgent,
   Runner,
 } from '@google/adk';
-import {afterEach, describe, expect, it, vi} from 'vitest';
+import {context, SpanStatusCode, trace} from '@opentelemetry/api';
+import {AsyncLocalStorageContextManager} from '@opentelemetry/context-async-hooks';
+import {
+  BasicTracerProvider,
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+} from '@opentelemetry/sdk-trace-base';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {logger} from '../../src/utils/logger.js';
 import {InvocationAbortedError} from '../../src/workflow/errors.js';
 
@@ -97,6 +106,247 @@ async function collect(stream: AsyncGenerator<Event, void, void>) {
 
 afterEach(() => vi.restoreAllMocks());
 
+describe('plugin lifecycle telemetry', () => {
+  let exporter: InMemorySpanExporter;
+  let provider: BasicTracerProvider;
+  let contextManager: AsyncLocalStorageContextManager;
+
+  beforeEach(() => {
+    exporter = new InMemorySpanExporter();
+    provider = new BasicTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    contextManager = new AsyncLocalStorageContextManager();
+    context.setGlobalContextManager(contextManager.enable());
+    trace.setGlobalTracerProvider(provider);
+  });
+
+  afterEach(async () => {
+    await provider.shutdown();
+    trace.disable();
+    context.disable();
+    contextManager.disable();
+  });
+
+  describe.each(['runAsync', 'runLive'] as const)('%s', (mode) => {
+    it.each([
+      'complete',
+      'abort',
+      'return',
+      'cancellation',
+      'error',
+      'after-error',
+    ] as const)('keeps hooks inside their spans on %s', async (outcome) => {
+      const failure = new Error(outcome);
+      const observations: Array<{
+        hook: string;
+        spanId: string | undefined;
+        recording: boolean | undefined;
+      }> = [];
+      const observe = (hook: string) => {
+        const span = trace.getActiveSpan();
+        observations.push({
+          hook,
+          spanId: span?.spanContext().spanId,
+          recording: span?.isRecording(),
+        });
+      };
+      const h = await setupLifecycle(
+        mode,
+        new LifecycleAgent(async function* (ctx) {
+          yield* oneEvent(ctx);
+          if (outcome === 'cancellation') {
+            h.controller.abort(failure);
+            throw failure;
+          }
+          if (outcome === 'error') {
+            throw failure;
+          }
+        }),
+      );
+      h.plugin.beforeRunCallback.mockImplementation(async () => {
+        observe('before');
+        return undefined;
+      });
+      h.plugin.afterRunCallback.mockImplementation(async () => {
+        observe('after-start');
+        await Promise.resolve();
+        observe('after-end');
+        if (outcome === 'after-error') {
+          throw failure;
+        }
+      });
+      h.plugin.onAgentErrorCallback.mockImplementation(async () => {
+        observe('agent-error');
+      });
+      h.plugin.onRunErrorCallback.mockImplementation(async () => {
+        observe('run-error');
+      });
+
+      const consume = async () => {
+        if (outcome === 'return') {
+          await h.stream.next();
+          await h.stream.return();
+        } else {
+          for await (const _event of h.stream) {
+            if (outcome === 'abort') {
+              h.controller.abort();
+            }
+          }
+        }
+      };
+      const error = await consume().catch((error: unknown) => error);
+      if (outcome === 'error' || outcome === 'cancellation') {
+        expect(error).toBe(failure);
+      } else if (outcome === 'after-error') {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).cause).toBe(failure);
+      } else {
+        expect(error).toBeUndefined();
+      }
+
+      const spans = exporter.getFinishedSpans();
+      expect(spans).toHaveLength(2);
+      const rootSpan = spans.find(
+        (span) => span.name === 'invoke_workflow agent',
+      )!;
+      const agentSpan = spans.find(
+        (span) => span.name === 'invoke_agent agent',
+      )!;
+      expect(agentSpan.parentSpanContext?.spanId).toBe(
+        rootSpan.spanContext().spanId,
+      );
+      expect(observations).toEqual(
+        (outcome === 'error'
+          ? ['before', 'agent-error', 'run-error']
+          : outcome === 'after-error'
+            ? ['before', 'after-start', 'after-end', 'run-error']
+            : ['before', 'after-start', 'after-end']
+        ).map((hook) => ({
+          hook,
+          spanId: (hook === 'agent-error' ? agentSpan : rootSpan).spanContext()
+            .spanId,
+          recording: true,
+        })),
+      );
+      const agentFailed = outcome === 'error' || outcome === 'cancellation';
+      expect(agentSpan.status.code).toBe(
+        agentFailed ? SpanStatusCode.ERROR : SpanStatusCode.UNSET,
+      );
+      expect(rootSpan.status.code).toBe(
+        agentFailed || outcome === 'after-error'
+          ? SpanStatusCode.ERROR
+          : SpanStatusCode.UNSET,
+      );
+    });
+  });
+});
+
+describe('plugin lifecycle toolset cleanup', () => {
+  it.each([
+    'complete',
+    'abort',
+    'return',
+    'cancellation',
+    'error',
+    'after-error',
+  ] as const)(
+    'finishes plugin callbacks before closing toolsets on %s',
+    async (outcome) => {
+      const order: string[] = [];
+      const failure = new Error(outcome);
+      class RecordingToolset extends BaseToolset {
+        override async getTools() {
+          return [];
+        }
+        override close = vi.fn(async () => {
+          order.push('toolset-close');
+        });
+      }
+      const toolset = new RecordingToolset();
+      const h = await setupLifecycle(
+        'runAsync',
+        new LifecycleAgent(
+          async function* (ctx) {
+            yield* oneEvent(ctx);
+            if (outcome === 'cancellation') {
+              h.controller.abort(failure);
+              throw failure;
+            }
+            if (outcome === 'error') {
+              throw failure;
+            }
+          },
+          {
+            subAgents: [new LlmAgent({name: 'child', tools: [toolset]})],
+          },
+        ),
+      );
+      const close = vi.spyOn(h.runner, 'close');
+      let releaseCompletion!: () => void;
+      const completionGate = new Promise<void>((resolve) => {
+        releaseCompletion = resolve;
+      });
+      let signalCompletionStarted!: () => void;
+      const completionStarted = new Promise<void>((resolve) => {
+        signalCompletionStarted = resolve;
+      });
+      h.plugin.afterRunCallback.mockImplementation(async () => {
+        order.push('after-start');
+        signalCompletionStarted();
+        await completionGate;
+        order.push('after-end');
+        if (outcome === 'after-error') {
+          throw failure;
+        }
+      });
+      h.plugin.onRunErrorCallback.mockImplementation(async () => {
+        order.push('run-error');
+      });
+
+      const consume = async () => {
+        if (outcome === 'return') {
+          await h.stream.next();
+          await h.stream.return();
+        } else {
+          for await (const _event of h.stream) {
+            if (outcome === 'abort') {
+              h.controller.abort();
+            }
+          }
+        }
+      };
+      const result = consume().catch((error: unknown) => error);
+      if (outcome !== 'error') {
+        try {
+          await completionStarted;
+          expect(close).not.toHaveBeenCalled();
+          expect(toolset.close).not.toHaveBeenCalled();
+        } finally {
+          releaseCompletion();
+        }
+      }
+      const error = await result;
+      if (outcome === 'error' || outcome === 'cancellation') {
+        expect(error).toBe(failure);
+      } else if (outcome === 'after-error') {
+        expect((error as Error).cause).toBe(failure);
+      } else {
+        expect(error).toBeUndefined();
+      }
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(toolset.close).toHaveBeenCalledTimes(1);
+      expect(order).toEqual(
+        outcome === 'error'
+          ? ['run-error', 'toolset-close']
+          : outcome === 'after-error'
+            ? ['after-start', 'after-end', 'run-error', 'toolset-close']
+            : ['after-start', 'after-end', 'toolset-close'],
+      );
+    },
+  );
+});
+
 describe.each(['runAsync', 'runLive'] as const)(
   '%s plugin lifecycle edge cases',
   (mode) => {
@@ -116,14 +366,18 @@ describe.each(['runAsync', 'runLive'] as const)(
         mode,
         new LifecycleAgent(async function* (ctx) {
           yield* oneEvent(ctx);
-          if (outcome === 'error') throw failure;
+          if (outcome === 'error') {
+            throw failure;
+          }
         }),
       );
       h.plugin.beforeRunCallback.mockImplementation(
         async ({invocationContext}) => {
           calls.push('before');
           active.add(invocationContext.invocationId);
-          if (outcome === 'abort-before') h.controller.abort();
+          if (outcome === 'abort-before') {
+            h.controller.abort();
+          }
           return undefined;
         },
       );
@@ -144,8 +398,9 @@ describe.each(['runAsync', 'runLive'] as const)(
       );
       vi.spyOn(h.plugin, 'onEventCallback').mockImplementation(
         async ({event}) => {
-          if (outcome === 'abort-event' && event.author === 'agent')
+          if (outcome === 'abort-event' && event.author === 'agent') {
             h.controller.abort();
+          }
           return undefined;
         },
       );
@@ -158,15 +413,23 @@ describe.each(['runAsync', 'runLive'] as const)(
         } else {
           for await (const _event of h.stream) {
             yielded++;
-            if (outcome === 'break') break;
-            if (outcome === 'abort') h.controller.abort();
+            if (outcome === 'break') {
+              break;
+            }
+            if (outcome === 'abort') {
+              h.controller.abort();
+            }
           }
         }
       };
-      if (outcome === 'error') await expect(consume()).rejects.toBe(failure);
-      else await consume();
-      if (outcome !== 'abort-before' && outcome !== 'abort-event')
+      if (outcome === 'error') {
+        await expect(consume()).rejects.toBe(failure);
+      } else {
+        await consume();
+      }
+      if (outcome !== 'abort-before' && outcome !== 'abort-event') {
         expect(yielded).toBeGreaterThan(0);
+      }
       expect(calls).toEqual(
         outcome === 'error'
           ? ['before', 'agent-error', 'run-error']
@@ -202,17 +465,21 @@ describe.each(['runAsync', 'runLive'] as const)(
       async (stage) => {
         const h = await setupLifecycle(mode);
         const failure = new Error(stage);
-        if (stage === 'before')
+        if (stage === 'before') {
           h.plugin.beforeRunCallback.mockRejectedValue(failure);
-        if (stage === 'event')
+        }
+        if (stage === 'event') {
           vi.spyOn(h.plugin, 'onEventCallback').mockRejectedValue(failure);
+        }
         if (stage === 'persistence') {
           const append = h.runner.sessionService.appendEvent.bind(
             h.runner.sessionService,
           );
           vi.spyOn(h.runner.sessionService, 'appendEvent').mockImplementation(
             async (params) => {
-              if (params.event.author !== 'user') throw failure;
+              if (params.event.author !== 'user') {
+                throw failure;
+              }
               return append(params);
             },
           );
@@ -337,7 +604,9 @@ describe.each(['runAsync', 'runLive'] as const)(
             try {
               yield* child[mode](ctx);
             } catch (error) {
-              if (!handled) throw error;
+              if (!handled) {
+                throw error;
+              }
             }
           },
           {name: 'parent', subAgents: [child]},
@@ -447,17 +716,25 @@ describe.each(['runAsync', 'runLive'] as const)(
         let cancellation: unknown;
         const agent = new LifecycleAgent(async function* (ctx) {
           yield* oneEvent(ctx);
-          if (kind === 'default') h.controller.abort();
-          else if (kind === 'reason-error')
+          if (kind === 'default') {
+            h.controller.abort();
+          } else if (kind === 'reason-error') {
             h.controller.abort(new Error('cancelled'));
-          else if (kind === 'reason-object')
+          } else if (kind === 'reason-object') {
             h.controller.abort({cancelled: true});
-          else if (kind === 'reason-string') h.controller.abort('cancelled');
-          else if (kind === 'reason-null') h.controller.abort(null);
-          else if (kind === 'reason-zero') h.controller.abort(0);
-          else if (kind === 'reason-false') h.controller.abort(false);
-          else if (kind === 'reason-empty') h.controller.abort('');
-          else h.controller.abort();
+          } else if (kind === 'reason-string') {
+            h.controller.abort('cancelled');
+          } else if (kind === 'reason-null') {
+            h.controller.abort(null);
+          } else if (kind === 'reason-zero') {
+            h.controller.abort(0);
+          } else if (kind === 'reason-false') {
+            h.controller.abort(false);
+          } else if (kind === 'reason-empty') {
+            h.controller.abort('');
+          } else {
+            h.controller.abort();
+          }
           cancellation =
             kind === 'AbortError'
               ? new DOMException('cancelled', 'AbortError')
@@ -474,7 +751,9 @@ describe.each(['runAsync', 'runLive'] as const)(
         const order: string[] = [];
         vi.spyOn(h.plugin, 'onEventCallback').mockImplementation(
           async ({event}) => {
-            if (event.errorCode === 'INVOCATION_ABORTED') order.push('sealed');
+            if (event.errorCode === 'INVOCATION_ABORTED') {
+              order.push('sealed');
+            }
             return undefined;
           },
         );
@@ -513,15 +792,18 @@ describe.each(['runAsync', 'runLive'] as const)(
           mode,
           new LifecycleAgent(oneEvent, config),
         );
-        if (stage === 'before-run')
+        if (stage === 'before-run') {
           h.plugin.beforeRunCallback.mockImplementation(async () => cancel());
-        else if (stage === 'event')
+        } else if (stage === 'event') {
           vi.spyOn(h.plugin, 'onEventCallback').mockImplementation(
             async ({event}) => {
-              if (event.errorCode !== 'INVOCATION_ABORTED') cancel();
+              if (event.errorCode !== 'INVOCATION_ABORTED') {
+                cancel();
+              }
               return undefined;
             },
           );
+        }
         const error = await collect(h.stream).catch((error: unknown) => error);
         expect(
           stage === 'before-run' || stage === 'event'
@@ -543,7 +825,9 @@ describe.each(['runAsync', 'runLive'] as const)(
             : new Error('unrelated failure');
         const agent = new LifecycleAgent(async function* (ctx) {
           yield* oneEvent(ctx);
-          if (kind === 'unrelated-after-abort') h.controller.abort();
+          if (kind === 'unrelated-after-abort') {
+            h.controller.abort();
+          }
           throw failure;
         });
         const h = await setupLifecycle(mode, agent);
