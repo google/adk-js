@@ -92,6 +92,28 @@ describe('injectSessionState', () => {
     );
   });
 
+  // In-memory and database sessions hand over state as a plain object, so it
+  // inherits these names from Object.prototype.
+  it.each(['toString', 'constructor', 'valueOf', 'hasOwnProperty'])(
+    'throws for {%s} when state has no such key',
+    async (key) => {
+      const ctx = makeContext({});
+      await expect(injectSessionState(`A {${key}} B`, ctx)).rejects.toThrow(
+        `Context variable not found: \`${key}\``,
+      );
+    },
+  );
+
+  it('replaces optional {toString?} with empty string when not in state', async () => {
+    const ctx = makeContext({});
+    expect(await injectSessionState('A {toString?} B', ctx)).toBe('A  B');
+  });
+
+  it('replaces {toString} when state has its own toString key', async () => {
+    const ctx = makeContext({toString: 'mine'});
+    expect(await injectSessionState('A {toString} B', ctx)).toBe('A mine B');
+  });
+
   it('treats {{double_brace}} as a placeholder, replacing inner key from state', async () => {
     const ctx = makeContext({double_brace: 'replaced'});
     // Pattern /\{+[^{}]*}+/ matches {{double_brace}} and extracts key "double_brace"
