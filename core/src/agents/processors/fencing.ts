@@ -22,7 +22,7 @@
  * conformance harness both have to spell the expected framing, and neither
  * should have to reach into another module's internals to do it.
  *
- * Ported from adk-python's flows/llm_flows/_fencing.py.
+ * Ported from adk-python's src/google/adk/flows/llm_flows/context/_fencing.py.
  */
 
 export const QUOTED_CONTENT_BEGIN = '<<<BEGIN_QUOTED_AGENT_CONTENT>>>';
@@ -56,6 +56,9 @@ export function quoteUntrusted(text: string): string {
   return `${QUOTED_CONTENT_BEGIN}\n${elideQuoteMarkers(text)}\n${QUOTED_CONTENT_END}`;
 }
 
+/** Returned by {@link safeStringify} when a value defeats every conversion. */
+export const UNSTRINGIFIABLE_VALUE = '<unstringifiable value>';
+
 /**
  * Stringifies a value for use inside a fenced payload. Total, unlike a bare
  * JSON.stringify: `undefined` (JSON.stringify's return type lies -- it
@@ -69,8 +72,16 @@ export function safeStringify(obj: unknown): string {
     return obj;
   }
   try {
-    return JSON.stringify(obj) ?? String(obj);
-  } catch (_e: unknown) {
+    const json = JSON.stringify(obj);
+    if (typeof json === 'string') {
+      return json;
+    }
+  } catch {
+    // Falls through to `String`, which renders a cycle as `[object Object]`.
+  }
+  try {
     return String(obj);
+  } catch {
+    return UNSTRINGIFIABLE_VALUE;
   }
 }

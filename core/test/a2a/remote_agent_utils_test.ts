@@ -20,7 +20,7 @@ import {
   OTHER_AGENT_CONTEXT_PREAMBLE,
   QUOTED_CONTENT_BEGIN,
   QUOTED_CONTENT_END,
-} from '../../src/agents/processors/_fencing.js';
+} from '../../src/agents/processors/fencing.js';
 import {createEvent} from '../../src/events/event.js';
 import {Session} from '../../src/sessions/session.js';
 

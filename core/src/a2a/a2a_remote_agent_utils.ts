@@ -13,7 +13,7 @@ import {
   OTHER_AGENT_CONTEXT_PREAMBLE,
   quoteUntrusted,
   safeStringify,
-} from '../agents/processors/_fencing.js';
+} from '../agents/processors/fencing.js';
 import {Event as AdkEvent, createEvent} from '../events/event.js';
 import {Session} from '../sessions/session.js';
 import {camelCaseKeys} from '../utils/case_utils.js';
@@ -413,14 +413,14 @@ export function presentAsUserMessage(
       const call = part.functionCall;
       parts.push({
         text: `[${agentEvent.author}] called tool ${elideQuoteMarkers(
-          String(call.name),
+          safeStringify(call.name),
         )} with parameters:\n${quoteUntrusted(safeStringify(call.args))}`,
       });
     } else if (part.functionResponse) {
       const resp = part.functionResponse;
       parts.push({
         text: `[${agentEvent.author}] ${elideQuoteMarkers(
-          String(resp.name),
+          safeStringify(resp.name),
         )} tool returned result:\n${quoteUntrusted(safeStringify(resp.response))}`,
       });
     } else {

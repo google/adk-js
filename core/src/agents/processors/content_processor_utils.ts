@@ -22,7 +22,7 @@ import {
   OTHER_AGENT_CONTEXT_PREAMBLE,
   quoteUntrusted,
   safeStringify,
-} from './_fencing.js';
+} from './fencing.js';
 
 import {isEventVisibleInIsolationScope} from '../../context/compaction_utils.js';
 import {
@@ -376,16 +376,22 @@ function convertForeignEvent(event: Event): Event | undefined {
       // obscure which tool ran.
       content.parts?.push({
         text: `[${event.author}] called tool \`${elideQuoteMarkers(
-          String(part.functionCall.name),
+          safeStringify(part.functionCall.name),
         )}\` with parameters:\n${quoteUntrusted(safeStringify(part.functionCall.args))}`,
       });
     } else if (part.functionResponse) {
       content.parts?.push({
         text: `[${event.author}] tool \`${elideQuoteMarkers(
-          String(part.functionResponse.name),
+          safeStringify(part.functionResponse.name),
         )}\` returned result:\n${quoteUntrusted(safeStringify(part.functionResponse.response))}`,
       });
     } else {
+      // Relayed on their own part types rather than fenced. Fencing means
+      // flattening a part into the text channel, which is what created the
+      // ambiguity here in the first place; blobs cannot be flattened at all,
+      // and doing it to code and its output would drop the pairing the model
+      // reads them by. They stay attacker-reachable, and the preamble frames
+      // the whole message rather than each of them.
       const {
         thought: _thought,
         thoughtSignature: _thoughtSignature,

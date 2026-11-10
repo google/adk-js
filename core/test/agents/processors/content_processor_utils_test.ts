@@ -8,16 +8,16 @@ import {CompactedEvent, createEvent} from '@google/adk';
 import {Content} from '@google/genai';
 import {describe, expect, it} from 'vitest';
 import {
-  OTHER_AGENT_CONTEXT_PREAMBLE,
-  QUOTED_CONTENT_BEGIN,
-  QUOTED_CONTENT_END,
-} from '../../../src/agents/processors/_fencing.js';
-import {
   getContents,
   getCurrentTurnContents,
   mergeFunctionResponseEvents,
   removeClientFunctionCallId,
 } from '../../../src/agents/processors/content_processor_utils.js';
+import {
+  OTHER_AGENT_CONTEXT_PREAMBLE,
+  QUOTED_CONTENT_BEGIN,
+  QUOTED_CONTENT_END,
+} from '../../../src/agents/processors/fencing.js';
 
 describe('getContents', () => {
   it('should handle object responses in convertForeignEvent', () => {
