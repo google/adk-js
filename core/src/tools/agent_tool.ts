@@ -9,7 +9,6 @@ import {isEqual} from 'lodash-es';
 
 import {BaseAgent} from '../agents/base_agent.js';
 import {isLlmAgent} from '../agents/llm_agent.js';
-import {Event} from '../events/event.js';
 import {InMemoryMemoryService} from '../memory/in_memory_memory_service.js';
 import {Runner} from '../runner/runner.js';
 import {InMemorySessionService} from '../sessions/in_memory_session_service.js';
@@ -28,35 +27,6 @@ type LlmAgentInstance = typeof isLlmAgent extends (
 ) => obj is infer T
   ? T
   : never;
-
-/** State deltas may already be empty after storage removes temporary keys. */
-function isStateOnlyEvent(event: Event): boolean {
-  if (
-    event.content !== undefined ||
-    event.errorCode !== undefined ||
-    event.errorMessage !== undefined ||
-    event.partial ||
-    event.interrupted ||
-    event.longRunningToolIds?.length ||
-    event.output !== undefined ||
-    event.route !== undefined ||
-    event.nodeInfo !== undefined
-  ) {
-    return false;
-  }
-
-  return Object.entries(event.actions).every(([key, value]) => {
-    if (key === 'stateDelta') return true;
-    if (
-      key === 'artifactDelta' ||
-      key === 'requestedAuthConfigs' ||
-      key === 'requestedToolConfirmations'
-    ) {
-      return Object.keys(value ?? {}).length === 0;
-    }
-    return value === undefined;
-  });
-}
 
 function excludeNone<T>(value: T): T {
   if (Array.isArray(value)) {
@@ -267,7 +237,8 @@ export class AgentTool extends BaseTool {
       return '';
     }
 
-    let lastEvent: Event | undefined;
+    let lastContent: Content | undefined;
+    let lastErrorMessage: string | undefined;
     for await (const event of runner.runAsync({
       userId: session.userId,
       sessionId: session.id,
@@ -290,24 +261,29 @@ export class AgentTool extends BaseTool {
         }
       }
 
-      // A state-only callback event commits changes without replacing the
-      // agent's answer. Explicit content and control/error events still win.
-      if (!isStateOnlyEvent(event)) {
-        lastEvent = event;
+      if (event.errorMessage) {
+        lastErrorMessage = event.errorMessage;
+      }
+      if (event.content) {
+        lastContent = event.content;
       }
     }
 
-    if (!lastEvent?.content?.parts?.length) {
-      return '';
+    if (!lastContent?.parts?.length) {
+      return lastErrorMessage ?? '';
     }
 
     const hasOutputSchema = isLlmAgent(this.agent) && this.agent.outputSchema;
     // Exclude thoughts from the merged text.
-    const mergedText = lastEvent.content.parts
+    const mergedText = lastContent.parts
       .filter((part) => !part.thought)
       .map((part) => part.text)
       .filter((text) => text)
       .join('\n');
+
+    if (!mergedText && lastErrorMessage) {
+      return lastErrorMessage;
+    }
 
     if (hasOutputSchema && isLlmAgent(this.agent)) {
       return validateAndStripAgentOutput(this.agent, mergedText);
