@@ -9,6 +9,7 @@ import {
   FunctionTool,
   isBaseToolset,
   isFunctionTool,
+  isToolboxTool,
   isToolboxToolset,
   ReadonlyContext,
   ToolboxLoadOptions,
@@ -274,5 +275,31 @@ describe('ToolboxToolset', () => {
       boundParams: {},
     });
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('identifies tools loaded by ToolboxToolset via isToolboxTool', async () => {
+    const plainTool = new FunctionTool({
+      name: 'plain',
+      description: 'Plain tool',
+      execute: () => 'ok',
+    });
+    expect(isToolboxTool(plainTool)).toBe(false);
+    expect(isToolboxTool(null)).toBe(false);
+    expect(isToolboxTool({})).toBe(false);
+
+    const toolset = new ToolboxToolset({
+      serverUrl: 'https://toolbox.example',
+      toolNames: ['search'],
+      client: {
+        loadTool: async (name: string) => ({
+          name,
+          description: 'Toolbox search',
+          execute: () => 'ok',
+        }),
+      },
+    });
+    const [loadedTool] = await toolset.getTools(readonlyContext);
+    expect(isFunctionTool(loadedTool)).toBe(true);
+    expect(isToolboxTool(loadedTool)).toBe(true);
   });
 });

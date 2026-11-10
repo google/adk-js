@@ -166,6 +166,8 @@ const TOOLBOX_TOOLSET_SIGNATURE_SYMBOL = Symbol.for(
   'google.adk.toolboxToolset',
 );
 
+const TOOLBOX_TOOL_SIGNATURE_SYMBOL = Symbol.for('google.adk.toolboxTool');
+
 /**
  * Type guard to check if an object is an instance of {@link ToolboxToolset}.
  */
@@ -176,6 +178,27 @@ export function isToolboxToolset(obj: unknown): obj is ToolboxToolset {
     TOOLBOX_TOOLSET_SIGNATURE_SYMBOL in obj &&
     (obj as Record<symbol, unknown>)[TOOLBOX_TOOLSET_SIGNATURE_SYMBOL] === true
   );
+}
+
+/**
+ * Type guard to check if an object is a tool loaded by {@link ToolboxToolset}.
+ */
+export function isToolboxTool(obj: unknown): obj is BaseTool {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    TOOLBOX_TOOL_SIGNATURE_SYMBOL in obj &&
+    (obj as Record<symbol, unknown>)[TOOLBOX_TOOL_SIGNATURE_SYMBOL] === true
+  );
+}
+
+function markToolboxTool<T extends BaseTool>(tool: T): T {
+  Object.defineProperty(tool, TOOLBOX_TOOL_SIGNATURE_SYMBOL, {
+    value: true,
+    enumerable: false,
+    configurable: true,
+  });
+  return tool;
 }
 
 function createUnconfiguredToolboxToolsetClient(
@@ -207,12 +230,14 @@ function isToolOptionsObject(
 function wrapLoadedTool(rawTool: unknown, prefix?: string): BaseTool {
   if (isBaseTool(rawTool)) {
     if (!prefix) {
-      return rawTool;
+      return markToolboxTool(rawTool);
     }
-    return Object.assign(
-      Object.create(Object.getPrototypeOf(rawTool)) as BaseTool,
-      rawTool,
-      {name: `${prefix}_${rawTool.name}`},
+    return markToolboxTool(
+      Object.assign(
+        Object.create(Object.getPrototypeOf(rawTool)) as BaseTool,
+        rawTool,
+        {name: `${prefix}_${rawTool.name}`},
+      ),
     );
   }
 
@@ -223,22 +248,26 @@ function wrapLoadedTool(rawTool: unknown, prefix?: string): BaseTool {
     const baseName = fn.name || 'toolbox_tool';
     const name = prefix ? `${prefix}_${baseName}` : baseName;
     const description = fn.description ?? '';
-    return new FunctionTool({
-      name,
-      description,
-      execute: fn,
-    });
+    return markToolboxTool(
+      new FunctionTool({
+        name,
+        description,
+        execute: fn,
+      }),
+    );
   }
 
   if (isToolOptionsObject(rawTool)) {
     const baseTool = new FunctionTool(rawTool);
     if (!prefix) {
-      return baseTool;
+      return markToolboxTool(baseTool);
     }
-    return new FunctionTool({
-      ...rawTool,
-      name: `${prefix}_${baseTool.name}`,
-    });
+    return markToolboxTool(
+      new FunctionTool({
+        ...rawTool,
+        name: `${prefix}_${baseTool.name}`,
+      }),
+    );
   }
 
   throw new TypeError(
