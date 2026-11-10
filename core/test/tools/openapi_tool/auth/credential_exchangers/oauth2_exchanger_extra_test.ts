@@ -81,7 +81,7 @@ describe('exchangeCredential', () => {
     expect(result).toBeNull();
   });
 
-  it('returns the original credential when only a refresh token is set', () => {
+  it('returns null when only a refresh token is set', () => {
     const refreshOnlyCredential: AuthCredential = {
       authType: AuthCredentialTypes.OAUTH2,
       oauth2: {clientId: 'test_client', refreshToken: 'test_refresh_token'},
@@ -89,7 +89,7 @@ describe('exchangeCredential', () => {
 
     const result = exchangeCredential(openIdScheme, refreshOnlyCredential);
 
-    expect(result).toBe(refreshOnlyCredential);
+    expect(result).toBeNull();
   });
 });
 

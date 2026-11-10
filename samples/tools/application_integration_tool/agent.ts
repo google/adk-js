@@ -41,7 +41,12 @@
  * Try "what can you do?".
  */
 
-import {ApplicationIntegrationToolset, LlmAgent} from '@google/adk';
+import {
+  ApplicationIntegrationToolset,
+  AuthCredentialTypes,
+  LlmAgent,
+  recordToAuthScheme,
+} from '@google/adk';
 
 /** Reads a comma-separated environment variable as a list. */
 function listFromEnv(name: string): string[] {
@@ -64,16 +69,48 @@ const entityOperations = Object.fromEntries(
   listFromEnv('CONNECTION_ENTITIES').map((entity) => [entity, []]),
 );
 
-// The constructor throws unless the variables name either an integration and
-// a trigger, or a connection with at least one entity or action.
+const clientId = process.env.CLIENT_ID;
+const clientSecret = process.env.CLIENT_SECRET;
+const hasOAuthCredentials = Boolean(clientId && clientSecret);
+const authScheme = hasOAuthCredentials
+  ? recordToAuthScheme({
+      type: 'oauth2',
+      flows: {
+        authorizationCode: {
+          authorizationUrl: 'https://accounts.google.com/o/oauth2/auth',
+          tokenUrl: 'https://oauth2.googleapis.com/token',
+          scopes: {
+            'https://www.googleapis.com/auth/cloud-platform':
+              'View and manage your data across Google Cloud Platform services',
+          },
+        },
+      },
+    })
+  : undefined;
+const authCredential =
+  clientId && clientSecret
+    ? {
+        authType: AuthCredentialTypes.OAUTH2,
+        oauth2: {
+          clientId,
+          clientSecret,
+        },
+      }
+    : undefined;
+
+// The constructor throws unless the variables name either an integration,
+// or a connection with at least one entity or action.
+const trigger = process.env.INTEGRATION_TRIGGER;
 const applicationIntegrationToolset = new ApplicationIntegrationToolset({
   project,
   location: process.env.GOOGLE_CLOUD_LOCATION ?? 'us-central1',
   integration: process.env.INTEGRATION_NAME,
-  trigger: process.env.INTEGRATION_TRIGGER,
+  triggers: trigger ? [trigger] : undefined,
   connection: process.env.CONNECTION_NAME,
   entityOperations,
   actions: listFromEnv('CONNECTION_ACTIONS'),
+  authScheme,
+  authCredential,
 });
 
 export const rootAgent = new LlmAgent({

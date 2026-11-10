@@ -17,7 +17,6 @@ import {
   InMemorySessionService,
   isApp,
   loadDotenvForAgent,
-  logToTmpFolder,
   markRestored,
   publicSession,
   requiresUserInput,
@@ -362,12 +361,8 @@ export interface RunAgentOptions {
   otelToCloud?: boolean;
   agentFileLoadOptions?: AgentFileOptions;
   reloadAgents?: boolean;
-  logToTmp?: boolean;
 }
 export async function runAgent(options: RunAgentOptions): Promise<void> {
-  if (options.logToTmp) {
-    logToTmpFolder();
-  }
   const userId = 'test_user';
   const artifactService =
     options.artifactService || new InMemoryArtifactService();

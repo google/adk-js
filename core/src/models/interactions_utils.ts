@@ -483,6 +483,10 @@ export function convertToolsConfigToInteractionsFormat(
     if (t.urlContext) {
       interactionTools.push({type: 'url_context'} as Interactions.Tool);
     }
+
+    if (t.computerUse) {
+      interactionTools.push({type: 'computer_use'} as Interactions.Tool);
+    }
   }
 
   return interactionTools;

@@ -185,7 +185,7 @@ describe('LlmAgent as a node (single_turn)', () => {
     expect(output).toBe('It is 9:00 AM in Rome.');
   });
 
-  it('persists the injected user turn through the session service', async () => {
+  it('keeps the node input out of the session service', async () => {
     const ic = createIc();
     const appended: Event[] = [];
     (ic as unknown as {sessionService: unknown}).sessionService = {
@@ -197,7 +197,7 @@ describe('LlmAgent as a node (single_turn)', () => {
         event: Event;
       }) => {
         appended.push(event);
-        session.events.push(event); // mimic the base service adding to the list
+        session.events.push(event);
         return event;
       },
     };
@@ -217,10 +217,8 @@ describe('LlmAgent as a node (single_turn)', () => {
     }
     await run;
 
-    // The user turn went through the persistence path (appendEvent), not just a
-    // silent in-memory push, and the agent still saw it.
-    const userTurn = appended.find((e) => e.author === 'user');
-    expect(userTurn?.content?.parts?.[0]?.text).toBe('hi');
+    expect(appended.some((e) => e.author === 'user')).toBe(false);
+    expect(ic.session.events.some((e) => e.author === 'user')).toBe(false);
     expect(root.output).toBe('echo:hi');
   });
 

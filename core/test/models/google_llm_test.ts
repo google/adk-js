@@ -5,15 +5,22 @@
  */
 
 import {
+  ComputerUseTool,
+  Context,
   Gemini,
   GeminiParams,
   GoogleLLMVariant,
+  InvocationContext,
+  LlmAgent,
   LlmRequest,
   LlmResponse,
+  PluginManager,
+  createSession,
   geminiInitParams,
   version,
 } from '@google/adk';
 import {
+  Environment,
   GenerateContentResponse,
   GoogleGenAI,
   HttpOptions,
@@ -967,5 +974,87 @@ describe('GoogleLlm', () => {
       });
       expect(llm.liveApiVersion).toBe('v1alpha');
     });
+  });
+});
+
+describe('Gemini computer use requests', () => {
+  function makeContext(): Context {
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv-1',
+      agent: new LlmAgent({name: 'agent', model: 'gemini-flash-latest'}),
+      session: createSession({id: 's1', appName: 'app', userId: 'u1'}),
+      pluginManager: new PluginManager([]),
+    });
+    return new Context({invocationContext, functionCallId: 'fc-1'});
+  }
+
+  function makeComputerUseRequest(model: string) {
+    const waitCalls: Array<Record<string, unknown>> = [];
+    const waitTool = new ComputerUseTool({
+      name: 'wait',
+      description: 'Waits for the specified number of seconds.',
+      screenSize: [1920, 1080],
+      execute: (args) => {
+        waitCalls.push(args);
+        return {screenshot: new Uint8Array([1]), url: 'https://example.com'};
+      },
+    });
+    const llmRequest: LlmRequest = {
+      model,
+      contents: [{role: 'user', parts: [{text: 'open the page'}]}],
+      config: {
+        systemInstruction: 'You are a browser agent.',
+        tools: [{computerUse: {environment: Environment.ENVIRONMENT_BROWSER}}],
+      },
+      liveConnectConfig: {},
+      toolsDict: {wait: waitTool},
+    };
+    return {llmRequest, waitTool, waitCalls};
+  }
+
+  async function send(llmRequest: LlmRequest) {
+    const llm = new TestGemini({apiKey: 'test-key'});
+    const generateContent = vi.fn().mockResolvedValue({
+      candidates: [{content: {parts: [{text: 'ok'}]}}],
+    });
+    llm.apiClient.models.generateContent = generateContent;
+    for await (const _response of llm.generateContentAsync(llmRequest)) {
+      // Drain the generator so the request is sent.
+    }
+    return generateContent;
+  }
+
+  it.each(['gemini-2.5-computer-use-preview-10-2025', 'gemini-3-pro-preview'])(
+    'drops the system instruction and adds wait_5_seconds for %s',
+    async (model) => {
+      const {llmRequest, waitTool, waitCalls} = makeComputerUseRequest(model);
+
+      const generateContent = await send(llmRequest);
+
+      expect(generateContent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.not.objectContaining({
+            systemInstruction: expect.anything(),
+          }),
+        }),
+      );
+      expect(llmRequest.toolsDict['wait']).toBe(waitTool);
+      const waitFiveSeconds = llmRequest.toolsDict['wait_5_seconds'];
+      expect(waitFiveSeconds).toBeInstanceOf(ComputerUseTool);
+      await waitFiveSeconds.runAsync({args: {}, toolContext: makeContext()});
+      expect(waitCalls).toEqual([{seconds: 5}]);
+    },
+  );
+
+  it('leaves a request without computer use alone', async () => {
+    const {llmRequest, waitTool} = makeComputerUseRequest('gemini-2.5-flash');
+    llmRequest.config = {systemInstruction: 'You are a browser agent.'};
+
+    await send(llmRequest);
+
+    expect(llmRequest.config.systemInstruction).toBe(
+      'You are a browser agent.',
+    );
+    expect(llmRequest.toolsDict).toEqual({wait: waitTool});
   });
 });

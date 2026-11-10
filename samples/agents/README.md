@@ -1,6 +1,6 @@
-# Agents Sample (`LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `LangGraphAgent`, `RemoteAgent`, and `LlmCallsLimitExceededError`)
+# Agents Sample (`LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `LangGraphAgent`, and `LlmCallsLimitExceededError`)
 
-This sample demonstrates how to compose model-backed, workflow, LangGraph-backed, and remote agents in `@google/adk`, save session artifacts from callbacks and custom `BaseAgent` subclasses, and enforce invocation-wide LLM call budgets with `RunConfig.maxLlmCalls` and `LlmCallsLimitExceededError`.
+This sample demonstrates how to compose model-backed, workflow, and LangGraph-backed agents in `@google/adk`, save session artifacts from callbacks and custom `BaseAgent` subclasses, and enforce invocation-wide LLM call budgets with `RunConfig.maxLlmCalls` and `LlmCallsLimitExceededError`.
 
 ## Overview
 
@@ -8,15 +8,14 @@ This sample demonstrates how to compose model-backed, workflow, LangGraph-backed
 
 1. `ParallelAgent` (`parallel_collectors`), running an `LlmAgent` (`topic_summarizer`) and a `LangGraphAgent` (`graph_classifier`) concurrently on isolated branch contexts while sharing `session.state`.
 2. `LoopAgent` (`quality_review_loop`), repeating a custom `BaseAgent` subclass (`QualityCheckAgent`) until it writes an approval artifact via `ctx.artifactService.saveArtifact` and sets `actions.escalate = true`.
-3. `RemoteAgent` (`remote_archiver`), forwarding `{invocation_id, session}` (with `null` and `undefined` schema fields stripped while preserving `session.state`) to an HTTP endpoint and re-authoring returned events under its own name.
 
-In addition to exporting `rootAgent` for `npm run sample` and `adk web`, the direct `main()` driver verifies the agent type guards (`isSequentialAgent`, `isParallelAgent`, `isLlmAgent`, `isLangGraphAgent`, `isLoopAgent`, and `isRemoteAgent`) and triggers `LlmCallsLimitExceededError` via `runConfig: {maxLlmCalls: 1}`.
+In addition to exporting `rootAgent` for `npm run sample` and `adk web`, the direct `main()` driver verifies the agent type guards (`isSequentialAgent`, `isParallelAgent`, `isLlmAgent`, `isLangGraphAgent`, and `isLoopAgent`) and triggers `LlmCallsLimitExceededError` via `runConfig: {maxLlmCalls: 1}`.
 
 ## Sample Inputs
 
 - `Distributed agent architectures`
 
-  _Runs `topic_summarizer` and `graph_classifier` in parallel, iterates `quality_gate` twice until escalation, and archives the resulting session state through `remote_archiver`._
+  _Runs `topic_summarizer` and `graph_classifier` in parallel and iterates `quality_gate` twice until escalation._
 
 ## Graph
 
@@ -27,7 +26,6 @@ graph TD
     Parallel --> Classifier[graph_classifier: LangGraphAgent]
     Root --> Loop[quality_review_loop: LoopAgent]
     Loop --> Gate[quality_gate: QualityCheckAgent]
-    Root --> Remote[remote_archiver: RemoteAgent]
 ```
 
 ## How To
@@ -40,17 +38,6 @@ const graphClassifier = new LangGraphAgent({
   description: 'Classifies the user prompt using a compiled LangGraph graph.',
   instruction: 'Classify the user request category.',
   graph: demoCompiledGraph,
-});
-```
-
-**Delegate to an external HTTP endpoint with `RemoteAgent`.** Configure `url` and optional `timeoutMs` or `fetchImpl` on `new RemoteAgent`:
-
-```ts
-const remoteArchiver = new RemoteAgent({
-  name: 'remote_archiver',
-  description: 'Delegates final archiving to a remote agent endpoint.',
-  url: 'https://agent-archiver.example.invalid/run',
-  fetchImpl: mockRemoteFetch,
 });
 ```
 
@@ -91,7 +78,7 @@ try {
 
 ## Running the Sample
 
-The sample uses an offline `BaseLlm` (`DeterministicDemoLlm`), an in-memory `CompiledGraphLike`, and an in-memory `RemoteAgentFetch`, so no API key or network access is required.
+The sample uses an offline `BaseLlm` (`DeterministicDemoLlm`) and an in-memory `CompiledGraphLike`, so no API key or network access is required.
 
 Run the self-contained script directly to execute all three sections (type guards, multi-agent pipeline execution, and `LlmCallsLimitExceededError` enforcement):
 
@@ -115,4 +102,4 @@ npm run ts:check:samples
 
 ## Related Guides
 
-- [Agents](../../docs/guides/agents/index.md) - `BaseAgent`, `LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `LangGraphAgent`, `RemoteAgent`, `InvocationContext`, `CallbackContext`, `RunConfig`, and `LlmCallsLimitExceededError`.
+- [Agents](../../docs/guides/agents/index.md) - `BaseAgent`, `LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, `LangGraphAgent`, `InvocationContext`, `CallbackContext`, `RunConfig`, and `LlmCallsLimitExceededError`.

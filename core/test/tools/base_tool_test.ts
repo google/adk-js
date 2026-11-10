@@ -51,7 +51,7 @@ async function createToolContext(): Promise<Context> {
 }
 
 describe('BaseTool.processLlmRequest', () => {
-  it('test_process_llm_request_no_declaration', async () => {
+  it('leaves the request config unset when the tool has no declaration', async () => {
     const tool = new TestingTool();
     const toolContext = await createToolContext();
     const llmRequest: LlmRequest = {
@@ -65,7 +65,7 @@ describe('BaseTool.processLlmRequest', () => {
     expect(llmRequest.config).toBeUndefined();
   });
 
-  it('test_process_llm_request_with_declaration', async () => {
+  it('adds the tool declaration to the request config', async () => {
     const declaration: FunctionDeclaration = {
       name: 'test_tool',
       description: 'test_description',
@@ -88,7 +88,7 @@ describe('BaseTool.processLlmRequest', () => {
     expect(firstTool?.functionDeclarations).toEqual([declaration]);
   });
 
-  it('test_process_llm_request_with_builtin_tool', async () => {
+  it('appends a new function declarations entry after an existing built-in tool', async () => {
     const declaration: FunctionDeclaration = {
       name: 'test_tool',
       description: 'test_description',
@@ -114,7 +114,7 @@ describe('BaseTool.processLlmRequest', () => {
     expect(secondTool?.functionDeclarations).toEqual([declaration]);
   });
 
-  it('test_process_llm_request_with_builtin_tool_and_another_declaration', async () => {
+  it('adds the declaration to the existing function declarations entry next to a built-in tool', async () => {
     const declaration: FunctionDeclaration = {
       name: 'test_tool',
       description: 'test_description',

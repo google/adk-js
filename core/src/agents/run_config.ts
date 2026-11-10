@@ -13,6 +13,7 @@ import {
   SpeechConfig,
 } from '@google/genai';
 
+import type {TelemetryConfig} from '../telemetry/api/instrumentation.js';
 import {logger} from '../utils/logger.js';
 
 /**
@@ -150,6 +151,19 @@ export interface RunConfig {
    * option does not exist there.
    */
   allowRemoteToolConfirmation?: boolean;
+
+  /**
+   * Telemetry overrides for this run.
+   *
+   * Each field set here replaces its environment variable for the spans, log
+   * records and metrics of this run only; a field left unset falls back to the
+   * environment. An operator can make the environment win over every run by
+   * setting `ADK_TELEMETRY_IGNORE_RUN_CONFIG` to `true` or `1`.
+   *
+   * WARNING: This feature is **experimental** and its API or behavior may
+   * change in future releases.
+   */
+  telemetry?: TelemetryConfig;
 
   /**
    * Set by the A2A executor to record that this run's message came from a

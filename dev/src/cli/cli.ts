@@ -22,6 +22,7 @@ import {
   parseAndGetEvalsToRun,
   runEvals,
   setLogLevel as setAdkCoreLogLevel,
+  setupAdkLogger,
   tryGetResetFunc,
 } from '@google/adk';
 import {Argument, Command, Option} from 'commander';
@@ -213,8 +214,8 @@ export const REGION_DEPLOY_OPTION = new Option(
 );
 export const ADK_VERSION_OPTION = new Option(
   '--adk_version [string]',
-  'Optional. ADK version to use. If not set, default to the latest version available on npm',
-).default('latest');
+  'Optional. Version or dist-tag of @google/adk-devtools to install in the deployed image',
+).default(version, `${version}, this CLI's version`);
 export const WITH_UI_OPTION = new Option(
   '--with_ui [boolean]',
   'Optional. Deploy ADK Web UI if set. (default: deploy ADK API server only)',
@@ -291,7 +292,7 @@ export function createProgram(): Command {
     .addOption(RELOAD_AGENTS_OPTION)
     .action(async (agentsDir: string, options: Record<string, string>) => {
       const logLevel = getLogLevelFromOptions(options);
-      setAdkCoreLogLevel(logLevel);
+      setupAdkLogger(logLevel);
 
       try {
         const server = new AdkApiServer({
@@ -339,7 +340,7 @@ export function createProgram(): Command {
     .addOption(RELOAD_AGENTS_OPTION)
     .action(async (agentsDir: string, options: Record<string, string>) => {
       const logLevel = getLogLevelFromOptions(options);
-      setAdkCoreLogLevel(logLevel);
+      setupAdkLogger(logLevel);
 
       try {
         const server = new AdkApiServer({
@@ -424,11 +425,6 @@ export function createProgram(): Command {
       '--resume <string>',
       'The json file that contains a previously saved session (by --save_session option). The previous session will be re-displayed. And user can continue to interact with the agent.',
     )
-    .option(
-      '--log_to_tmp [boolean]',
-      'Optional. Whether to log to system temp folder instead of console.',
-      false,
-    )
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION)
     .addOption(SESSION_SERVICE_URI_OPTION)
@@ -439,11 +435,8 @@ export function createProgram(): Command {
     .addOption(AGENT_FILE_MODULE_TYPE)
     .addOption(RELOAD_AGENTS_OPTION)
     .action(async (agentPath: string, options: Record<string, string>) => {
-      setAdkCoreLogLevel(getLogLevelFromOptions(options));
-      const logToTmp = getBoolean(options['log_to_tmp']);
-      if (logToTmp) {
-        logToTmpFolder({level: getLogLevelFromOptions(options)});
-      }
+      const logLevel = getLogLevelFromOptions(options);
+      logToTmpFolder({level: logLevel});
 
       try {
         await runAgent({
@@ -457,7 +450,6 @@ export function createProgram(): Command {
           otelToCloud: options['otel_to_cloud'] ? true : false,
           agentFileLoadOptions: getAgentFileOptions(options),
           reloadAgents: getBoolean(options['reload_agents']),
-          ...(logToTmp ? {logToTmp: true} : {}),
         });
       } catch (error) {
         logger.error('Error running agent:', (error as Error).message);
@@ -688,6 +680,7 @@ export function createProgram(): Command {
       .addOption(LOG_LEVEL_OPTION)
       .addOption(SESSION_SERVICE_URI_OPTION)
       .addOption(ARTIFACT_SERVICE_URI_OPTION)
+      .addOption(OTEL_TO_CLOUD_OPTION)
       .addOption(COMPILE_AGENT_FILE)
       .addOption(BUNDLE_AGENT_FILE)
       .addOption(AGENT_FILE_MODULE_TYPE)
@@ -696,6 +689,7 @@ export function createProgram(): Command {
       .addOption(MIN_INSTANCES_OPTION)
       .addOption(MAX_INSTANCES_OPTION)
       .action(async (agentPath: string, options: Record<string, string>) => {
+        const otelToCloud = getBoolean(options['otel_to_cloud']);
         try {
           await deployToAgentEngine({
             agentPath: getAbsolutePath(agentPath),
@@ -713,6 +707,7 @@ export function createProgram(): Command {
             allowOrigins: options['allow_origins'],
             sessionServiceUri: options['session_service_uri'],
             artifactServiceUri: options['artifact_service_uri'],
+            ...(otelToCloud ? {otelToCloud: true} : {}),
             agentFileLoadOptions: getAgentFileOptions({
               ...options,
               minify: true,

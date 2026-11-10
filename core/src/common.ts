@@ -24,6 +24,7 @@ export {
   handleFunctionCallsLive,
   isToolNotFound,
 } from './agents/functions.js';
+export {injectSessionState} from './agents/instructions.js';
 export {
   InvocationContext,
   LlmCallsLimitExceededError,
@@ -89,11 +90,6 @@ export {
   InteractionsRequestProcessor,
 } from './agents/processors/interactions_request_processor.js';
 export {ReadonlyContext} from './agents/readonly_context.js';
-export {RemoteAgent, isRemoteAgent} from './agents/remote_agent.js';
-export type {
-  RemoteAgentConfig,
-  RemoteAgentFetch,
-} from './agents/remote_agent.js';
 export {RoutedAgent, isRoutedAgent} from './agents/routed_agent.js';
 export type {AgentRouter, RoutedAgentConfig} from './agents/routed_agent.js';
 export {StreamingMode, createRunConfig} from './agents/run_config.js';
@@ -360,6 +356,11 @@ export {InMemorySessionService} from './sessions/in_memory_session_service.js';
 export {createSession} from './sessions/session.js';
 export type {CompositeSessionKey, Session} from './sessions/session.js';
 export {State, StateSchemaError, isStateSchemaError} from './sessions/state.js';
+export type {
+  ContentCapturingMode,
+  ExperimentalFeature,
+  TelemetryConfig,
+} from './telemetry/api/instrumentation.js';
 export {AgentTool, isAgentTool} from './tools/agent_tool.js';
 export type {AgentToolConfig} from './tools/agent_tool.js';
 export {BaseTool, isBaseTool} from './tools/base_tool.js';
@@ -371,6 +372,33 @@ export type {
 export {BaseToolset, isBaseToolset} from './tools/base_toolset.js';
 export type {ToolPredicate} from './tools/base_toolset.js';
 export {BuiltInTool} from './tools/built_in_tool.js';
+export {
+  BaseComputer,
+  ComputerEnvironment,
+  isBaseComputer,
+} from './tools/computer_use/base_computer.js';
+export type {
+  ComputerState,
+  ScrollDirection,
+} from './tools/computer_use/base_computer.js';
+export {
+  ComputerUseTool,
+  isComputerUseTool,
+} from './tools/computer_use/computer_use_tool.js';
+export type {
+  ComputerUseFunction,
+  ComputerUseToolOptions,
+} from './tools/computer_use/computer_use_tool.js';
+export {
+  ComputerUseToolset,
+  adaptComputerUseTool,
+  isComputerUseToolset,
+} from './tools/computer_use/computer_use_toolset.js';
+export type {
+  AdaptComputerUseToolParams,
+  AdaptedComputerUseFunction,
+  ComputerUseToolsetOptions,
+} from './tools/computer_use/computer_use_toolset.js';
 export {ConsolidateContextTool} from './tools/consolidate_context_tool.js';
 export {
   ENTERPRISE_WEB_SEARCH,
@@ -457,6 +485,8 @@ export {getClientLabels, runWithClientLabel} from './utils/client_labels.js';
 export {toGeminiSchema} from './utils/gemini_schema_util.js';
 export type {MCPToolSchema} from './utils/gemini_schema_util.js';
 export {genaiSchemaToJsonSchema} from './utils/genai_schema_to_json.js';
+export {newId, resetIdProvider, setIdProvider} from './utils/id_provider.js';
+export type {IdProvider} from './utils/id_provider.js';
 export {
   LogLevel,
   getLogger,
@@ -474,7 +504,12 @@ export {
 } from './utils/model_name.js';
 export {toJsonSchema} from './utils/schema.js';
 export type {SchemaLike} from './utils/schema.js';
-export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
+export {
+  isZodObject,
+  isZodSchema,
+  zodObjectToSchema,
+} from './utils/simple_zod_to_json.js';
+export type {ZodSchema} from './utils/simple_zod_to_json.js';
 export {Task} from './utils/task.js';
 export type {TaskExecutable} from './utils/task.js';
 export {GoogleLLMVariant} from './utils/variant_utils.js';
@@ -525,6 +560,7 @@ export {
   isNodeSchemaValidationError,
   isNodeState,
   isNodeTimeoutError,
+  isParallelWorker,
   isRequestInput,
   isRunnableRoot,
   isWorkflow,
@@ -581,34 +617,21 @@ export type {
   IntermediateAgentResponseItem,
   ToolUseItem,
 } from './cli/utils/evals.js';
-export {CrewaiTool, isCrewaiTool} from './tools/crewai_tool.js';
-export type {
-  CrewaiSchemaLike,
-  CrewaiToolConfig,
-  CrewaiToolLike,
-} from './tools/crewai_tool.js';
 export {
   buildFunctionDeclarationForLangchain,
   buildFunctionDeclarationForParamsForCrewai,
   buildFunctionDeclarationUtil,
 } from './tools/function_tool.js';
 export type {CallLiveToolRequest} from './tools/function_tool.js';
-export {LangchainTool, isLangchainTool} from './tools/langchain_tool.js';
 export type {
-  LangchainSchemaLike,
-  LangchainToolConfig,
-  LangchainToolLike,
-} from './tools/langchain_tool.js';
-export type {LoadMemoryResponse} from './tools/load_memory_tool.js';
+  LoadMemoryResponse,
+  LoadMemoryToolOptions,
+} from './tools/load_memory_tool.js';
 export {isBaseRetrievalTool} from './tools/retrieval/base_retrieval_tool.js';
-export {ToolboxTool, isToolboxTool} from './tools/toolbox_tool.js';
-export type {
-  ToolboxClientLike,
-  ToolboxToolOptions,
-} from './tools/toolbox_tool.js';
 export {ToolboxToolset, isToolboxToolset} from './tools/toolbox_toolset.js';
 export type {
   ToolboxLoadOptions,
+  ToolboxToolLike,
   ToolboxToolsetClientLike,
   ToolboxToolsetOptions,
 } from './tools/toolbox_toolset.js';

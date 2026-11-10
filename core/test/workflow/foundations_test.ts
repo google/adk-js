@@ -239,6 +239,20 @@ describe('Phase 0 — shouldRetryNode', () => {
 });
 
 describe('Phase 0 — errorName', () => {
+  it.each([Object.create(null), {constructor: null}])(
+    'handles thrown objects without a constructor',
+    (error) => {
+      expect(errorName(error)).toBe('Object');
+      expect(
+        shouldRetryNode({
+          error,
+          retryConfig: prepareRetryConfig({exceptions: ['Object']}),
+          nodeState: createNodeState({attemptCount: 1}),
+        }),
+      ).toBe(true);
+    },
+  );
+
   it('reports the class name of a subclass that never assigns this.name', () => {
     class RateLimitedError extends Error {}
     expect(errorName(new RateLimitedError('x'))).toBe('RateLimitedError');

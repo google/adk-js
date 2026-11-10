@@ -727,6 +727,30 @@ describe('InMemorySessionService', () => {
       expect(session2.state).toHaveProperty(`${State.USER_PREFIX}key`, 'value');
     });
 
+    it('keeps temp: state in the session for the invocation but does not store it', async () => {
+      const session = await service.createSession({
+        appName: 'app',
+        userId: 'user',
+      });
+      const event = createEvent({
+        timestamp: Date.now(),
+        actions: createEventActions({
+          stateDelta: {[`${State.TEMP_PREFIX}draft`]: 'text', kept: 'value'},
+        }),
+      });
+
+      await service.appendEvent({session, event});
+
+      expect(session.state[`${State.TEMP_PREFIX}draft`]).toBe('text');
+      expect(event.actions.stateDelta).toEqual({kept: 'value'});
+      const stored = await service.getSession({
+        appName: 'app',
+        userId: 'user',
+        sessionId: session.id,
+      });
+      expect(stored?.state).toEqual({kept: 'value'});
+    });
+
     it('handles non-existent app/user/session gracefully', async () => {
       const session: Session = {
         id: 'fake-session',

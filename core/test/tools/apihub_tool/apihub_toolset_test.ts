@@ -151,21 +151,19 @@ describe('APIHubToolset', () => {
     expect(getSpecContent).toHaveBeenCalledWith('test_resource');
     expect(toolset.name).toBe('mock_api');
     expect(toolset.description).toBe('Mock API Description');
-    expect(toolset.apihubResourceName).toBe('test_resource');
-    expect(toolset.lazyLoadSpec).toBe(false);
     expect(tools).toHaveLength(1);
     expect(tools[0].name).toBe('test_get');
-    expect(await toolset.getTool('test_get')).toBeDefined();
   });
 
-  it('returns undefined for a tool the spec does not define', async () => {
+  it('returns an empty array when toolFilter matches no tools', async () => {
     const {client} = mockClient(MOCK_SPEC);
     const toolset = new APIHubToolset({
       apihubResourceName: 'test_resource',
       apihubClient: client,
+      toolFilter: ['missing_tool'],
     });
 
-    expect(await toolset.getTool('missing_tool')).toBeUndefined();
+    expect(await toolset.getTools()).toEqual([]);
   });
 
   it('fetches the spec only on first use when loading lazily', async () => {
@@ -176,14 +174,14 @@ describe('APIHubToolset', () => {
       lazyLoadSpec: true,
     });
 
-    expect(toolset.lazyLoadSpec).toBe(true);
     expect(getSpecContent).not.toHaveBeenCalled();
 
     const tools = await toolset.getTools();
 
     expect(getSpecContent).toHaveBeenCalledTimes(1);
     expect(tools).toHaveLength(1);
-    expect(await toolset.getTool('test_get')).toBe(tools[0]);
+    const cachedTools = await toolset.getTools();
+    expect(cachedTools).toEqual(tools);
     expect(getSpecContent).toHaveBeenCalledTimes(1);
   });
 
@@ -250,10 +248,8 @@ describe('APIHubToolset', () => {
     });
     globalThis.fetch = fetchMock;
 
-    const tools = await toolset.getTools();
-    expect(tools).toHaveLength(1);
-    const tool = await toolset.getTool('test_get');
-    await tool!.runAsync({args: {}, toolContext: createToolContext()});
+    const [tool] = await toolset.getTools();
+    await tool.runAsync({args: {}, toolContext: createToolContext()});
 
     expect(fetchMock).toHaveBeenCalledWith(
       'https://api.example.com/test',
@@ -272,7 +268,6 @@ describe('APIHubToolset', () => {
     });
 
     expect(await toolset.getTools()).toEqual([]);
-    expect(await toolset.getTool('test_get')).toBeUndefined();
   });
 
   it('rejects with a YAMLException for invalid YAML', async () => {
@@ -295,7 +290,7 @@ describe('APIHubToolset', () => {
     expect(getSpecContent).toHaveBeenCalledTimes(1);
 
     await toolset.getTools();
-    await toolset.getTool('test_get');
+    await toolset.getTools();
 
     expect(getSpecContent).toHaveBeenCalledTimes(1);
   });
@@ -318,7 +313,6 @@ describe('APIHubToolset', () => {
 
       expect(unhandled).not.toHaveBeenCalled();
       await expect(toolset.getTools()).rejects.toBe(failure);
-      await expect(toolset.getTool('test_get')).rejects.toBe(failure);
       expect(client.getSpecContent).toHaveBeenCalledTimes(1);
     } finally {
       process.off('unhandledRejection', unhandled);
@@ -364,7 +358,6 @@ describe('APIHubToolset', () => {
     const tools = await toolset.getTools();
 
     expect(tools.map((tool) => tool.name)).toEqual(['list_items']);
-    expect((await toolset.getTool('create_item'))?.name).toBe('create_item');
   });
 
   it('filters tools with a ToolPredicate when called without a ReadonlyContext', async () => {

@@ -121,4 +121,24 @@ describe('ADK runs in a real browser', () => {
     expect(authors).toEqual(['user', 'agent', 'user', 'agent']);
     expect(pageErrors).toEqual([]);
   });
+
+  // A tool call runs code that a plain reply never reaches. A throw there does
+  // not show up as a page error: the model gets it back as the tool's error.
+  it('runs a function tool and replies with its result', async () => {
+    await page.fill('#prompt', 'add 2 and 3');
+    await page.click('#send');
+
+    await page.waitForFunction(
+      'document.querySelectorAll("#messages li").length === 6',
+      undefined,
+      {timeout: 30000},
+    );
+
+    const reply = await page.$eval(
+      '#messages li:last-child',
+      (item) => item.textContent,
+    );
+    expect(reply).toBe('The sum is 5');
+    expect(pageErrors).toEqual([]);
+  });
 });

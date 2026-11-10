@@ -474,7 +474,8 @@ export class AdkApiServer {
 
           const functionCalls = getFunctionCalls(event);
           const functionResponses = getFunctionResponses(event);
-          await using agentFile = await this.agentLoader.getAgentFile(appName);
+          const agentFile = await this.agentLoader.getAgentFile(appName);
+          await using _bundleLease = agentFile.retain();
           const loaded = await agentFile.load();
           const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
 
@@ -1042,7 +1043,8 @@ export class AdkApiServer {
           }
 
           const testData = convertSessionToEvalFormat(session);
-          await using agentFile = await this.agentLoader.getAgentFile(appName);
+          const agentFile = await this.agentLoader.getAgentFile(appName);
+          await using _bundleLease = agentFile.retain();
           const loaded = await agentFile.load();
           const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
           const initialSessionState = isApp(rootAgent)
@@ -1158,7 +1160,8 @@ export class AdkApiServer {
               ? evalSetData.filter((e) => evalIds.includes(e.name))
               : evalSetData;
 
-          await using agentFile = await this.agentLoader.getAgentFile(appName);
+          const agentFile = await this.agentLoader.getAgentFile(appName);
+          await using _bundleLease = agentFile.retain();
           const loaded = await agentFile.load();
           const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
           if (!('subAgents' in rootAgent)) {
@@ -1280,10 +1283,6 @@ export class AdkApiServer {
     });
 
     app.post('/api/reasoning_engine', async (req: Request, res: Response) => {
-      this.logger.info(
-        `Received Reasoning Engine query headers: ${JSON.stringify(req.headers)}`,
-      );
-
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const executeQuery = async (body: any) => {
         const input = body.input || {};
@@ -1332,9 +1331,6 @@ export class AdkApiServer {
       const isParsed =
         req.body && (Object.keys(req.body).length > 0 || !req.readable);
       if (isParsed) {
-        this.logger.info(
-          `Using already parsed body: ${JSON.stringify(req.body)}`,
-        );
         await executeQuery(req.body);
       } else {
         let rawBody = '';
@@ -1342,7 +1338,6 @@ export class AdkApiServer {
           rawBody += chunk;
         });
         req.on('end', async () => {
-          this.logger.info(`Received Reasoning Engine raw body: ${rawBody}`);
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           let body: any = {};
           if (rawBody) {
@@ -1663,7 +1658,8 @@ export class AdkApiServer {
     }
 
     try {
-      await using agentFile = await this.agentLoader.getAgentFile(appName);
+      const agentFile = await this.agentLoader.getAgentFile(appName);
+      await using _bundleLease = agentFile.retain();
       const loaded = await agentFile.load();
       const runner = await this.getRunner(loaded, appName);
       const runConfig: RunConfig =
@@ -1735,7 +1731,8 @@ export class AdkApiServer {
       return undefined;
     }
 
-    await using agentFile = await this.agentLoader.getAgentFile(appName);
+    const agentFile = await this.agentLoader.getAgentFile(appName);
+    await using _bundleLease = agentFile.retain();
     const loaded = await agentFile.load();
 
     return isApp(loaded) ? loaded.rootAgent : loaded;
@@ -1745,9 +1742,12 @@ export class AdkApiServer {
     agentOrApp: RunnableRoot | App,
     appName: string,
   ): Promise<Runner> {
-    if (!(appName in this.runnerCache)) {
-      const isAppInstance = isApp(agentOrApp);
-      const agent = isAppInstance ? agentOrApp.rootAgent : agentOrApp;
+    const isAppInstance = isApp(agentOrApp);
+    const agent = isAppInstance ? agentOrApp.rootAgent : agentOrApp;
+    if (
+      !(appName in this.runnerCache) ||
+      this.runnerCache[appName].agent !== agent
+    ) {
       this.runnerCache[appName] = new Runner({
         app: isAppInstance ? agentOrApp : undefined,
         appName,
@@ -1775,9 +1775,8 @@ export class AdkApiServer {
       loadDotenvForAgent(options.appName, this.agentsDir);
     }
 
-    await using agentFile = await this.agentLoader.getAgentFile(
-      options.appName,
-    );
+    const agentFile = await this.agentLoader.getAgentFile(options.appName);
+    await using _bundleLease = agentFile.retain();
     const loaded = await agentFile.load();
     const runner = await this.getRunner(loaded, options.appName);
 

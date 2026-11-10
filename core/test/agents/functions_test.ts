@@ -14,6 +14,7 @@ import {
   BasePlugin,
   BaseTool,
   BeforeToolCallback,
+  ComputerUseTool,
   Context,
   createEvent,
   createEventActions,
@@ -33,8 +34,14 @@ import {
   SingleBeforeToolCallback,
   ToolConfirmation,
 } from '@google/adk';
-import {FunctionCall} from '@google/genai';
-import {Span, SpanStatusCode} from '@opentelemetry/api';
+import {FunctionCall, FunctionResponse} from '@google/genai';
+import {context, SpanStatusCode, trace} from '@opentelemetry/api';
+import {AsyncLocalStorageContextManager} from '@opentelemetry/context-async-hooks';
+import {
+  BasicTracerProvider,
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+} from '@opentelemetry/sdk-trace-base';
 import type {MockInstance} from 'vitest';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
@@ -47,7 +54,6 @@ import {
   handleFunctionCallsAsync,
   mergeParallelFunctionResponseEvents,
 } from '../../src/agents/functions.js';
-import {tracer} from '../../src/telemetry/tracing.js';
 import {logger} from '../../src/utils/logger.js';
 import {Task} from '../../src/utils/task.js';
 
@@ -176,17 +182,33 @@ function createStartJobTool(mutate: (toolContext: Context) => void) {
 }
 
 describe('handleFunctionCallList', () => {
+  let spanExporter: InMemorySpanExporter;
+  let spanContextManager: AsyncLocalStorageContextManager;
+  let spanProvider: BasicTracerProvider;
   let invocationContext: InvocationContext;
   let pluginManager: PluginManager;
   let functionCall: FunctionCall;
   let toolsDict: Record<string, BaseTool>;
   let warnSpy: MockInstance<typeof logger.warn>;
 
-  afterEach(() => {
+  afterEach(async () => {
+    await spanProvider.shutdown();
+    trace.disable();
+    context.disable();
+    spanContextManager.disable();
     vi.restoreAllMocks();
   });
 
   beforeEach(() => {
+    trace.disable();
+    context.disable();
+    spanExporter = new InMemorySpanExporter();
+    spanContextManager = new AsyncLocalStorageContextManager().enable();
+    spanProvider = new BasicTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(spanExporter)],
+    });
+    context.setGlobalContextManager(spanContextManager);
+    trace.setGlobalTracerProvider(spanProvider);
     // These tests deliberately provoke resolution failures; keep the expected
     // diagnostics out of the suite output.
     warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
@@ -421,21 +443,6 @@ describe('handleFunctionCallList', () => {
   });
 
   it('records a thrown tool error on its execution span', async () => {
-    const executionSpan = {
-      setAttributes: vi.fn(),
-      setAttribute: vi.fn(),
-      setStatus: vi.fn(),
-      recordException: vi.fn(),
-      end: vi.fn(),
-    };
-    vi.spyOn(tracer, 'startActiveSpan').mockImplementation(((
-      _name: string,
-      callback: (span: Span) => unknown,
-    ) =>
-      callback(
-        executionSpan as unknown as Span,
-      )) as typeof tracer.startActiveSpan);
-
     await handleFunctionCallList({
       invocationContext,
       functionCalls: [{...functionCall, name: 'errorTool'}],
@@ -444,44 +451,30 @@ describe('handleFunctionCallList', () => {
       afterToolCallbacks: [],
     });
 
-    expect(executionSpan.recordException).toHaveBeenCalledWith(
+    const spans = spanExporter
+      .getFinishedSpans()
+      .filter((s) => s.name === 'execute_tool errorTool');
+    expect(spans).toHaveLength(1);
+    const executionSpan = spans[0];
+    expect(executionSpan.events).toEqual([
       expect.objectContaining({
-        message: expect.stringContaining('tool error message content'),
+        name: 'exception',
+        attributes: expect.objectContaining({
+          'exception.message': expect.stringContaining(
+            'tool error message content',
+          ),
+        }),
       }),
-    );
-    expect(executionSpan.setAttribute).toHaveBeenCalledWith(
-      'error.type',
-      'Error',
-    );
-    expect(executionSpan.setStatus).toHaveBeenCalledWith({
+    ]);
+    expect(executionSpan.attributes['error.type']).toBe('Error');
+    expect(executionSpan.status).toEqual({
       code: SpanStatusCode.ERROR,
       message: 'Error',
     });
-    expect(executionSpan.end).toHaveBeenCalledOnce();
-    expect(
-      executionSpan.recordException.mock.invocationCallOrder[0],
-    ).toBeLessThan(executionSpan.end.mock.invocationCallOrder[0]);
-    expect(executionSpan.setStatus.mock.invocationCallOrder[0]).toBeLessThan(
-      executionSpan.end.mock.invocationCallOrder[0],
-    );
+    expect(executionSpan.ended).toBe(true);
   });
 
   it('records an explicit error type returned by the tool', async () => {
-    const executionSpan = {
-      setAttributes: vi.fn(),
-      setAttribute: vi.fn(),
-      setStatus: vi.fn(),
-      recordException: vi.fn(),
-      end: vi.fn(),
-    };
-    vi.spyOn(tracer, 'startActiveSpan').mockImplementation(((
-      _name: string,
-      callback: (span: Span) => unknown,
-    ) =>
-      callback(
-        executionSpan as unknown as Span,
-      )) as typeof tracer.startActiveSpan);
-
     await handleFunctionCallList({
       invocationContext,
       functionCalls: [{...functionCall, name: 'typedErrorResponseTool'}],
@@ -490,16 +483,18 @@ describe('handleFunctionCallList', () => {
       afterToolCallbacks: [],
     });
 
-    expect(executionSpan.setAttribute).toHaveBeenCalledWith(
-      'error.type',
-      'MCP_TOOL_ERROR',
-    );
-    expect(executionSpan.setStatus).toHaveBeenCalledWith({
+    const spans = spanExporter
+      .getFinishedSpans()
+      .filter((s) => s.name === 'execute_tool typedErrorResponseTool');
+    expect(spans).toHaveLength(1);
+    const executionSpan = spans[0];
+    expect(executionSpan.attributes['error.type']).toBe('MCP_TOOL_ERROR');
+    expect(executionSpan.status).toEqual({
       code: SpanStatusCode.ERROR,
       message: 'MCP_TOOL_ERROR',
     });
-    expect(executionSpan.recordException).not.toHaveBeenCalled();
-    expect(executionSpan.end).toHaveBeenCalledOnce();
+    expect(executionSpan.events).toEqual([]);
+    expect(executionSpan.ended).toBe(true);
   });
 
   it('should return error message when error is thrown during tool execution, when no plugin onToolErrorCallback is provided', async () => {
@@ -2497,7 +2492,7 @@ describe('async tool callbacks on LlmAgent', () => {
     expectedCalls: number[];
   }> = [
     {
-      name: 'middle_async_callback_returns',
+      name: 'when middle async callback returns content',
       callbacks: [
         {response: undefined, isAsync: false},
         {response: {test: 'callback_2_response'}, isAsync: true},
@@ -2508,7 +2503,7 @@ describe('async tool callbacks on LlmAgent', () => {
       expectedCalls: [1, 1, 0, 0],
     },
     {
-      name: 'all_callbacks_return_undefined',
+      name: 'when all callbacks return undefined',
       callbacks: [
         {response: undefined, isAsync: false},
         {response: undefined, isAsync: true},
@@ -2519,7 +2514,7 @@ describe('async tool callbacks on LlmAgent', () => {
       expectedCalls: [1, 1, 1, 1],
     },
     {
-      name: 'first_sync_callback_returns',
+      name: 'when first sync callback returns content',
       callbacks: [
         {response: {test: 'callback_1_response'}, isAsync: false},
         {response: {test: 'callback_2_response'}, isAsync: true},
@@ -2530,7 +2525,7 @@ describe('async tool callbacks on LlmAgent', () => {
   ];
 
   it.each(CALLBACK_PARAMS)(
-    'test_before_tool_callbacks_chain ($name)',
+    'executes beforeToolCallback chain ($name)',
     async ({callbacks, expectedResponse, expectedCalls}) => {
       const mockBeforeCbs: SingleBeforeToolCallback[] = callbacks.map(
         ({response, isAsync}) =>
@@ -2553,7 +2548,7 @@ describe('async tool callbacks on LlmAgent', () => {
   );
 
   it.each(CALLBACK_PARAMS)(
-    'test_after_tool_callbacks_chain ($name)',
+    'executes afterToolCallback chain ($name)',
     async ({callbacks, expectedResponse, expectedCalls}) => {
       const mockAfterCbs: SingleAfterToolCallback[] = callbacks.map(
         ({response, isAsync}) =>
@@ -2574,4 +2569,76 @@ describe('async tool callbacks on LlmAgent', () => {
       }
     },
   );
+});
+
+describe('computer use function responses', () => {
+  function makeInvocationContext(): InvocationContext {
+    return new InvocationContext({
+      invocationId: 'inv_computer_use',
+      session: createSession({id: 's1', appName: 'app', userId: 'u1'}),
+      agent: new LlmAgent({name: 'test_agent', model: 'test_model'}),
+      pluginManager: new PluginManager(),
+    });
+  }
+
+  async function respond(tool: BaseTool): Promise<FunctionResponse> {
+    const event = await handleFunctionCallList({
+      invocationContext: makeInvocationContext(),
+      functionCalls: [callFor(tool)],
+      toolsDict: {[tool.name]: tool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    const functionResponse = event?.content?.parts?.[0].functionResponse;
+    if (!functionResponse) {
+      throw new Error('No function response in the event');
+    }
+    return functionResponse;
+  }
+
+  function computerUseTool(result: unknown): ComputerUseTool {
+    return new ComputerUseTool({
+      name: 'current_state',
+      description: 'Returns the current state.',
+      screenSize: [1920, 1080],
+      execute: () => result,
+    });
+  }
+
+  it('sends the screenshot as an inline image part', async () => {
+    const functionResponse = await respond(
+      computerUseTool({
+        screenshot: new Uint8Array([1, 2, 3]),
+        url: 'https://example.com',
+      }),
+    );
+
+    expect(functionResponse.response).toEqual({url: 'https://example.com'});
+    expect(functionResponse.parts).toEqual([
+      {inlineData: {data: 'AQID', mimeType: 'image/png'}},
+    ]);
+  });
+
+  it('leaves an image that is not base64 in the response', async () => {
+    const image = {data: 'not base64!', mimetype: 'image/png'};
+
+    const functionResponse = await respond(computerUseTool({image}));
+
+    expect(functionResponse.response).toEqual({image});
+    expect(functionResponse.parts).toBeUndefined();
+  });
+
+  it('leaves the image of a tool that is not a computer use tool', async () => {
+    const image = {data: 'AQID', mimetype: 'image/png'};
+    const tool = new FunctionTool({
+      name: 'imageTool',
+      description: 'returns an image field',
+      execute: async () => ({image}),
+    });
+
+    const functionResponse = await respond(tool);
+
+    expect(functionResponse.response).toEqual({image});
+    expect(functionResponse.parts).toBeUndefined();
+  });
 });

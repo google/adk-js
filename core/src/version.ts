@@ -5,4 +5,4 @@
  */
 
 // version: major.minor.patch
-export const version = '2.3.0'; // x-release-please-version
+export const version = '2.4.0'; // x-release-please-version

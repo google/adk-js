@@ -60,7 +60,7 @@ const LOCATION = 'us-central1';
 const CONNECTION = 'test-connection';
 const CLOUD_PLATFORM_SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
 const VALIDATION_MESSAGE =
-  'Either (integration and trigger) or (connection and (entityOperations or actions)) should be provided.';
+  'Either integration or (connection and (entityOperations or actions)) should be provided.';
 
 const INTEGRATION_SPEC = {
   openapi: '3.0.0',
@@ -107,7 +107,7 @@ function integrationToolset(
 ): ApplicationIntegrationToolset {
   return toolset({
     integration: 'test-integration',
-    trigger: 'test-trigger',
+    triggers: ['test-trigger'],
     ...options,
   });
 }
@@ -172,6 +172,56 @@ describe('ApplicationIntegrationToolset', () => {
       const tools = await toolset({
         integration: 'test-integration',
         triggers,
+      }).getTools();
+
+      expect(tools.map((tool) => tool.name)).toEqual(['get_things']);
+      expect(integrationSpy).toHaveBeenCalledOnce();
+    });
+
+    it('initialization with integration and trigger', async () => {
+      const integrationSpy = vi
+        .spyOn(IntegrationClient.prototype, 'getOpenApiSpecForIntegration')
+        .mockResolvedValue(INTEGRATION_SPEC);
+
+      const tools = await toolset({
+        integration: 'test-integration',
+        triggers: ['test-trigger'],
+      }).getTools();
+
+      expect(tools.map((tool) => tool.name)).toEqual(['get_things']);
+      expect(integrationSpy).toHaveBeenCalledOnce();
+    });
+
+    it('initialization with integration and list of triggers', async () => {
+      const integrationSpy = vi
+        .spyOn(IntegrationClient.prototype, 'getOpenApiSpecForIntegration')
+        .mockResolvedValue({
+          ...INTEGRATION_SPEC,
+          paths: {
+            '/things': {get: {operationId: 'getThings', summary: 'Get things'}},
+            '/other': {get: {operationId: 'getOther', summary: 'Get other'}},
+          },
+        });
+
+      const tools = await toolset({
+        integration: 'test-integration',
+        triggers: ['test-trigger1', 'test-trigger2'],
+      }).getTools();
+
+      expect(tools.map((tool) => tool.name)).toEqual([
+        'get_things',
+        'get_other',
+      ]);
+      expect(integrationSpy).toHaveBeenCalledOnce();
+    });
+
+    it('initialization with integration and empty trigger list', async () => {
+      const integrationSpy = vi
+        .spyOn(IntegrationClient.prototype, 'getOpenApiSpecForIntegration')
+        .mockResolvedValue(INTEGRATION_SPEC);
+
+      const tools = await toolset({
+        integration: 'test-integration',
       }).getTools();
 
       expect(tools.map((tool) => tool.name)).toEqual(['get_things']);
@@ -264,7 +314,7 @@ describe('ApplicationIntegrationToolset', () => {
   });
 
   describe('connection mode', () => {
-    it('passes toolName and toolInstructions and wraps entity tools in IntegrationConnectorTool', async () => {
+    it('passes toolNamePrefix and toolInstructions and wraps entity tools in IntegrationConnectorTool', async () => {
       vi.spyOn(
         ConnectionsClient.prototype,
         'getConnectionDetails',
@@ -285,7 +335,7 @@ describe('ApplicationIntegrationToolset', () => {
       const tools = await toolset({
         connection: CONNECTION,
         entityOperations: {Issues: ['LIST', 'GET']},
-        toolName: 'My Connection Tool',
+        toolNamePrefix: 'My Connection Tool',
         toolInstructions: 'Use this tool to manage entities.',
       }).getTools();
 
@@ -305,7 +355,7 @@ describe('ApplicationIntegrationToolset', () => {
       );
     });
 
-    it('passes toolName and toolInstructions and wraps action tools in IntegrationConnectorTool', async () => {
+    it('passes toolNamePrefix and toolInstructions and wraps action tools in IntegrationConnectorTool', async () => {
       vi.spyOn(
         ConnectionsClient.prototype,
         'getConnectionDetails',
@@ -322,7 +372,7 @@ describe('ApplicationIntegrationToolset', () => {
       const tools = await toolset({
         connection: CONNECTION,
         actions: ['ExecuteCustomQuery'],
-        toolName: 'My Actions Tool',
+        toolNamePrefix: 'My Actions Tool',
         toolInstructions: 'Use this tool.',
       }).getTools();
 
@@ -358,34 +408,6 @@ describe('ApplicationIntegrationToolset', () => {
       await toolset({connection: CONNECTION, actions: ['a']}).getTools();
 
       expect(connectionSpy).toHaveBeenCalledExactlyOnceWith('', '');
-    });
-
-    it('passes toolNamePrefix to getOpenApiSpecForConnection and prefers it over toolName', async () => {
-      vi.spyOn(
-        ConnectionsClient.prototype,
-        'getConnectionDetails',
-      ).mockResolvedValue({
-        name: `projects/${PROJECT}/locations/${LOCATION}/connections/${CONNECTION}`,
-        serviceName: 'svc',
-        host: '',
-        authOverrideEnabled: false,
-      });
-      const connectionSpy = vi
-        .spyOn(IntegrationClient.prototype, 'getOpenApiSpecForConnection')
-        .mockResolvedValue(connectionSpec());
-
-      await toolset({
-        connection: CONNECTION,
-        entityOperations: {Issues: ['LIST']},
-        toolName: 'FallbackName',
-        toolNamePrefix: 'PreferredPrefix',
-        toolInstructions: 'Instructions.',
-      }).getTools();
-
-      expect(connectionSpy).toHaveBeenCalledExactlyOnceWith(
-        'PreferredPrefix',
-        'Instructions.',
-      );
     });
 
     it('passes authScheme and authCredential to IntegrationConnectorTool when authOverrideEnabled is true', async () => {
@@ -498,8 +520,7 @@ describe('ApplicationIntegrationToolset', () => {
   describe('validation', () => {
     it.each<[string, Partial<ApplicationIntegrationToolsetOptions>]>([
       ['nothing', {}],
-      ['an integration without a trigger', {integration: 'test'}],
-      ['a trigger without an integration', {trigger: 'test'}],
+      ['triggers without an integration', {triggers: ['test']}],
       ['a connection alone', {connection: 'test'}],
       [
         'a connection with empty entity operations',
@@ -509,6 +530,10 @@ describe('ApplicationIntegrationToolset', () => {
     ])('rejects %s', (_, options) => {
       expect(() => toolset(options)).toThrow(VALIDATION_MESSAGE);
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('accepts an integration without triggers', () => {
+      expect(() => toolset({integration: 'test-integration'})).not.toThrow();
     });
   });
 
@@ -718,7 +743,7 @@ describe('ApplicationIntegrationToolset', () => {
         connection: CONNECTION,
         entityOperations: {Issues: ['LIST']},
         actions: ['ExecuteCustomQuery'],
-        toolName: 'tracker',
+        toolNamePrefix: 'tracker',
         toolInstructions: 'Custom instruction.',
       }).getTools();
 
@@ -735,7 +760,7 @@ describe('ApplicationIntegrationToolset', () => {
 
       expect(
         Object.keys(tools[0]._getDeclaration()?.parameters?.properties ?? {}),
-      ).toEqual(['filter_clause', 'page_size', 'page_token']);
+      ).toEqual(['filterClause', 'pageSize', 'pageToken']);
       fetchMock.mockReset();
       fetchMock.mockResolvedValue(jsonResponse({connectorOutputPayload: []}));
       await tools[0].runAsync({
@@ -766,7 +791,7 @@ describe('ApplicationIntegrationToolset', () => {
       });
     });
 
-    it('includes filter_clause in update and delete tool declarations and request bodies', async () => {
+    it('includes filterClause in update and delete tool declarations and request bodies', async () => {
       const connectionUrl = `https://connectors.googleapis.com/v1/projects/${PROJECT}/locations/${LOCATION}/connections/${CONNECTION}`;
       const routes: Record<string, unknown> = {
         [`${connectionUrl}?view=BASIC`]: {
@@ -797,7 +822,7 @@ describe('ApplicationIntegrationToolset', () => {
       const tools = await toolset({
         connection: CONNECTION,
         entityOperations: {Issues: ['UPDATE', 'DELETE']},
-        toolName: 'tracker',
+        toolNamePrefix: 'tracker',
       }).getTools();
 
       expect(tools.map((tool) => tool.name)).toEqual([
@@ -806,15 +831,15 @@ describe('ApplicationIntegrationToolset', () => {
       ]);
       expect(
         Object.keys(tools[0]._getDeclaration()?.parameters?.properties ?? {}),
-      ).toEqual(['connector_input_payload', 'entity_id', 'filter_clause']);
+      ).toEqual(['connectorInputPayload', 'entityId', 'filterClause']);
       expect(
         Object.keys(tools[1]._getDeclaration()?.parameters?.properties ?? {}),
-      ).toEqual(['entity_id', 'filter_clause']);
+      ).toEqual(['entityId', 'filterClause']);
 
       fetchMock.mockReset();
       fetchMock.mockResolvedValue(jsonResponse({connectorOutputPayload: {}}));
       await tools[1].runAsync({
-        args: {entity_id: 'issue-1', filter_clause: "status='closed'"},
+        args: {entityId: 'issue-1', filterClause: "status='closed'"},
         toolContext: toolContext(),
       });
 
@@ -851,6 +876,16 @@ describe('ApplicationIntegrationToolset', () => {
             operations: ['LIST'],
           },
         },
+        [`${connectionUrl}/connectionSchemaMetadata:getAction?actionId=ExecuteCustomQuery`]:
+          {name: 'operations/action'},
+        'https://connectors.googleapis.com/v1/operations/action': {
+          done: true,
+          response: {
+            inputJsonSchema: {type: 'object'},
+            outputJsonSchema: {type: 'object'},
+            displayName: 'ExecuteCustomQuery',
+          },
+        },
       };
       fetchMock.mockImplementation(async (input) => {
         const url = String(input);
@@ -870,6 +905,7 @@ describe('ApplicationIntegrationToolset', () => {
       const tools = await toolset({
         connection: CONNECTION,
         entityOperations: {Issues: ['LIST']},
+        actions: ['ExecuteCustomQuery'],
         toolNamePrefix: 'tracker',
         authScheme: TEST_AUTH_SCHEME,
         authCredential: TEST_AUTH_CREDENTIAL,
@@ -877,7 +913,10 @@ describe('ApplicationIntegrationToolset', () => {
 
       expect(
         Object.keys(tools[0]._getDeclaration()?.parameters?.properties ?? {}),
-      ).toEqual(['filter_clause', 'page_size', 'page_token']);
+      ).toEqual(['filterClause', 'pageSize', 'pageToken']);
+      expect(
+        Object.keys(tools[1]._getDeclaration()?.parameters?.properties ?? {}),
+      ).toEqual(['query', 'timeout', 'pageSize']);
 
       fetchMock.mockReset();
       fetchMock.mockResolvedValue(jsonResponse({connectorOutputPayload: []}));
@@ -891,6 +930,29 @@ describe('ApplicationIntegrationToolset', () => {
       expect(JSON.parse(String(init?.body))).toEqual({
         operation: 'LIST_ENTITIES',
         entity: 'Issues',
+        connectionName: `projects/${PROJECT}/locations/${LOCATION}/connections/${CONNECTION}`,
+        serviceName: 'test-service',
+        host: '',
+        dynamicAuthConfig: {
+          'oauth2_auth_code_flow.access_token': 'dynamic_user_token',
+        },
+      });
+
+      fetchMock.mockReset();
+      fetchMock.mockResolvedValue(jsonResponse({connectorOutputPayload: []}));
+      await tools[1].runAsync({
+        args: {query: 'SELECT 1', timeout: 120, pageSize: 50},
+        toolContext: toolContext(),
+      });
+
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const [, queryInit] = fetchMock.mock.calls[0];
+      expect(JSON.parse(String(queryInit?.body))).toEqual({
+        operation: 'EXECUTE_QUERY',
+        action: 'ExecuteCustomQuery',
+        query: 'SELECT 1',
+        timeout: 120,
+        pageSize: 50,
         connectionName: `projects/${PROJECT}/locations/${LOCATION}/connections/${CONNECTION}`,
         serviceName: 'test-service',
         host: '',

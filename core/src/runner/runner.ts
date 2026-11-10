@@ -5,7 +5,6 @@
  */
 
 import {Content, createPartFromText, Modality, Part} from '@google/genai';
-import {context, trace} from '@opentelemetry/api';
 
 import {BaseAgent, isBaseAgent} from '../agents/base_agent.js';
 import {reservedFunctionCallName} from '../agents/framework_function_calls.js';
@@ -47,20 +46,26 @@ import {BasePlugin} from '../plugins/base_plugin.js';
 import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {Session} from '../sessions/session.js';
-import {
-  runAsyncGeneratorWithOtelContext,
-  tracer,
-} from '../telemetry/tracing.js';
+import {recordInvocation} from '../telemetry/api/instrumentation.js';
 import {BaseToolset, isBaseToolset} from '../tools/base_toolset.js';
+import {formatError} from '../utils/error_utils.js';
 import {logger} from '../utils/logger.js';
 import {isGemini2OrAbove} from '../utils/model_name.js';
 import {stringifyWithRedactedInlineData} from '../utils/redact_inline_data.js';
+import type {BaseNode} from '../workflow/base_node.js';
 import type {RunnableNode} from '../workflow/graph.js';
+import {isParallelWorker, isWorkflow} from '../workflow/index.js';
 import {
   asRunnableRoot,
   RunnableRoot,
   runNodeAsInvocation,
 } from '../workflow/run_node_as_invocation.js';
+
+const TOOLSET_CLEANUP_TIMEOUT_MS = 10_000;
+
+const TOOLSET_CLEANUP_TIMEOUT_SYMBOL = Symbol(
+  'google.adk.runner.toolsetCleanupTimeout',
+);
 
 /**
  * The configuration parameters for the Runner.
@@ -308,66 +313,64 @@ export class Runner {
     // =========================================================================
     // Setup the session and invocation context
     // =========================================================================
-    const span = tracer.startSpan('invocation');
-    const ctx = trace.setSpan(context.active(), span);
+    const runnerCtx = this;
     try {
-      yield* runAsyncGeneratorWithOtelContext<Runner, Event>(
-        ctx,
-        this,
+      yield* recordInvocation(
+        {entrypoint: this.agent, sessionId, runConfig},
         async function* () {
-          const session = await this.resolveSession(userId, sessionId);
+          const session = await runnerCtx.resolveSession(userId, sessionId);
 
           if (params.abortSignal?.aborted) {
             return;
           }
 
           if (!session) {
-            if (!this.appName) {
+            if (!runnerCtx.appName) {
               throw new Error(
                 `Session lookup failed: appName must be provided in runner constructor (or via app.name)`,
               );
             }
             throw new Error(
-              `Session not found: ${sessionId} (appName=${this.appName}, userId=${userId})`,
+              `Session not found: ${sessionId} (appName=${runnerCtx.appName}, userId=${userId})`,
             );
           }
 
-          if (runConfig.supportCfc && isLlmAgent(this.agent)) {
-            const modelName = this.agent.canonicalModel.model;
+          if (runConfig.supportCfc && isLlmAgent(runnerCtx.agent)) {
+            const modelName = runnerCtx.agent.canonicalModel.model;
             if (!isGemini2OrAbove(modelName)) {
               throw new Error(
                 `CFC is not supported for model: ${
                   modelName
-                } in agent: ${this.agent.name}`,
+                } in agent: ${runnerCtx.agent.name}`,
               );
             }
 
-            if (!isBuiltInCodeExecutor(this.agent.codeExecutor)) {
-              this.agent.codeExecutor = new BuiltInCodeExecutor();
+            if (!isBuiltInCodeExecutor(runnerCtx.agent.codeExecutor)) {
+              runnerCtx.agent.codeExecutor = new BuiltInCodeExecutor();
             }
           }
 
           const invocationContext = new InvocationContext({
-            artifactService: this.artifactService
-              ? isSessionArtifactService(this.artifactService)
-                ? this.artifactService
+            artifactService: runnerCtx.artifactService
+              ? isSessionArtifactService(runnerCtx.artifactService)
+                ? runnerCtx.artifactService
                 : new ScopedArtifactService(
-                    this.artifactService,
-                    this.appName,
+                    runnerCtx.artifactService,
+                    runnerCtx.appName,
                     userId,
                     sessionId,
                   )
               : undefined,
-            sessionService: this.sessionService,
-            memoryService: this.memoryService,
-            credentialService: this.credentialService,
+            sessionService: runnerCtx.sessionService,
+            memoryService: runnerCtx.memoryService,
+            credentialService: runnerCtx.credentialService,
             invocationId: newInvocationContextId(),
-            agent: isBaseAgent(this.agent) ? this.agent : undefined,
+            agent: isBaseAgent(runnerCtx.agent) ? runnerCtx.agent : undefined,
             session,
             userContent: newMessage,
             runConfig,
             a2aMetadata: runConfig.a2aMetadata,
-            pluginManager: this.pluginManager,
+            pluginManager: runnerCtx.pluginManager,
             abortSignal: params.abortSignal,
           });
 
@@ -375,7 +378,7 @@ export class Runner {
           // Preprocess plugins on user message
           // =========================================================================
           const pluginUserMessage =
-            await this.pluginManager.runOnUserMessageCallback({
+            await runnerCtx.pluginManager.runOnUserMessageCallback({
               userMessage: newMessage,
               invocationContext,
             });
@@ -399,7 +402,7 @@ export class Runner {
             // Directly saves the artifacts (if applicable) in the user message and
             // replaces the artifact data with a file name placeholder.
             if (runConfig.saveInputBlobsAsArtifacts) {
-              newMessage = await this.saveArtifacts(
+              newMessage = await runnerCtx.saveArtifacts(
                 invocationContext.artifactService,
                 invocationContext.invocationId,
                 newMessage,
@@ -409,7 +412,7 @@ export class Runner {
               }
             }
             // Append the user message to the session with optional state delta.
-            await this.sessionService.appendEvent({
+            await runnerCtx.sessionService.appendEvent({
               session,
               event: createEvent({
                 invocationId: invocationContext.invocationId,
@@ -432,10 +435,10 @@ export class Runner {
           // =========================================================================
           // Only meaningful for an agent root: this resolves an event author
           // against the agent tree, and a node subtree is not in that tree.
-          if (isBaseAgent(this.agent)) {
-            invocationContext.agent = this.determineAgentForResumption(
+          if (isBaseAgent(runnerCtx.agent)) {
+            invocationContext.agent = runnerCtx.determineAgentForResumption(
               session,
-              this.agent,
+              runnerCtx.agent,
             );
           }
 
@@ -448,7 +451,7 @@ export class Runner {
             // =========================================================================
             // Step 1: Run the before_run callbacks to see if we should early exit.
             const beforeRunCallbackResponse =
-              await this.pluginManager.runBeforeRunCallback({
+              await runnerCtx.pluginManager.runBeforeRunCallback({
                 invocationContext,
               });
             if (params.abortSignal?.aborted) {
@@ -463,7 +466,7 @@ export class Runner {
               });
               // TODO: b/447446338 - In the future, do *not* save live call
               // audio content to the session.
-              await this.sessionService.appendEvent({
+              await runnerCtx.sessionService.appendEvent({
                 session,
                 event: earlyExitEvent,
               });
@@ -477,10 +480,12 @@ export class Runner {
               let abortSealed = false;
               const sealAbortedInvocation = () => {
                 abortSealed = true;
-                return this.synthesizeAbortEvents(invocationContext);
+                return runnerCtx.synthesizeAbortEvents(invocationContext);
               };
               try {
-                for await (const event of this.runRoot(invocationContext)) {
+                for await (const event of runnerCtx.runRoot(
+                  invocationContext,
+                )) {
                   if (params.abortSignal?.aborted) {
                     break;
                   }
@@ -488,7 +493,7 @@ export class Runner {
                   // Step 3: Run the on_event callbacks before persisting so
                   // callback changes are stored in the session and match the
                   // streamed event.
-                  const outputEvent = await this.processAndAppendEvent(
+                  const outputEvent = await runnerCtx.processAndAppendEvent(
                     invocationContext,
                     event,
                   );
@@ -519,7 +524,9 @@ export class Runner {
                 }
               }
               // Step 4: Run the after_run callbacks to optionally modify the context.
-              await this.pluginManager.runAfterRunCallback({invocationContext});
+              await runnerCtx.pluginManager.runAfterRunCallback({
+                invocationContext,
+              });
               if (params.abortSignal?.aborted) {
                 return;
               }
@@ -528,12 +535,16 @@ export class Runner {
         },
       );
     } finally {
-      span.end();
-      const toolsets = isBaseAgent(this.agent)
-        ? getAllToolsets(this.agent)
-        : [];
-      await Promise.allSettled(toolsets.map((t) => t.close()));
+      await this.close();
     }
+  }
+
+  /**
+   * Closes the runner and cleans up all toolsets reachable from the root agent
+   * or workflow.
+   */
+  async close(): Promise<void> {
+    await cleanupToolsets(collectToolsets(this.agent));
   }
 
   /**
@@ -763,6 +774,7 @@ export class Runner {
       throw new Error('runLive is only supported for agents.');
     }
     const agent = this.agent;
+    const {sessionId} = params;
 
     const runConfig = createRunConfig(params.runConfig);
     if (!runConfig.responseModalities?.length) {
@@ -777,115 +789,110 @@ export class Runner {
       runConfig.inputAudioTranscription ??= {};
     }
 
-    const span = tracer.startSpan('invocation');
-    const ctx = trace.setSpan(context.active(), span);
-    try {
-      yield* runAsyncGeneratorWithOtelContext<Runner, Event>(
-        ctx,
-        this,
-        async function* () {
-          const session = await this.sessionService.getOrCreateSession({
-            appName: this.appName,
-            userId: params.userId,
-            sessionId: params.sessionId,
-          });
+    const runnerCtx = this;
+    yield* recordInvocation(
+      {entrypoint: agent, sessionId, runConfig},
+      async function* () {
+        const session = await runnerCtx.sessionService.getOrCreateSession({
+          appName: runnerCtx.appName,
+          userId: params.userId,
+          sessionId: params.sessionId,
+        });
 
-          if (params.abortSignal?.aborted) {
-            return;
-          }
+        if (params.abortSignal?.aborted) {
+          return;
+        }
 
-          const invocationContext = new InvocationContext({
-            artifactService: this.artifactService
-              ? isSessionArtifactService(this.artifactService)
-                ? this.artifactService
-                : new ScopedArtifactService(
-                    this.artifactService,
-                    this.appName,
-                    params.userId,
-                    params.sessionId,
-                  )
-              : undefined,
-            sessionService: this.sessionService,
-            memoryService: this.memoryService,
-            credentialService: this.credentialService,
-            invocationId: newInvocationContextId(),
-            agent,
-            session,
-            runConfig,
-            a2aMetadata: runConfig.a2aMetadata,
-            pluginManager: this.pluginManager,
-            liveRequestQueue: params.liveRequestQueue,
-            abortSignal: params.abortSignal,
-            liveSessionResumptionHandle: params.liveSessionResumptionHandle,
-          });
+        const invocationContext = new InvocationContext({
+          artifactService: runnerCtx.artifactService
+            ? isSessionArtifactService(runnerCtx.artifactService)
+              ? runnerCtx.artifactService
+              : new ScopedArtifactService(
+                  runnerCtx.artifactService,
+                  runnerCtx.appName,
+                  params.userId,
+                  params.sessionId,
+                )
+            : undefined,
+          sessionService: runnerCtx.sessionService,
+          memoryService: runnerCtx.memoryService,
+          credentialService: runnerCtx.credentialService,
+          invocationId: newInvocationContextId(),
+          agent,
+          session,
+          runConfig,
+          a2aMetadata: runConfig.a2aMetadata,
+          pluginManager: runnerCtx.pluginManager,
+          liveRequestQueue: params.liveRequestQueue,
+          abortSignal: params.abortSignal,
+          liveSessionResumptionHandle: params.liveSessionResumptionHandle,
+        });
 
-          invocationContext.agent = this.determineAgentForResumption(
-            session,
-            agent,
-          );
+        invocationContext.agent = runnerCtx.determineAgentForResumption(
+          session,
+          agent,
+        );
 
-          // Step 1: before-run plugin hook (early exit if it returns content).
-          const beforeRunCallbackResponse =
-            await this.pluginManager.runBeforeRunCallback({
-              invocationContext,
-            });
-          if (params.abortSignal?.aborted) {
-            return;
-          }
-          if (beforeRunCallbackResponse) {
-            const earlyExitEvent = createEvent({
-              invocationId: invocationContext.invocationId,
-              author: 'model',
-              content: beforeRunCallbackResponse,
-            });
-            await this.sessionService.appendEvent({
-              session,
-              event: earlyExitEvent,
-            });
-            yield earlyExitEvent;
-            return;
-          }
-
-          // Step 2: drive the agent's runLive and propagate events.
-          for await (const event of requireAgent(invocationContext).runLive(
+        // Step 1: before-run plugin hook (early exit if it returns content).
+        const beforeRunCallbackResponse =
+          await runnerCtx.pluginManager.runBeforeRunCallback({
             invocationContext,
-          )) {
-            if (params.abortSignal?.aborted) {
-              return;
-            }
+          });
+        if (params.abortSignal?.aborted) {
+          return;
+        }
+        if (beforeRunCallbackResponse) {
+          const earlyExitEvent = createEvent({
+            invocationId: invocationContext.invocationId,
+            author: 'model',
+            content: beforeRunCallbackResponse,
+          });
+          await runnerCtx.sessionService.appendEvent({
+            session,
+            event: earlyExitEvent,
+          });
+          yield earlyExitEvent;
+          return;
+        }
 
-            const modifiedEvent = await this.pluginManager.runOnEventCallback({
+        // Step 2: drive the agent's runLive and propagate events.
+        for await (const event of requireAgent(invocationContext).runLive(
+          invocationContext,
+        )) {
+          if (params.abortSignal?.aborted) {
+            return;
+          }
+
+          const modifiedEvent =
+            await runnerCtx.pluginManager.runOnEventCallback({
               invocationContext,
               event,
             });
-            if (params.abortSignal?.aborted) {
-              return;
-            }
-
-            const eventToProcess = modifiedEvent
-              ? withInternalMetadataOf(event, modifiedEvent)
-              : event;
-
-            if (
-              !eventToProcess.partial &&
-              !isLiveModelMediaEventWithInlineData(eventToProcess)
-            ) {
-              await this.sessionService.appendEvent({
-                session,
-                event: eventToProcess,
-              });
-            }
-
-            yield eventToProcess;
+          if (params.abortSignal?.aborted) {
+            return;
           }
 
-          // Step 3: after-run plugin hook for cleanup/metrics.
-          await this.pluginManager.runAfterRunCallback({invocationContext});
-        },
-      );
-    } finally {
-      span.end();
-    }
+          const eventToProcess = modifiedEvent
+            ? withInternalMetadataOf(event, modifiedEvent)
+            : event;
+
+          if (
+            !eventToProcess.partial &&
+            !isLiveModelMediaEventWithInlineData(eventToProcess)
+          ) {
+            await runnerCtx.sessionService.appendEvent({
+              session,
+              event: eventToProcess,
+            });
+          }
+
+          yield eventToProcess;
+        }
+
+        // Step 3: after-run plugin hook for cleanup/metrics.
+        await runnerCtx.pluginManager.runAfterRunCallback({invocationContext});
+      },
+    );
   }
 }
 
@@ -1076,29 +1083,89 @@ export function findEventByLastFunctionResponseId(
   return findMatchingFunctionCall(events) ?? null;
 }
 
-function getAllToolsets(agent: BaseAgent): BaseToolset[] {
-  const toolsets: BaseToolset[] = [];
-  const visited = new Set<BaseAgent>();
+function collectToolsets(root: BaseNode): Set<BaseToolset> {
+  const toolsets = new Set<BaseToolset>();
+  const visited = new Set<BaseNode>();
 
-  function traverse(curr: BaseAgent) {
-    if (visited.has(curr)) return;
+  function traverse(curr: BaseNode): void {
+    if (visited.has(curr)) {
+      return;
+    }
     visited.add(curr);
 
     if (isLlmAgent(curr)) {
       for (const tool of curr.tools) {
         if (isBaseToolset(tool)) {
-          toolsets.push(tool);
+          toolsets.add(tool);
         }
       }
     }
 
-    for (const sub of curr.subAgents) {
-      traverse(sub);
+    if (isBaseAgent(curr)) {
+      for (const sub of curr.subAgents) {
+        traverse(sub);
+      }
+    }
+
+    if (isWorkflow(curr) && curr.graph) {
+      for (const node of curr.graph.nodes) {
+        traverse(node);
+      }
+    }
+
+    if (isParallelWorker(curr)) {
+      traverse(curr.inner);
     }
   }
 
-  traverse(agent);
+  traverse(root);
   return toolsets;
+}
+
+function formatToolsetCloseError(err: unknown): string {
+  const formatted = formatError(err);
+  if (formatted !== '[object Object]') {
+    return formatted;
+  }
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return formatted;
+  }
+}
+
+async function cleanupToolsets(toolsets: Set<BaseToolset>): Promise<void> {
+  await Promise.allSettled(
+    [...toolsets].map(async (toolset) => {
+      const toolsetName = toolset.constructor?.name || 'BaseToolset';
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      try {
+        logger.debug(`Closing toolset: ${toolsetName}`);
+        const result = await Promise.race([
+          toolset.close().then(() => undefined),
+          new Promise<typeof TOOLSET_CLEANUP_TIMEOUT_SYMBOL>((resolve) => {
+            timeoutId = setTimeout(
+              () => resolve(TOOLSET_CLEANUP_TIMEOUT_SYMBOL),
+              TOOLSET_CLEANUP_TIMEOUT_MS,
+            );
+          }),
+        ]);
+        if (result === TOOLSET_CLEANUP_TIMEOUT_SYMBOL) {
+          logger.warn(`Toolset ${toolsetName} cleanup timed out`);
+        } else {
+          logger.debug(`Successfully closed toolset: ${toolsetName}`);
+        }
+      } catch (e: unknown) {
+        logger.error(
+          `Error closing toolset ${toolsetName}: ${formatToolsetCloseError(e)}`,
+        );
+      } finally {
+        if (timeoutId !== undefined) {
+          clearTimeout(timeoutId);
+        }
+      }
+    }),
+  );
 }
 
 /**

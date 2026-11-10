@@ -7,10 +7,6 @@
 import {
   Context,
   createSession,
-  GoogleApiParameter,
-  GoogleApiSchema,
-  GoogleApiSpec,
-  GoogleApiToOpenApiConverter,
   InvocationContext,
   LlmAgent,
   OpenAPIToolset,
@@ -32,7 +28,11 @@ import {
   convertSecuritySchemes,
   convertServers,
   extractPathParameters,
+  GoogleApiToOpenApiConverter,
   normalizeGoogleSchemaRef,
+  type GoogleApiParameter,
+  type GoogleApiSchema,
+  type GoogleApiSpec,
 } from '../../../src/tools/google_api_tool/googleapi_to_openapi_converter.js';
 
 function createCalendarApiSpec(): GoogleApiSpec {
@@ -199,14 +199,14 @@ function createCalendarApiSpec(): GoogleApiSpec {
   };
 }
 
-function createPreparedConverter(): {
-  converter: GoogleApiToOpenApiConverter;
-  calendarApiSpec: GoogleApiSpec;
-} {
-  const calendarApiSpec = createCalendarApiSpec();
-  const converter = new GoogleApiToOpenApiConverter('calendar', 'v3');
-  converter.googleApiSpec = calendarApiSpec;
-  return {converter, calendarApiSpec};
+function createPreparedOpenapiSpec(): OpenAPIV3.Document {
+  return {
+    openapi: '3.0.0',
+    info: {} as OpenAPIV3.InfoObject,
+    servers: [],
+    paths: {},
+    components: {schemas: {}, securitySchemes: {}},
+  };
 }
 
 describe('TestGoogleApiToOpenApiConverter', () => {
@@ -216,18 +216,12 @@ describe('TestGoogleApiToOpenApiConverter', () => {
 
   it('test_init', () => {
     const converter = new GoogleApiToOpenApiConverter('calendar', 'v3');
-    expect(converter.apiName).toBe('calendar');
-    expect(converter.apiVersion).toBe('v3');
-    expect(converter.googleApiSpec).toBeNull();
-    expect(converter.openapiSpec.openapi).toBe('3.0.0');
-    expect('info' in converter.openapiSpec).toBe(true);
-    expect('paths' in converter.openapiSpec).toBe(true);
-    expect('components' in converter.openapiSpec).toBe(true);
+    expect(converter).toBeDefined();
   });
 
   it('test_fetch_google_api_spec', async () => {
     const calendarApiSpec = createCalendarApiSpec();
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
       status: 200,
       json: async () => calendarApiSpec,
@@ -236,10 +230,9 @@ describe('TestGoogleApiToOpenApiConverter', () => {
     const converter = new GoogleApiToOpenApiConverter('calendar', 'v3');
     await converter.fetchGoogleApiSpec();
 
-    expect(globalThis.fetch).toHaveBeenCalledWith(
+    expect(fetchSpy).toHaveBeenCalledWith(
       'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest',
     );
-    expect(converter.googleApiSpec).toEqual(calendarApiSpec);
   });
 
   it('test_fetch_google_api_spec_error', async () => {
@@ -256,45 +249,37 @@ describe('TestGoogleApiToOpenApiConverter', () => {
   });
 
   it('test_convert_info', () => {
-    const {converter, calendarApiSpec} = createPreparedConverter();
-    convertInfo(
-      calendarApiSpec,
-      converter.openapiSpec,
-      converter.apiName,
-      converter.apiVersion,
-    );
+    const calendarApiSpec = createCalendarApiSpec();
+    const openapiSpec = createPreparedOpenapiSpec();
+    convertInfo(calendarApiSpec, openapiSpec, 'calendar', 'v3');
 
-    const info = converter.openapiSpec.info;
+    const info = openapiSpec.info;
     expect(info.title).toBe('Google Calendar API');
     expect(info.description).toBe('Accesses the Google Calendar API');
     expect(info.version).toBe('v3');
     expect(info.termsOfService).toBe('https://developers.google.com/calendar/');
 
-    const externalDocs = converter.openapiSpec.externalDocs;
+    const externalDocs = openapiSpec.externalDocs;
     expect(externalDocs?.url).toBe('https://developers.google.com/calendar/');
   });
 
   it('test_convert_servers', () => {
-    const {converter, calendarApiSpec} = createPreparedConverter();
-    convertServers(
-      calendarApiSpec,
-      converter.openapiSpec,
-      converter.apiName,
-      converter.apiVersion,
-    );
+    const calendarApiSpec = createCalendarApiSpec();
+    const openapiSpec = createPreparedOpenapiSpec();
+    convertServers(calendarApiSpec, openapiSpec, 'calendar', 'v3');
 
-    const servers = converter.openapiSpec.servers ?? [];
+    const servers = openapiSpec.servers ?? [];
     expect(servers.length).toBe(1);
     expect(servers[0].url).toBe('https://www.googleapis.com/calendar/v3');
     expect(servers[0].description).toBe('calendar v3 API');
   });
 
   it('test_convert_security_schemes', () => {
-    const {converter, calendarApiSpec} = createPreparedConverter();
-    convertSecuritySchemes(calendarApiSpec, converter.openapiSpec);
+    const calendarApiSpec = createCalendarApiSpec();
+    const openapiSpec = createPreparedOpenapiSpec();
+    convertSecuritySchemes(calendarApiSpec, openapiSpec);
 
-    const securitySchemes =
-      converter.openapiSpec.components?.securitySchemes ?? {};
+    const securitySchemes = openapiSpec.components?.securitySchemes ?? {};
 
     expect('oauth2' in securitySchemes).toBe(true);
     const oauth2 = securitySchemes['oauth2'] as OpenAPIV3.OAuth2SecurityScheme;
@@ -314,10 +299,11 @@ describe('TestGoogleApiToOpenApiConverter', () => {
   });
 
   it('test_convert_schemas', () => {
-    const {converter, calendarApiSpec} = createPreparedConverter();
-    convertSchemas(calendarApiSpec, converter.openapiSpec);
+    const calendarApiSpec = createCalendarApiSpec();
+    const openapiSpec = createPreparedOpenapiSpec();
+    convertSchemas(calendarApiSpec, openapiSpec);
 
-    const schemas = converter.openapiSpec.components?.schemas ?? {};
+    const schemas = openapiSpec.components?.schemas ?? {};
 
     expect('Calendar' in schemas).toBe(true);
     const calendarSchema = schemas['Calendar'] as OpenAPIV3.SchemaObject;
@@ -502,11 +488,12 @@ describe('TestGoogleApiToOpenApiConverter', () => {
   });
 
   it('test_convert_methods', () => {
-    const {converter, calendarApiSpec} = createPreparedConverter();
+    const calendarApiSpec = createCalendarApiSpec();
+    const openapiSpec = createPreparedOpenapiSpec();
     const methods = calendarApiSpec.resources?.['calendars']?.methods ?? {};
-    convertMethods(methods, '/calendars', converter.openapiSpec);
+    convertMethods(methods, '/calendars', openapiSpec);
 
-    const paths = converter.openapiSpec.paths;
+    const paths = openapiSpec.paths;
     expect('/calendars/{calendarId}' in paths).toBe(true);
     const getMethod = paths['/calendars/{calendarId}']?.get;
     expect(getMethod?.operationId).toBe('calendar.calendars.get');
@@ -533,10 +520,11 @@ describe('TestGoogleApiToOpenApiConverter', () => {
   });
 
   it('test_convert_resources', () => {
-    const {converter, calendarApiSpec} = createPreparedConverter();
-    convertResources(calendarApiSpec.resources ?? {}, converter.openapiSpec);
+    const calendarApiSpec = createCalendarApiSpec();
+    const openapiSpec = createPreparedOpenapiSpec();
+    convertResources(calendarApiSpec.resources ?? {}, openapiSpec);
 
-    const paths = converter.openapiSpec.paths;
+    const paths = openapiSpec.paths;
     expect('/calendars/{calendarId}' in paths).toBe(true);
     expect('/calendars/{calendarId}/events' in paths).toBe(true);
 
@@ -648,7 +636,13 @@ describe('GoogleApiToOpenApiConverter additional branch coverage', () => {
       'Failed to retrieve API specification',
     );
 
-    const {converter} = createPreparedConverter();
+    const calendarApiSpec = createCalendarApiSpec();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => calendarApiSpec,
+    } as Response);
+    const converter = new GoogleApiToOpenApiConverter('calendar', 'v3');
     await converter.convert();
 
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'google-api-spec-'));
@@ -701,8 +695,7 @@ describe('GoogleApiToOpenApiConverter additional branch coverage', () => {
       },
     ]);
 
-    const converter = new GoogleApiToOpenApiConverter('docs', 'v1');
-    converter.googleApiSpec = {
+    const customDocsSpec: GoogleApiSpec = {
       rootUrl: 'https://docs.googleapis.com/',
       servicePath: '',
       resources: {
@@ -743,6 +736,13 @@ describe('GoogleApiToOpenApiConverter additional branch coverage', () => {
       },
     };
 
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => customDocsSpec,
+    } as Response);
+
+    const converter = new GoogleApiToOpenApiConverter('docs', 'v1');
     const openapiSpec = await converter.convert();
     expect('/v1/documents/{documentId}:batchUpdate' in openapiSpec.paths).toBe(
       true,
@@ -814,33 +814,27 @@ describe('GoogleApiToOpenApiConverter flatPath handling', () => {
       listMethodSpec.flatPath = 'calendars/{calendarId}/events';
     }
 
-    const methodConverter = new GoogleApiToOpenApiConverter('calendar', 'v3');
+    const methodOpenapiSpec = createPreparedOpenapiSpec();
     convertMethods(
       calendarsResource?.methods ?? {},
       '/calendars',
-      methodConverter.openapiSpec,
+      methodOpenapiSpec,
     );
-    expect('/calendars/{calendarId}' in methodConverter.openapiSpec.paths).toBe(
+    expect('/calendars/{calendarId}' in methodOpenapiSpec.paths).toBe(true);
+    expect(
+      methodOpenapiSpec.paths['/calendars/{calendarId}']?.get?.operationId,
+    ).toBe('calendar.calendars.get');
+    expect('/calendars' in methodOpenapiSpec.paths).toBe(true);
+
+    const resourceOpenapiSpec = createPreparedOpenapiSpec();
+    convertResources(spec.resources ?? {}, resourceOpenapiSpec);
+    expect('/calendars/{calendarId}' in resourceOpenapiSpec.paths).toBe(true);
+    expect('/calendars/{calendarId}/events' in resourceOpenapiSpec.paths).toBe(
       true,
     );
-    expect(
-      methodConverter.openapiSpec.paths['/calendars/{calendarId}']?.get
-        ?.operationId,
-    ).toBe('calendar.calendars.get');
-    expect('/calendars' in methodConverter.openapiSpec.paths).toBe(true);
-
-    const resourceConverter = new GoogleApiToOpenApiConverter('calendar', 'v3');
-    convertResources(spec.resources ?? {}, resourceConverter.openapiSpec);
-    expect(
-      '/calendars/{calendarId}' in resourceConverter.openapiSpec.paths,
-    ).toBe(true);
-    expect(
-      '/calendars/{calendarId}/events' in resourceConverter.openapiSpec.paths,
-    ).toBe(true);
 
     const eventsGet =
-      resourceConverter.openapiSpec.paths['/calendars/{calendarId}/events']
-        ?.get;
+      resourceOpenapiSpec.paths['/calendars/{calendarId}/events']?.get;
     expect(eventsGet?.operationId).toBe('calendar.events.list');
     const eventParamNames = (
       (eventsGet?.parameters ?? []) as OpenAPIV3.ParameterObject[]
@@ -849,8 +843,12 @@ describe('GoogleApiToOpenApiConverter flatPath handling', () => {
     expect(eventParamNames).toContain('maxResults');
     expect(eventParamNames).toContain('orderBy');
 
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => spec,
+    } as Response);
     const fullConverter = new GoogleApiToOpenApiConverter('calendar', 'v3');
-    fullConverter.googleApiSpec = spec;
     const result = await fullConverter.convert();
     expect(result.paths['/calendars/{calendarId}']?.get?.operationId).toBe(
       'calendar.calendars.get',
@@ -861,7 +859,7 @@ describe('GoogleApiToOpenApiConverter flatPath handling', () => {
   });
 
   it('prefers flatPath over path when a method defines both', () => {
-    const converter = new GoogleApiToOpenApiConverter('bigquery', 'v2');
+    const openapiSpec = createPreparedOpenapiSpec();
     convertMethods(
       {
         list: {
@@ -881,16 +879,15 @@ describe('GoogleApiToOpenApiConverter flatPath handling', () => {
         },
       },
       '/projects',
-      converter.openapiSpec,
+      openapiSpec,
     );
 
-    expect(
-      '/v2/projects/{projectsId}/locations' in converter.openapiSpec.paths,
-    ).toBe(true);
-    expect('/v2/{parent}/locations' in converter.openapiSpec.paths).toBe(false);
+    expect('/v2/projects/{projectsId}/locations' in openapiSpec.paths).toBe(
+      true,
+    );
+    expect('/v2/{parent}/locations' in openapiSpec.paths).toBe(false);
 
-    const getOp =
-      converter.openapiSpec.paths['/v2/projects/{projectsId}/locations']?.get;
+    const getOp = openapiSpec.paths['/v2/projects/{projectsId}/locations']?.get;
     expect(getOp?.operationId).toBe('bigquery.projects.locations.list');
     expect(getOp?.parameters).toEqual([
       {
