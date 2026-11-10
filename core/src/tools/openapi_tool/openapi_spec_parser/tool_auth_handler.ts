@@ -12,7 +12,7 @@ import {
   isAuthCredential,
 } from '../../../auth/auth_credential.js';
 import {
-  credentialWithoutSecrets,
+  credentialWithoutClientSecret,
   withConfiguredClient,
 } from '../../../auth/auth_handler.js';
 import {AuthScheme} from '../../../auth/auth_schemes.js';
@@ -251,11 +251,14 @@ export class ToolAuthHandler {
         this.authCredential,
       );
       // This is written to session state, which the client can read, so the
-      // cached copy keeps the access token but not the client secret that
-      // was merged in to obtain it.
+      // cached copy drops the OAuth2 client secret that was merged in to obtain
+      // the access token. It keeps every other secret: for apiKey, http and
+      // serviceAccount the secret is the credential itself, so stripping it
+      // would cache a credential that the next invocation reads back and then
+      // sends an unauthenticated request with.
       this.credentialStore.storeCredential(
         key,
-        credentialWithoutSecrets(exchanged.credential)!,
+        credentialWithoutClientSecret(exchanged.credential)!,
       );
     }
 
