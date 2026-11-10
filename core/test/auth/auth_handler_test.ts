@@ -15,14 +15,23 @@ import {
 import {createHash} from 'node:crypto';
 import {describe, expect, it, vi} from 'vitest';
 
+/** Credentials the mocked exchanger was asked to exchange, most recent last. */
+const exchangeCalls: Array<{clientId?: string; clientSecret?: string}> = [];
+
 vi.mock('../../src/auth/oauth2/oauth2_credential_exchanger.js', () => ({
   OAuth2CredentialExchanger: class {
-    exchange = vi.fn().mockResolvedValue({
-      credential: {
-        authType: 'oauth2',
-        oauth2: {accessToken: 'mockAccessToken'},
-      },
-      wasExchanged: true,
+    exchange = vi.fn().mockImplementation(({authCredential}) => {
+      exchangeCalls.push({
+        clientId: authCredential?.oauth2?.clientId,
+        clientSecret: authCredential?.oauth2?.clientSecret,
+      });
+      return Promise.resolve({
+        credential: {
+          authType: 'oauth2',
+          oauth2: {accessToken: 'mockAccessToken'},
+        },
+        wasExchanged: true,
+      });
     });
   },
 }));
@@ -148,7 +157,11 @@ describe('AuthHandler', () => {
         },
         exchangedAuthCredential: {
           authType: AuthCredentialTypes.OAUTH2,
-          oauth2: {authCode: '123'},
+          oauth2: {
+            authCode: '123',
+            clientId: 'client-id',
+            clientSecret: 'client-secret',
+          },
         },
       };
       const handler = new AuthHandler(authConfig);
@@ -227,6 +240,7 @@ describe('AuthHandler', () => {
       );
       expect(state.hasDelta()).toBe(false);
     });
+
   });
 
   describe('generateAuthRequest', () => {
@@ -240,6 +254,48 @@ describe('AuthHandler', () => {
       const request = handler.generateAuthRequest();
 
       expect(request).toEqual(authConfig);
+    });
+
+    it('strips a non-oauth api key from the request', () => {
+      const authConfig: AuthConfig = {
+        credentialKey: 'testKey',
+        authScheme: {type: 'apiKey', name: 'testKey', in: 'header'},
+        rawAuthCredential: {
+          authType: AuthCredentialTypes.API_KEY,
+          apiKey: 'super-secret-api-key',
+        },
+      };
+      const handler = new AuthHandler(authConfig);
+
+      const request = handler.generateAuthRequest();
+
+      expect(request.rawAuthCredential?.apiKey).toBeUndefined();
+    });
+
+    it('strips the oauth2 client secret from the request', () => {
+      const authConfig: AuthConfig = {
+        credentialKey: 'testKey',
+        authScheme: {
+          type: 'oauth2',
+          flows: {
+            authorizationCode: {
+              authorizationUrl: 'https://auth.com',
+              tokenUrl: 'https://token.com',
+              scopes: {},
+            },
+          },
+        },
+        rawAuthCredential: {
+          authType: AuthCredentialTypes.OAUTH2,
+          oauth2: {clientId: 'cid', clientSecret: 'super-secret'},
+        },
+      };
+      const handler = new AuthHandler(authConfig);
+
+      const request = handler.generateAuthRequest();
+
+      expect(request.rawAuthCredential?.oauth2?.clientSecret).toBeUndefined();
+      expect(request.rawAuthCredential?.oauth2?.clientId).toBe('cid');
     });
 
     it('returns original config if exchangedAuthCredential.oauth2.authUri is present', () => {
@@ -727,7 +783,12 @@ describe('AuthHandler generateAuthRequest copies', () => {
     const request = handler.generateAuthRequest();
 
     expect(request).not.toBe(authConfig);
-    expect(request).toEqual(authConfig);
+    // The copy carries everything but the api key, which is redacted because
+    // the request is streamed to the client and stored in the session.
+    expect(request).toEqual({
+      ...authConfig,
+      exchangedAuthCredential: {authType: AuthCredentialTypes.API_KEY},
+    });
     expect(request.exchangedAuthCredential).not.toBe(
       authConfig.exchangedAuthCredential,
     );
@@ -746,7 +807,17 @@ describe('AuthHandler generateAuthRequest copies', () => {
     const request = handler.generateAuthRequest();
 
     expect(request).not.toBe(authConfig);
-    expect(request).toEqual(authConfig);
+    // Same config, minus the client secret the request must not carry.
+    expect(request).toEqual({
+      ...authConfig,
+      rawAuthCredential: {
+        ...authConfig.rawAuthCredential,
+        oauth2: {
+          ...authConfig.rawAuthCredential?.oauth2,
+          clientSecret: undefined,
+        },
+      },
+    });
 
     exchangedOAuth2(request).authResponseUri = 'https://redirect.com/?code=abc';
     expect(
@@ -765,9 +836,14 @@ describe('AuthHandler generateAuthRequest copies', () => {
     expect(request.exchangedAuthCredential).not.toBe(
       authConfig.rawAuthCredential,
     );
-    expect(request.exchangedAuthCredential).toEqual(
-      authConfig.rawAuthCredential,
-    );
+    // The copy of the raw credential reaches the client without its secret.
+    expect(request.exchangedAuthCredential).toEqual({
+      ...authConfig.rawAuthCredential,
+      oauth2: {
+        ...authConfig.rawAuthCredential?.oauth2,
+        clientSecret: undefined,
+      },
+    });
     expect(request.credentialKey).toBe('testKey');
   });
 

@@ -20,6 +20,41 @@ import {
 /** The only PKCE code challenge method this handler supports. */
 const S256_CODE_CHALLENGE_METHOD = 'S256';
 
+// The auth request is sent to the client and stored in the session, so the
+// agent's own secrets must not travel in it. They are re-supplied from the
+// tool config when the credential is exchanged.
+function credentialWithoutSecrets(
+  credential: AuthCredential | undefined,
+): AuthCredential | undefined {
+  if (!credential) {
+    return credential;
+  }
+  const redacted = structuredClone(credential);
+  if (redacted.oauth2) {
+    redacted.oauth2.clientSecret = undefined;
+  }
+  if (redacted.apiKey !== undefined) {
+    redacted.apiKey = undefined;
+  }
+  if (redacted.http?.credentials) {
+    redacted.http.credentials.password = undefined;
+  }
+  if (redacted.serviceAccount?.serviceAccountCredential) {
+    redacted.serviceAccount.serviceAccountCredential.privateKey = '';
+  }
+  return redacted;
+}
+
+function authConfigWithoutSecrets(config: AuthConfig): AuthConfig {
+  return {
+    ...config,
+    rawAuthCredential: credentialWithoutSecrets(config.rawAuthCredential),
+    exchangedAuthCredential: credentialWithoutSecrets(
+      config.exchangedAuthCredential,
+    ),
+  };
+}
+
 /**
  * A handler that handles the auth flow in Agent Development Kit to help
  * orchestrates the credential request and response flow (e.g. OAuth flow)
@@ -88,6 +123,10 @@ export class AuthHandler {
    *     credential, no `oauth2` on it, or no client ID and secret.
    */
   generateAuthRequest(): AuthConfig {
+    return authConfigWithoutSecrets(this.buildAuthRequest());
+  }
+
+  private buildAuthRequest(): AuthConfig {
     const authSchemeType = this.authConfig.authScheme.type;
 
     if (!['oauth2', 'openIdConnect'].includes(authSchemeType)) {
