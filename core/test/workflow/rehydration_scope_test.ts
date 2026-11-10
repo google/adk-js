@@ -160,6 +160,37 @@ describe('eventsForCurrentRun', () => {
     expect(eventsForCurrentRun(events, 'b')).toEqual(events.slice(1));
   });
 
+  it('keeps an invocation that ended still waiting on an earlier question', () => {
+    // The reply in `b` answers `y` only. The node waiting on `x` keeps waiting
+    // without asking again, so `b` raises nothing new; the workflow's resume
+    // checkpoint still lists `x`.
+    const events = [
+      createEvent({author: 'user', invocationId: 'a'}),
+      pauseEvent('a', 'wf.a', 'x'),
+      pauseEvent('a', 'wf.b', 'y'),
+      createEvent({author: 'user', invocationId: 'b'}),
+      nodeEvent('b', 'wf.b', {output: 'b:yy'}),
+      nodeEvent('b', 'wf', {longRunningToolIds: ['x']}),
+      createEvent({author: 'user', invocationId: 'c'}),
+    ];
+    expect(eventsForCurrentRun(events, 'c')).toEqual(events.slice(1));
+  });
+
+  it('drops the run once the last open question is answered', () => {
+    const events = [
+      createEvent({author: 'user', invocationId: 'a'}),
+      pauseEvent('a', 'wf.a', 'x'),
+      pauseEvent('a', 'wf.b', 'y'),
+      createEvent({author: 'user', invocationId: 'b'}),
+      nodeEvent('b', 'wf.b', {output: 'b:yy'}),
+      nodeEvent('b', 'wf', {longRunningToolIds: ['x']}),
+      createEvent({author: 'user', invocationId: 'c'}),
+      nodeEvent('c', 'wf.a', {output: 'a:xx'}),
+      createEvent({author: 'user', invocationId: 'd'}),
+    ];
+    expect(eventsForCurrentRun(events, 'd')).toEqual([events[8]]);
+  });
+
   it('passes through when there is nothing earlier to drop', () => {
     const events = [createEvent({author: 'user', invocationId: 'a'})];
     expect(eventsForCurrentRun(events, 'a')).toEqual(events);

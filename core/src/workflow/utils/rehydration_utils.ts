@@ -58,6 +58,11 @@ export interface RehydratedNode {
  *
  *   - An invocation that raised an interrupt ended paused, so it belongs to the
  *     run still in progress.
+ *   - So did an invocation that ended still waiting on an interrupt an earlier
+ *     invocation raised. A reply that answers only some of the open interrupts
+ *     leaves the other nodes waiting without asking again (see
+ *     `waitingInterrupts`), so such an invocation raises nothing new; the
+ *     resume checkpoint it writes lists the interrupts it is waiting on.
  *   - An invocation that emitted node events without raising one ran to
  *     completion; it is the boundary, and it and everything before it are
  *     dropped.
@@ -83,6 +88,8 @@ export function eventsForCurrentRun(
   // phantom run of its own — which would put the boundary in the middle of a
   // paused run and re-execute nodes that had already completed.
   let lastInvocationId: string | undefined;
+  // Interrupt ids a prior invocation asked the user about.
+  const asked = new Set<string>();
 
   for (let i = 0; i < events.length; i++) {
     const event = events[i];
@@ -105,6 +112,11 @@ export function eventsForCurrentRun(
       priorRuns.push(entry);
     }
     if (raisedInterrupt(event)) {
+      entry.paused = true;
+      for (const id of event.longRunningToolIds ?? []) {
+        asked.add(id);
+      }
+    } else if (event.longRunningToolIds?.some((id) => asked.has(id))) {
       entry.paused = true;
     }
   }
@@ -343,7 +355,11 @@ function reconstructRuns(
   keyFor: (event: Event) => string | undefined,
 ): Map<string, RehydratedNode[]> {
   const nodes = new Map<string, RehydratedNode[]>();
-  const interruptOwner = new Map<string, RehydratedNode>();
+  // The runs each interrupt's reply belongs to: the run that asked, and every
+  // run whose resume checkpoint lists the interrupt again because it waits on
+  // the child that asked. Asking again starts over, so the reply to the new
+  // question does not reach a run that asked it before.
+  const interruptOwners = new Map<string, RehydratedNode[]>();
   const resolved = resolvedInterruptResponses(events);
 
   const currentRun = (name: string): RehydratedNode => {
@@ -371,10 +387,11 @@ function reconstructRuns(
     if (event.author === 'user' && event.content?.parts) {
       for (const part of event.content.parts) {
         const fr = part.functionResponse;
-        if (fr?.id && interruptOwner.has(fr.id) && resolved.has(fr.id)) {
-          interruptOwner
-            .get(fr.id)!
-            .resolvedResponses.set(fr.id, resolved.get(fr.id));
+        if (!fr?.id || !resolved.has(fr.id)) {
+          continue;
+        }
+        for (const owner of interruptOwners.get(fr.id) ?? []) {
+          owner.resolvedResponses.set(fr.id, resolved.get(fr.id));
         }
       }
       continue;
@@ -395,7 +412,12 @@ function reconstructRuns(
     }
     for (const id of event.longRunningToolIds ?? []) {
       node.interruptIds.add(id);
-      interruptOwner.set(id, node);
+      const owners = interruptOwners.get(id);
+      if (!owners || raisedInterrupt(event)) {
+        interruptOwners.set(id, [node]);
+      } else if (!owners.includes(node)) {
+        owners.push(node);
+      }
     }
     // Capture the node's original input, stashed on the interrupt event, so a
     // resumed waiting node re-runs with it (not the resume message). Guard the
@@ -438,6 +460,44 @@ export function isFastForwardable(node: RehydratedNode): boolean {
     }
   }
   return true;
+}
+
+/**
+ * The interrupts a resumed node keeps waiting on, or `undefined` when it does
+ * not keep waiting.
+ *
+ * A node whose prior run raised interrupts that are not all answered keeps
+ * waiting: it does not run again and does not ask again, so its question keeps
+ * its id and a later reply can still resolve it. A reply to some other node's
+ * interrupt, or to only part of this node's, is not a reason to run it. The
+ * exception is a node with `rerunOnResume` that got an answer to at least one
+ * of its own interrupts: it runs again with the answers it has.
+ *
+ * This is `google/adk-python`'s rule for a node with unresolved interrupts
+ * (`_replay_interceptor.check_interception`).
+ *
+ * Answers are looked up in `resumeInputs`, the map the resumed node itself
+ * reads and the `rerunOnResume: false` handoff checks, so the resume paths
+ * agree on which interrupts are answered.
+ */
+export function waitingInterrupts(
+  prior: RehydratedNode | undefined,
+  rerunOnResume: boolean,
+  resumeInputs: Record<string, unknown>,
+): string[] | undefined {
+  if (!prior || prior.interruptIds.size === 0) {
+    return undefined;
+  }
+  const unresolved = [...prior.interruptIds].filter(
+    (id) => resumeInputs[id] === undefined,
+  );
+  if (unresolved.length === 0) {
+    return undefined;
+  }
+  if (rerunOnResume && unresolved.length < prior.interruptIds.size) {
+    return undefined;
+  }
+  return unresolved;
 }
 
 /**
