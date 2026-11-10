@@ -83,6 +83,9 @@ function createToolContext(): Context {
   });
 }
 
+/** Credentials the mocked exchanger was handed, most recent last. */
+const exchangedCredentials: AuthCredential[] = [];
+
 // Mock AutoAuthCredentialExchanger
 vi.mock(
   '../../../src/tools/openapi_tool/auth/credential_exchangers/auto_auth_credential_exchanger.js',
@@ -90,12 +93,18 @@ vi.mock(
     return {
       AutoAuthCredentialExchanger: vi.fn().mockImplementation(function () {
         return {
-          exchange: vi.fn().mockResolvedValue({
-            credential: {
-              authType: AuthCredentialTypes.HTTP,
-              http: {scheme: 'bearer', credentials: {token: 'exchanged-token'}},
-            },
-            wasExchanged: true,
+          exchange: vi.fn().mockImplementation(({authCredential}) => {
+            exchangedCredentials.push(authCredential);
+            return Promise.resolve({
+              credential: {
+                authType: AuthCredentialTypes.HTTP,
+                http: {
+                  scheme: 'bearer',
+                  credentials: {token: 'exchanged-token'},
+                },
+              },
+              wasExchanged: true,
+            });
           }),
         };
       }),
@@ -358,6 +367,108 @@ describe('ToolAuthHandler', () => {
       cacheKeyFor(scheme, credential),
     );
     expect(stored?.http?.credentials.token).toBe('exchanged-token');
+  });
+
+  it('exchanges an auth response using the configured client secret', async () => {
+    // The auth response travelled through the client, so the request it
+    // answers was redacted and it carries no secret. The token endpoint still
+    // needs one, and the tool's own configured credential is where it comes
+    // from.
+    exchangedCredentials.length = 0;
+    const state = new State();
+    const mockContext = {
+      state,
+      getAuthResponse: vi.fn().mockReturnValue({
+        authType: AuthCredentialTypes.OAUTH2,
+        oauth2: {authCode: 'the-code', clientId: 'response-id'},
+      }),
+      requestCredential: vi.fn(),
+    } as unknown as Context;
+
+    const result = await new ToolAuthHandler(
+      mockContext,
+      {
+        type: 'oauth2',
+        flows: {
+          authorizationCode: {
+            authorizationUrl: 'https://example.com/auth',
+            tokenUrl: 'https://example.com/token',
+            scopes: {},
+          },
+        },
+      },
+      {
+        authType: AuthCredentialTypes.OAUTH2,
+        oauth2: {clientId: 'configured-id', clientSecret: 'configured-secret'},
+      },
+    ).prepareAuthCredentials();
+
+    expect(result.state).toBe('done');
+    expect(exchangedCredentials).toHaveLength(1);
+    const handed = exchangedCredentials[0].oauth2;
+    // The code answers the request; the client identity is the agent's.
+    expect(handed?.authCode).toBe('the-code');
+    expect(handed?.clientSecret).toBe('configured-secret');
+    expect(handed?.clientId).toBe('configured-id');
+  });
+
+  it('caches the exchanged credential without the client secret', async () => {
+    exchangedCredentials.length = 0;
+    const state = new State();
+    const mockContext = {
+      state,
+      getAuthResponse: vi.fn().mockReturnValue({
+        authType: AuthCredentialTypes.OAUTH2,
+        oauth2: {authCode: 'the-code'},
+      }),
+      requestCredential: vi.fn(),
+    } as unknown as Context;
+
+    // A real OAuth2 exchange returns an oauth2 credential, and the client
+    // fields ride along on it, so the redaction has something to remove.
+    vi.mocked(AutoAuthCredentialExchanger).mockImplementationOnce(function () {
+      return {
+        exchange: vi.fn().mockResolvedValue({
+          credential: {
+            authType: AuthCredentialTypes.OAUTH2,
+            oauth2: {
+              accessToken: 'the-access-token',
+              clientId: 'configured-id',
+              clientSecret: 'configured-secret',
+            },
+          },
+          wasExchanged: true,
+        }),
+      } as unknown as AutoAuthCredentialExchanger;
+    });
+
+    const authScheme: AuthScheme = {
+      type: 'oauth2',
+      flows: {
+        authorizationCode: {
+          authorizationUrl: 'https://example.com/auth',
+          tokenUrl: 'https://example.com/token',
+          scopes: {},
+        },
+      },
+    };
+    const authCredential: AuthCredential = {
+      authType: AuthCredentialTypes.OAUTH2,
+      oauth2: {clientId: 'configured-id', clientSecret: 'configured-secret'},
+    };
+
+    await new ToolAuthHandler(
+      mockContext,
+      authScheme,
+      authCredential,
+    ).prepareAuthCredentials();
+
+    // The cache lives in session state, which the client can read.
+    const stored = state.get<AuthCredential>(
+      cacheKeyFor(authScheme, authCredential),
+    );
+    expect(stored?.oauth2?.accessToken).toBe('the-access-token');
+    expect(stored?.oauth2?.clientSecret).toBeUndefined();
   });
 });
 
