@@ -127,7 +127,8 @@ describe('getContents', () => {
       p.text?.includes('to_json_nothing_tool'),
     );
     expect(textPart?.text).toBe(
-      '[other_agent] called tool `to_json_nothing_tool` with parameters: [object Object]',
+      '[other_agent] called tool `to_json_nothing_tool` with parameters:\n' +
+        '<<<BEGIN_QUOTED_AGENT_CONTENT>>>\n[object Object]\n<<<END_QUOTED_AGENT_CONTENT>>>',
     );
   });
 
@@ -149,7 +150,8 @@ describe('getContents', () => {
       p.text?.includes('null_proto_tool'),
     );
     expect(textPart?.text).toBe(
-      '[other_agent] called tool `null_proto_tool` with parameters: {"a":1}',
+      '[other_agent] called tool `null_proto_tool` with parameters:\n' +
+        '<<<BEGIN_QUOTED_AGENT_CONTENT>>>\n{"a":1}\n<<<END_QUOTED_AGENT_CONTENT>>>',
     );
   });
 
@@ -172,7 +174,8 @@ describe('getContents', () => {
       p.text?.includes('null_proto_circular_tool'),
     );
     expect(textPart?.text).toBe(
-      '[other_agent] called tool `null_proto_circular_tool` with parameters: <unstringifiable value>',
+      '[other_agent] called tool `null_proto_circular_tool` with parameters:\n' +
+        '<<<BEGIN_QUOTED_AGENT_CONTENT>>>\n<unstringifiable value>\n<<<END_QUOTED_AGENT_CONTENT>>>',
     );
   });
 
@@ -201,7 +204,8 @@ describe('getContents', () => {
       p.text?.includes('hostile_tool'),
     );
     expect(textPart?.text).toBe(
-      '[other_agent] tool `hostile_tool` returned result: <unstringifiable value>',
+      '[other_agent] tool `hostile_tool` returned result:\n' +
+        '<<<BEGIN_QUOTED_AGENT_CONTENT>>>\n<unstringifiable value>\n<<<END_QUOTED_AGENT_CONTENT>>>',
     );
   });
 
