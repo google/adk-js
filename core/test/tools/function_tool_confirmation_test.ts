@@ -5,20 +5,30 @@
  */
 
 import {
+  BaseLlm,
+  BaseLlmConnection,
   BaseTool,
   Context,
   Event,
+  EventType,
   FunctionTool,
+  InMemoryRunner,
   InvocationContext,
   LlmAgent,
+  LlmRequest,
+  LlmResponse,
   PluginManager,
   REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
   RunConfig,
   ToolConfirmation,
   createEvent,
   createSession,
+  getFunctionCalls,
+  getFunctionResponses,
+  isFinalResponse,
+  toStructuredEvents,
 } from '@google/adk';
-import {FunctionCall} from '@google/genai';
+import {Content, FunctionCall} from '@google/genai';
 import {describe, expect, it} from 'vitest';
 import {z} from 'zod/v3';
 import {REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR} from '../../src/agents/processors/request_confirmation_llm_request_processor.js';
@@ -458,5 +468,220 @@ describe('RequestConfirmation resume round-trip', () => {
     expect(calls).toEqual([{path: '/tmp/y'}]);
     expect(out).toHaveLength(1);
     expect(out[0].content?.parts?.[0].functionResponse?.id).toBe('orig-2');
+  });
+});
+
+// --- Parallel calls where only some need confirmation ------------------------
+//
+// Driven through a real Runner: the model calls a gated tool and an ungated
+// one in the same turn, so the ungated one runs while the gated one waits.
+
+/** Records every request; calls the given tools in parallel, then replies. */
+class ParallelCallsLlm extends BaseLlm {
+  readonly requests: Content[][] = [];
+
+  constructor(private readonly functionCalls: FunctionCall[]) {
+    super({model: 'parallel-calls'});
+  }
+
+  async *generateContentAsync(
+    request: LlmRequest,
+  ): AsyncGenerator<LlmResponse, void, void> {
+    this.requests.push(structuredClone(request.contents));
+    yield this.requests.length === 1
+      ? {
+          content: {
+            role: 'model',
+            parts: this.functionCalls.map((functionCall) => ({functionCall})),
+          },
+        }
+      : {content: {role: 'model', parts: [{text: 'done'}]}};
+  }
+
+  async connect(): Promise<BaseLlmConnection> {
+    throw new Error('Live connections are not used in this test.');
+  }
+}
+
+/** The function responses of each content that has some, by tool name. */
+function functionResponsesSent(contents: Content[]) {
+  return contents
+    .map((content) =>
+      Object.fromEntries(
+        (content.parts ?? [])
+          .filter((part) => part.functionResponse)
+          .map((part) => [
+            part.functionResponse!.name,
+            part.functionResponse!.response,
+          ]),
+      ),
+    )
+    .filter((responses) => Object.keys(responses).length > 0);
+}
+
+describe('confirmation for one of several parallel calls', () => {
+  const deleteCall: FunctionCall = {
+    id: 'call-delete',
+    name: 'delete_file',
+    args: {path: '/tmp/x'},
+  };
+  const listCall: FunctionCall = {
+    id: 'call-list',
+    name: 'list_files',
+    args: {},
+  };
+
+  function setUp(functionCalls: FunctionCall[]) {
+    const deleted: string[] = [];
+    let listRuns = 0;
+    const deleteFile = new FunctionTool({
+      name: 'delete_file',
+      description: 'Deletes a file.',
+      parameters: z.object({path: z.string()}),
+      requireConfirmation: true,
+      execute: ({path}) => {
+        deleted.push(path);
+        return {deleted: path};
+      },
+    });
+    const listFiles = new FunctionTool({
+      name: 'list_files',
+      description: 'Lists files.',
+      execute: (_args, toolContext) => {
+        listRuns++;
+        toolContext!.state.set('listed', true);
+        return {files: ['x']};
+      },
+    });
+    const llm = new ParallelCallsLlm(functionCalls);
+    const runner = new InMemoryRunner({
+      agent: new LlmAgent({
+        name: 'agent',
+        model: llm,
+        tools: [deleteFile, listFiles],
+      }),
+      appName: 'app',
+    });
+    const sessionPromise = runner.sessionService.createSession({
+      appName: 'app',
+      userId: 'u1',
+    });
+    async function send(newMessage: Content): Promise<Event[]> {
+      const session = await sessionPromise;
+      const events: Event[] = [];
+      for await (const event of runner.runAsync({
+        userId: 'u1',
+        sessionId: session.id,
+        newMessage,
+      })) {
+        events.push(event);
+      }
+      return events;
+    }
+    async function storedState() {
+      const session = await sessionPromise;
+      return (await runner.sessionService.getSession({
+        appName: 'app',
+        userId: 'u1',
+        sessionId: session.id,
+      }))!.state;
+    }
+    return {
+      llm,
+      send,
+      storedState,
+      deleted,
+      listRuns: () => listRuns,
+    };
+  }
+
+  function confirmation(confirmationCallId: string, confirmed: boolean) {
+    return {
+      role: 'user',
+      parts: [
+        {
+          functionResponse: {
+            id: confirmationCallId,
+            name: REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+            response: {confirmed},
+          },
+        },
+      ],
+    };
+  }
+
+  it.each([
+    {confirmed: true, deleteResponse: {deleted: '/tmp/x'}},
+    {confirmed: false, deleteResponse: {error: 'This tool call is rejected.'}},
+  ])(
+    'keeps the response of the call that ran (confirmed: $confirmed)',
+    async ({confirmed, deleteResponse}) => {
+      const {llm, send, storedState, deleted, listRuns} = setUp([
+        deleteCall,
+        listCall,
+      ]);
+
+      const paused = await send({role: 'user', parts: [{text: 'clean up'}]});
+
+      const gate = paused.at(-1)!;
+      const [confirmationCall] = getFunctionCalls(gate);
+      expect(confirmationCall.name).toBe(
+        REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+      );
+      expect(isFinalResponse(gate)).toBe(true);
+      // The ungated call ran once, and its response is stored before the
+      // pause, next to the gated call's placeholder.
+      const responses = paused.at(-2)!;
+      expect(getFunctionResponses(responses).map((r) => r.id)).toEqual([
+        'call-delete',
+        'call-list',
+      ]);
+      expect(isFinalResponse(responses)).toBe(false);
+      expect(listRuns()).toBe(1);
+      expect(deleted).toEqual([]);
+      expect((await storedState())['listed']).toBe(true);
+      // The state change and the confirmation request are each stored once.
+      expect(responses.actions.stateDelta).toEqual({listed: true});
+      expect(gate.actions.stateDelta).toEqual({});
+      expect(
+        paused
+          .flatMap((event) => toStructuredEvents(event))
+          .filter((event) => event.type === EventType.TOOL_CONFIRMATION),
+      ).toHaveLength(1);
+
+      await send(confirmation(confirmationCall.id!, confirmed));
+
+      expect(listRuns()).toBe(1);
+      expect(deleted).toEqual(confirmed ? ['/tmp/x'] : []);
+      const expected = [
+        {delete_file: deleteResponse, list_files: {files: ['x']}},
+      ];
+      // The resumed request answers both calls of the turn, and so does every
+      // later one.
+      expect(functionResponsesSent(llm.requests[1])).toEqual(expected);
+      await send({role: 'user', parts: [{text: 'thanks'}]});
+      expect(functionResponsesSent(llm.requests[2])).toEqual(expected);
+    },
+  );
+
+  it('pauses on the gate alone when every call waits for confirmation', async () => {
+    const {llm, send, deleted} = setUp([deleteCall]);
+
+    const paused = await send({role: 'user', parts: [{text: 'clean up'}]});
+
+    expect(paused).toHaveLength(2);
+    expect(getFunctionCalls(paused[0])).toEqual([deleteCall]);
+    const [confirmationCall] = getFunctionCalls(paused[1]);
+    expect(confirmationCall.name).toBe(REQUEST_CONFIRMATION_FUNCTION_CALL_NAME);
+    expect(paused[1].actions.requestedToolConfirmations).toHaveProperty(
+      'call-delete',
+    );
+
+    await send(confirmation(confirmationCall.id!, true));
+
+    expect(deleted).toEqual(['/tmp/x']);
+    expect(functionResponsesSent(llm.requests[1])).toEqual([
+      {delete_file: {deleted: '/tmp/x'}},
+    ]);
   });
 });
