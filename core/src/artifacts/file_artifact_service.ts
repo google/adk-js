@@ -9,6 +9,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import {fileURLToPath, pathToFileURL} from 'url';
 
+import {InputValidationError} from '../errors/input_validation_error.js';
 import {logger} from '../utils/logger.js';
 
 import {
@@ -29,7 +30,6 @@ const USER_NAMESPACE_PREFIX = 'user:';
 interface FileArtifactVersion extends ArtifactVersion {
   fileName?: string;
   fileUri?: string;
-  contentFileName?: string;
 }
 
 /**
@@ -47,7 +47,7 @@ interface FileArtifactVersion extends ArtifactVersion {
  *         │           └── {artifactPath}/  // derived from filename
  *         │               └── versions/
  *         │                   └── {version}/
- *         │                       ├── {payloadFilename}
+ *         │                       ├── {originalFilename}
  *         │                       └── metadata.json
  *         └── artifacts/
  *             └── {artifactPath}/...
@@ -88,6 +88,16 @@ export class FileArtifactService implements BaseArtifactService {
       sessionId,
       filename,
     );
+    if (
+      path
+        .basename(artifactDir)
+        .replace(/[ .]+$/, '')
+        .toLowerCase() === 'metadata.json'
+    ) {
+      throw new InputValidationError(
+        'Artifact filename is reserved for version metadata.',
+      );
+    }
     await fs.mkdir(artifactDir, {recursive: true});
 
     const versions = await getArtifactVersionsFromDir(artifactDir);
@@ -98,14 +108,7 @@ export class FileArtifactService implements BaseArtifactService {
     const versionDir = path.join(versionsDir, nextVersion.toString());
     await fs.mkdir(versionDir, {recursive: true});
 
-    const originalFilename = path.basename(artifactDir);
-    // Keep payloads separate from the version metadata on case-insensitive
-    // filesystems as well. Older records keep using their original filename.
-    const storedFilename =
-      (artifact.inlineData || artifact.text !== undefined) &&
-      originalFilename.toLowerCase() === 'metadata.json'
-        ? 'content'
-        : originalFilename;
+    const storedFilename = path.basename(artifactDir); // using the directory name which is the sanitized filename
     const contentPath = path.join(versionDir, storedFilename);
 
     let mimeType: string | undefined;
@@ -131,7 +134,6 @@ export class FileArtifactService implements BaseArtifactService {
       sessionId,
       filename,
       nextVersion,
-      storedFilename,
     );
     const metadata: FileArtifactVersion = {
       fileName: filename,
@@ -140,9 +142,6 @@ export class FileArtifactService implements BaseArtifactService {
       version: nextVersion,
       canonicalUri,
       customMetadata,
-      ...(storedFilename !== originalFilename
-        ? {contentFileName: storedFilename}
-        : {}),
     };
 
     await writeMetadata(path.join(versionDir, 'metadata.json'), metadata);
@@ -205,8 +204,7 @@ export class FileArtifactService implements BaseArtifactService {
         };
       }
 
-      const storedFilename =
-        metadata.contentFileName ?? path.basename(artifactDir);
+      const storedFilename = path.basename(artifactDir);
       let contentPath = path.join(versionDir, storedFilename);
 
       if (metadata.canonicalUri) {
@@ -566,7 +564,6 @@ async function getArtifactVersionsFromDir(
  * @param sessionId The session ID.
  * @param filename The filename.
  * @param version The version.
- * @param storedFilename The filename of the stored payload.
  * @returns A promise that resolves to the canonical URI.
  */
 async function getCanonicalUri(
@@ -575,7 +572,6 @@ async function getCanonicalUri(
   sessionId: string,
   filename: string,
   version: number,
-  storedFilename: string,
 ): Promise<string> {
   const artifactDir = await getArtifactDir(
     rootDir,
@@ -583,6 +579,7 @@ async function getCanonicalUri(
     sessionId,
     filename,
   );
+  const storedFilename = path.basename(artifactDir);
   const versionsDir = getVersionsDir(artifactDir);
   const payloadPath = path.join(
     versionsDir,
