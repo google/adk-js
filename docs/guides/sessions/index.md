@@ -1,12 +1,13 @@
 # Sessions
 
-A session is one conversation between a user and an application: the events it produced and the state it carries. This guide covers the `Session` shape, the `State` view of it, the `BaseSessionService` contract, and the three services that store sessions: `InMemorySessionService`, `DatabaseSessionService` and `VertexAiSessionService`.
+A session is one conversation between a user and an application: the events it produced and the state it carries. This guide covers the `Session` shape, the `State` view of it, the `BaseSessionService` contract, and the four services that store sessions: `InMemorySessionService`, `DatabaseSessionService`, `VertexAiSessionService` and `RestSessionService`.
 
-All three services implement the same contract, so the choice between them is a choice of storage:
+All four services implement the same contract, so the choice between them is a choice of storage:
 
 - `InMemorySessionService` - Sessions live in the process and are lost when it exits. It needs no setup, which suits tests, samples and local development.
 - `DatabaseSessionService` - Sessions live in a SQL database through MikroORM. It suits a deployment that already runs PostgreSQL, MySQL, MariaDB, SQL Server or SQLite.
 - `VertexAiSessionService` - Sessions live in Vertex AI Agent Engine Sessions. It suits an agent deployed to Agent Engine, where Google Cloud manages the storage.
+- `RestSessionService` - Sessions live behind an HTTP service you run, which implements the [REST session contract](./rest_session_service_contract.md). It suits a deployment where the agent process should not hold database credentials, or where an existing service already owns session storage.
 
 ## Introduction
 
@@ -163,6 +164,31 @@ The Agent Engine client cannot send an API key, so the constructor throws when i
 
 `createSession` on this service takes a `VertexAiCreateSessionRequest`, which adds `ttl`, a lifetime such as `'7200s'`, and `expireTime`, an RFC 3339 UTC time. The two are mutually exclusive, and the service throws before the request when both are set.
 
+### RestSessionService
+
+`RestSessionService` takes a `RestSessionServiceOptions` object. It calls a backend that implements the [REST session contract](./rest_session_service_contract.md), using only the global `fetch`, so it works in Node and in the browser.
+
+| Option             | Type                                                 | Default        | Description                                                                              |
+| :----------------- | :--------------------------------------------------- | :------------- | :--------------------------------------------------------------------------------------- |
+| `baseUrl`          | `string`                                             | none           | The root of the backend, such as `https://sessions.example.com/v1`. Required.            |
+| `headers`          | `Record<string, string>` or a function returning one | none           | Sent with every request. A function, which can be async, is called before every attempt. |
+| `fetch`            | `typeof fetch`                                       | global `fetch` | The `fetch` implementation, for example a mock in tests.                                 |
+| `timeoutMs`        | `number`                                             | `30000`        | The timeout of one attempt.                                                              |
+| `maxRetries`       | `number`                                             | `3`            | Retries after a network error, a timeout, or a `408`, `429` or `5xx` response.           |
+| `retryBaseDelayMs` | `number`                                             | `250`          | The delay before the first retry. It doubles on every further retry, with jitter.        |
+| `retryMaxDelayMs`  | `number`                                             | `5000`         | The longest single delay, including one asked for by a `Retry-After` header.             |
+
+```ts
+import {RestSessionService} from '@google/adk';
+
+const sessionService = new RestSessionService({
+  baseUrl: 'https://sessions.example.com/v1',
+  headers: async () => ({Authorization: `Bearer ${await getToken()}`}),
+});
+```
+
+Writes for one session are sent one at a time, in the order they were made, so state deltas reach the backend in order. Appending an event is idempotent by `event.id`, and `createSession` generates the session id on the client when you omit it, so every call is safe to retry. `createSession` throws `AlreadyExistsError` for an id that already exists. `appendEvent` throws `SessionNotFoundError` when the backend no longer has the session, and `StaleSessionError` when another writer has appended since your copy was read. In both cases nothing is applied to your session object. Any other failure throws `RestSessionServiceError`, which carries the HTTP `status` when there was a response.
+
 ### getSessionServiceFromUri
 
 `getSessionServiceFromUri(uri)` builds a service from one string, which suits a command-line flag or an environment variable.
@@ -189,6 +215,8 @@ Write a `user:` key to keep a preference across every session of one user, and a
 
 Callers should re-read the session with `getSession` and retry. For backward compatibility, configuring `staleSession: 'reload'` preserves the deprecated reload behavior.
 
+`RestSessionService` follows the same pattern. It sends the `lastUpdateTime` of your copy with every append, and a backend that answers `409` makes it throw a `StaleSessionError`.
+
 ## Limitations
 
 These limits apply today.
@@ -198,6 +226,7 @@ These limits apply today.
 - `DatabaseSessionService` reads `sqlite:///path` as an absolute path. A relative file needs the two-slash form, `sqlite://path`.
 - `InMemorySessionService` keeps everything in the process, so sessions do not survive a restart and are not shared between processes.
 - `VertexAiSessionService` is experimental and logs a warning when constructed. Its behavior can change in a later release, and it does not support Express Mode.
+- `RestSessionService` is experimental and logs a warning when constructed. `getSessionServiceFromUri` does not build it, because its headers do not fit in a URI.
 
 ## Related samples
 
