@@ -29,6 +29,7 @@ import {
 import {createSession, Session} from './session.js';
 import {StaleSessionError} from './stale_session_error.js';
 import {State} from './state.js';
+import {shouldApplyDeltaWrite} from './state_write_order.js';
 
 type SchemaModule = typeof import('./db/schema.js');
 type OperationsModule = typeof import('./db/operations.js');
@@ -572,21 +573,36 @@ export class DatabaseSessionService extends BaseSessionService {
       // three models edited above are persisted explicitly.
       txEm.persist([appStateModel, userStateModel, storageSession]);
 
-      const newMergedState = mergeStates(
-        appStateModel.state,
-        userStateModel.state,
-        storageSession.state,
-      );
-      // temp: keys are never stored, but stay in the in-memory session for the
-      // rest of the invocation: carry over earlier ones, then this event's
-      for (const source of [session.state, stateDelta]) {
-        for (const [key, value] of Object.entries(source)) {
-          if (key.startsWith(State.TEMP_PREFIX)) {
-            newMergedState[key] = value;
+      // Explicit stale-session reloads still refresh stored keys. Ordinary
+      // commits only apply their own delta, so unrelated live writes survive.
+      if (sessionWasStale) {
+        const storedState = mergeStates(
+          appStateModel.state,
+          userStateModel.state,
+          storageSession.state,
+        );
+        for (const [key, value] of Object.entries(storedState)) {
+          if (!Object.hasOwn(stateDelta, key)) {
+            Object.defineProperty(session.state, key, {
+              value,
+              writable: true,
+              enumerable: true,
+              configurable: true,
+            });
           }
         }
       }
-      session.state = newMergedState;
+      // Use the original delta captured before trimming temp: keys. State
+      // views retain this object, and older commits must not undo newer writes.
+      for (const [key, value] of Object.entries(stateDelta)) {
+        if (!shouldApplyDeltaWrite(session.state, stateDelta, key)) continue;
+        Object.defineProperty(session.state, key, {
+          value,
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
+      }
 
       upsertSessionEvent(session, event);
       session.lastUpdateTime = storageSession.updateTime.getTime();
