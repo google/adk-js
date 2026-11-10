@@ -8,6 +8,7 @@ import {
   AsyncQueue,
   BaseLlm,
   BaseLlmConnection,
+  BasePlugin,
   BaseTool,
   Event,
   InMemoryArtifactService,
@@ -21,7 +22,7 @@ import {
   SequentialAgent,
 } from '@google/adk';
 import {Blob, Content, FunctionDeclaration, Modality} from '@google/genai';
-import {beforeEach, describe, expect, it} from 'vitest';
+import {beforeEach, describe, expect, it, vi} from 'vitest';
 
 const TEST_APP_ID = 'test_app_id';
 const TEST_USER_ID = 'test_user_id';
@@ -746,7 +747,13 @@ describe('Runner.runLive', () => {
       {turnComplete: true},
     ]);
     const agent = new LlmAgent({name: 'agent', model: llm});
+    class RecordingPlugin extends BasePlugin {}
+    const plugin = new RecordingPlugin('lifecycle');
+    const afterRun = vi.spyOn(plugin, 'afterRunCallback');
+    const onAgentError = vi.spyOn(plugin, 'onAgentErrorCallback');
+    const onRunError = vi.spyOn(plugin, 'onRunErrorCallback');
     const runner = new Runner({
+      plugins: [plugin],
       appName: TEST_APP_ID,
       agent,
       sessionService,
@@ -774,6 +781,9 @@ describe('Runner.runLive', () => {
       events.some((e) => e.content?.parts?.[0]?.text === 'second event'),
     ).toBe(false);
     expect(llm.connection!.closed).toBe(true);
+    expect(afterRun).toHaveBeenCalledTimes(1);
+    expect(onAgentError).not.toHaveBeenCalled();
+    expect(onRunError).not.toHaveBeenCalled();
   });
 
   it('does not throw when aborted while an outbound send rejects on closed connection', async () => {
@@ -1064,7 +1074,13 @@ describe('Runner.runLive', () => {
     llm.sendContentError = new Error('Simulated outbound connection error');
 
     const agent = new LlmAgent({name: 'agent', model: llm});
+    class RecordingPlugin extends BasePlugin {}
+    const plugin = new RecordingPlugin('lifecycle');
+    const afterRun = vi.spyOn(plugin, 'afterRunCallback');
+    const onAgentError = vi.spyOn(plugin, 'onAgentErrorCallback');
+    const onRunError = vi.spyOn(plugin, 'onRunErrorCallback');
     const runner = new Runner({
+      plugins: [plugin],
       appName: TEST_APP_ID,
       agent,
       sessionService,
@@ -1086,6 +1102,11 @@ describe('Runner.runLive', () => {
     }).rejects.toThrow('Simulated outbound connection error');
 
     expect(llm.connection!.closed).toBe(true);
+    expect(afterRun).not.toHaveBeenCalled();
+    expect(onAgentError).toHaveBeenCalledTimes(1);
+    expect(onRunError).toHaveBeenCalledTimes(1);
+    expect(onAgentError.mock.calls[0][0].error).toBe(llm.sendContentError);
+    expect(onRunError.mock.calls[0][0].error).toBe(llm.sendContentError);
   });
 
   it('propagates the send-loop error when the receive loop is empty', async () => {
