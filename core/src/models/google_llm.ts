@@ -11,8 +11,10 @@ import {
   GoogleGenAI,
   HttpOptions,
   LiveServerMessage,
+  Tool,
 } from '@google/genai';
 
+import {adaptComputerUseTool} from '../tools/computer_use/computer_use_toolset.js';
 import {isBrowser, isEnterpriseModeEnabled} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
@@ -165,6 +167,7 @@ export class Gemini extends BaseLlm {
     stream = false,
     abortSignal?: AbortSignal,
   ): AsyncGenerator<LlmResponse, void> {
+    await adaptComputerUseRequest(llmRequest);
     if (this.useInteractionsApi) {
       yield* generateContentViaInteractions(this.apiClient, llmRequest, stream);
       return;
@@ -368,6 +371,41 @@ export class Gemini extends BaseLlm {
         }
       }
     }
+  }
+}
+
+/**
+ * Adapts a request that carries a computer use configuration to the computer
+ * use model.
+ *
+ * The model does not accept a system instruction alongside computer use, so it
+ * is dropped. The model can call `wait_5_seconds`, so a `wait_5_seconds` tool
+ * that waits 5 seconds is registered next to `wait`, which Gemini 3.x calls.
+ */
+async function adaptComputerUseRequest(llmRequest: LlmRequest): Promise<void> {
+  if (
+    !llmRequest.config?.tools?.some(
+      (tool) => 'computerUse' in tool && (tool as Tool).computerUse,
+    )
+  ) {
+    return;
+  }
+  llmRequest.config.systemInstruction = undefined;
+
+  const waitTool = Object.hasOwn(llmRequest.toolsDict, 'wait')
+    ? llmRequest.toolsDict['wait']
+    : undefined;
+  await adaptComputerUseTool({
+    methodName: 'wait',
+    adapter: (waitFunc) => ({
+      name: 'wait_5_seconds',
+      description: 'Waits for 5 seconds.',
+      execute: (_args, toolContext) => waitFunc({seconds: 5}, toolContext),
+    }),
+    llmRequest,
+  });
+  if (waitTool && Object.hasOwn(llmRequest.toolsDict, 'wait_5_seconds')) {
+    llmRequest.toolsDict['wait'] = waitTool;
   }
 }
 

@@ -1,23 +1,22 @@
 # Telemetry
 
-ADK opens an OpenTelemetry span for each step of a run and writes what the
-framework knows about that step onto it as attributes. `maybeSetOtelProviders`
-is the call that sends those spans, and the metrics and logs beside them, to an
-exporter you choose.
+ADK opens an OpenTelemetry span for each step of a run, writes what the
+framework knows about that step onto it as attributes, and emits one log record
+for each model call. `maybeSetOtelProviders` is the call that sends those
+spans, log records and metrics to an exporter you choose.
 
 ## Introduction
 
-A run reaches a trace backend as a tree of spans: the turn, each agent in it,
-each model call, and each tool call. The OpenTelemetry SDK records timing and
-parentage on its own. It cannot know the framework context around each step, so
-ADK adds it: which invocation and session the span belongs to, which agent and
-tool, and the request and response payloads that crossed the model boundary.
+A run reaches a trace backend as a tree of spans: the turn, each agent and
+workflow in it, each model call, and each tool call. The OpenTelemetry SDK
+records timing and parentage on its own. It cannot know the framework context
+around each step, so ADK adds it: which session and invocation the span belongs
+to, which agent, model and tool, and how many tokens the model used.
 
-Two readers depend on those attributes. A trace backend selects and groups spans
-by them, which is why they are fixed keys with fixed string values. The `adk web`
-dev server reads the same attributes to render its Trace view, and its
-`/debug/trace/:eventId` endpoint returns them keyed by
-`gcp.vertex.agent.event_id`.
+The span and attribute names follow the OpenTelemetry semantic conventions for
+Generative AI (version 1.44). A backend that understands those conventions can
+show an ADK trace without configuration, and the `adk web` dev server reads the
+same attributes to render its Trace view.
 
 Everything a caller imports is in `@google/adk`: `maybeSetOtelProviders`, the
 `OTelHooks` and `OtelExportersConfig` types, `getGcpExporters` and
@@ -26,12 +25,17 @@ framework, and [Limitations](#limitations) explains why they are not exported.
 
 ## Get started
 
-Install a span processor once, before the agent runs, and every span ADK emits
-afterwards goes through it. This example prints each span to the console, which
-shows the full attribute set without a backend.
+Install a span processor and a log record processor once, before the agent
+runs, and everything ADK emits afterwards goes through them. This example
+prints each span and log record to the console, which shows the full attribute
+set without a backend.
 
 ```ts
 import {FunctionTool, LlmAgent, maybeSetOtelProviders} from '@google/adk';
+import {
+  ConsoleLogRecordExporter,
+  SimpleLogRecordProcessor,
+} from '@opentelemetry/sdk-logs';
 import {
   ConsoleSpanExporter,
   SimpleSpanProcessor,
@@ -39,7 +43,12 @@ import {
 import {z} from 'zod';
 
 maybeSetOtelProviders([
-  {spanProcessors: [new SimpleSpanProcessor(new ConsoleSpanExporter())]},
+  {
+    spanProcessors: [new SimpleSpanProcessor(new ConsoleSpanExporter())],
+    logRecordProcessors: [
+      new SimpleLogRecordProcessor({exporter: new ConsoleLogRecordExporter()}),
+    ],
+  },
 ]);
 
 const getOrderStatus = new FunctionTool({
@@ -59,96 +68,208 @@ export const rootAgent = new LlmAgent({
 
 `SimpleSpanProcessor` exports each span as it ends, which suits a console or a
 test. `BatchSpanProcessor` buffers spans and sends them together, which is what
-a network exporter wants.
+a network exporter wants. The same holds for the log record processors.
 
 ## How it works
 
 ADK names each span after the step it covers. A prompt that triggers one tool
-call produces `invocation`, `invoke_agent <name>`, `call_llm`,
-`execute_tool <name>` and a second `call_llm`: the first model call returns the
-tool call, and the second turns the tool response into the answer.
+call produces this tree:
 
-| Span                     | Opened for                                                         |
-| :----------------------- | :----------------------------------------------------------------- |
-| `invocation`             | One turn, opened by the `Runner`.                                  |
-| `invoke_agent <name>`    | One agent's part of the turn.                                      |
-| `call_llm`               | One request to the model.                                          |
-| `execute_tool <name>`    | One tool call and its response.                                    |
-| `execute_tool (merged)`  | Parallel tool calls whose responses are merged into one event.     |
-| `send_data`              | Replaying session history to a live model connection in `runLive`. |
-| `invoke_workflow <name>` | One `Workflow` run.                                                |
-| `execute_node <name>`    | One node in a workflow.                                            |
+```text
+invoke_workflow order_assistant
+└── invoke_agent order_assistant
+    ├── generate_content gemini-flash-latest   (one log record)
+    ├── execute_tool get_order_status
+    └── generate_content gemini-flash-latest   (one log record)
+```
 
-### Identifying attributes
+The first model call returns the tool call, and the second turns the tool
+response into the answer. The tool span is a sibling of the model calls, not a
+child: a `generate_content` span ends at the response that reports why the model
+stopped, before the agent acts on that response.
 
-Three attributes identify a span rather than describe it, and they are what a
-backend filters and groups on.
+| Span                                 | Opened for                                                                                                                                                         |
+| :----------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invoke_workflow <name>`             | One turn, opened by the `Runner` and named after its root agent or workflow. Also each nested `Workflow` run, and the turn of an agent called through `AgentTool`. |
+| `invoke_agent <name>`                | One agent's part of the turn.                                                                                                                                      |
+| `generate_content <model>`           | One call to the model. None is opened when a `beforeModelCallback` answers instead.                                                                                |
+| `execute_tool <name>`                | One tool call and its response.                                                                                                                                    |
+| `execute_tool <name> <skill> [path]` | A skill tool call, named after the skill and the resource or script it touched.                                                                                    |
+| `execute_tool (merged)`              | Parallel tool calls whose responses are merged into one event.                                                                                                     |
+| `invoke_node <name>`                 | One plain node in a workflow. An agent or workflow node is traced by its own span instead.                                                                         |
+| `compact_events <trigger>`           | One context compaction.                                                                                                                                            |
+| `send_data`                          | Replaying session history to a live model connection in `runLive`.                                                                                                 |
 
-| Attribute                        | Value                | Set on                                                     |
-| :------------------------------- | :------------------- | :--------------------------------------------------------- |
-| `gen_ai.system`                  | `'gcp.vertex.agent'` | `call_llm`, `execute_tool <name>`, `execute_tool (merged)` |
-| `gcp.vertex.agent.invocation_id` | The invocation's id  | `call_llm`, both tool spans, `send_data`                   |
-| `gcp.vertex.agent.event_id`      | An event's id        | `call_llm`, both tool spans, `send_data`                   |
+A workflow passed to the `Runner` as its root runs inside the turn's
+`invoke_workflow` span rather than opening a second one. Any other workflow
+span below it carries `gen_ai.workflow.nested = true`.
 
-`gen_ai.system` is the OpenTelemetry semantic-convention key that marks a span
-as belonging to a Generative AI system. Because ADK writes the same value on the
-model spans and the tool spans, one filter on that key selects every model call
-and every tool call of a run. `gcp.vertex.agent.invocation_id` carries one value
-across a turn, so grouping by it collects that turn's model and tool calls
-together.
+### Span attributes
 
-`gcp.vertex.agent.event_id` is the id of the event the step produced: the model
-response event on `call_llm`, the function response event on
-`execute_tool <name>`, and the merged response event on `execute_tool (merged)`.
-On `send_data` no event is produced, so the value is a freshly generated id.
-
-### Descriptive attributes
-
-The rest of the set describes the step.
-
-| Span                    | Attributes                                                                                                                                                                                                                                                                                                        |
-| :---------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `invoke_agent <name>`   | `gen_ai.operation.name` `'invoke_agent'`, `gen_ai.agent.name`, `gen_ai.agent.description`, `gen_ai.conversation.id` set to the session id.                                                                                                                                                                        |
-| `call_llm`              | `gen_ai.request.model`, `gen_ai.agent.name`, `gcp.vertex.agent.session_id`, `gcp.vertex.agent.llm_request`, `gcp.vertex.agent.llm_response`, and, when present, `gen_ai.request.top_p`, `gen_ai.request.max_tokens`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.response.finish_reasons`. |
-| `execute_tool <name>`   | `gen_ai.operation.name` `'execute_tool'`, `gen_ai.tool.name`, `gen_ai.tool.description`, `gen_ai.tool.type`, `gen_ai.tool.call.id`, `gcp.vertex.agent.tool_call_args`, `gcp.vertex.agent.tool_response`, and `gcp.vertex.agent.llm_request` and `gcp.vertex.agent.llm_response` both set to `'{}'`.               |
-| `execute_tool (merged)` | The same keys, with `gen_ai.tool.name` and `gen_ai.tool.description` set to `'(merged tools)'`, `gen_ai.tool.call.id` set to the merged event id, `tool_call_args` set to `'N/A'`, and `tool_response` holding the whole merged event.                                                                            |
-| `send_data`             | `gcp.vertex.agent.data`, the replayed `Content[]` as JSON.                                                                                                                                                                                                                                                        |
-| `invoke_workflow`       | `gen_ai.operation.name` `'invoke_workflow'`, `gen_ai.conversation.id`, `adk.workflow.name`, `adk.node.path`.                                                                                                                                                                                                      |
-| `execute_node`          | `gen_ai.operation.name` `'execute_node'`, `adk.node.path`, `adk.node.run_id`, `adk.node.attempt`, `adk.node.status`, `adk.node.interrupt_count`.                                                                                                                                                                  |
-
-The empty `llm_request` and `llm_response` on tool spans exist because the dev
-server's Trace view expects both keys on every span it renders.
-
-Two spans carry only their name. `invoke_agent <name>` gets its attributes on
-the `runAsync` path and none under `runLive`, and a function call naming a tool
-the agent does not have still opens `execute_tool <name>` so the failure shows
-in the waterfall, but writes no attributes on it.
+| Span                       | Attributes                                                                                                                                                                                                                                                                                                                                                                                                 |
+| :------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invoke_workflow <name>`   | `gen_ai.operation.name`, `gen_ai.conversation.id` (the session id), `gen_ai.workflow.name`, and `gen_ai.workflow.nested` on a nested workflow.                                                                                                                                                                                                                                                             |
+| `invoke_agent <name>`      | `gen_ai.operation.name`, `gen_ai.agent.name`, `gen_ai.agent.description`, `gen_ai.conversation.id`.                                                                                                                                                                                                                                                                                                        |
+| `generate_content <model>` | `gen_ai.operation.name`, `gen_ai.request.model`, `gen_ai.agent.name`, `gen_ai.conversation.id`, `gen_ai.provider.name`, `gcp.vertex.agent.event_id`, `gcp.vertex.agent.invocation_id`, `gen_ai.tool.definitions`, and when known `gen_ai.request.top_p`, `gen_ai.request.max_tokens`, `gen_ai.response.finish_reasons` and the `gen_ai.usage.*` token counts. Message content is described below.          |
+| `execute_tool <name>`      | `gen_ai.operation.name`, `gen_ai.tool.name`, `gen_ai.tool.description`, `gen_ai.tool.type`, `gen_ai.agent.name`, `gen_ai.tool.call.id`, `gcp.vertex.agent.event_id`, and `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result` when content capture includes spans. A skill tool adds `gen_ai.skill.name`, `gen_ai.skill.description`, `gen_ai.skill.resource.name` and `adk.skill.additional_tools`. |
+| `execute_tool (merged)`    | `gen_ai.operation.name`, `gen_ai.tool.name` and `gen_ai.tool.description` set to `'(merged tools)'`, and `gen_ai.tool.call.id` and `gcp.vertex.agent.event_id` set to the merged event id.                                                                                                                                                                                                                 |
+| `invoke_node <name>`       | `gen_ai.operation.name`, `gen_ai.conversation.id`, and `gcp.vertex.agent.associated_event_ids`, the ids of the events the node emitted.                                                                                                                                                                                                                                                                    |
+| `compact_events <trigger>` | `gen_ai.operation.name`, `gen_ai.conversation.id`, `gen_ai.compaction.trigger`, and for a compaction that added a summary `gen_ai.compaction.result_event_id`, `gen_ai.compaction.event_count`, `gen_ai.compaction.start_timestamp` and `gen_ai.compaction.end_timestamp`.                                                                                                                                 |
+| `send_data`                | `gcp.vertex.agent.invocation_id`, `gcp.vertex.agent.event_id`, and `gcp.vertex.agent.data`, the replayed `Content[]` as JSON.                                                                                                                                                                                                                                                                              |
 
 A few values follow rules worth knowing when you query them:
 
-- `gen_ai.tool.type` is the tool's class name, such as `FunctionTool`.
-- `gen_ai.tool.call.id` is `'<not specified>'` when the function response
-  carries no id.
-- `tool_response` is always a JSON object. A tool result that is not an object,
-  such as a bare string, is wrapped as `{"result": ...}`.
-- `gen_ai.usage.input_tokens` is written whenever the response has usage
-  metadata, as `0` if the prompt token count is missing, while
-  `gen_ai.usage.output_tokens` is written only for a non-zero count.
+- `gen_ai.provider.name` is `gcp.gemini`, or `gcp.vertex_ai` when
+  `GOOGLE_GENAI_USE_ENTERPRISE` (or the older `GOOGLE_GENAI_USE_VERTEXAI`) is
+  set. A model id of the form `<provider>/<model>` reports its provider.
+- `gen_ai.usage.input_tokens` adds the prompt tokens and the tokens of
+  server-side tool results. `gen_ai.usage.output_tokens` adds the candidate and
+  reasoning tokens. A count the model did not report is left out.
 - `gen_ai.response.finish_reasons` is a one-element array holding the finish
   reason in lower case, such as `['stop']`.
+- `gen_ai.tool.type` is the tool's class name, such as `FunctionTool`.
+- A failure sets the span status to ERROR. A tool span also gets `error.type`,
+  for an error the tool throws and for one it reports in its response through
+  an `errorType` or `error_code` field. The status message is the error type,
+  never the error text.
 
-### What the request payload leaves out
+### The model call log record
 
-`gcp.vertex.agent.llm_request` is a JSON copy of the request with three things
-removed, so that it stays small and holds no credentials:
+Each model call emits one log record with the event name
+`gen_ai.client.inference.operation.details`, while its `generate_content` span
+is still open, so the record carries that span's trace and span ids. Its body is
+empty; the details are attributes:
 
-- `config.responseSchema`, which can be large and is already known to the
-  application.
-- Every part carrying `inlineData`, so images, audio and other bytes never reach
-  the trace.
-- `config.httpOptions.headers` and `config.httpOptions.extraBody`, because the
-  first commonly carries an `Authorization` token and the second is a free-form
-  request body.
+- the span's `gen_ai.agent.name`, `gen_ai.conversation.id`,
+  `gen_ai.provider.name`, `gcp.vertex.agent.event_id` and
+  `gcp.vertex.agent.invocation_id`;
+- `gen_ai.response.finish_reasons` and the `gen_ai.usage.*` token counts;
+- `gen_ai.tool.definitions`;
+- when content capture includes events, `gen_ai.input.messages`,
+  `gen_ai.system_instructions`, `gen_ai.output.messages` and `user.id`.
+
+Exactly one record is emitted per call, also when the call fails or the caller
+stops reading the response stream early.
+
+### Capturing message content
+
+`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` decides where message
+content goes. The value is read case-insensitively when each step starts.
+
+| Value                         | Content on the log record | Content on spans |
+| :---------------------------- | :------------------------ | :--------------- |
+| unset, `NO_CONTENT`, or other | no                        | no               |
+| `EVENT_ONLY`, `true`, `1`     | yes                       | no               |
+| `SPAN_ONLY`                   | no                        | yes              |
+| `SPAN_AND_EVENT`              | yes                       | yes              |
+
+Message content is the user's prompt, the system instruction, the model's
+answer, the tool parameter schemas inside `gen_ai.tool.definitions`, and the
+arguments and result of each tool call. Without content capture
+`gen_ai.tool.definitions` still lists each tool's name and description. The
+`user.id` of the session is personal data too, so it goes only on the log record
+and only when content capture includes events; it is never set on a span.
+
+ADK keeps a few things out even when content is captured: the bytes of inline
+data parts (only the MIME type is recorded), and the secret fields of anything
+shaped like an auth credential in a tool result.
+
+A trace or log backend usually sits behind a different trust boundary from the
+application, with different retention and a wider audience, so exporting the
+content there is a decision to make rather than a default to accept.
+
+### Experimental telemetry
+
+Some attributes are experimental and may change. `ADK_EXPERIMENTAL_TELEMETRY`
+set to `true` or `1` turns all of them on, and
+`ADK_EXPERIMENTAL_TELEMETRY_FEATURES` turns on the features it names, as a
+comma-separated list of `skills`, `workflow`, `context_cache`, `grounding`,
+`mcp`, `token_usage` and `compaction`. In this release the `grounding` feature
+adds `adk.experimental.grounding.*` attributes to a `generate_content` span
+whose response used a built-in grounding tool.
+
+### The MCP HTTP exchange record
+
+With the experimental `mcp` feature on, each HTTP response that a streamable
+HTTP or SSE MCP transport receives emits one DEBUG log record with the event
+name `adk.experimental.mcp.http.client.response.end`. The record carries the
+span that was active when the request was sent: `execute_tool` for a tool
+call, and `invoke_agent` for tool listing. Only the environment turns it on,
+because the transport does not know which run sent the request; the per-run
+overrides below do not apply to it.
+
+The attributes are `http.request.method`, `url.full`,
+`http.response.status_code`, `server.address`, `server.port` (when the URL names
+a port), `mcp.session.id`, `mcp.protocol.version`, and `error.type` (the status
+code) for a status of 400 or higher.
+
+| Variable                                                    | Effect                                                                       |
+| :---------------------------------------------------------- | :--------------------------------------------------------------------------- |
+| `ADK_CAPTURE_MCP_HTTP_BODIES`                               | `true` or `1` records the request and response bodies. Otherwise `<elided>`. |
+| `OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_REQUEST`  | Request headers to record, as comma-separated regular expressions.           |
+| `OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_RESPONSE` | Response headers to record, in the same form.                                |
+
+A header pattern must match the whole header name, ignoring case, and a header
+is recorded as `http.request.header.<name>` or `http.response.header.<name>`.
+No header is recorded unless a pattern names it.
+
+MCP payloads often carry user data and tool results, so bodies are off by
+default and are a separate decision from GenAI content capture. Even when they
+are on, ADK keeps these out of the record:
+
+- the values of `authorization`, `cookie`, `set-cookie`, `proxy-authorization`,
+  `api-key`, `x-api-key` and `x-goog-api-key`, which are recorded as
+  `<redacted>` even when a pattern names them;
+- user name and password in the URL, and every query value, which becomes
+  `REDACTED`;
+- the body of an event stream response, recorded as `<SSE stream>`, because the
+  stream does not end;
+- anything after the first 1000 characters of a body, which ends in
+  `... [truncated]`.
+
+The transport receives each response as soon as it arrives. ADK reads a copy of
+the body in the background, and a failure to write the record is logged, never
+thrown. A `fetch` you set in `transportOptions.fetch` still sends the requests.
+A `fetch` set in the SSE transport's `eventSourceInit` opens the event stream
+without passing through ADK, so that request is not reported.
+
+### Per-run overrides
+
+`RunConfig.telemetry` changes the telemetry of one run without changing the
+environment, for example to capture content for a single tenant. It is
+experimental. Each field overrides one environment variable, and a field left
+unset falls back to it.
+
+| Field                           | Overrides                                            |
+| :------------------------------ | :--------------------------------------------------- |
+| `captureMessageContent`         | `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` |
+| `adkExperimentalTelemetryOptIn` | `ADK_EXPERIMENTAL_TELEMETRY`                         |
+| `experimentalFeaturesOptIn`     | `ADK_EXPERIMENTAL_TELEMETRY_FEATURES`                |
+
+`adkExperimentalTelemetryOptIn: false` turns every experimental feature off for
+the run, also the ones the environment names. `experimentalFeaturesOptIn`
+enables exactly the features it lists; a list with no recognized feature falls
+back to the environment.
+
+```ts
+for await (const event of runner.runAsync({
+  userId,
+  sessionId,
+  newMessage,
+  runConfig: {
+    telemetry: {
+      captureMessageContent: 'SPAN_ONLY',
+      experimentalFeaturesOptIn: ['workflow', 'token_usage'],
+    },
+  },
+})) {
+  // ...
+}
+```
+
+An operator who must keep the environment in charge sets
+`ADK_TELEMETRY_IGNORE_RUN_CONFIG` to `true` or `1`. Every `RunConfig.telemetry`
+field is then ignored.
 
 ## Configuration options
 
@@ -185,28 +306,59 @@ without a code change.
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | A metric reader.                   |
 | `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`    | A log record exporter.             |
 
-### Capturing message content
+### Sending log records
 
-`ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS` decides whether ADK writes payloads onto
-spans. Content is captured when the variable is unset, empty, `true` or `1`.
-Any other value, such as `false`, `0` or `no`, replaces
-`gcp.vertex.agent.llm_request`, `gcp.vertex.agent.llm_response`,
-`gcp.vertex.agent.tool_call_args`, `gcp.vertex.agent.tool_response` and
-`gcp.vertex.agent.data` with `'{}'`.
+ADK writes its log records through the global `LoggerProvider` of the
+OpenTelemetry Logs API. The application owns that provider: ADK never creates
+one, and it looks the provider up when it emits each record, so a provider
+registered after ADK is imported still receives every record. A run with no
+provider registered emits nothing.
 
-Those payloads are the user's prompt, the model's answer, and the arguments and
-results of each tool call. A trace backend usually sits behind a different
-trust boundary from the application, with different retention and a wider
-audience, so exporting the content there is a decision to make rather than a
-default to accept. The identifying attributes are never redacted, so a
-deployment that turns content off keeps its filtering and grouping keys and
-loses only the payloads.
+One way to register the provider is `maybeSetOtelProviders`, with log record
+processors in its hooks or with `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` (or
+`OTEL_EXPORTER_OTLP_ENDPOINT`) set:
+
+```ts
+import {maybeSetOtelProviders} from '@google/adk';
+import {OTLPLogExporter} from '@opentelemetry/exporter-logs-otlp-http';
+import {BatchLogRecordProcessor} from '@opentelemetry/sdk-logs';
+
+maybeSetOtelProviders([
+  {
+    logRecordProcessors: [
+      new BatchLogRecordProcessor({exporter: new OTLPLogExporter()}),
+    ],
+  },
+]);
+```
+
+The other is to create the provider yourself and register it with the Logs
+API:
+
+```ts
+import {logs} from '@opentelemetry/api-logs';
+import {
+  ConsoleLogRecordExporter,
+  LoggerProvider,
+  SimpleLogRecordProcessor,
+} from '@opentelemetry/sdk-logs';
+
+const loggerProvider = new LoggerProvider({
+  processors: [
+    new SimpleLogRecordProcessor({exporter: new ConsoleLogRecordExporter()}),
+  ],
+});
+logs.setGlobalLoggerProvider(loggerProvider);
+```
+
+ADK's records use the instrumentation scope `gcp.vertex.agent`, with the ADK
+version and the schema URL `https://opentelemetry.io/schemas/1.44.0`.
 
 ## Advanced applications
 
-`getGcpExporters` builds hooks that send spans to Cloud Trace and metrics to
-Cloud Monitoring, and `getGcpResource` detects the Google Cloud resource labels
-that say where the process runs.
+`getGcpExporters` exports traces, metrics, and logs to Google Cloud via
+`https://telemetry.googleapis.com/v1/{traces,metrics,logs}` using OTLP over
+HTTP. `getGcpResource` detects Google Cloud resource labels for the deployment.
 
 ```ts
 import {
@@ -218,44 +370,84 @@ import {
 const gcpHooks = await getGcpExporters({
   enableTracing: true,
   enableMetrics: true,
+  enableLogging: true,
 });
-maybeSetOtelProviders([gcpHooks], getGcpResource());
+const gcpResource = await getGcpResource();
+maybeSetOtelProviders([gcpHooks], gcpResource);
 ```
 
-| `OtelExportersConfig` field | Default | Effect in `getGcpExporters`                            |
-| :-------------------------- | :------ | :----------------------------------------------------- |
-| `enableTracing`             | `false` | Adds a batched Cloud Trace span processor.             |
-| `enableMetrics`             | `false` | Adds a Cloud Monitoring reader that exports every 5 s. |
-| `enableLogging`             | `false` | Ignored. No Cloud Logging exporter is created.         |
+| `OtelExportersConfig` field | Default     | Effect in `getGcpExporters`                          |
+| :-------------------------- | :---------- | :--------------------------------------------------- |
+| `enableTracing`             | `false`     | Sends traces via OTLP to `telemetry.googleapis.com`. |
+| `enableMetrics`             | `false`     | Sends metrics via OTLP every 5 seconds.              |
+| `enableLogging`             | `false`     | Sends logs via `GCPBatchLogRecordProcessor`.         |
+| `projectId`                 | `undefined` | Project ID override for export.                      |
 
-`getGcpExporters` resolves the project through the ambient Google credentials.
-When no project resolves, it logs a warning and returns empty hooks, so a
-process without credentials starts and runs untraced rather than failing.
+`getGcpExporters` authenticates requests using `google-auth-library` with the
+`https://www.googleapis.com/auth/cloud-platform` scope. When project resolution
+fails, it logs a warning and returns empty hooks.
+
+### Cloud Logging and log names
+
+`GCPBatchLogRecordProcessor` keeps log names stable in Google Cloud Logging. By
+default, records write to the `adk-otel` log. You can override this name with a
+non-empty `GCP_DEFAULT_LOG_NAME` environment variable.
+
+On Vertex AI Agent Engine, records write to the single stdout log:
+`aiplatform.googleapis.com/reasoning_engine_stdout`. The processor sets the
+`event.name` attribute from the record event name, and clears `eventName` on
+Agent Engine. Monitored resource attributes are attached to the log record, and
+`service.version` is copied to record labels.
+
+### Endpoints and mTLS
+
+OTLP exporters send requests to `https://telemetry.googleapis.com`. You can
+configure mutual TLS (mTLS) endpoints with these environment variables:
+
+| Variable                            | Values                    | Description                                |
+| :---------------------------------- | :------------------------ | :----------------------------------------- |
+| `GOOGLE_API_USE_CLIENT_CERTIFICATE` | `true`, `false`           | Enables client certificate authentication. |
+| `GOOGLE_API_USE_MTLS_ENDPOINT`      | `auto`, `always`, `never` | Controls whether to use mTLS endpoints.    |
+
+When `GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY` is set, exporters add the
+`Vertex-Agent-Engine` User-Agent header.
+
+### Resource detection
+
+`getGcpResource(projectId?)` constructs an OpenTelemetry `Resource` by merging
+attributes in precedence order:
+
+1. Common deployment attributes: `service.instance.id`, `gcp.project_id`, and
+   `cloud.account.id`.
+2. Agent Engine attributes: `cloud.platform` (`gcp.agent_engine`),
+   `service.name`, and `cloud.resource_id`.
+3. OpenTelemetry environment detector attributes from `OTEL_SERVICE_NAME` and
+   `OTEL_RESOURCE_ATTRIBUTES`.
+4. Platform detector attributes for GKE and Cloud Run.
+5. Agent Registry Uniform Resource Name (URN) enrichment on `gen_ai.main_agent.id`.
+
+When resolving project numbers for URN reconstruction, ADK queries the Cloud
+Resource Manager API. This lookup requires the `resourcemanager.projects.get`
+permission. Successful lookups are cached in memory.
 
 ## Limitations
 
-`core/src/telemetry/tracing.ts` is not exported from `@google/adk`, so `tracer`,
-`traceCallLlm`, `traceToolCall` and the other trace functions cannot be
-imported. The framework calls them where it opens each span, and the attributes
-rather than the functions are the contract a caller observes. adk-python differs
-here: `google.adk.telemetry` is importable.
+`core/src/telemetry/api/instrumentation.ts` is not exported from `@google/adk`,
+so `recordInference`, `recordToolExecution` and other scope functions cannot be
+imported. The framework calls them when opening spans, and the resulting
+attributes form the contract.
 
-`getGcpExporters` loads each exporter from an optional peer dependency when you
-enable its signal. Install the one you use:
-
-```bash
-npm install @google-cloud/opentelemetry-cloud-trace-exporter
-npm install @google-cloud/opentelemetry-cloud-monitoring-exporter
-```
+Google Cloud export uses built-in OTLP HTTP exporters. You do not need separate
+Cloud Trace or Cloud Monitoring exporter packages.
 
 A trace call never throws. A payload that `JSON.stringify` rejects, such as one
-holding a cycle, is recorded as `'<not serializable>'`, so an unserializable
-tool result costs one attribute rather than the run. A trace call made with no
-active span does nothing.
+holding a cycle, is recorded as `'<not serializable>'`. An unserializable tool
+result costs one attribute rather than the run. A trace call made with no active
+span does nothing.
 
 `maybeSetOtelProviders` is marked experimental in its documentation, so its
 signature may change.
 
 ## Related samples
 
-- [`samples/telemetry/`](../../../samples/telemetry/README.md) - One traced tool call, with its span attributes printed to the console.
+- [`samples/telemetry/`](../../../samples/telemetry/README.md) - One traced tool call, with its spans and log records printed to the console.

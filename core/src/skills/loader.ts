@@ -71,8 +71,9 @@ function decodeSkillFileContent(data: Buffer): string | Buffer {
  * Recursively loads files from a directory into a dictionary.
  *
  * @param directoryPath - The absolute or relative path of the directory to load.
- * @returns A promise that resolves to a dictionary where keys are relative file paths
- * and values are the file contents (as string for UTF-8 or Buffer otherwise).
+ * @returns A promise that resolves to a dictionary where keys are forward-slash
+ * relative paths on every OS, matching zipped skills and adk-python, and values
+ * are the file contents (as string for UTF-8 or Buffer otherwise).
  */
 async function loadDir(
   directoryPath: string,
@@ -90,7 +91,10 @@ async function loadDir(
 
         await walk(fullPath);
       } else if (entry.isFile()) {
-        const relativePath = path.relative(directoryPath, fullPath);
+        const relativePath = path
+          .relative(directoryPath, fullPath)
+          .split(path.sep)
+          .join('/');
         if (IGNORED_EXTENSIONS.has(path.extname(entry.name))) {
           continue;
         }
@@ -115,6 +119,17 @@ async function loadDir(
   return files;
 }
 
+const FRONTMATTER_BOM = '\uFEFF';
+
+/**
+ * Matches the opening `---` line, the frontmatter, and the closing `---` line
+ * of a SKILL.md, with LF or CRLF line endings. The frontmatter is optional so
+ * that an empty `---` / `---` pair is reported as a non-mapping rather than as
+ * unclosed.
+ */
+const FRONTMATTER_PATTERN =
+  /^---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)??---[ \t]*(?:\r?\n|$)/;
+
 /**
  * Splits SKILL.md into its raw, unvalidated YAML frontmatter mapping and its body.
  *
@@ -126,25 +141,28 @@ function parseFrontmatterYaml(content: string): {
   raw: Record<string, unknown>;
   body: string;
 } {
-  if (!content.startsWith('---')) {
+  // Editors such as Notepad write a UTF-8 byte order mark, which Node's
+  // `readFile` keeps as a leading U+FEFF.
+  const text = content.startsWith(FRONTMATTER_BOM)
+    ? content.slice(FRONTMATTER_BOM.length)
+    : content;
+  if (!text.startsWith('---')) {
     throw new InputValidationError(
       'SKILL.md must start with YAML frontmatter (---)',
     );
   }
 
-  // Split into at least 3 parts: empty before ---, frontmatter, body
-  const parts = content.split('---');
-  if (parts.length < 3) {
+  // A delimiter is a line of exactly `---`, so a `---` inside a value (for
+  // example `description: Use A --- B`) does not end the frontmatter.
+  const match = FRONTMATTER_PATTERN.exec(text);
+  if (!match) {
     throw new InputValidationError(
       'SKILL.md frontmatter not properly closed with ---',
     );
   }
 
-  const frontmatterStr = parts[1];
-  const body = parts
-    .filter((_, i) => i >= 2)
-    .join('---')
-    .trim();
+  const frontmatterStr = match[1] ?? '';
+  const body = text.slice(match[0].length).trim();
 
   try {
     const parsed = yaml.load(frontmatterStr);

@@ -8,7 +8,6 @@ import {
   logger,
   LOGGING_FORMAT,
   LogLevel,
-  logToStderr,
   logToTmpFolder,
   setLogger,
   setupAdkLogger,
@@ -33,27 +32,6 @@ describe('cli/utils/logs', () => {
     expect(LOGGING_FORMAT).toBe(
       '%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s',
     );
-  });
-
-  describe('logToStderr', () => {
-    it('writes log records at or above the configured level to process.stderr', () => {
-      const writes: string[] = [];
-      vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
-        writes.push(String(chunk));
-        return true;
-      });
-
-      logToStderr(LogLevel.INFO);
-      logger.debug('debug-hidden');
-      logger.info('info-visible');
-      logger.warn('warn-visible');
-
-      expect(writes.some((w) => w.includes('debug-hidden'))).toBe(false);
-      expect(writes.some((w) => w.includes('INFO - info-visible'))).toBe(true);
-      expect(writes.some((w) => w.includes('WARNING - warn-visible'))).toBe(
-        true,
-      );
-    });
   });
 
   describe('logToTmpFolder', () => {
@@ -108,11 +86,15 @@ describe('cli/utils/logs', () => {
       setupAdkLogger(LogLevel.DEBUG);
       logger.debug('debug-visible');
       logger.info('info-visible');
+      logger.warn('warn-visible');
 
       expect(writes.some((w) => w.includes('DEBUG - debug-visible'))).toBe(
         true,
       );
       expect(writes.some((w) => w.includes('INFO - info-visible'))).toBe(true);
+      expect(writes.some((w) => w.includes('WARNING - warn-visible'))).toBe(
+        true,
+      );
     });
 
     it('defaults to LogLevel.INFO when no level is provided', () => {
@@ -125,9 +107,13 @@ describe('cli/utils/logs', () => {
       setupAdkLogger();
       logger.debug('debug-filtered');
       logger.info('info-emitted');
+      logger.warn('warn-emitted');
 
       expect(writes.some((w) => w.includes('debug-filtered'))).toBe(false);
       expect(writes.some((w) => w.includes('INFO - info-emitted'))).toBe(true);
+      expect(writes.some((w) => w.includes('WARNING - warn-emitted'))).toBe(
+        true,
+      );
     });
   });
 });

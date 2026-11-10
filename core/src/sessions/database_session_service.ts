@@ -12,7 +12,7 @@ import type {
 import type {MikroORMOptions as MikroDBOptions} from './db/operations.js';
 
 import {Event} from '../events/event.js';
-import {randomUUID} from '../utils/env_aware_utils.js';
+import {newId} from '../utils/id_provider.js';
 import {logger} from '../utils/logger.js';
 import {
   AppendEventRequest,
@@ -27,6 +27,7 @@ import {
   upsertSessionEvent,
 } from './base_session_service.js';
 import {createSession, Session} from './session.js';
+import {StaleSessionError} from './stale_session_error.js';
 import {State} from './state.js';
 
 type SchemaModule = typeof import('./db/schema.js');
@@ -77,6 +78,32 @@ async function importMikroOrm(): Promise<void> {
   } = operations);
 }
 
+export {isStaleSessionError, StaleSessionError} from './stale_session_error.js';
+
+/**
+ * Formats a Date or timestamp into 'YYYY-MM-DD HH:mm:ss' in UTC.
+ */
+function formatDateTime(dateOrEpochMs: Date | number): string {
+  const date =
+    typeof dateOrEpochMs === 'number' ? new Date(dateOrEpochMs) : dateOrEpochMs;
+  return date.toISOString().replace('T', ' ').slice(0, 19);
+}
+
+/**
+ * Options for configuring {@link DatabaseSessionService}.
+ */
+export interface DatabaseSessionServiceOptions extends MikroDBOptions {
+  /**
+   * How to handle stale sessions in {@link DatabaseSessionService.appendEvent}.
+   *
+   * - `'reject'` (default): throws a {@link StaleSessionError} without persisting changes.
+   * - `'reload'`: reloads stored events and state into the session object after writing.
+   *
+   * @deprecated 'reload' is deprecated and will be removed in a future release. Use 'reject' (the default) and re-read the session with `getSession` to retry.
+   */
+  staleSession?: 'reject' | 'reload';
+}
+
 /**
  * Checks if a URI is a database connection URI.
  *
@@ -106,17 +133,30 @@ export class DatabaseSessionService extends BaseSessionService {
   private initialized = false;
   private options?: MikroDBOptions;
   private connectionString?: string;
+  private readonly staleSession: 'reject' | 'reload';
 
-  constructor(connectionStringOrOptions: MikroDBOptions | string) {
+  constructor(
+    connectionStringOrOptions: DatabaseSessionServiceOptions | string,
+    options?: DatabaseSessionServiceOptions,
+  ) {
     super();
     if (typeof connectionStringOrOptions === 'string') {
       this.connectionString = connectionStringOrOptions;
+      if (options) {
+        const {staleSession, ...mikroOptions} = options;
+        this.options = mikroOptions;
+        this.staleSession = staleSession ?? 'reject';
+      } else {
+        this.staleSession = 'reject';
+      }
     } else {
       if (!connectionStringOrOptions.driver) {
         throw new Error('Driver is required when passing options object.');
       }
 
-      this.options = connectionStringOrOptions;
+      const {staleSession, ...mikroOptions} = connectionStringOrOptions;
+      this.options = mikroOptions;
+      this.staleSession = staleSession ?? 'reject';
     }
   }
 
@@ -130,7 +170,11 @@ export class DatabaseSessionService extends BaseSessionService {
     // ENTITIES overrides a caller-supplied `entities`, exactly as the
     // constructor did before the schema module became lazy.
     const options: MikroDBOptions = this.connectionString
-      ? await getConnectionOptionsFromUri(this.connectionString)
+      ? {
+          ...(await getConnectionOptionsFromUri(this.connectionString)),
+          ...this.options,
+          entities: ENTITIES,
+        }
       : {...this.options, entities: ENTITIES};
     this.options = options;
 
@@ -149,7 +193,7 @@ export class DatabaseSessionService extends BaseSessionService {
     await this.init();
     const em = this.orm!.em.fork();
 
-    const id = sessionId || randomUUID();
+    const id = sessionId || newId();
     const now = new Date();
     const existing = await em.findOne(StorageSession, {
       id,
@@ -303,7 +347,7 @@ export class DatabaseSessionService extends BaseSessionService {
     const em = this.orm!.em.fork();
 
     const where: FilterQuery<StorageSessionEntity> = {appName};
-    if (userId) {
+    if (userId !== undefined) {
       where.userId = userId;
     }
 
@@ -368,7 +412,7 @@ export class DatabaseSessionService extends BaseSessionService {
     const appState = appStateModel?.state || {};
     const userStateMap: Record<string, Record<string, unknown>> = {};
 
-    if (userId) {
+    if (userId !== undefined) {
       const u = await em.findOne(StorageUserState, {appName, userId});
       if (u) userStateMap[userId] = u.state;
     } else {
@@ -417,6 +461,7 @@ export class DatabaseSessionService extends BaseSessionService {
       return event;
     }
 
+    const stateDelta = event.actions?.stateDelta ?? {};
     const trimmedEvent = trimTempDeltaState(event);
     let sessionWasStale = false;
 
@@ -433,6 +478,15 @@ export class DatabaseSessionService extends BaseSessionService {
 
       if (!storageSession) {
         throw new Error(`Session ${session.id} not found for appendEvent`);
+      }
+
+      if (storageSession.updateTime.getTime() > session.lastUpdateTime) {
+        if (this.staleSession === 'reject') {
+          throw new StaleSessionError(
+            `The last_update_time provided in the session object ${formatDateTime(session.lastUpdateTime)} is earlier than the update_time in the storage_session ${formatDateTime(storageSession.updateTime)}. Please check if it is a stale session.`,
+          );
+        }
+        sessionWasStale = true;
       }
 
       let appStateModel = await txEm.findOne(StorageAppState, {
@@ -459,12 +513,6 @@ export class DatabaseSessionService extends BaseSessionService {
         });
         txEm.persist(userStateModel);
       }
-
-      // Reload after the transaction: this holds a PESSIMISTIC_WRITE lock on
-      // the session row, and the reload only refreshes the in-memory
-      // `session`.
-      sessionWasStale =
-        storageSession.updateTime.getTime() > session.lastUpdateTime;
 
       if (event.actions && event.actions.stateDelta) {
         const appDelta: Record<string, unknown> = {};
@@ -529,6 +577,15 @@ export class DatabaseSessionService extends BaseSessionService {
         userStateModel.state,
         storageSession.state,
       );
+      // temp: keys are never stored, but stay in the in-memory session for the
+      // rest of the invocation: carry over earlier ones, then this event's
+      for (const source of [session.state, stateDelta]) {
+        for (const [key, value] of Object.entries(source)) {
+          if (key.startsWith(State.TEMP_PREFIX)) {
+            newMergedState[key] = value;
+          }
+        }
+      }
       session.state = newMergedState;
 
       upsertSessionEvent(session, event);

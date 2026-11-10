@@ -121,10 +121,106 @@ ${body}
       const result = parseSkillMdContent(content);
       expect(result.body).toBe(body);
     });
+
+    describe('frontmatter delimiters', () => {
+      const skillMd = (newline: string, description = 'A test skill') =>
+        [
+          '---',
+          'name: test-skill',
+          'description: ' + description,
+          '---',
+          'Body',
+        ].join(newline);
+
+      it.each([
+        ['LF', '\n'],
+        ['CRLF', '\r\n'],
+      ])('parses %s line endings', (_label, newline) => {
+        const result = parseSkillMdContent(skillMd(newline));
+
+        expect(result.frontmatter.description).toBe('A test skill');
+        expect(result.body).toBe('Body');
+      });
+
+      it.each([
+        ['LF', '\n'],
+        ['CRLF', '\r\n'],
+      ])('accepts a UTF-8 byte order mark with %s', (_label, newline) => {
+        const result = parseSkillMdContent('﻿' + skillMd(newline));
+
+        expect(result.frontmatter.name).toBe('test-skill');
+        expect(result.body).toBe('Body');
+      });
+
+      it('keeps a --- inside a frontmatter value', () => {
+        const result = parseSkillMdContent(
+          skillMd('\n', 'Use A --- B for things'),
+        );
+
+        expect(result.frontmatter.description).toBe('Use A --- B for things');
+        expect(result.body).toBe('Body');
+      });
+
+      it('ends the frontmatter at the first line of exactly ---', () => {
+        const content = skillMd('\n') + '\n\nMore\n\n---\n\nAfter the rule';
+
+        const result = parseSkillMdContent(content);
+
+        expect(result.frontmatter.description).toBe('A test skill');
+        expect(result.body).toBe('Body\n\nMore\n\n---\n\nAfter the rule');
+      });
+
+      it('accepts trailing spaces after a delimiter', () => {
+        const result = parseSkillMdContent(
+          '--- \nname: test-skill\ndescription: A test skill\n---  \nBody',
+        );
+
+        expect(result.frontmatter.name).toBe('test-skill');
+        expect(result.body).toBe('Body');
+      });
+
+      it('does not treat a --- at the end of a value line as the closing delimiter', () => {
+        const content =
+          '---\nname: test-skill\ndescription: A test skill ---\nBody';
+
+        expect(() => parseSkillMdContent(content)).toThrow(
+          'SKILL.md frontmatter not properly closed with ---',
+        );
+        expect(() => parseSkillMdContent(content)).toThrow(
+          InputValidationError,
+        );
+      });
+
+      it('reports empty frontmatter as a non-mapping, not as unclosed', () => {
+        expect(() => parseSkillMdContent('---\n---\nBody')).toThrow(
+          'Invalid YAML in frontmatter:',
+        );
+        expect(() => parseSkillMdContent('---\n---\nBody')).toThrow(
+          InputValidationError,
+        );
+      });
+    });
   });
 
   describe('loadSkillFromDir', () => {
     let tempDir: string;
+
+    it('loads a SKILL.md saved with a UTF-8 byte order mark', async () => {
+      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-skill-test-'));
+      const skillDir = path.join(tempDir, 'test-skill');
+      await fs.mkdir(skillDir);
+
+      await fs.writeFile(
+        path.join(skillDir, 'SKILL.md'),
+        '﻿---\r\nname: test-skill\r\ndescription: A test skill\r\n---\r\nInstructions content',
+      );
+
+      const skill = await loadSkillFromDir(skillDir);
+      expect(skill.frontmatter.name).toBe('test-skill');
+      expect(skill.instructions).toBe('Instructions content');
+
+      await fs.rm(tempDir, {recursive: true, force: true});
+    });
 
     it('loads a valid skill from a directory', async () => {
       tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-skill-test-'));
@@ -245,6 +341,41 @@ Instructions`,
       // File is named .png but contents are valid UTF-8 text, so it stays a string.
       expect(skill.resources?.assets?.['logo.png']).toBe('binary content');
       expect(skill.resources?.scripts?.['run.sh']).toEqual({src: 'echo hello'});
+
+      await fs.rm(tempDir, {recursive: true, force: true});
+    });
+
+    it('keys nested resources by forward-slash paths on every OS', async () => {
+      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-skill-test-'));
+      const skillDir = path.join(tempDir, 'test-skill');
+      await fs.mkdir(path.join(skillDir, 'references', 'api'), {
+        recursive: true,
+      });
+      await fs.mkdir(path.join(skillDir, 'scripts', 'lib'), {recursive: true});
+      await fs.writeFile(
+        path.join(skillDir, 'SKILL.md'),
+        `---
+name: test-skill
+description: A test skill
+---
+Instructions`,
+      );
+      await fs.writeFile(
+        path.join(skillDir, 'references', 'api', 'auth.md'),
+        'auth docs',
+      );
+      await fs.writeFile(
+        path.join(skillDir, 'scripts', 'lib', 'helper.py'),
+        'print(1)',
+      );
+
+      const skill = await loadSkillFromDir(skillDir);
+      expect(Object.keys(skill.resources?.references ?? {})).toEqual([
+        'api/auth.md',
+      ]);
+      expect(Object.keys(skill.resources?.scripts ?? {})).toEqual([
+        'lib/helper.py',
+      ]);
 
       await fs.rm(tempDir, {recursive: true, force: true});
     });

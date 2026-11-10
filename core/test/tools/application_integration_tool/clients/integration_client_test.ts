@@ -99,7 +99,7 @@ function integrationClient(serviceAccountJson?: string): IntegrationClient {
     project: PROJECT,
     location: LOCATION,
     integration: INTEGRATION,
-    trigger: TRIGGER,
+    triggers: [TRIGGER],
     serviceAccountJson,
   });
 }
@@ -200,7 +200,7 @@ describe('IntegrationClient', () => {
       });
     });
 
-    it('sends null triggerId when neither trigger nor triggers is provided', async () => {
+    it('sends null triggerId when triggers is omitted', async () => {
       const expectedSpec = {
         openapi: '3.0.0',
         info: {title: 'Test Integration'},
@@ -230,18 +230,16 @@ describe('IntegrationClient', () => {
     it.each([
       [404, 'Not Found'],
       [400, 'Bad Request'],
+      [404, ''],
+      [400, ''],
     ])(
-      'reports HTTP %i %j as an invalid request without trigger when triggers is used',
+      'reports HTTP %i %j as an invalid request',
       async (status, statusText) => {
         fetchMock.mockResolvedValue(new Response('', {status, statusText}));
-        const client = new IntegrationClient({
-          project: PROJECT,
-          location: LOCATION,
-          integration: INTEGRATION,
-          triggers: [TRIGGER],
-        });
 
-        await expect(client.getOpenApiSpecForIntegration()).rejects.toThrow(
+        await expect(
+          integrationClient().getOpenApiSpecForIntegration(),
+        ).rejects.toThrow(
           `Invalid request. Please check the provided values of project(${PROJECT}), location(${LOCATION}), integration(${INTEGRATION}).`,
         );
       },
@@ -257,24 +255,6 @@ describe('IntegrationClient', () => {
       );
       expect(fetchMock).not.toHaveBeenCalled();
     });
-
-    it.each([
-      [404, 'Not Found'],
-      [400, 'Bad Request'],
-      [404, ''],
-      [400, ''],
-    ])(
-      'reports HTTP %i %j as an invalid request',
-      async (status, statusText) => {
-        fetchMock.mockResolvedValue(new Response('', {status, statusText}));
-
-        await expect(
-          integrationClient().getOpenApiSpecForIntegration(),
-        ).rejects.toThrow(
-          `Invalid request. Please check the provided values of project(${PROJECT}), location(${LOCATION}), integration(${INTEGRATION}) and trigger(${TRIGGER}).`,
-        );
-      },
-    );
 
     it('reports any other HTTP error as a request error', async () => {
       fetchMock.mockResolvedValue(

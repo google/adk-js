@@ -46,7 +46,12 @@ export {
   DebugLoggingPlugin,
   isDebugLoggingPlugin,
 } from './plugins/debug_logging_plugin.js';
-export {DatabaseSessionService} from './sessions/database_session_service.js';
+export {
+  DatabaseSessionService,
+  isStaleSessionError,
+  StaleSessionError,
+} from './sessions/database_session_service.js';
+export type {DatabaseSessionServiceOptions} from './sessions/database_session_service.js';
 export {getSessionServiceFromUri} from './sessions/registry.js';
 export {VertexAiSessionService} from './sessions/vertex_ai_session_service.js';
 export type {
@@ -119,11 +124,11 @@ export {LOAD_WEB_PAGE, loadWebPage} from './tools/load_web_page.js';
 export type {LoadWebPageOptions} from './tools/load_web_page.js';
 export {
   credentialToParam,
-  dictToAuthScheme,
   INTERNAL_AUTH_PREFIX,
-  openidDictToSchemeCredential,
+  openidRecordToSchemeCredential,
   openidUrlToSchemeCredential,
-  serviceAccountDictToSchemeCredential,
+  recordToAuthScheme,
+  serviceAccountRecordToSchemeCredential,
   serviceAccountSchemeCredential,
   tokenToSchemeCredential,
 } from './tools/openapi_tool/auth/auth_helpers.js';
@@ -184,8 +189,8 @@ export {SkillToolset} from './tools/skill/skill_toolset.js';
 export type {JsonObject} from './utils/json_utils.js';
 
 export * from './integrations/agent_registry/agent_registry.js';
-export * from './telemetry/google_cloud.js';
-export * from './telemetry/setup.js';
+export * from './telemetry/export/google_cloud.js';
+export * from './telemetry/export/setup.js';
 export * from './tools/google_api_tool/index.js';
 // Also available as `@google/adk/tools/mcp`, which does not evaluate the rest
 // of this barrel.
@@ -219,7 +224,6 @@ export type {
 export {loadDotenvForAgent, walkToRootUntilFound} from './cli/utils/envs.js';
 export {
   LOGGING_FORMAT,
-  logToStderr,
   logToTmpFolder,
   setupAdkLogger,
 } from './cli/utils/logs.js';

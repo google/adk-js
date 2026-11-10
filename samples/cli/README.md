@@ -52,4 +52,4 @@ npm run ts:check:samples
 
 ## Related Guides
 
-- [CLI and Evaluation Utilities](../../docs/guides/cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalFormat`, `logToStderr`, `logToTmpFolder`, and `runEvals`.
+- [CLI and Evaluation Utilities](../../docs/guides/cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalFormat`, `setupAdkLogger`, `logToTmpFolder`, and `runEvals`.

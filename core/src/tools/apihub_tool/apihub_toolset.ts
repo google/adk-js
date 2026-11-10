@@ -13,7 +13,6 @@ import {experimental} from '../../utils/experimental.js';
 import {BaseTool} from '../base_tool.js';
 import {BaseToolset, ToolPredicate} from '../base_toolset.js';
 import {OpenAPIToolset} from '../openapi_tool/openapi_toolset.js';
-import {RestApiTool} from '../openapi_tool/rest_api_tool.js';
 import {APIHubClient, BaseAPIHubClient} from './clients/apihub_client.js';
 
 /** Options for {@link APIHubToolset}. */
@@ -50,8 +49,8 @@ export interface APIHubToolsetOptions {
    */
   description?: string;
   /**
-   * When true, the spec is fetched on the first call to `getTools` or
-   * `getTool` instead of when the toolset is constructed.
+   * When true, the spec is fetched on the first call to `getTools`
+   * instead of when the toolset is constructed.
    */
   lazyLoadSpec?: boolean;
   /** Auth scheme applied to every tool the spec produces. */
@@ -75,7 +74,7 @@ export interface APIHubToolsetOptions {
  *
  * The toolset fetches an OpenAPI spec from API Hub, parses it as YAML or JSON,
  * and hands it to an {@link OpenAPIToolset}, which produces a
- * {@link RestApiTool} for each operation.
+ * `RestApiTool` for each operation.
  *
  * ```ts
  * const toolset = new APIHubToolset({
@@ -91,11 +90,11 @@ export interface APIHubToolsetOptions {
  *
  * By default the spec is fetched when the toolset is constructed. A
  * constructor cannot wait for the request, so a failure is reported by the
- * first call to `getTools` or `getTool`, and every later call reports the same
+ * first call to `getTools`, and every later call reports the same
  * failure.
  *
- * With `lazyLoadSpec`, the spec is fetched on the first call to `getTools` or
- * `getTool`. A successful result is kept, including a spec that produced no
+ * With `lazyLoadSpec`, the spec is fetched on the first call to `getTools`.
+ * A successful result is kept, including a spec that produced no
  * tools. A failed fetch is not kept, so the next call fetches again.
  */
 @experimental
@@ -104,9 +103,9 @@ export class APIHubToolset extends BaseToolset {
   name: string;
   /** The toolset description, filled in from the spec when empty. */
   description: string;
-  readonly apihubResourceName: string;
-  readonly lazyLoadSpec: boolean;
 
+  private readonly apihubResourceName: string;
+  private readonly lazyLoadSpec: boolean;
   private readonly apihubClient: BaseAPIHubClient;
   private readonly authScheme?: OpenAPIV3.SecuritySchemeObject;
   private readonly authCredential?: AuthCredential;
@@ -129,8 +128,8 @@ export class APIHubToolset extends BaseToolset {
 
     if (!this.lazyLoadSpec) {
       this.toolsetPromise = this.prepareTools();
-      // The rejection is observed by `getTools` and `getTool`. Until one of
-      // them runs, this handler keeps it from being reported as unhandled.
+      // The rejection is observed by `getTools`. Until it runs,
+      // this handler keeps it from being reported as unhandled.
       this.toolsetPromise.catch(() => undefined);
     }
   }
@@ -144,21 +143,6 @@ export class APIHubToolset extends BaseToolset {
   override async getTools(context?: ReadonlyContext): Promise<BaseTool[]> {
     const toolset = await this.loadToolset();
     return toolset ? toolset.getTools(context) : [];
-  }
-
-  /**
-   * Returns the tool with the given name, or `undefined` when the spec
-   * produced no such tool.
-   *
-   * Unlike `OpenAPIToolset.getTool`, the result is a Promise, because the spec
-   * may still be loading.
-   *
-   * @param name The tool name, which is the operation ID in snake_case.
-   * @throws When the spec cannot be fetched or is not valid YAML or JSON.
-   */
-  async getTool(name: string): Promise<RestApiTool | undefined> {
-    const toolset = await this.loadToolset();
-    return toolset?.getTool(name);
   }
 
   override async close(): Promise<void> {

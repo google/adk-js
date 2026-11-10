@@ -18,6 +18,10 @@ import {buildNode} from '../utils/workflow_graph_utils.js';
  */
 const DEFAULT_MAX_PARALLEL_WORKERS = 8;
 
+const PARALLEL_WORKER_SIGNATURE_SYMBOL = Symbol.for(
+  'google.adk.workflow.parallelWorker',
+);
+
 /** Options for a {@link ParallelWorker}. */
 export interface ParallelWorkerConfig {
   /**
@@ -61,8 +65,9 @@ export interface ParallelWorkerConfig {
  *   `ctx.runNode` has no way to forward a signal into a child run.
  */
 export class ParallelWorker extends BaseNode {
+  readonly [PARALLEL_WORKER_SIGNATURE_SYMBOL] = true;
   readonly maxParallelWorkers?: number;
-  private readonly inner: BaseNode;
+  readonly inner: BaseNode;
 
   constructor(inner: RunnableNode, config: ParallelWorkerConfig = {}) {
     const built = buildNode(inner);
@@ -176,6 +181,18 @@ export class ParallelWorker extends BaseNode {
     }
     yield results;
   }
+}
+
+/**
+ * Type guard to check if an object is an instance of {@link ParallelWorker}.
+ */
+export function isParallelWorker(value: unknown): value is ParallelWorker {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    PARALLEL_WORKER_SIGNATURE_SYMBOL in value &&
+    value[PARALLEL_WORKER_SIGNATURE_SYMBOL] === true
+  );
 }
 
 // The factory the engine uses to wrap a built node in a ParallelWorker (for

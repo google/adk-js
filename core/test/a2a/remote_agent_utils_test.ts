@@ -103,13 +103,13 @@ describe('remote_agent_utils', () => {
   describe('getUserFunctionCallAt', () => {
     it('should return undefined for invalid index', () => {
       const session = {events: []} as unknown as Session;
-      expect(getUserFunctionCallAt(session, 0)).toBeUndefined();
+      expect(getUserFunctionCallAt(session, 0, 'agent')).toBeUndefined();
     });
 
     it('should return undefined if event author is not user', () => {
       const event = createEvent({author: 'agent'});
       const session = {events: [event]} as unknown as Session;
-      expect(getUserFunctionCallAt(session, 0)).toBeUndefined();
+      expect(getUserFunctionCallAt(session, 0, 'agent')).toBeUndefined();
     });
 
     it('should return undefined if no functionResponse', () => {
@@ -118,7 +118,7 @@ describe('remote_agent_utils', () => {
         content: {role: 'user', parts: [{text: 'hello'}]},
       });
       const session = {events: [event]} as unknown as Session;
-      expect(getUserFunctionCallAt(session, 0)).toBeUndefined();
+      expect(getUserFunctionCallAt(session, 0, 'agent')).toBeUndefined();
     });
 
     it('should return UserFunctionCall if request event found', () => {
@@ -146,11 +146,35 @@ describe('remote_agent_utils', () => {
         events: [requestEvent, responseEvent],
       } as unknown as Session;
 
-      const result = getUserFunctionCallAt(session, 1);
+      const result = getUserFunctionCallAt(session, 1, 'agent');
       expect(result).toBeDefined();
       expect(result?.taskId).toBe('task-123');
       expect(result?.contextId).toBe('ctx-123');
       expect(result?.response).toBe(responseEvent);
+    });
+
+    it('does not resume a task requested by another agent', () => {
+      const requestEvent = createEvent({
+        author: 'other-agent',
+        content: {
+          role: 'model',
+          parts: [{functionCall: {id: 'call-123', name: 'tool'}}],
+        },
+        customMetadata: {
+          [AdkMetadataKeys.TASK_ID]: 'other-task',
+          [AdkMetadataKeys.CONTEXT_ID]: 'other-context',
+        },
+      });
+      const responseEvent = createEvent({
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [{functionResponse: {id: 'call-123', name: 'tool'}}],
+        },
+      });
+      const session = {events: [requestEvent, responseEvent]} as Session;
+
+      expect(getUserFunctionCallAt(session, 1, 'agent')).toBeUndefined();
     });
   });
 

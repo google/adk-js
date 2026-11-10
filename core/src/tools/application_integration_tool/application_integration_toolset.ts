@@ -11,6 +11,7 @@ import {
   AuthCredentialTypes,
 } from '../../auth/auth_credential.js';
 import {AuthScheme} from '../../auth/auth_schemes.js';
+import {toSnakeCaseName} from '../../utils/case_utils.js';
 import {experimental} from '../../utils/experimental.js';
 import {
   isJsonObject,
@@ -20,7 +21,7 @@ import {
 import {logger} from '../../utils/logger.js';
 import {BaseTool} from '../base_tool.js';
 import {BaseToolset, ToolPredicate} from '../base_toolset.js';
-import {serviceAccountDictToSchemeCredential} from '../openapi_tool/auth/auth_helpers.js';
+import {serviceAccountRecordToSchemeCredential} from '../openapi_tool/auth/auth_helpers.js';
 import {OpenApiSpecParser} from '../openapi_tool/openapi_spec_parser/openapi_spec_parser.js';
 import {OpenAPIToolset} from '../openapi_tool/openapi_toolset.js';
 import {createRestApiTool} from '../openapi_tool/rest_api_tool.js';
@@ -50,14 +51,11 @@ export interface ApplicationIntegrationToolsetOptions {
   project: string;
   /** The Google Cloud location, such as `us-central1`. */
   location: string;
-  /** The integration name. Set it together with `trigger` or `triggers`. */
+  /** The integration name. Set it together with `triggers` or alone for all triggers. */
   integration?: string;
-  /** The API trigger ID of the integration, such as `api_trigger/my_trigger`. */
-  trigger?: string;
   /**
    * The API trigger IDs of the integration, such as
-   * `['api_trigger/my_trigger']`. When both `triggers` and `trigger` are
-   * provided, `triggers` takes precedence.
+   * `['api_trigger/my_trigger']`.
    */
   triggers?: string[];
   /**
@@ -74,11 +72,6 @@ export interface ApplicationIntegrationToolsetOptions {
   /** Connection actions to expose, such as `['ExecuteCustomQuery']`. */
   actions?: string[];
   /** Prefix of every generated tool name. Defaults to `''`. */
-  toolName?: string;
-  /**
-   * Prefix of every generated tool name. Takes precedence over `toolName` when
-   * both are set.
-   */
   toolNamePrefix?: string;
   /** Text appended to every generated tool description. Defaults to `''`. */
   toolInstructions?: string;
@@ -118,7 +111,7 @@ export interface ApplicationIntegrationToolsetOptions {
  *   project: 'my-project',
  *   location: 'us-central1',
  *   integration: 'my-integration',
- *   trigger: 'api_trigger/my_trigger',
+ *   triggers: ['api_trigger/my_trigger'],
  * });
  *
  * @example
@@ -138,15 +131,12 @@ export class ApplicationIntegrationToolset extends BaseToolset {
   private openApiToolsets: OpenAPIToolset[] = [];
 
   /**
-   * @throws Error Unless the options name either an integration and a trigger,
-   *   or a connection with at least one entity operation or action.
+   * @throws Error Unless the options name either an integration, or a
+   *   connection with at least one entity operation or action.
    */
   constructor(options: ApplicationIntegrationToolsetOptions) {
     super(options.toolFilter ?? []);
-    const hasIntegration = Boolean(
-      options.integration &&
-      (options.trigger || options.triggers !== undefined),
-    );
+    const hasIntegration = Boolean(options.integration);
     const hasConnection = Boolean(
       options.connection &&
       (Object.keys(options.entityOperations ?? {}).length > 0 ||
@@ -154,7 +144,7 @@ export class ApplicationIntegrationToolset extends BaseToolset {
     );
     if (!hasIntegration && !hasConnection) {
       throw new Error(
-        'Either (integration and trigger) or (connection and (entityOperations or actions)) should be provided.',
+        'Either integration or (connection and (entityOperations or actions)) should be provided.',
       );
     }
     this.options = options;
@@ -172,9 +162,7 @@ export class ApplicationIntegrationToolset extends BaseToolset {
     }
     try {
       const tools = await this.toolsPromise;
-      return tools.filter((tool) =>
-        this.isToolSelected(tool, context as ReadonlyContext),
-      );
+      return tools.filter((tool) => this.isToolSelected(tool, context));
     } catch (e: unknown) {
       this.toolsPromise = undefined;
       throw e;
@@ -192,26 +180,23 @@ export class ApplicationIntegrationToolset extends BaseToolset {
       project,
       location,
       integration,
-      trigger,
       triggers,
       connection,
       entityOperations,
       actions,
-      toolName,
       toolNamePrefix,
       toolInstructions = '',
       serviceAccountJson,
       authScheme,
       authCredential: dynamicAuthCredential,
     } = this.options;
-    const resolvedToolName = toolNamePrefix ?? toolName ?? '';
+    const resolvedToolName = toolNamePrefix ?? '';
     this.openApiToolsets = [];
 
     const integrationClient = new IntegrationClient({
       project,
       location,
       integration,
-      trigger,
       triggers,
       connection,
       entityOperations,
@@ -222,7 +207,7 @@ export class ApplicationIntegrationToolset extends BaseToolset {
     const authCredential = buildAuthCredential(serviceAccountJson);
     const toolsByName = new Map<string, BaseTool>();
 
-    if (integration && (trigger || triggers !== undefined)) {
+    if (integration) {
       const specDict = await integrationClient.getOpenApiSpecForIntegration();
       const spec = toOpenApiDocument(specDict);
       for (const [path, pathItem] of Object.entries(spec.paths ?? {})) {
@@ -262,7 +247,9 @@ export class ApplicationIntegrationToolset extends BaseToolset {
     );
     const spec = toOpenApiDocument(specDict);
     addDynamicAuthConfigToConnectionSchemas(spec);
-    const operations = new OpenApiSpecParser().parse(spec);
+    const operations = new OpenApiSpecParser({
+      preservePropertyNames: true,
+    }).parse(spec);
     // A connection spec tells its operations apart by a URL fragment, such as
     // `…?triggerId=api_trigger/ExecuteConnection#list_Issues`. A fragment is
     // never sent, and a tool would carry it into the query string, so each
@@ -272,13 +259,17 @@ export class ApplicationIntegrationToolset extends BaseToolset {
       const operation = toStringValue(operationObject['x-operation']);
       const entity = toStringValue(operationObject['x-entity']);
       const action = toStringValue(operationObject['x-action']);
-      const restApiTool = createRestApiTool({
-        ...openApiOperation,
-        endpoint: {
-          ...openApiOperation.endpoint,
-          path: removeFragment(openApiOperation.endpoint.path),
+      const restApiTool = createRestApiTool(
+        {
+          ...openApiOperation,
+          name: toSnakeCaseName(openApiOperation.name),
+          endpoint: {
+            ...openApiOperation.endpoint,
+            path: removeFragment(openApiOperation.endpoint.path),
+          },
         },
-      });
+        {preservePropertyNames: true},
+      );
       restApiTool.configureAuthScheme(AUTH_SCHEME);
       restApiTool.configureAuthCredential(authCredential);
       const tool = new IntegrationConnectorTool({
@@ -316,7 +307,6 @@ function addDynamicAuthConfigToConnectionSchemas(
       schemaName.endsWith('_Request') &&
       isJsonObject(schema) &&
       isJsonObject(schema.properties) &&
-      !('query' in schema.properties) &&
       !('dynamicAuthConfig' in schema.properties)
     ) {
       schema.properties = {
@@ -357,7 +347,7 @@ function buildAuthCredential(serviceAccountJson?: string): AuthCredential {
   if (!isJsonObject(key)) {
     throw new Error('serviceAccountJson must hold a JSON object.');
   }
-  const [, authCredential] = serviceAccountDictToSchemeCredential(key, [
+  const [, authCredential] = serviceAccountRecordToSchemeCredential(key, [
     CLOUD_PLATFORM_SCOPE,
   ]);
   return authCredential;

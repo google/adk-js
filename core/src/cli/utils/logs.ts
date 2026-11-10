@@ -94,22 +94,13 @@ function createWriterLogger(
  *
  * @param level The minimum `LogLevel` to emit. Defaults to `LogLevel.INFO`.
  */
-export function logToStderr(level: LogLevel = LogLevel.INFO): void {
+export function setupAdkLogger(level: LogLevel = LogLevel.INFO): void {
   setLogLevel(level);
   setLogger(
     createWriterLogger(level, (line) => {
       process.stderr.write(`${line}\n`);
     }),
   );
-}
-
-/**
- * Configures the global ADK logger to write formatted log records to `stderr`.
- *
- * @param level The minimum `LogLevel` to emit. Defaults to `LogLevel.INFO`.
- */
-export function setupAdkLogger(level: LogLevel = LogLevel.INFO): void {
-  logToStderr(level);
 }
 
 /**

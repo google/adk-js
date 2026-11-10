@@ -4,9 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {InvocationContext, ReadonlyContext} from '@google/adk';
+import {
+  injectSessionState,
+  InvocationContext,
+  ReadonlyContext,
+} from '@google/adk';
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import {injectSessionState} from '../../src/agents/instructions.js';
 
 /**
  * Builds a minimal ReadonlyContext backed by a plain-object invocation context.
@@ -219,6 +222,20 @@ describe('injectSessionState', () => {
       await expect(
         injectSessionState('{artifact.missing.txt}', ctx),
       ).rejects.toThrow('Artifact missing.txt not found.');
+    });
+
+    it('throws when artifact name is empty', async () => {
+      const mockArtifactService = {
+        loadArtifact: vi.fn().mockResolvedValue(null),
+      };
+
+      const ctx = makeContext({}, mockArtifactService);
+      await expect(
+        injectSessionState('The artifact content is: {artifact.}', ctx),
+      ).rejects.toThrow('Artifact  not found.');
+      expect(mockArtifactService.loadArtifact).toHaveBeenCalledWith({
+        filename: '',
+      });
     });
 
     it('resolves missing optional artifact to empty string', async () => {
