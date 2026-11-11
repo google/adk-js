@@ -71,6 +71,8 @@ const TOOLSET_CLEANUP_TIMEOUT_SYMBOL = Symbol(
   'google.adk.runner.toolsetCleanupTimeout',
 );
 
+let warnedSaveInputBlobsAsArtifacts = false;
+
 /**
  * The configuration parameters for the Runner.
  */
@@ -406,6 +408,14 @@ export class Runner {
             // Directly saves the artifacts (if applicable) in the user message and
             // replaces the artifact data with a file name placeholder.
             if (runConfig.saveInputBlobsAsArtifacts) {
+              if (!warnedSaveInputBlobsAsArtifacts) {
+                warnedSaveInputBlobsAsArtifacts = true;
+                logger.warn(
+                  "The 'saveInputBlobsAsArtifacts' parameter is deprecated. Use " +
+                    'SaveFilesAsArtifactsPlugin instead for better control and ' +
+                    'flexibility.',
+                );
+              }
               newMessage = await runnerCtx.saveArtifacts(
                 invocationContext.artifactService,
                 invocationContext.invocationId,
