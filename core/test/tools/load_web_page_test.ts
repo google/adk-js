@@ -299,6 +299,51 @@ describe('loadWebPage', () => {
 
       expect(result).toBe('');
     });
+
+    it.each([
+      [
+        'chinese',
+        '<html><body><nav>首页</nav>' +
+          '<p>2024款Model Y补贴后起售价为24.99万元。</p></body></html>',
+        '2024款Model Y补贴后起售价为24.99万元。',
+      ],
+      [
+        'japanese',
+        '<html><body><nav>ホーム</nav>' +
+          '<p>今月の注文分は4週間後に納車が始まります。</p></body></html>',
+        '今月の注文分は4週間後に納車が始まります。',
+      ],
+    ])(
+      'keeps %s lines, which are written without spaces',
+      async (_, html, expected) => {
+        resolveTo('93.184.216.34');
+        fetchMock.mockResolvedValue(htmlResponse(html));
+
+        expect(await loadWebPage('https://example.com/')).toBe(expected);
+      },
+    );
+
+    it.each([
+      // Each letter of an unspaced script counts as a word.
+      ['本月下单的车辆预计四周后开始交付。', true],
+      ['会员中心', true],
+      ['สวัสดีครับ', true],
+      ['首页', false],
+      ['ホーム', false],
+      ['ﾎｰﾑ', false],
+      ['𠮷𠮟', false],
+      // Runs between those letters count once if they hold a letter or digit.
+      ['2024款Model', false],
+      ['2024款Model Y价', true],
+      // Punctuation-only tokens in spaced text still count as words.
+      ['- Home -', false],
+      ['- Home - About', true],
+    ])('keeps the line %j: %s', async (line, kept) => {
+      resolveTo('93.184.216.34');
+      fetchMock.mockResolvedValue(htmlResponse(`<p>${line}</p>`));
+
+      expect(await loadWebPage('https://example.com/')).toBe(kept ? line : '');
+    });
   });
 
   describe('response and transport failures', () => {
