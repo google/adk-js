@@ -50,11 +50,11 @@ export const researcherAgent = new LlmAgent({
 
 The `CrewaiToolConfig` interface configures `new CrewaiTool(config)` or `new CrewaiTool(tool, options?)`.
 
-| Option | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `tool` | `CrewaiToolLike` | Required | Wrapped CrewAI tool object exposing `run` and optional `name`, `description`, and `argsSchema`. |
-| `name` | `string` | Normalized `tool.name` | Optional non-empty override for the wrapped tool name. Empty strings fall back to `tool.name`. |
-| `description` | `string` | `tool.description` | Optional non-empty override for the wrapped tool description. |
+| Option        | Type             | Default                | Description                                                                                     |
+| :------------ | :--------------- | :--------------------- | :---------------------------------------------------------------------------------------------- |
+| `tool`        | `CrewaiToolLike` | Required               | Wrapped CrewAI tool object exposing `run` and optional `name`, `description`, and `argsSchema`. |
+| `name`        | `string`         | Normalized `tool.name` | Optional non-empty override for the wrapped tool name. Empty strings fall back to `tool.name`.  |
+| `description` | `string`         | `tool.description`     | Optional non-empty override for the wrapped tool description.                                   |
 
 ## How it works
 

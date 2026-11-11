@@ -52,9 +52,7 @@
               "gen_ai.operation.name": "generate_content",
               "gen_ai.provider.name": "gcp.gemini",
               "gen_ai.request.model": "gemini-2.5-flash",
-              "gen_ai.response.finish_reasons": [
-                "stop"
-              ],
+              "gen_ai.response.finish_reasons": ["stop"],
               "gen_ai.tool.definitions": [
                 {
                   "description": "A sample tool.",
@@ -79,9 +77,7 @@
                   "gen_ai.agent.name": "some_root_agent",
                   "gen_ai.conversation.id": "PRESENT",
                   "gen_ai.provider.name": "gcp.gemini",
-                  "gen_ai.response.finish_reasons": [
-                    "stop"
-                  ],
+                  "gen_ai.response.finish_reasons": ["stop"],
                   "gen_ai.tool.definitions": [
                     {
                       "description": "A sample tool.",
@@ -122,9 +118,7 @@
               "gen_ai.operation.name": "generate_content",
               "gen_ai.provider.name": "gcp.gemini",
               "gen_ai.request.model": "gemini-2.5-flash",
-              "gen_ai.response.finish_reasons": [
-                "stop"
-              ],
+              "gen_ai.response.finish_reasons": ["stop"],
               "gen_ai.tool.definitions": [
                 {
                   "description": "A sample tool.",
@@ -149,9 +143,7 @@
                   "gen_ai.agent.name": "some_root_agent",
                   "gen_ai.conversation.id": "PRESENT",
                   "gen_ai.provider.name": "gcp.gemini",
-                  "gen_ai.response.finish_reasons": [
-                    "stop"
-                  ],
+                  "gen_ai.response.finish_reasons": ["stop"],
                   "gen_ai.tool.definitions": [
                     {
                       "description": "A sample tool.",

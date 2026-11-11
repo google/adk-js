@@ -1262,6 +1262,95 @@ describe('RestApiTool Utilities', () => {
     });
   });
 
+  describe('path, header, and cookie parameter serialization', () => {
+    const itemFilterEndpoint = {
+      baseUrl: 'https://example.com',
+      path: '/items/{item_filter}',
+      method: 'GET',
+    };
+    const param = (name: string, paramLocation: string): ApiParameter => ({
+      name,
+      originalName: name,
+      paramLocation,
+      paramSchema: {},
+      required: false,
+    });
+    const parameters: ApiParameter[] = [
+      param('item_filter', 'path'),
+      param('X-Page-Size', 'header'),
+      param('page_size', 'cookie'),
+    ];
+
+    it.each([
+      [50, '50', '50'],
+      [1.5, '1.5', '1.5'],
+      [true, 'true', 'true'],
+      [false, 'false', 'false'],
+      [['a', 'b', 3], 'a,b,3', 'a%2Cb%2C3'],
+      [[true, false], 'true,false', 'true%2Cfalse'],
+      [[1, null, undefined, true], '1,true', '1%2Ctrue'],
+      [
+        {a: 1, b: null, d: undefined, c: true},
+        'a,1,c,true',
+        'a%2C1%2Cc%2Ctrue',
+      ],
+      ['already-a-string', 'already-a-string', 'already-a-string'],
+    ])(
+      'serializes %j using OpenAPI simple style across path, header, and cookie',
+      (value, expected, expectedPath) => {
+        const result = prepareRequestParams(itemFilterEndpoint, parameters, {
+          item_filter: value,
+          'X-Page-Size': value,
+          page_size: value,
+        });
+
+        expect(result.url).toBe(`https://example.com/items/${expectedPath}`);
+        expect(result.headers['X-Page-Size']).toBe(expected);
+        expect(result.cookies['page_size']).toBe(expected);
+      },
+    );
+
+    it('omits null and undefined header, cookie, and path values', () => {
+      const resultForNull = prepareRequestParams(
+        itemFilterEndpoint,
+        parameters,
+        {
+          item_filter: null,
+          'X-Page-Size': null,
+          page_size: null,
+        },
+      );
+
+      expect(resultForNull.url).toBe('https://example.com/items/{item_filter}');
+      expect(resultForNull.headers).toEqual({});
+      expect(resultForNull.cookies).toEqual({});
+
+      const resultForUndefined = prepareRequestParams(
+        itemFilterEndpoint,
+        parameters,
+        {
+          item_filter: undefined,
+          'X-Page-Size': undefined,
+          page_size: undefined,
+        },
+      );
+
+      expect(resultForUndefined.url).toBe(
+        'https://example.com/items/{item_filter}',
+      );
+      expect(resultForUndefined.headers).toEqual({});
+      expect(resultForUndefined.cookies).toEqual({});
+    });
+
+    it('still rejects dot-segment path parameters after array serialization', () => {
+      expect(() =>
+        prepareRequestParams(itemFilterEndpoint, parameters, {
+          item_filter: ['..', null],
+        }),
+      ).toThrow(/relative path segments/);
+    });
+  });
+
   describe('prepareRequestBody', () => {
     it('should format JSON body correctly', () => {
       const requestBody: OpenAPIV3.RequestBodyObject = {
@@ -1395,6 +1484,134 @@ describe('RestApiTool Utilities', () => {
 
       expect(result).toBeUndefined();
       expect(headers).toEqual({});
+    });
+
+    describe('form bodies', () => {
+      const urlencoded: OpenAPIV3.RequestBodyObject = {
+        content: {
+          'application/x-www-form-urlencoded': {schema: {type: 'object'}},
+        },
+      };
+      const multipart: OpenAPIV3.RequestBodyObject = {
+        content: {'multipart/form-data': {schema: {type: 'object'}}},
+      };
+
+      const entriesOf = (form: FormData): Array<[string, string]> => {
+        const entries: Array<[string, string]> = [];
+        form.forEach((value, key) => entries.push([key, String(value)]));
+        return entries;
+      };
+
+      it('should send an array as repeated keys in a urlencoded body', () => {
+        const result = prepareRequestBody(
+          urlencoded,
+          undefined,
+          {tags: ['a', 'b'], n: 5},
+          {},
+        ) as URLSearchParams;
+
+        expect(result.toString()).toBe('tags=a&tags=b&n=5');
+        expect(result.getAll('tags')).toEqual(['a', 'b']);
+      });
+
+      it('should JSON-encode an object in a urlencoded body', () => {
+        const result = prepareRequestBody(
+          urlencoded,
+          undefined,
+          {filter: {k: 1}},
+          {},
+        ) as URLSearchParams;
+
+        expect(result.toString()).toBe('filter=%7B%22k%22%3A1%7D');
+        expect(result.get('filter')).toBe('{"k":1}');
+      });
+
+      it('should JSON-encode an object element of an array in a urlencoded body', () => {
+        const result = prepareRequestBody(
+          urlencoded,
+          undefined,
+          {items: [{id: 1}, 'x']},
+          {},
+        ) as URLSearchParams;
+
+        expect(result.getAll('items')).toEqual(['{"id":1}', 'x']);
+      });
+
+      it('should skip null and undefined fields and elements in a urlencoded body', () => {
+        const result = prepareRequestBody(
+          urlencoded,
+          undefined,
+          {a: null, b: undefined, c: [1, null, undefined, 2], d: []},
+          {},
+        ) as URLSearchParams;
+
+        expect(result.toString()).toBe('c=1&c=2');
+      });
+
+      it('should keep scalar fields as strings in a urlencoded body', () => {
+        const result = prepareRequestBody(
+          urlencoded,
+          undefined,
+          {s: 'a b', n: 0, flag: false},
+          {},
+        ) as URLSearchParams;
+
+        expect(result.toString()).toBe('s=a+b&n=0&flag=false');
+      });
+
+      it('should still parse a string body as a urlencoded query string', () => {
+        const result = prepareRequestBody(
+          urlencoded,
+          'a=1&a=2',
+          {},
+          {},
+        ) as URLSearchParams;
+
+        expect(result.getAll('a')).toEqual(['1', '2']);
+      });
+
+      it('should send an array as repeated keys in a multipart body', () => {
+        const result = prepareRequestBody(
+          multipart,
+          undefined,
+          {tags: ['a', 'b'], n: 5},
+          {},
+        ) as FormData;
+
+        expect(entriesOf(result)).toEqual([
+          ['tags', 'a'],
+          ['tags', 'b'],
+          ['n', '5'],
+        ]);
+      });
+
+      it('should JSON-encode an object in a multipart body', () => {
+        const result = prepareRequestBody(
+          multipart,
+          undefined,
+          {filter: {k: 1}, items: [{id: 1}]},
+          {},
+        ) as FormData;
+
+        expect(entriesOf(result)).toEqual([
+          ['filter', '{"k":1}'],
+          ['items', '{"id":1}'],
+        ]);
+      });
+
+      it('should skip null and undefined fields and elements in a multipart body', () => {
+        const result = prepareRequestBody(
+          multipart,
+          undefined,
+          {a: null, b: undefined, c: [1, null, 2], d: []},
+          {},
+        ) as FormData;
+
+        expect(entriesOf(result)).toEqual([
+          ['c', '1'],
+          ['c', '2'],
+        ]);
+      });
     });
   });
 

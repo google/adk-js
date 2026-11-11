@@ -52,9 +52,7 @@
               "gen_ai.operation.name": "generate_content",
               "gen_ai.provider.name": "gcp.gemini",
               "gen_ai.request.model": "gemini-2.5-flash",
-              "gen_ai.response.finish_reasons": [
-                "stop"
-              ],
+              "gen_ai.response.finish_reasons": ["stop"],
               "gen_ai.tool.definitions": [
                 {
                   "description": "A sample tool.",
@@ -106,9 +104,7 @@
                     }
                   ],
                   "gen_ai.provider.name": "gcp.gemini",
-                  "gen_ai.response.finish_reasons": [
-                    "stop"
-                  ],
+                  "gen_ai.response.finish_reasons": ["stop"],
                   "gen_ai.system_instructions": [
                     {
                       "content": "You are an agent. Your internal name is \"some_root_agent\".\n\nThe description about you is \"A sample root agent.\"\n\nyou are helpful",
@@ -125,9 +121,7 @@
                             "type": "STRING"
                           }
                         },
-                        "required": [
-                          "arg1"
-                        ],
+                        "required": ["arg1"],
                         "type": "OBJECT"
                       },
                       "type": "function"
@@ -167,9 +161,7 @@
               "gen_ai.operation.name": "generate_content",
               "gen_ai.provider.name": "gcp.gemini",
               "gen_ai.request.model": "gemini-2.5-flash",
-              "gen_ai.response.finish_reasons": [
-                "stop"
-              ],
+              "gen_ai.response.finish_reasons": ["stop"],
               "gen_ai.tool.definitions": [
                 {
                   "description": "A sample tool.",
@@ -242,9 +234,7 @@
                     }
                   ],
                   "gen_ai.provider.name": "gcp.gemini",
-                  "gen_ai.response.finish_reasons": [
-                    "stop"
-                  ],
+                  "gen_ai.response.finish_reasons": ["stop"],
                   "gen_ai.system_instructions": [
                     {
                       "content": "You are an agent. Your internal name is \"some_root_agent\".\n\nThe description about you is \"A sample root agent.\"\n\nyou are helpful",
@@ -261,9 +251,7 @@
                             "type": "STRING"
                           }
                         },
-                        "required": [
-                          "arg1"
-                        ],
+                        "required": ["arg1"],
                         "type": "OBJECT"
                       },
                       "type": "function"

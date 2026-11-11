@@ -50,11 +50,11 @@ export const mathAgent = new LlmAgent({
 
 The `LangchainToolConfig` interface configures `new LangchainTool(config)` or `new LangchainTool(tool, options?)`.
 
-| Option | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `tool` | `LangchainToolLike` | Required | Wrapped LangChain tool object exposing `_run`, `_call`, `invoke`, or `run`. |
-| `name` | `string` | `tool.name` | Optional custom name override. |
-| `description` | `string` | `tool.description` | Optional custom description override. |
+| Option        | Type                | Default            | Description                                                                 |
+| :------------ | :------------------ | :----------------- | :-------------------------------------------------------------------------- |
+| `tool`        | `LangchainToolLike` | Required           | Wrapped LangChain tool object exposing `_run`, `_call`, `invoke`, or `run`. |
+| `name`        | `string`            | `tool.name`        | Optional custom name override.                                              |
+| `description` | `string`            | `tool.description` | Optional custom description override.                                       |
 
 ## How it works
 

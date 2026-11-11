@@ -567,6 +567,67 @@ describe('DatabaseSessionService', () => {
     expect(listAll.sessions.length).toBe(1);
   });
 
+  it.each([
+    {options: {}, ids: ['empty-1', 'empty-2']},
+    {options: {limit: 1}, ids: ['empty-1']},
+    {options: {limit: 1, page: 2}, ids: ['empty-2']},
+    {options: {limit: 1, offset: 1}, ids: ['empty-2']},
+  ])(
+    'filters an empty userId with options $options',
+    async ({options, ids}) => {
+      const appName = 'empty-user-app';
+      const stateKey = State.USER_PREFIX + 'owner';
+      await service.createSession({
+        appName,
+        userId: 'other-user',
+        sessionId: 'other-session',
+        state: {[stateKey]: 'other-user'},
+      });
+      const created = await service.createSession({
+        appName,
+        userId: '',
+        sessionId: 'empty-1',
+        state: {[stateKey]: 'empty-user'},
+      });
+      await service.createSession({appName, userId: '', sessionId: 'empty-2'});
+
+      const loaded = await service.getSession({
+        appName,
+        userId: '',
+        sessionId: created.id,
+      });
+      expect(loaded?.userId).toBe('');
+      expect(loaded?.state[stateKey]).toBe('empty-user');
+
+      const allUsers = await service.listSessions({appName});
+      expect(allUsers.sessions.map((session) => session.id).sort()).toEqual([
+        'empty-1',
+        'empty-2',
+        'other-session',
+      ]);
+      expect(allUsers.totalItems).toBe(3);
+      expect(
+        allUsers.sessions.find((session) => session.userId === 'other-user')
+          ?.state[stateKey],
+      ).toBe('other-user');
+
+      const response = await service.listSessions({
+        appName,
+        userId: '',
+        order: 'asc',
+        ...options,
+      });
+      expect(response.totalItems).toBe(2);
+      expect(
+        response.sessions.map((session) => [
+          session.id,
+          session.userId,
+          session.state[stateKey],
+        ]),
+      ).toEqual(ids.map((id) => [id, '', 'empty-user']));
+    },
+  );
+
   it('should handle errors', async () => {
     await service.createSession({
       appName: 'app1',
@@ -958,6 +1019,51 @@ describe('DatabaseSessionService', () => {
       expect(
         eventData.actions?.stateDelta?.[State.TEMP_PREFIX + 'hide'],
       ).toBeUndefined();
+    });
+
+    it('should keep temp state in the session for the invocation without storing it', async () => {
+      const key = {appName: 'test-app', userId: 'test-user', sessionId: 's1'};
+      const session = await service.createSession(key);
+      const event = createEvent({
+        timestamp: Date.now(),
+        actions: createEventActions({
+          stateDelta: {[State.TEMP_PREFIX + 'draft']: 'text', kept: 'value'},
+        }),
+      });
+
+      await service.appendEvent({session, event});
+
+      expect(session.state[State.TEMP_PREFIX + 'draft']).toBe('text');
+      expect((await service.getSession(key))?.state).toEqual({kept: 'value'});
+    });
+
+    it('should keep temp state from an earlier event after a later append', async () => {
+      const session = await service.createSession({
+        appName: 'test-app',
+        userId: 'test-user',
+      });
+      await service.appendEvent({
+        session,
+        event: createEvent({
+          timestamp: Date.now(),
+          actions: createEventActions({
+            stateDelta: {[State.TEMP_PREFIX + 'draft']: 'text'},
+          }),
+        }),
+      });
+
+      await service.appendEvent({
+        session,
+        event: createEvent({
+          timestamp: Date.now() + 1,
+          actions: createEventActions({stateDelta: {kept: 'value'}}),
+        }),
+      });
+
+      expect(session.state).toEqual({
+        [State.TEMP_PREFIX + 'draft']: 'text',
+        kept: 'value',
+      });
     });
 
     it('should align session updateTime with event timestamp', async () => {

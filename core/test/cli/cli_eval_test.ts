@@ -158,6 +158,20 @@ describe('cli/cli_eval', () => {
         'set2.evalset.json': ['case_a', 'case_b', 'case_c'],
       });
     });
+
+    it('does not split a Windows drive letter off an absolute path', () => {
+      const parsed = parseAndGetEvalsToRun([
+        'C:\\evals\\set1.evalset.json',
+        'C:\\evals\\set2.evalset.json:case_a,case_b',
+        'd:/evals/set3.evalset.json:case_c',
+      ]);
+
+      expect(parsed).toEqual({
+        'C:\\evals\\set1.evalset.json': [],
+        'C:\\evals\\set2.evalset.json': ['case_a', 'case_b'],
+        'd:/evals/set3.evalset.json': ['case_c'],
+      });
+    });
   });
 
   describe('getRootAgent and tryGetResetFunc', () => {

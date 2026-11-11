@@ -214,8 +214,8 @@ export const REGION_DEPLOY_OPTION = new Option(
 );
 export const ADK_VERSION_OPTION = new Option(
   '--adk_version [string]',
-  'Optional. ADK version to use. If not set, default to the latest version available on npm',
-).default('latest');
+  'Optional. Version or dist-tag of @google/adk-devtools to install in the deployed image',
+).default(version, `${version}, this CLI's version`);
 export const WITH_UI_OPTION = new Option(
   '--with_ui [boolean]',
   'Optional. Deploy ADK Web UI if set. (default: deploy ADK API server only)',

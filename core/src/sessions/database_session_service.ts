@@ -347,7 +347,7 @@ export class DatabaseSessionService extends BaseSessionService {
     const em = this.orm!.em.fork();
 
     const where: FilterQuery<StorageSessionEntity> = {appName};
-    if (userId) {
+    if (userId !== undefined) {
       where.userId = userId;
     }
 
@@ -412,7 +412,7 @@ export class DatabaseSessionService extends BaseSessionService {
     const appState = appStateModel?.state || {};
     const userStateMap: Record<string, Record<string, unknown>> = {};
 
-    if (userId) {
+    if (userId !== undefined) {
       const u = await em.findOne(StorageUserState, {appName, userId});
       if (u) userStateMap[userId] = u.state;
     } else {
@@ -461,6 +461,7 @@ export class DatabaseSessionService extends BaseSessionService {
       return event;
     }
 
+    const stateDelta = event.actions?.stateDelta ?? {};
     const trimmedEvent = trimTempDeltaState(event);
     let sessionWasStale = false;
 
@@ -576,6 +577,15 @@ export class DatabaseSessionService extends BaseSessionService {
         userStateModel.state,
         storageSession.state,
       );
+      // temp: keys are never stored, but stay in the in-memory session for the
+      // rest of the invocation: carry over earlier ones, then this event's
+      for (const source of [session.state, stateDelta]) {
+        for (const [key, value] of Object.entries(source)) {
+          if (key.startsWith(State.TEMP_PREFIX)) {
+            newMergedState[key] = value;
+          }
+        }
+      }
       session.state = newMergedState;
 
       upsertSessionEvent(session, event);

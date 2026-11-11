@@ -177,6 +177,7 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
       const userFnCall = getUserFunctionCallAt(
         context.session,
         events.length - 1,
+        this.name,
       );
       let parts: A2APart[];
       let taskId: string | undefined = undefined;

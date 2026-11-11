@@ -70,7 +70,7 @@ async function resolveKey(
 
   // Step 3: Handle state variable injection.
   if (isValidStateName(key)) {
-    if (key in invocationContext.session.state) {
+    if (Object.hasOwn(invocationContext.session.state, key)) {
       return formatValue(invocationContext.session.state[key], false);
     }
     if (isOptional) {

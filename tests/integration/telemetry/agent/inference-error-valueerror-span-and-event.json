@@ -55,9 +55,7 @@
                         "type": "STRING"
                       }
                     },
-                    "required": [
-                      "arg1"
-                    ],
+                    "required": ["arg1"],
                     "type": "OBJECT"
                   },
                   "type": "function"
@@ -103,9 +101,7 @@
                             "type": "STRING"
                           }
                         },
-                        "required": [
-                          "arg1"
-                        ],
+                        "required": ["arg1"],
                         "type": "OBJECT"
                       },
                       "type": "function"

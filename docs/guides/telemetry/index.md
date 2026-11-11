@@ -88,17 +88,17 @@ response into the answer. The tool span is a sibling of the model calls, not a
 child: a `generate_content` span ends at the response that reports why the model
 stopped, before the agent acts on that response.
 
-| Span                                 | Opened for                                                                                     |
-| :----------------------------------- | :--------------------------------------------------------------------------------------------- |
+| Span                                 | Opened for                                                                                                                                                         |
+| :----------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `invoke_workflow <name>`             | One turn, opened by the `Runner` and named after its root agent or workflow. Also each nested `Workflow` run, and the turn of an agent called through `AgentTool`. |
-| `invoke_agent <name>`                | One agent's part of the turn.                                                                  |
-| `generate_content <model>`           | One call to the model. None is opened when a `beforeModelCallback` answers instead.            |
-| `execute_tool <name>`                | One tool call and its response.                                                                |
-| `execute_tool <name> <skill> [path]` | A skill tool call, named after the skill and the resource or script it touched.                |
-| `execute_tool (merged)`              | Parallel tool calls whose responses are merged into one event.                                 |
-| `invoke_node <name>`                 | One plain node in a workflow. An agent or workflow node is traced by its own span instead.     |
-| `compact_events <trigger>`           | One context compaction.                                                                        |
-| `send_data`                          | Replaying session history to a live model connection in `runLive`.                             |
+| `invoke_agent <name>`                | One agent's part of the turn.                                                                                                                                      |
+| `generate_content <model>`           | One call to the model. None is opened when a `beforeModelCallback` answers instead.                                                                                |
+| `execute_tool <name>`                | One tool call and its response.                                                                                                                                    |
+| `execute_tool <name> <skill> [path]` | A skill tool call, named after the skill and the resource or script it touched.                                                                                    |
+| `execute_tool (merged)`              | Parallel tool calls whose responses are merged into one event.                                                                                                     |
+| `invoke_node <name>`                 | One plain node in a workflow. An agent or workflow node is traced by its own span instead.                                                                         |
+| `compact_events <trigger>`           | One context compaction.                                                                                                                                            |
+| `send_data`                          | Replaying session history to a live model connection in `runLive`.                                                                                                 |
 
 A workflow passed to the `Runner` as its root runs inside the turn's
 `invoke_workflow` span rather than opening a second one. Any other workflow
@@ -106,16 +106,16 @@ span below it carries `gen_ai.workflow.nested = true`.
 
 ### Span attributes
 
-| Span                       | Attributes                                                                                                                                                                                                                                                                                                                                                                                |
-| :------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `invoke_workflow <name>`   | `gen_ai.operation.name`, `gen_ai.conversation.id` (the session id), `gen_ai.workflow.name`, and `gen_ai.workflow.nested` on a nested workflow.                                                                                                                                                                                                                                         |
-| `invoke_agent <name>`      | `gen_ai.operation.name`, `gen_ai.agent.name`, `gen_ai.agent.description`, `gen_ai.conversation.id`.                                                                                                                                                                                                                                                                                    |
-| `generate_content <model>` | `gen_ai.operation.name`, `gen_ai.request.model`, `gen_ai.agent.name`, `gen_ai.conversation.id`, `gen_ai.provider.name`, `gcp.vertex.agent.event_id`, `gcp.vertex.agent.invocation_id`, `gen_ai.tool.definitions`, and when known `gen_ai.request.top_p`, `gen_ai.request.max_tokens`, `gen_ai.response.finish_reasons` and the `gen_ai.usage.*` token counts. Message content is described below. |
+| Span                       | Attributes                                                                                                                                                                                                                                                                                                                                                                                                 |
+| :------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invoke_workflow <name>`   | `gen_ai.operation.name`, `gen_ai.conversation.id` (the session id), `gen_ai.workflow.name`, and `gen_ai.workflow.nested` on a nested workflow.                                                                                                                                                                                                                                                             |
+| `invoke_agent <name>`      | `gen_ai.operation.name`, `gen_ai.agent.name`, `gen_ai.agent.description`, `gen_ai.conversation.id`.                                                                                                                                                                                                                                                                                                        |
+| `generate_content <model>` | `gen_ai.operation.name`, `gen_ai.request.model`, `gen_ai.agent.name`, `gen_ai.conversation.id`, `gen_ai.provider.name`, `gcp.vertex.agent.event_id`, `gcp.vertex.agent.invocation_id`, `gen_ai.tool.definitions`, and when known `gen_ai.request.top_p`, `gen_ai.request.max_tokens`, `gen_ai.response.finish_reasons` and the `gen_ai.usage.*` token counts. Message content is described below.          |
 | `execute_tool <name>`      | `gen_ai.operation.name`, `gen_ai.tool.name`, `gen_ai.tool.description`, `gen_ai.tool.type`, `gen_ai.agent.name`, `gen_ai.tool.call.id`, `gcp.vertex.agent.event_id`, and `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result` when content capture includes spans. A skill tool adds `gen_ai.skill.name`, `gen_ai.skill.description`, `gen_ai.skill.resource.name` and `adk.skill.additional_tools`. |
-| `execute_tool (merged)`    | `gen_ai.operation.name`, `gen_ai.tool.name` and `gen_ai.tool.description` set to `'(merged tools)'`, and `gen_ai.tool.call.id` and `gcp.vertex.agent.event_id` set to the merged event id.                                                                                                                                                                                              |
-| `invoke_node <name>`       | `gen_ai.operation.name`, `gen_ai.conversation.id`, and `gcp.vertex.agent.associated_event_ids`, the ids of the events the node emitted.                                                                                                                                                                                                                                                 |
-| `compact_events <trigger>` | `gen_ai.operation.name`, `gen_ai.conversation.id`, `gen_ai.compaction.trigger`, and for a compaction that added a summary `gen_ai.compaction.result_event_id`, `gen_ai.compaction.event_count`, `gen_ai.compaction.start_timestamp` and `gen_ai.compaction.end_timestamp`.                                                                                                             |
-| `send_data`                | `gcp.vertex.agent.invocation_id`, `gcp.vertex.agent.event_id`, and `gcp.vertex.agent.data`, the replayed `Content[]` as JSON.                                                                                                                                                                                                                                                          |
+| `execute_tool (merged)`    | `gen_ai.operation.name`, `gen_ai.tool.name` and `gen_ai.tool.description` set to `'(merged tools)'`, and `gen_ai.tool.call.id` and `gcp.vertex.agent.event_id` set to the merged event id.                                                                                                                                                                                                                 |
+| `invoke_node <name>`       | `gen_ai.operation.name`, `gen_ai.conversation.id`, and `gcp.vertex.agent.associated_event_ids`, the ids of the events the node emitted.                                                                                                                                                                                                                                                                    |
+| `compact_events <trigger>` | `gen_ai.operation.name`, `gen_ai.conversation.id`, `gen_ai.compaction.trigger`, and for a compaction that added a summary `gen_ai.compaction.result_event_id`, `gen_ai.compaction.event_count`, `gen_ai.compaction.start_timestamp` and `gen_ai.compaction.end_timestamp`.                                                                                                                                 |
+| `send_data`                | `gcp.vertex.agent.invocation_id`, `gcp.vertex.agent.event_id`, and `gcp.vertex.agent.data`, the replayed `Content[]` as JSON.                                                                                                                                                                                                                                                                              |
 
 A few values follow rules worth knowing when you query them:
 
@@ -324,7 +324,11 @@ import {OTLPLogExporter} from '@opentelemetry/exporter-logs-otlp-http';
 import {BatchLogRecordProcessor} from '@opentelemetry/sdk-logs';
 
 maybeSetOtelProviders([
-  {logRecordProcessors: [new BatchLogRecordProcessor({exporter: new OTLPLogExporter()})]},
+  {
+    logRecordProcessors: [
+      new BatchLogRecordProcessor({exporter: new OTLPLogExporter()}),
+    ],
+  },
 ]);
 ```
 
@@ -340,7 +344,9 @@ import {
 } from '@opentelemetry/sdk-logs';
 
 const loggerProvider = new LoggerProvider({
-  processors: [new SimpleLogRecordProcessor({exporter: new ConsoleLogRecordExporter()})],
+  processors: [
+    new SimpleLogRecordProcessor({exporter: new ConsoleLogRecordExporter()}),
+  ],
 });
 logs.setGlobalLoggerProvider(loggerProvider);
 ```

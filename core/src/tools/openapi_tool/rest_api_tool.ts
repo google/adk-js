@@ -283,6 +283,29 @@ function encodePathParamValue(name: string, value: string): string {
 }
 
 /**
+ * Serializes a path, header, or cookie parameter value using OpenAPI's default
+ * `simple` style, matching `adk-python`'s `_to_param_string`.
+ *
+ * Arrays and plain objects are comma-joined while omitting `null` and
+ * `undefined` entries.
+ */
+function toParamString(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value
+      .filter((item) => item !== undefined && item !== null)
+      .map(toParamString)
+      .join(',');
+  }
+  if (typeof value === 'object' && value !== null) {
+    return Object.entries(value)
+      .filter(([, v]) => v !== undefined && v !== null)
+      .map(([k, v]) => `${k},${toParamString(v)}`)
+      .join(',');
+  }
+  return String(value);
+}
+
+/**
  * Serializes one element of a query parameter value.
  *
  * Plain objects have no string form, so they are JSON-encoded rather than
@@ -295,25 +318,27 @@ function serializeQueryValue(value: unknown): string {
 }
 
 /**
- * Appends a model-supplied query parameter value to `queryParams`.
+ * Appends a model-supplied value to `target`, a `URLSearchParams` or a
+ * `FormData`.
  *
- * OpenAPI query parameters default to `style: form` and `explode: true`, so an
- * array is sent as one `name=value` pair per element (`id=1&id=2&id=3`), the
- * same as adk-python, which hands the list to httpx. `null` and `undefined`
- * elements are skipped and an empty array sends nothing.
+ * OpenAPI query parameters and form fields default to `style: form` and
+ * `explode: true`, so an array is sent as one `name=value` pair per element
+ * (`id=1&id=2&id=3`), the same as adk-python, which hands the list to httpx.
+ * `null` and `undefined` elements are skipped and an empty array sends
+ * nothing.
  */
-function appendQueryParam(
-  queryParams: URLSearchParams,
+function appendParamValue(
+  target: Pick<URLSearchParams, 'append'>,
   name: string,
   value: unknown,
 ): void {
   if (!Array.isArray(value)) {
-    queryParams.append(name, serializeQueryValue(value));
+    target.append(name, serializeQueryValue(value));
     return;
   }
   for (const item of value) {
     if (item !== undefined && item !== null) {
-      queryParams.append(name, serializeQueryValue(item));
+      target.append(name, serializeQueryValue(item));
     }
   }
 }
@@ -340,21 +365,27 @@ export function prepareRequestParams(
     const location = param.paramLocation;
 
     if (location === 'path') {
-      pathParams[originalName] = encodePathParamValue(
-        originalName,
-        String(argValue),
-      );
+      if (argValue !== undefined && argValue !== null) {
+        pathParams[originalName] = encodePathParamValue(
+          originalName,
+          toParamString(argValue),
+        );
+      }
     } else if (location === 'query') {
       // An unset query parameter is not sent. `0` and `false` are sent, unlike
       // the reference implementation, which drops every falsy value and so
       // loses `?count=0` and `?flag=false`.
       if (argValue !== undefined && argValue !== null && argValue !== '') {
-        appendQueryParam(queryParams, originalName, argValue);
+        appendParamValue(queryParams, originalName, argValue);
       }
     } else if (location === 'header') {
-      headers[originalName] = String(argValue);
+      if (argValue !== undefined && argValue !== null) {
+        headers[originalName] = toParamString(argValue);
+      }
     } else if (location === 'cookie') {
-      cookies[originalName] = String(argValue);
+      if (argValue !== undefined && argValue !== null) {
+        cookies[originalName] = toParamString(argValue);
+      }
     } else if (location === 'body') {
       if (
         originalName === 'body' ||
@@ -415,6 +446,26 @@ function isRawBody(value: unknown): boolean {
   );
 }
 
+function isFormFields(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Appends each field of a form request body to `target`. An array becomes one
+ * entry per element and an object is JSON-encoded, as for query parameters. A
+ * `null` or `undefined` field is omitted.
+ */
+function appendFormFields(
+  target: Pick<URLSearchParams, 'append'>,
+  fields: Record<string, unknown>,
+): void {
+  for (const [name, value] of Object.entries(fields)) {
+    if (value !== undefined && value !== null) {
+      appendParamValue(target, name, value);
+    }
+  }
+}
+
 export function prepareRequestBody(
   requestBody:
     OpenAPIV3.RequestBodyObject | OpenAPIV3.ReferenceObject | undefined,
@@ -440,13 +491,16 @@ export function prepareRequestBody(
           ? finalData
           : JSON.stringify(finalData);
       } else if (mimeType === 'application/x-www-form-urlencoded') {
+        if (isFormFields(finalData)) {
+          const formParams = new URLSearchParams();
+          appendFormFields(formParams, finalData);
+          return formParams;
+        }
         return new URLSearchParams(finalData as Record<string, string>);
       } else if (mimeType === 'multipart/form-data') {
         const formData = new FormData();
         if (typeof finalData === 'object' && finalData !== null) {
-          for (const [key, value] of Object.entries(finalData)) {
-            formData.append(key, String(value));
-          }
+          appendFormFields(formData, finalData as Record<string, unknown>);
         }
         return formData;
       } else if (mimeType === 'application/octet-stream') {

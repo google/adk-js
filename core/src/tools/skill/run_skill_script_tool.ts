@@ -106,11 +106,12 @@ export class RunSkillScriptTool extends BaseTool {
     }
     skillActivity.recordSkill(skill);
 
-    const relScriptPath = scriptPath.startsWith('scripts/')
+    let relScriptPath = scriptPath.startsWith('scripts/')
       ? scriptPath.substring('scripts/'.length)
       : scriptPath;
     let script = skill.resources?.scripts?.[relScriptPath];
     if (!script) {
+      relScriptPath = scriptPath;
       script = skill.resources?.scripts?.[scriptPath];
     }
 
@@ -141,7 +142,9 @@ export class RunSkillScriptTool extends BaseTool {
       const result = await codeExecutor.executeCode({
         invocationContext: toolContext.invocationContext,
         codeExecutionInput: {
-          code: buildWrapperCode(scriptPath, language),
+          // Scripts are always written under scripts/ (see
+          // getSkillResourceFiles), with or without the prefix in script_path.
+          code: buildWrapperCode(`scripts/${relScriptPath}`, language),
           inputFiles: getSkillResourceFiles(skill),
           language,
           args: scriptArgs,

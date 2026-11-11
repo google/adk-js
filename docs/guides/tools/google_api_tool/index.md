@@ -10,11 +10,11 @@ Google APIs publish Discovery documents rather than OpenAPI v3 specifications. T
 
 The subsystem exposes nine toolset and tool classes:
 
-| Export | Purpose |
-| :--- | :--- |
-| `GoogleApiToolset` | Loads a Google API specification, filters operations exposed to an agent, and configures OAuth 2.0 client credentials. |
+| Export                                                                                                                  | Purpose                                                                                                                                       |
+| :---------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GoogleApiToolset`                                                                                                      | Loads a Google API specification, filters operations exposed to an agent, and configures OAuth 2.0 client credentials.                        |
 | `CalendarToolset`, `BigQueryToolset`, `GmailToolset`, `YoutubeToolset`, `SlidesToolset`, `SheetsToolset`, `DocsToolset` | Service-specific `GoogleApiToolset` subclasses that construct isolated toolset instances with `{clientId, clientSecret, toolFilter}` options. |
-| `GoogleApiTool` | Wraps a single `RestApiTool` and accepts `{clientId, clientSecret}` in its constructor or via `configureAuth(clientId, clientSecret)`. |
+| `GoogleApiTool`                                                                                                         | Wraps a single `RestApiTool` and accepts `{clientId, clientSecret}` in its constructor or via `configureAuth(clientId, clientSecret)`.        |
 
 All classes in this subsystem carry the `@experimental` decorator and log a one-time warning when instantiated or called.
 
@@ -58,13 +58,13 @@ When `getTools()` is called, `GoogleApiToolset` fetches the Discovery document f
 
 `new GoogleApiToolset(options)` and the seven service-specific toolset classes accept a `GoogleApiToolsetOptions` object.
 
-| Option | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `apiName` | `string` | `undefined` | Google Discovery API identifier, such as `'calendar'` or `'gmail'`. |
-| `apiVersion` | `string` | `undefined` | Google Discovery API version string, such as `'v3'` or `'v1'`. |
-| `clientId` | `string` | `undefined` | OAuth 2.0 client ID applied to every `GoogleApiTool` in the toolset. |
-| `clientSecret` | `string` | `undefined` | OAuth 2.0 client secret applied to every `GoogleApiTool` in the toolset. |
-| `toolFilter` | `ToolPredicate \| string[]` | `[]` | Selects which tools `getTools()` exposes to the agent. An empty array exposes every tool. |
+| Option         | Type                        | Default     | Description                                                                               |
+| :------------- | :-------------------------- | :---------- | :---------------------------------------------------------------------------------------- |
+| `apiName`      | `string`                    | `undefined` | Google Discovery API identifier, such as `'calendar'` or `'gmail'`.                       |
+| `apiVersion`   | `string`                    | `undefined` | Google Discovery API version string, such as `'v3'` or `'v1'`.                            |
+| `clientId`     | `string`                    | `undefined` | OAuth 2.0 client ID applied to every `GoogleApiTool` in the toolset.                      |
+| `clientSecret` | `string`                    | `undefined` | OAuth 2.0 client secret applied to every `GoogleApiTool` in the toolset.                  |
+| `toolFilter`   | `ToolPredicate \| string[]` | `[]`        | Selects which tools `getTools()` exposes to the agent. An empty array exposes every tool. |
 
 `toolFilter` accepts an array of tool names or a `(tool, readonlyContext?) => boolean` predicate function. It can be updated at runtime with `setToolFilter(toolFilter)`.
 
