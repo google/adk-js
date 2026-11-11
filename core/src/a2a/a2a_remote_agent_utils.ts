@@ -23,16 +23,18 @@ export interface UserFunctionCall {
 
 /**
  * Returns a UserFunctionCall when the event at `index` contains a
- * FunctionResponse that can be traced back to a preceding FunctionCall event.
+ * FunctionResponse that can be traced back to this agent's FunctionCall event.
  *
  * @param session - The session whose event history to inspect.
  * @param index - Index of the candidate event to examine.
+ * @param agentName - The remote agent whose pending task to resume.
  * @returns The matching `UserFunctionCall`, or `undefined` if the event at
  *   `index` is not a user function-response event or has no preceding call.
  */
 export function getUserFunctionCallAt(
   session: Session,
   index: number,
+  agentName: string,
 ): UserFunctionCall | undefined {
   const events = session.events;
   if (index < 0 || index >= events.length) {
@@ -44,14 +46,19 @@ export function getUserFunctionCallAt(
     return undefined;
   }
 
-  const fnCallId = getFunctionResponseCallId(candidate);
-  if (!fnCallId) {
+  const fnCallIds = candidate.content?.parts
+    ?.map((part) => part.functionResponse?.id)
+    .filter((id): id is string => !!id);
+  if (!fnCallIds?.length) {
     return undefined;
   }
 
   for (let i = index - 1; i >= 0; i--) {
     const request = events[i];
-    if (!isFunctionCallEvent(request, fnCallId)) {
+    if (
+      request.author !== agentName ||
+      !fnCallIds.some((callId) => isFunctionCallEvent(request, callId))
+    ) {
       continue;
     }
 
@@ -221,14 +228,17 @@ export function peerRequestedCallIds(
  * bearing part is a request this local agent raised for its own tools, or
  * an answer to one, and must never cross the trust boundary to the peer.
  *
- * The peer-requested exception only applies when the peer's own request
- * event was authored under a non-'user' role: `messageToAdkEvent` sets
- * `author: msg.role === 'user' ? 'user' : agentName`, so a peer that sends
- * its own `adk_request_credential` inside a `role: 'user'` message is
- * classified the same as a local request, and its answer is withheld --
- * the handshake stalls (logged via the drop warning below, not silent),
- * rather than leaking. Nothing in the A2A spec obliges a peer to use a
- * non-user role.
+ * `messageToAdkEvent` now attributes every peer message to the peer
+ * (`author: agentName`) regardless of the `role` the peer claims, so a
+ * peer's own `adk_request_credential` is always classified as peer-requested
+ * and its id lands in `peerRequestedIds`. The exception therefore forwards
+ * the exchanged credential back to the peer that asked for it, which is the
+ * point of the exception: a credential the peer itself requested is not a
+ * local secret crossing the boundary, and withholding it would strand the
+ * peer's handshake. This does widen credential egress compared with the old
+ * behaviour, where a peer that mislabelled its request as `role: 'user'` was
+ * classified as local and had its answer withheld; that path is gone because
+ * a peer can no longer author an event as the local user.
  *
  * An adk_request_credential call carries a serialized AuthConfig in its
  * arguments -- including rawAuthCredential, an OAuth2 client secret or a

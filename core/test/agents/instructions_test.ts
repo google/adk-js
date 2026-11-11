@@ -4,9 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {InvocationContext, ReadonlyContext} from '@google/adk';
-import {describe, expect, it, vi} from 'vitest';
-import {injectSessionState} from '../../src/agents/instructions.js';
+import {
+  injectSessionState,
+  InvocationContext,
+  ReadonlyContext,
+} from '@google/adk';
+import {afterEach, describe, expect, it, vi} from 'vitest';
 
 /**
  * Builds a minimal ReadonlyContext backed by a plain-object invocation context.
@@ -89,11 +92,69 @@ describe('injectSessionState', () => {
     );
   });
 
+  // In-memory and database sessions hand over state as a plain object, so it
+  // inherits these names from Object.prototype.
+  it.each(['toString', 'constructor', 'valueOf', 'hasOwnProperty'])(
+    'throws for {%s} when state has no such key',
+    async (key) => {
+      const ctx = makeContext({});
+      await expect(injectSessionState(`A {${key}} B`, ctx)).rejects.toThrow(
+        `Context variable not found: \`${key}\``,
+      );
+    },
+  );
+
+  it('replaces optional {toString?} with empty string when not in state', async () => {
+    const ctx = makeContext({});
+    expect(await injectSessionState('A {toString?} B', ctx)).toBe('A  B');
+  });
+
+  it('replaces {toString} when state has its own toString key', async () => {
+    const ctx = makeContext({toString: 'mine'});
+    expect(await injectSessionState('A {toString} B', ctx)).toBe('A mine B');
+  });
+
   it('treats {{double_brace}} as a placeholder, replacing inner key from state', async () => {
     const ctx = makeContext({double_brace: 'replaced'});
     // Pattern /\{+[^{}]*}+/ matches {{double_brace}} and extracts key "double_brace"
     expect(await injectSessionState('escape {{double_brace}}', ctx)).toBe(
       'escape replaced',
+    );
+  });
+
+  it('leaves a literal ${expression} untouched when the key is absent', async () => {
+    const ctx = makeContext({});
+    const template = 'formatString supports ${expression} interpolation.';
+    expect(await injectSessionState(template, ctx)).toBe(template);
+  });
+
+  it('leaves ${expression} untouched when the key is in state', async () => {
+    const ctx = makeContext({user_name: 'Foo', expression: 'bar'});
+    expect(
+      await injectSessionState('Hello {user_name}! Uses ${expression}.', ctx),
+    ).toBe('Hello Foo! Uses ${expression}.');
+  });
+
+  it('leaves ${{expression}} untouched', async () => {
+    expect(
+      await injectSessionState(
+        'Workflow syntax: ${{expression}}.',
+        makeContext(),
+      ),
+    ).toBe('Workflow syntax: ${{expression}}.');
+    const ctx = makeContext({expression: 'foo', user_name: 'bar'});
+    expect(
+      await injectSessionState(
+        'Workflow syntax: ${{expression}} and {user_name}.',
+        ctx,
+      ),
+    ).toBe('Workflow syntax: ${{expression}} and bar.');
+  });
+
+  it('leaves a backslash-escaped \\{expression} untouched', async () => {
+    const ctx = makeContext({expression: 'foo'});
+    expect(await injectSessionState('Literal \\{expression}.', ctx)).toBe(
+      'Literal \\{expression}.',
     );
   });
 
@@ -183,6 +244,20 @@ describe('injectSessionState', () => {
       await expect(
         injectSessionState('{artifact.missing.txt}', ctx),
       ).rejects.toThrow('Artifact missing.txt not found.');
+    });
+
+    it('throws when artifact name is empty', async () => {
+      const mockArtifactService = {
+        loadArtifact: vi.fn().mockResolvedValue(null),
+      };
+
+      const ctx = makeContext({}, mockArtifactService);
+      await expect(
+        injectSessionState('The artifact content is: {artifact.}', ctx),
+      ).rejects.toThrow('Artifact  not found.');
+      expect(mockArtifactService.loadArtifact).toHaveBeenCalledWith({
+        filename: '',
+      });
     });
 
     it('resolves missing optional artifact to empty string', async () => {
@@ -298,13 +373,99 @@ describe('injectSessionState', () => {
   it('serializes non-text Part artifact object to JSON string', async () => {
     const mockArtifactService = {
       loadArtifact: vi.fn().mockResolvedValue({
-        inlineData: {mimeType: 'text/plain', data: 'abc'},
+        inlineData: {mimeType: 'image/png', data: 'abc'},
       }),
     };
     const ctx = makeContext({}, mockArtifactService);
-    expect(await injectSessionState('Data: {artifact.data.bin}', ctx)).toBe(
-      'Data: {"inlineData":{"mimeType":"text/plain","data":"abc"}}',
+    expect(await injectSessionState('Data: {artifact.chart.png}', ctx)).toBe(
+      'Data: {"inlineData":{"mimeType":"image/png","data":"abc"}}',
     );
+  });
+
+  describe('inlineData artifacts', () => {
+    // Base64 of 'Buy milk.' and of the bytes 00 01 02 03.
+    const textArtifact = {
+      inlineData: {mimeType: 'text/plain', data: 'QnV5IG1pbGsu'},
+    };
+    const binaryArtifact = {
+      inlineData: {mimeType: 'application/octet-stream', data: 'AAECAw=='},
+    };
+    const binaryPlaceholder =
+      '[Binary artifact: notes, type: application/octet-stream, size: 0.0 KB. Content cannot be displayed inline.]';
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('injects the decoded text of a text artifact', async () => {
+      const mockArtifactService = {
+        loadArtifact: vi.fn().mockResolvedValue(textArtifact),
+      };
+      const ctx = makeContext({}, mockArtifactService);
+      expect(await injectSessionState('Notes: {artifact.notes}', ctx)).toBe(
+        'Notes: Buy milk.',
+      );
+    });
+
+    it('injects a placeholder for a binary artifact', async () => {
+      const mockArtifactService = {
+        loadArtifact: vi.fn().mockResolvedValue(binaryArtifact),
+      };
+      const ctx = makeContext({}, mockArtifactService);
+      expect(await injectSessionState('Notes: {artifact.notes}', ctx)).toBe(
+        `Notes: ${binaryPlaceholder}`,
+      );
+    });
+
+    // 1484 bytes encode to 1980 base64 characters, the last one padding.
+    // Counting the padding as data gives 1485 bytes, which rounds to 1.5 KB.
+    it('reports the decoded size of a binary artifact', async () => {
+      const mockArtifactService = {
+        loadArtifact: vi.fn().mockResolvedValue({
+          inlineData: {
+            mimeType: 'application/octet-stream',
+            data: Buffer.alloc(1484).toString('base64'),
+          },
+        }),
+      };
+      const ctx = makeContext({}, mockArtifactService);
+      expect(
+        await injectSessionState('Notes: {artifact.notes}', ctx),
+      ).toContain('size: 1.4 KB');
+    });
+
+    it('does not need Buffer in a browser', async () => {
+      vi.stubGlobal('window', {atob: globalThis.atob.bind(globalThis)});
+      vi.stubGlobal('Buffer', undefined);
+      const mockArtifactService = {
+        loadArtifact: vi
+          .fn()
+          .mockResolvedValueOnce(textArtifact)
+          .mockResolvedValueOnce(binaryArtifact),
+      };
+      const ctx = makeContext({}, mockArtifactService);
+      expect(await injectSessionState('Notes: {artifact.notes}', ctx)).toBe(
+        'Notes: Buy milk.',
+      );
+      expect(await injectSessionState('Notes: {artifact.notes}', ctx)).toBe(
+        `Notes: ${binaryPlaceholder}`,
+      );
+    });
+
+    // 'Pz8_' is '???' in URL-safe base64. Node's Buffer reads it, atob does not.
+    it('reads URL-safe base64 in a browser', async () => {
+      vi.stubGlobal('window', {atob: globalThis.atob.bind(globalThis)});
+      vi.stubGlobal('Buffer', undefined);
+      const mockArtifactService = {
+        loadArtifact: vi.fn().mockResolvedValue({
+          inlineData: {mimeType: 'text/plain', data: 'Pz8_'},
+        }),
+      };
+      const ctx = makeContext({}, mockArtifactService);
+      expect(await injectSessionState('Notes: {artifact.notes}', ctx)).toBe(
+        'Notes: ???',
+      );
+    });
   });
 
   describe('workflow field placeholders', () => {

@@ -14,13 +14,15 @@ import {
 
 import {LiveResponseAggregator} from '../utils/live_connection_utils.js';
 import {logger} from '../utils/logger.js';
-import {isGemini3xFlashLive} from '../utils/model_name.js';
+import {isGemini35LiveTranslate, isGemini3xLive} from '../utils/model_name.js';
 
 import {BaseLlmConnection} from './base_llm_connection.js';
 import {LlmResponse} from './llm_response.js';
 
 /** The Gemini model connection. */
 export class GeminiLlmConnection implements BaseLlmConnection {
+  private messageIterator?: AsyncIterator<LiveServerMessage>;
+
   constructor(
     private readonly geminiSession: Session,
     private readonly modelVersion?: string,
@@ -43,7 +45,7 @@ export class GeminiLlmConnection implements BaseLlmConnection {
     );
 
     if (contents.length > 0) {
-      const isGemini3x = isGemini3xFlashLive(this.modelVersion);
+      const isGemini3x = isGemini3xLive(this.modelVersion);
       this.geminiSession.sendClientContent({
         turns: contents,
         turnComplete: isGemini3x
@@ -79,7 +81,7 @@ export class GeminiLlmConnection implements BaseLlmConnection {
       });
     } else {
       logger.debug('Sending LLM new content', content);
-      const isGemini3x = isGemini3xFlashLive(this.modelVersion);
+      const isGemini3x = isGemini3xLive(this.modelVersion);
       if (isGemini3x && content.parts.length === 1 && content.parts[0].text) {
         logger.debug('Using sendRealtimeInput for Gemini 3.x text input');
         this.geminiSession.sendRealtimeInput({text: content.parts[0].text});
@@ -99,10 +101,14 @@ export class GeminiLlmConnection implements BaseLlmConnection {
    */
   async sendRealtime(blob: Blob): Promise<void> {
     logger.debug('Sending LLM Blob:', blob);
-    const isGemini3x = isGemini3xFlashLive(this.modelVersion);
+    const isGemini3x = isGemini3xLive(this.modelVersion);
     const isNativeAudio = this.modelVersion?.includes('native-audio');
+    const isLiveTranslate = isGemini35LiveTranslate(this.modelVersion);
 
-    if (isGemini3x || isNativeAudio) {
+    // Live Translate is excluded from the conversational 3.x routing above but
+    // still sends audio/video over the realtime path (adk-python parity:
+    // `if self._is_gemini_3_x_live or self._is_gemini_3_5_live_translate:`).
+    if (isGemini3x || isNativeAudio || isLiveTranslate) {
       if (blob.mimeType?.startsWith('audio/')) {
         this.geminiSession.sendRealtimeInput({audio: blob});
       } else if (blob.mimeType?.startsWith('image/')) {
@@ -133,28 +139,37 @@ export class GeminiLlmConnection implements BaseLlmConnection {
   }
 
   /**
-   * Builds a full text response.
+   * Receives the model responses for one model turn.
    *
-   * The text should not be partial and the returned LlmResponse is not be
-   * partial.
+   * The generator ends after the message that completes the turn has been
+   * processed, or when the server closes the connection. Call `receive()`
+   * again to read the next turn; it continues from the next server message.
    *
-   * @param text The text to be included in the response.
-   * @param isThought Whether the text is a thought.
-   * @param groundingMetadata The grounding metadata to include.
-   * @returns An LlmResponse containing the full text.
+   * @returns A generator of the LlmResponses of one model turn.
    */
   async *receive(): AsyncGenerator<LlmResponse, void, void> {
     if (!this.messageQueue) {
       throw new Error('Message queue is not initialized.');
     }
+    // Iterate with `next()` rather than `for await` so that leaving after a
+    // turn does not call `return()` and close a generator-backed source.
+    this.messageIterator ??= this.messageQueue[Symbol.asyncIterator]();
 
     const aggregator = new LiveResponseAggregator(this.modelVersion);
 
-    for await (const message of this.messageQueue) {
+    while (true) {
+      const next = await this.messageIterator.next();
+      if (next.done) {
+        break;
+      }
+      const message = next.value;
       logger.debug('Got LLM Live message:', message);
 
       for (const response of aggregator.processMessage(message)) {
         yield response;
+      }
+      if (message.serverContent?.turnComplete) {
+        return;
       }
     }
 

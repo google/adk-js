@@ -151,4 +151,67 @@ describe('AsyncQueue — failure & lifecycle', () => {
     queue.fail(new Error('second'));
     await expect(drain(queue)).rejects.toThrow('first');
   });
+
+  describe('pushAndWait', () => {
+    it('resolves once the consumer asks for the next item', async () => {
+      const queue = new AsyncQueue<number>();
+      const iterator = queue[Symbol.asyncIterator]();
+      let released = false;
+      const pushed = queue.pushAndWait(1).then(() => (released = true));
+
+      expect(await iterator.next()).toEqual({value: 1, done: false});
+      await Promise.resolve();
+      expect(released).toBe(false);
+
+      const next = iterator.next();
+      await pushed;
+      expect(released).toBe(true);
+      queue.close();
+      expect(await next).toEqual({value: undefined, done: true});
+    });
+
+    it('resolves for a value handed to a consumer that was already waiting', async () => {
+      const queue = new AsyncQueue<number>();
+      const iterator = queue[Symbol.asyncIterator]();
+      const first = iterator.next();
+      let released = false;
+      const pushed = queue.pushAndWait(1).then(() => (released = true));
+
+      expect(await first).toEqual({value: 1, done: false});
+      await Promise.resolve();
+      expect(released).toBe(false);
+
+      void iterator.next();
+      await pushed;
+      expect(released).toBe(true);
+    });
+
+    it('releases waiting producers when the queue closes', async () => {
+      const queue = new AsyncQueue<number>();
+      const pushed = Promise.all([queue.pushAndWait(1), queue.pushAndWait(2)]);
+
+      queue.close();
+
+      await expect(pushed).resolves.toEqual([undefined, undefined]);
+      // Buffered items are still delivered after close.
+      expect(await drain(queue)).toEqual([1, 2]);
+    });
+
+    it('releases waiting producers when the queue fails', async () => {
+      const queue = new AsyncQueue<number>();
+      const pushed = queue.pushAndWait(1);
+
+      queue.fail(new Error('boom'));
+
+      await expect(pushed).resolves.toBeUndefined();
+    });
+
+    it('resolves at once on a closed queue and drops the value', async () => {
+      const queue = new AsyncQueue<number>();
+      queue.close();
+
+      await expect(queue.pushAndWait(1)).resolves.toBeUndefined();
+      expect(await drain(queue)).toEqual([]);
+    });
+  });
 });

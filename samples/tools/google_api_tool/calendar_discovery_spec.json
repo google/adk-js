@@ -1,0 +1,71 @@
+{
+  "title": "Calendar API",
+  "description": "Manipulates events and other calendar data.",
+  "version": "v3",
+  "rootUrl": "https://www.googleapis.com/",
+  "servicePath": "calendar/v3/",
+  "auth": {
+    "oauth2": {
+      "scopes": {
+        "https://www.googleapis.com/auth/calendar": {
+          "description": "See, edit, share, and delete all calendars"
+        }
+      }
+    }
+  },
+  "schemas": {
+    "Calendar": {
+      "type": "object",
+      "description": "A calendar resource.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Identifier of the calendar."
+        },
+        "summary": {
+          "type": "string",
+          "description": "Title of the calendar."
+        }
+      }
+    }
+  },
+  "resources": {
+    "calendars": {
+      "methods": {
+        "get": {
+          "id": "calendar.calendars.get",
+          "path": "calendars/{calendarId}",
+          "httpMethod": "GET",
+          "description": "Returns metadata for a calendar.",
+          "parameters": {
+            "calendarId": {
+              "type": "string",
+              "location": "path",
+              "required": true,
+              "description": "Calendar identifier."
+            }
+          },
+          "response": {
+            "$ref": "Calendar"
+          },
+          "scopes": ["https://www.googleapis.com/auth/calendar"]
+        },
+        "clear": {
+          "id": "calendar.calendars.clear",
+          "path": "calendars/{calendarId}/clear",
+          "httpMethod": "POST",
+          "description": "Clears a primary calendar.",
+          "parameters": {
+            "calendarId": {
+              "type": "string",
+              "location": "path",
+              "required": true,
+              "description": "Calendar identifier."
+            }
+          },
+          "scopes": ["https://www.googleapis.com/auth/calendar"]
+        }
+      }
+    }
+  }
+}

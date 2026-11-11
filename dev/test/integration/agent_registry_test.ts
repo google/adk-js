@@ -6,6 +6,7 @@
 
 import {
   AgentTool,
+  EXIT_LOOP,
   FunctionTool,
   LlmAgent,
   MCPToolset,
@@ -13,7 +14,10 @@ import {
 } from '@google/adk';
 import {beforeEach, describe, expect, it} from 'vitest';
 import {AgentRegistry} from '../../src/integration/agent_registry.js';
-import {YamlAgentConfig} from '../../src/integration/agent_types.js';
+import {
+  AgentClass,
+  YamlAgentConfig,
+} from '../../src/integration/agent_types.js';
 import {IntegrationRegistry} from '../../src/integration/integration_registry.js';
 
 describe('AgentRegistry', () => {
@@ -257,7 +261,7 @@ describe('AgentRegistry', () => {
     expect(retrieved.tools[0]).toBe(tool);
   });
 
-  it('should skip built-in tools', () => {
+  it('should resolve exit_loop to the EXIT_LOOP built-in tool', () => {
     const config = {
       name: 'builtin_agent',
       model: 'model',
@@ -270,7 +274,94 @@ describe('AgentRegistry', () => {
     agentRegistry.registerAgentConfig('builtin_agent', config);
     const retrieved = agentRegistry.getAgent('builtin_agent') as LlmAgent;
 
-    expect(retrieved).toBeDefined();
+    expect(retrieved.tools).toEqual([EXIT_LOOP]);
+  });
+
+  it('should skip server-side built-in tools', () => {
+    const config = {
+      name: 'builtin_agent',
+      model: 'model',
+      description: 'desc',
+      instruction: 'inst',
+      agentClass: 'LlmAgent',
+      tools: [
+        {name: 'google_search'},
+        {name: 'url_context'},
+        {name: 'google_maps_grounding'},
+      ],
+    } as unknown as YamlAgentConfig;
+
+    agentRegistry.registerAgentConfig('builtin_agent', config);
+    const retrieved = agentRegistry.getAgent('builtin_agent') as LlmAgent;
+
     expect(retrieved.tools.length).toBe(0);
+  });
+
+  it('should summarise an empty registry', () => {
+    expect(agentRegistry.summary()).toBe('0 configs, 0 instantiated agents');
+  });
+
+  it('should count configs and instantiated agents separately', () => {
+    const config: YamlAgentConfig = {
+      agentClass: AgentClass.LlmAgent,
+      name: 'summary_config_agent',
+      model: 'test_model',
+      description: 'test description',
+      instruction: 'test instruction',
+      isRootAgent: false,
+    };
+    const agent = new LlmAgent({
+      name: 'summary_instance_agent',
+      model: 'test_model',
+      description: 'test description',
+      instruction: 'test instruction',
+    });
+
+    agentRegistry.registerAgentConfig('summary_config_agent', config);
+    agentRegistry.registerAgent('summary_instance_agent', agent);
+
+    expect(agentRegistry.summary()).toBe('1 configs, 1 instantiated agents');
+  });
+
+  it('should report each count in its own slot', () => {
+    const config: YamlAgentConfig = {
+      agentClass: AgentClass.LlmAgent,
+      name: 'summary_config_agent_a',
+      model: 'test_model',
+      description: 'test description',
+      instruction: 'test instruction',
+      isRootAgent: false,
+    };
+    const agent = new LlmAgent({
+      name: 'summary_instance_agent',
+      model: 'test_model',
+      description: 'test description',
+      instruction: 'test instruction',
+    });
+
+    agentRegistry.registerAgentConfig('summary_config_agent_a', config);
+    agentRegistry.registerAgentConfig('summary_config_agent_b', {
+      ...config,
+      name: 'summary_config_agent_b',
+    });
+    agentRegistry.registerAgent('summary_instance_agent', agent);
+
+    expect(agentRegistry.summary()).toBe('2 configs, 1 instantiated agents');
+  });
+
+  it('should not resolve an inherited Object member as a built-in tool', () => {
+    const config = {
+      name: 'bad_agent',
+      model: 'model',
+      description: 'desc',
+      instruction: 'inst',
+      agentClass: 'LlmAgent',
+      tools: [{name: 'constructor'}],
+    } as unknown as YamlAgentConfig;
+
+    agentRegistry.registerAgentConfig('bad_agent', config);
+    expect(() => agentRegistry.getAgent('bad_agent')).toThrow(
+      'Tool constructor not found in registry',
+    );
   });
 });

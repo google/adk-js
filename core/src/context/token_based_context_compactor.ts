@@ -55,7 +55,10 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
     invocationContext: InvocationContext,
   ): boolean | Promise<boolean> {
     const events = invocationContext.session.events;
-    const activeEvents = getActiveEvents(events);
+    const activeEvents = getActiveEvents(
+      events,
+      invocationContext.isolationScope,
+    );
     const rawEvents = activeEvents.filter((e) => !isCompactedEvent(e));
 
     if (rawEvents.length <= this.eventRetentionSize) {
@@ -83,7 +86,10 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
 
   async compact(invocationContext: InvocationContext): Promise<void> {
     const events = invocationContext.session.events;
-    const activeEvents = getActiveEvents(events);
+    const activeEvents = getActiveEvents(
+      events,
+      invocationContext.isolationScope,
+    );
     const rawEvents = activeEvents.filter((e) => !isCompactedEvent(e));
 
     if (rawEvents.length <= this.eventRetentionSize) {
@@ -119,6 +125,7 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
       };
     }
 
+    compactedEvent.isolationScope ??= invocationContext.isolationScope;
     invocationContext.session.events.push(compactedEvent);
   }
 }
@@ -131,13 +138,18 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
  * history), so the latest one is used directly. These values must not be
  * summed across events: each already includes all prior history, so a sum
  * grows with call count rather than context size.
+ *
+ * For a generation that @google/genai resumed after continuation pauses,
+ * promptTokenCount is summed over every resumed request, each of which resent
+ * the prompt, so `initialPromptTokenCount` is used instead when present.
  */
 function latestPromptTokenCount(
   activeEvents: Event[],
   invocationContext: InvocationContext,
 ): number | undefined {
   for (let i = activeEvents.length - 1; i >= 0; i--) {
-    const count = activeEvents[i].usageMetadata?.promptTokenCount;
+    const usage = activeEvents[i].usageMetadata;
+    const count = usage?.initialPromptTokenCount ?? usage?.promptTokenCount;
     if (count !== undefined) {
       return count;
     }

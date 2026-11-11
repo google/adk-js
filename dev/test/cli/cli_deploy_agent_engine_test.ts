@@ -18,6 +18,7 @@ import {
   isFile,
   isFolderExists,
   loadFileData,
+  saveToFile,
   tryToFindFileRecursively,
 } from '../../src/utils/file_utils.js';
 declare global {
@@ -79,20 +80,10 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     }
     const pathStr = typeof path === 'string' ? path : String(path || '');
     const tempFolder = globalThis.fsMockTempFolder;
-    process.stdout.write(
-      `[GLOBAL MOCK readdir] path: ${pathStr}, tempFolder: ${tempFolder}\n`,
-    );
     if (tempFolder && pathStr.startsWith(tempFolder)) {
       const mockReaddirFn = globalThis.fsMockReaddir;
-      process.stdout.write(
-        `[GLOBAL MOCK readdir] matched tempFolder, mockReaddirFn: ${mockReaddirFn ? 'DEFINED' : 'UNDEFINED'}\n`,
-      );
       if (mockReaddirFn) {
-        const res = mockReaddirFn(path, opts);
-        process.stdout.write(
-          `[GLOBAL MOCK readdir] mockReaddirFn returned: ${res} (type: ${typeof res})\n`,
-        );
-        return res;
+        return mockReaddirFn(path, opts);
       }
       return Promise.resolve([]);
     }
@@ -121,13 +112,15 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 });
 
 vi.mock('../../src/utils/agent_loader.js', () => ({
-  AgentLoader: vi.fn().mockImplementation(() => ({
-    listAgents: vi.fn().mockResolvedValue(['agent1']),
-    getAgentFile: vi.fn().mockResolvedValue({
-      getFilePath: vi.fn().mockReturnValue('path/to/agent1.ts'),
-    }),
-    disposeAll: vi.fn().mockResolvedValue(undefined),
-  })),
+  AgentLoader: vi.fn().mockImplementation(function () {
+    return {
+      listAgents: vi.fn().mockResolvedValue(['agent1']),
+      getAgentFile: vi.fn().mockResolvedValue({
+        getFilePath: vi.fn().mockReturnValue('path/to/agent1.ts'),
+      }),
+      disposeAll: vi.fn().mockResolvedValue(undefined),
+    };
+  }),
 }));
 
 vi.mock('../../src/utils/file_utils.js', () => ({
@@ -143,7 +136,7 @@ const mockCreateInternal = vi.fn();
 const mockUpdateInternal = vi.fn();
 const mockGetAgentOperationInternal = vi.fn();
 
-vi.mock('@google-cloud/vertexai/build/src/genai/client.js', () => ({
+vi.mock('@google-cloud/vertexai', () => ({
   Client: class {
     agentEnginesInternal = {
       createInternal: mockCreateInternal,
@@ -192,13 +185,15 @@ describe('deployToAgentEngine', () => {
       },
     });
 
-    (AgentLoader as Mock).mockImplementation(() => ({
-      listAgents: vi.fn().mockResolvedValue(['agent1']),
-      getAgentFile: vi.fn().mockResolvedValue({
-        getFilePath: vi.fn().mockReturnValue('path/to/agent1.ts'),
-      }),
-      disposeAll: vi.fn().mockResolvedValue(undefined),
-    }));
+    (AgentLoader as Mock).mockImplementation(function () {
+      return {
+        listAgents: vi.fn().mockResolvedValue(['agent1']),
+        getAgentFile: vi.fn().mockResolvedValue({
+          getFilePath: vi.fn().mockReturnValue('path/to/agent1.ts'),
+        }),
+        disposeAll: vi.fn().mockResolvedValue(undefined),
+      };
+    });
 
     execMock.mockImplementation((cmd: string, callback: Callback) => {
       if (cmd.includes('config get-value project')) {
@@ -248,10 +243,6 @@ describe('deployToAgentEngine', () => {
     vi.restoreAllMocks();
   });
 
-  it('debug: fs.readdir is mock', () => {
-    console.warn('XXX fs.readdir is mock?', vi.isMockFunction(fs.readdir));
-  });
-
   it('should deploy successfully with explicit options', async () => {
     await deployToAgentEngine(defaultOptions);
 
@@ -292,6 +283,12 @@ describe('deployToAgentEngine', () => {
       },
     });
 
+    expect(console.info).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Successfully deployed Reasoning Engine: projects/test-project/locations/us-central1/reasoningEngines/123',
+      ),
+    );
+
     // Verify tempFolder was cleaned up
     let exists = true;
     try {
@@ -319,6 +316,34 @@ describe('deployToAgentEngine', () => {
     );
     expect(isFolderExists).not.toHaveBeenCalled();
     await expect(fs.access(createdTempFolder)).rejects.toThrow();
+  });
+
+  it('should install the requested adkVersion in the Dockerfile', async () => {
+    await deployToAgentEngine(defaultOptions);
+
+    expect(saveToFile).toHaveBeenCalledWith(
+      path.join(tempFolder, 'Dockerfile'),
+      expect.stringContaining('RUN npm install @google/adk-devtools@1.0.0\n'),
+    );
+  });
+
+  it('should not stage an empty node_modules or package-lock.json', async () => {
+    await deployToAgentEngine(defaultOptions);
+
+    const mkdirPaths = (fs.mkdir as Mock).mock.calls.map((call) =>
+      String(call[0]),
+    );
+    const savedPaths = (saveToFile as Mock).mock.calls.map((call) =>
+      String(call[0]),
+    );
+    expect(mkdirPaths).not.toContain(path.join(tempFolder, 'node_modules'));
+    expect(savedPaths).not.toContain(
+      path.join(tempFolder, 'package-lock.json'),
+    );
+    expect(saveToFile).toHaveBeenCalledWith(
+      path.join(tempFolder, 'package.json'),
+      {dependencies: {'@google/adk': '^1.0.0'}},
+    );
   });
 
   it('should deploy successfully with all optional parameters', async () => {
@@ -372,6 +397,53 @@ describe('deployToAgentEngine', () => {
         },
       },
     });
+  });
+
+  it('should use custom minInstances and maxInstances when provided', async () => {
+    await deployToAgentEngine({
+      ...defaultOptions,
+      minInstances: 2,
+      maxInstances: 5,
+    });
+
+    expect(mockCreateInternal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          spec: expect.objectContaining({
+            deploymentSpec: expect.objectContaining({
+              minInstances: 2,
+              maxInstances: 5,
+            }),
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('should send Cloud Build logs to the staging bucket when one is provided', async () => {
+    await deployToAgentEngine({
+      ...defaultOptions,
+      stagingBucket: 'custom-bucket',
+    });
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      'gcloud',
+      expect.arrayContaining(['--gcs-log-dir', 'gs://custom-bucket/logs']),
+      expect.any(Object),
+    );
+  });
+
+  it('should send Cloud Build logs to the project bucket when no staging bucket is provided', async () => {
+    await deployToAgentEngine(defaultOptions);
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      'gcloud',
+      expect.arrayContaining([
+        '--gcs-log-dir',
+        'gs://test-project_cloudbuild/logs',
+      ]),
+      expect.any(Object),
+    );
   });
 
   it('should resolve default project and region from gcloud if not provided', async () => {
@@ -636,9 +708,16 @@ describe('deployToAgentEngine', () => {
             },
           },
         },
+        updateMask:
+          'display_name,spec.container_spec,spec.deployment_spec.container_concurrency,spec.deployment_spec.min_instances,spec.deployment_spec.max_instances,spec.deployment_spec.resource_limits',
       },
     });
     expect(mockCreateInternal).not.toHaveBeenCalled();
+    expect(console.info).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Successfully updated Reasoning Engine: projects/test-project/locations/us-central1/reasoningEngines/12345',
+      ),
+    );
   });
 
   it('should update existing Reasoning Engine successfully when full resource name agentEngineId is provided', async () => {
@@ -677,9 +756,50 @@ describe('deployToAgentEngine', () => {
             },
           },
         },
+        updateMask:
+          'display_name,spec.container_spec,spec.deployment_spec.container_concurrency,spec.deployment_spec.min_instances,spec.deployment_spec.max_instances,spec.deployment_spec.resource_limits',
       },
     });
     expect(mockCreateInternal).not.toHaveBeenCalled();
+  });
+
+  it('should include description in the update mask only when one is provided', async () => {
+    await deployToAgentEngine({
+      ...defaultOptions,
+      agentEngineId: '12345',
+      description: 'new-description',
+    });
+
+    expect(mockUpdateInternal).toHaveBeenCalledWith({
+      name: 'projects/test-project/locations/us-central1/reasoningEngines/12345',
+      config: expect.objectContaining({
+        description: 'new-description',
+        updateMask:
+          'display_name,description,spec.container_spec,spec.deployment_spec.container_concurrency,spec.deployment_spec.min_instances,spec.deployment_spec.max_instances,spec.deployment_spec.resource_limits',
+      }),
+    });
+  });
+
+  it('should not overwrite server-managed env vars on update', async () => {
+    await deployToAgentEngine({...defaultOptions, agentEngineId: '12345'});
+
+    const {config} = mockUpdateInternal.mock.calls[0][0];
+    expect(config.updateMask.split(',')).not.toContain(
+      'spec.deployment_spec.env',
+    );
+    expect(config.updateMask.split(',')).not.toContain(
+      'spec.deployment_spec.secret_env',
+    );
+    expect(config.spec.deploymentSpec).not.toHaveProperty('env');
+    expect(config.spec.deploymentSpec).not.toHaveProperty('secretEnv');
+  });
+
+  it('should not send an update mask when creating a Reasoning Engine', async () => {
+    await deployToAgentEngine(defaultOptions);
+
+    expect(mockCreateInternal.mock.calls[0][0].config).not.toHaveProperty(
+      'updateMask',
+    );
   });
 
   it('should throw descriptive error if update operation times out when agentEngineId is provided', async () => {
@@ -748,5 +868,226 @@ describe('deployToAgentEngine', () => {
     await expect(deployToAgentEngine(options)).rejects.toThrow(
       'Reasoning Engine update failed: [Code 404] Resource not found',
     );
+  });
+
+  describe('telemetry and deployment env', () => {
+    let agentDir: string;
+
+    beforeEach(async () => {
+      agentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-agent-dir-'));
+      defaultOptions.agentPath = agentDir;
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(async () => {
+      await fs.rm(agentDir, {recursive: true, force: true});
+    });
+
+    async function writeDotenv(content: string) {
+      await fs.writeFile(path.join(agentDir, '.env'), content);
+    }
+
+    function getDockerfileContent(): string {
+      const call = (saveToFile as Mock).mock.calls.find(
+        (c) => String(c[0]) === path.join(tempFolder, 'Dockerfile'),
+      );
+      expect(call).toBeDefined();
+      return String(call?.[1]);
+    }
+
+    function getCreatedEnv(): unknown {
+      return mockCreateInternal.mock.calls[0][0].config.spec.deploymentSpec.env;
+    }
+
+    it('should start the server with --otel_to_cloud and set telemetry env when otelToCloud is true', async () => {
+      await deployToAgentEngine({...defaultOptions, otelToCloud: true});
+
+      expect(getDockerfileContent()).toContain('--otel_to_cloud');
+      expect(getCreatedEnv()).toEqual([
+        {name: 'GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY', value: 'true'},
+        {name: 'ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS', value: 'false'},
+      ]);
+      expect(console.warn).not.toHaveBeenCalled();
+    });
+
+    it('should not enable telemetry or send env when otelToCloud is false and there is no .env', async () => {
+      await deployToAgentEngine({...defaultOptions, otelToCloud: false});
+
+      expect(getDockerfileContent()).not.toContain('--otel_to_cloud');
+      expect(
+        mockCreateInternal.mock.calls[0][0].config.spec.deploymentSpec,
+      ).not.toHaveProperty('env');
+    });
+
+    it.each(['true', '1'])(
+      'should enable telemetry when .env sets GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY=%s',
+      async (value) => {
+        await writeDotenv(
+          `GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY=${value}\nMY_VAR=hello\n`,
+        );
+
+        await deployToAgentEngine(defaultOptions);
+
+        expect(getDockerfileContent()).toContain('--otel_to_cloud');
+        expect(getCreatedEnv()).toEqual([
+          {name: 'GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY', value},
+          {name: 'MY_VAR', value: 'hello'},
+        ]);
+        expect(console.info).toHaveBeenCalledWith(
+          `\`--otel_to_cloud\` is set to true by GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY in ${path.join(agentDir, '.env')}`,
+        );
+      },
+    );
+
+    it('should not enable telemetry when .env sets GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY=false', async () => {
+      await writeDotenv('GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY=false\n');
+
+      await deployToAgentEngine(defaultOptions);
+
+      expect(getDockerfileContent()).not.toContain('--otel_to_cloud');
+      expect(getCreatedEnv()).toEqual([
+        {name: 'GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY', value: 'false'},
+      ]);
+    });
+
+    it('should let otelToCloud override GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY in .env', async () => {
+      await writeDotenv('GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY=false\n');
+
+      await deployToAgentEngine({...defaultOptions, otelToCloud: true});
+
+      expect(getDockerfileContent()).toContain('--otel_to_cloud');
+      expect(getCreatedEnv()).toEqual([
+        {name: 'GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY', value: 'true'},
+        {name: 'ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS', value: 'false'},
+      ]);
+      expect(console.warn).toHaveBeenCalledWith(
+        'Ignoring GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY in .env as `--otel_to_cloud` was explicitly passed and takes precedence',
+      );
+    });
+
+    it('should keep user content capture settings and leave OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT unset by default', async () => {
+      await writeDotenv('ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=true\n');
+
+      await deployToAgentEngine({...defaultOptions, otelToCloud: true});
+
+      expect(getCreatedEnv()).toEqual([
+        {name: 'ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS', value: 'true'},
+        {name: 'GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY', value: 'true'},
+      ]);
+    });
+
+    it('should forward OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT when the user sets it', async () => {
+      await writeDotenv(
+        'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true\n',
+      );
+
+      await deployToAgentEngine({...defaultOptions, otelToCloud: true});
+
+      expect(getCreatedEnv()).toEqual([
+        {
+          name: 'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT',
+          value: 'true',
+        },
+        {name: 'GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY', value: 'true'},
+        {name: 'ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS', value: 'false'},
+      ]);
+    });
+
+    it('should drop platform-injected variables and merge caller env over .env', async () => {
+      await writeDotenv(
+        [
+          'GOOGLE_CLOUD_PROJECT=env-project',
+          'GOOGLE_CLOUD_LOCATION=env-location',
+          'GOOGLE_CLOUD_AGENT_ENGINE_ID=env-id',
+          'GOOGLE_CLOUD_AGENT_ENGINE_LOCATION=env-engine-location',
+          'MY_VAR=from-dotenv',
+          'OTHER_VAR=other',
+        ].join('\n'),
+      );
+
+      await deployToAgentEngine({
+        ...defaultOptions,
+        env: [
+          {name: 'MY_VAR', value: 'from-caller'},
+          {name: 'K_REVISION', value: 'caller-revision'},
+          {name: 'CALLER_VAR', value: 'caller'},
+        ],
+      });
+
+      expect(getCreatedEnv()).toEqual([
+        {name: 'MY_VAR', value: 'from-caller'},
+        {name: 'OTHER_VAR', value: 'other'},
+        {name: 'CALLER_VAR', value: 'caller'},
+      ]);
+      expect(getDockerfileContent()).not.toContain('--otel_to_cloud');
+    });
+
+    it('should rethrow .env read errors other than a missing file', async () => {
+      await fs.mkdir(path.join(agentDir, '.env'));
+
+      await expect(deployToAgentEngine(defaultOptions)).rejects.toThrow(
+        /EISDIR/,
+      );
+      expect(spawnMock).not.toHaveBeenCalled();
+    });
+
+    it('should accept caller env as a name-to-value map', async () => {
+      await deployToAgentEngine({
+        ...defaultOptions,
+        env: {CALLER_VAR: 'caller'},
+      });
+
+      expect(getCreatedEnv()).toEqual([{name: 'CALLER_VAR', value: 'caller'}]);
+    });
+
+    it('should not print .env values in notices', async () => {
+      await writeDotenv(
+        'GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY=1\nGOOGLE_CLOUD_PROJECT=secret-project\nAPI_KEY=secret-key\n',
+      );
+
+      await deployToAgentEngine(defaultOptions);
+
+      const messages = [
+        ...(console.info as Mock).mock.calls,
+        ...(console.warn as Mock).mock.calls,
+      ].map((call) => call.join(' '));
+      expect(messages.some((m) => m.includes('secret'))).toBe(false);
+    });
+
+    it('should send the resolved env in the update request', async () => {
+      await writeDotenv('MY_VAR=hello\n');
+      mockGetAgentOperationInternal.mockResolvedValue({
+        done: true,
+        response: {
+          name: 'projects/test-project/locations/us-central1/reasoningEngines/12345',
+        },
+      });
+
+      await deployToAgentEngine({
+        ...defaultOptions,
+        agentEngineId: '12345',
+        otelToCloud: true,
+      });
+
+      expect(mockCreateInternal).not.toHaveBeenCalled();
+      expect(mockUpdateInternal).toHaveBeenCalledWith({
+        name: 'projects/test-project/locations/us-central1/reasoningEngines/12345',
+        config: expect.objectContaining({
+          spec: expect.objectContaining({
+            deploymentSpec: expect.objectContaining({
+              env: [
+                {name: 'MY_VAR', value: 'hello'},
+                {
+                  name: 'GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY',
+                  value: 'true',
+                },
+                {name: 'ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS', value: 'false'},
+              ],
+            }),
+          }),
+        }),
+      });
+      expect(getDockerfileContent()).toContain('--otel_to_cloud');
+    });
   });
 });

@@ -17,6 +17,13 @@
 import * as winston from 'winston';
 import {Logger, LogLevel, setLogger} from './logger.js';
 
+const WINSTON_LEVEL_NAMES: Record<LogLevel, string> = {
+  [LogLevel.DEBUG]: 'debug',
+  [LogLevel.INFO]: 'info',
+  [LogLevel.WARN]: 'warn',
+  [LogLevel.ERROR]: 'error',
+};
+
 /** The default logger on Node. Writes through winston. */
 export class WinstonLogger implements Logger {
   private readonly logger: winston.Logger;
@@ -30,6 +37,10 @@ export class WinstonLogger implements Logger {
         'warn': LogLevel.WARN,
         'error': LogLevel.ERROR,
       },
+      // `levels` above inverts winston's npm ordering, so `error` (3) is the
+      // most permissive and leaves winston pass-through. Every method already
+      // gates on `this.logLevel`; a lower value here would double-gate and
+      // drop records.
       level: 'error',
       format: winston.format.combine(
         winston.format.label({label: 'ADK'}),
@@ -56,7 +67,7 @@ export class WinstonLogger implements Logger {
       return;
     }
 
-    this.logger.log(level.toString(), messages.join(' '));
+    this.logger.log(WINSTON_LEVEL_NAMES[level], messages.join(' '));
   }
 
   debug(...messages: unknown[]): void {

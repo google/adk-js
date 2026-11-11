@@ -316,6 +316,88 @@ describe('skill_toolset', () => {
       expect(tools2.map((t) => t.name)).toContain('cached_tool');
       expect(mockInnerGetTools).toHaveBeenCalledTimes(1);
     });
+
+    describe('SkillToolset close', () => {
+      const remoteSkill: Skill = {
+        frontmatter: {
+          name: 'remote-skill',
+          description: 'A remote skill',
+        },
+        instructions: 'Remote instructions',
+      };
+
+      it('awaits the registry close exactly once', async () => {
+        const registry = {
+          getSkill: vi.fn(),
+          searchSkills: vi.fn(),
+          close: vi.fn().mockResolvedValue(undefined),
+        };
+        const toolset = new SkillToolset([mockSkill], {registry});
+
+        await toolset.close();
+
+        expect(registry.close).toHaveBeenCalledTimes(1);
+        expect(registry.close).toHaveBeenCalledWith();
+      });
+
+      it('does not resolve until the registry close settles', async () => {
+        let releaseClose: () => void = () => {};
+        const registry = {
+          getSkill: vi.fn(),
+          searchSkills: vi.fn(),
+          close: vi.fn(
+            () =>
+              new Promise<void>((resolve) => {
+                releaseClose = resolve;
+              }),
+          ),
+        };
+        const toolset = new SkillToolset([mockSkill], {registry});
+
+        let settled = false;
+        const closing = toolset.close().then(() => {
+          settled = true;
+        });
+
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(settled).toBe(false);
+
+        releaseClose();
+        await closing;
+        expect(settled).toBe(true);
+      });
+
+      it('closes cleanly when the registry has no close method', async () => {
+        const registry = {getSkill: vi.fn(), searchSkills: vi.fn()};
+        const toolset = new SkillToolset([mockSkill], {registry});
+
+        await expect(toolset.close()).resolves.toBeUndefined();
+      });
+
+      it('closes cleanly when there is no registry', async () => {
+        const toolset = new SkillToolset([mockSkill]);
+
+        await expect(toolset.close()).resolves.toBeUndefined();
+      });
+
+      it('clears the fetched-skill cache even when the registry close rejects', async () => {
+        const registry = {
+          getSkill: vi.fn().mockResolvedValue(remoteSkill),
+          searchSkills: vi.fn(),
+          close: vi.fn().mockRejectedValue(new Error('close failed')),
+        };
+        const toolset = new SkillToolset([mockSkill], {registry});
+
+        await toolset.getOrFetchSkill('remote-skill', 'inv-1');
+        expect(registry.getSkill).toHaveBeenCalledTimes(1);
+
+        await expect(toolset.close()).rejects.toThrow('close failed');
+
+        await toolset.getOrFetchSkill('remote-skill', 'inv-1');
+        expect(registry.getSkill).toHaveBeenCalledTimes(2);
+      });
+    });
   });
 
   describe('script output directory', () => {

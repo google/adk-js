@@ -8,6 +8,7 @@ import {logger} from '../utils/logger.js';
 
 import {ApigeeLlm} from './apigee_llm.js';
 import {BaseLlm} from './base_llm.js';
+import {ChromeBuiltInLlm} from './chrome_prompt_llm.js';
 import {Gemini} from './google_llm.js';
 
 /**
@@ -116,7 +117,7 @@ export class LLMRegistry {
       // with ^...$; `RegExp.test` would otherwise match anywhere in the string.
       // TODO - b/425992518: validate it works well.
       const pattern = new RegExp(
-        `^${regex instanceof RegExp ? regex.source : regex}$`,
+        `^(?:${regex instanceof RegExp ? regex.source : regex})$`,
         regex instanceof RegExp ? regex.flags : undefined,
       );
       if (pattern.test(model)) {
@@ -132,3 +133,4 @@ export class LLMRegistry {
 /** Registers default LLM factories, e.g. for Gemini models. */
 LLMRegistry.register(Gemini);
 LLMRegistry.register(ApigeeLlm);
+LLMRegistry.register(ChromeBuiltInLlm);

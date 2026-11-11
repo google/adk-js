@@ -5,10 +5,12 @@
  */
 
 import AdmZip from 'adm-zip';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import {isUtf8} from 'node:buffer';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import {InputValidationError} from '../errors/input_validation_error.js';
+import {NotFoundError} from '../errors/not_found_error.js';
 import {logger} from '../utils/logger.js';
 import {
   Frontmatter,
@@ -69,8 +71,9 @@ function decodeSkillFileContent(data: Buffer): string | Buffer {
  * Recursively loads files from a directory into a dictionary.
  *
  * @param directoryPath - The absolute or relative path of the directory to load.
- * @returns A promise that resolves to a dictionary where keys are relative file paths
- * and values are the file contents (as string for UTF-8 or Buffer otherwise).
+ * @returns A promise that resolves to a dictionary where keys are forward-slash
+ * relative paths on every OS, matching zipped skills and adk-python, and values
+ * are the file contents (as string for UTF-8 or Buffer otherwise).
  */
 async function loadDir(
   directoryPath: string,
@@ -88,7 +91,10 @@ async function loadDir(
 
         await walk(fullPath);
       } else if (entry.isFile()) {
-        const relativePath = path.relative(directoryPath, fullPath);
+        const relativePath = path
+          .relative(directoryPath, fullPath)
+          .split(path.sep)
+          .join('/');
         if (IGNORED_EXTENSIONS.has(path.extname(entry.name))) {
           continue;
         }
@@ -113,32 +119,50 @@ async function loadDir(
   return files;
 }
 
+const FRONTMATTER_BOM = '\uFEFF';
+
+/**
+ * Matches the opening `---` line, the frontmatter, and the closing `---` line
+ * of a SKILL.md, with LF or CRLF line endings. The frontmatter is optional so
+ * that an empty `---` / `---` pair is reported as a non-mapping rather than as
+ * unclosed.
+ */
+const FRONTMATTER_PATTERN =
+  /^---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)??---[ \t]*(?:\r?\n|$)/;
+
 /**
  * Splits SKILL.md into its raw, unvalidated YAML frontmatter mapping and its body.
  *
  * @param content - The raw content of the SKILL.md file.
  * @returns An object containing the raw frontmatter mapping and the remaining markdown body.
- * @throws {Error} If the content is not properly formatted with YAML frontmatter.
+ * @throws {InputValidationError} If the content is not properly formatted with YAML frontmatter.
  */
 function parseFrontmatterYaml(content: string): {
   raw: Record<string, unknown>;
   body: string;
 } {
-  if (!content.startsWith('---')) {
-    throw new Error('SKILL.md must start with YAML frontmatter (---)');
+  // Editors such as Notepad write a UTF-8 byte order mark, which Node's
+  // `readFile` keeps as a leading U+FEFF.
+  const text = content.startsWith(FRONTMATTER_BOM)
+    ? content.slice(FRONTMATTER_BOM.length)
+    : content;
+  if (!text.startsWith('---')) {
+    throw new InputValidationError(
+      'SKILL.md must start with YAML frontmatter (---)',
+    );
   }
 
-  // Split into at least 3 parts: empty before ---, frontmatter, body
-  const parts = content.split('---');
-  if (parts.length < 3) {
-    throw new Error('SKILL.md frontmatter not properly closed with ---');
+  // A delimiter is a line of exactly `---`, so a `---` inside a value (for
+  // example `description: Use A --- B`) does not end the frontmatter.
+  const match = FRONTMATTER_PATTERN.exec(text);
+  if (!match) {
+    throw new InputValidationError(
+      'SKILL.md frontmatter not properly closed with ---',
+    );
   }
 
-  const frontmatterStr = parts[1];
-  const body = parts
-    .filter((_, i) => i >= 2)
-    .join('---')
-    .trim();
+  const frontmatterStr = match[1] ?? '';
+  const body = text.slice(match[0].length).trim();
 
   try {
     const parsed = yaml.load(frontmatterStr);
@@ -147,11 +171,16 @@ function parseFrontmatterYaml(content: string): {
       parsed === null ||
       Array.isArray(parsed)
     ) {
-      throw new Error('SKILL.md frontmatter must be a YAML mapping');
+      throw new InputValidationError(
+        'SKILL.md frontmatter must be a YAML mapping',
+      );
     }
     return {raw: parsed as Record<string, unknown>, body};
   } catch (e: unknown) {
-    throw new Error(`Invalid YAML in frontmatter: ${(e as Error).message}`);
+    throw new InputValidationError(
+      `Invalid YAML in frontmatter: ${(e as Error).message}`,
+      {cause: e},
+    );
   }
 }
 
@@ -160,13 +189,16 @@ function parseFrontmatterYaml(content: string): {
  *
  * @param raw - The raw frontmatter mapping produced by {@link parseFrontmatterYaml}.
  * @returns The validated and normalized frontmatter.
- * @throws {Error} If the mapping does not satisfy the schema.
+ * @throws {InputValidationError} If the mapping does not satisfy the schema.
  */
 function validateFrontmatter(raw: Record<string, unknown>): Frontmatter {
   try {
     return FrontmatterSchema.parse(raw);
   } catch (e: unknown) {
-    throw new Error(`Invalid YAML in frontmatter: ${(e as Error).message}`);
+    throw new InputValidationError(
+      `Invalid YAML in frontmatter: ${(e as Error).message}`,
+      {cause: e},
+    );
   }
 }
 
@@ -175,7 +207,7 @@ function validateFrontmatter(raw: Record<string, unknown>): Frontmatter {
  *
  * @param content - The raw content of the SKILL.md file.
  * @returns An object containing the parsed frontmatter and the remaining markdown body.
- * @throws {Error} If the content is not properly formatted with YAML frontmatter.
+ * @throws {InputValidationError} If the content is not properly formatted with YAML frontmatter.
  */
 export function parseSkillMdContent(content: string): {
   frontmatter: Frontmatter;
@@ -251,6 +283,20 @@ export async function validateSkillDir(skillDir: string): Promise<string[]> {
   const problems: string[] = [];
   const resolvedDir = path.resolve(skillDir);
 
+  try {
+    const stats = await fs.stat(resolvedDir);
+    if (!stats.isDirectory()) {
+      return [`'${resolvedDir}' is not a directory.`];
+    }
+  } catch (e: unknown) {
+    const code = (e as {code?: string}).code;
+    // ENOTDIR means a parent path component is a file, so the path is absent too.
+    if (code === 'ENOENT' || code === 'ENOTDIR') {
+      return [`Directory '${resolvedDir}' does not exist.`];
+    }
+    return [`Failed to access '${resolvedDir}': ${(e as Error).message}`];
+  }
+
   let skill;
   try {
     skill = await loadSkillFile(resolvedDir);
@@ -285,7 +331,9 @@ export async function validateSkillDir(skillDir: string): Promise<string[]> {
  *
  * @param skillDir - The path to the skill directory.
  * @returns A promise that resolves to a Skill object containing only frontmatter and instructions.
- * @throws {Error} If the skill file cannot be found or parsed.
+ * @throws {NotFoundError} If the skill directory has no SKILL.md.
+ * @throws {InputValidationError} If SKILL.md cannot be parsed or its name
+ * does not match the directory name.
  */
 async function loadSkillFile(skillDir: string): Promise<Skill> {
   const resolvedDir = path.resolve(skillDir);
@@ -313,7 +361,7 @@ async function loadSkillFile(skillDir: string): Promise<Skill> {
   }
 
   if (!skillMdPath) {
-    throw new Error(
+    throw new NotFoundError(
       `SKILL.md (or any case variation like skill.md) not found in '${skillDir}'.`,
     );
   }
@@ -322,7 +370,7 @@ async function loadSkillFile(skillDir: string): Promise<Skill> {
   const frontmatter = FrontmatterSchema.parse(parsed);
   const dirName = path.basename(resolvedDir);
   if (dirName !== frontmatter.name) {
-    throw new Error(
+    throw new InputValidationError(
       `Skill name '${frontmatter.name}' does not match directory name '${dirName}'.`,
     );
   }
@@ -400,7 +448,8 @@ export async function loadAllSkillsInDir(
  *
  * @param zipBuffer - The raw Buffer of the zip file containing the skill.
  * @returns A Skill object with all components loaded.
- * @throws {Error} If a member name is a traversal path, if SKILL.md is missing,
+ * @throws {NotFoundError} If the archive has no SKILL.md.
+ * @throws {InputValidationError} If a member name is a traversal path,
  * or if the skill name is missing or is not a bare path segment.
  */
 export function loadSkillFromZipBuffer(zipBuffer: Buffer): Skill {
@@ -409,7 +458,9 @@ export function loadSkillFromZipBuffer(zipBuffer: Buffer): Skill {
 
   for (const entry of entries) {
     if (isDangerousZipEntryName(entry.entryName)) {
-      throw new Error(`Dangerous zip entry ignored: ${entry.entryName}`);
+      throw new InputValidationError(
+        `Dangerous zip entry ignored: ${entry.entryName}`,
+      );
     }
   }
 
@@ -423,16 +474,18 @@ export function loadSkillFromZipBuffer(zipBuffer: Buffer): Skill {
   }
 
   if (!skillMdContent) {
-    throw new Error('SKILL.md not found in zipped filesystem.');
+    throw new NotFoundError('SKILL.md not found in zipped filesystem.');
   }
 
   const {raw, body} = parseFrontmatterYaml(skillMdContent);
   const skillName = raw['name'];
   if (!skillName) {
-    throw new Error("SKILL.md frontmatter must contain 'name'");
+    throw new InputValidationError("SKILL.md frontmatter must contain 'name'");
   }
   if (typeof skillName !== 'string' || !isBareSkillName(skillName)) {
-    throw new Error(`Invalid skill name in SKILL.md: ${String(skillName)}`);
+    throw new InputValidationError(
+      `Invalid skill name in SKILL.md: ${String(skillName)}`,
+    );
   }
   const frontmatter = validateFrontmatter(raw);
 

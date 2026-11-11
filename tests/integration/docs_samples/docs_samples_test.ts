@@ -83,6 +83,10 @@ const OFFLINE: Record<string, OfflineSample> = {
     turns: ['Paris', 'the museum'],
     pausesOnFirstTurn: true,
   },
+  'human_input/rerun_on_resume': {
+    turns: ['the delivery was a week late', 'make it shorter', 'approve'],
+    pausesOnFirstTurn: true,
+  },
   'routes/fan_out_join': {turns: ['hello world']},
   'routes/function_node': {turns: ['hello world']},
   'routes/loop_escalation': {turns: ['graph workflows']},

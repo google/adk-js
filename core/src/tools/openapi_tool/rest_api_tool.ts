@@ -10,6 +10,7 @@ import {Context} from '../../agents/context.js';
 import {ReadonlyContext} from '../../agents/readonly_context.js';
 import {AuthCredential} from '../../auth/auth_credential.js';
 import {experimental} from '../../utils/experimental.js';
+import {openApiSchemaToGeminiSchema} from '../../utils/gemini_schema_util.js';
 import {BaseTool, RunAsyncToolRequest} from '../base_tool.js';
 import {applyCredential} from './auth/auth_helpers.js';
 import {
@@ -19,6 +20,66 @@ import {
 import {ToolAuthHandler} from './openapi_spec_parser/tool_auth_handler.js';
 
 import {OperationEndpoint} from './openapi_spec_parser/openapi_spec_parser.js';
+
+/**
+ * Longest tool name a `RestApiTool` reports. Gemini limits the length of a
+ * function name, and `OperationParser.getFunctionName` already truncates a
+ * generated name to the same length.
+ */
+const MAX_TOOL_NAME_LENGTH = 60;
+
+/** The security scheme types an OpenAPI document may declare. */
+const SECURITY_SCHEME_TYPES: readonly string[] = [
+  'apiKey',
+  'http',
+  'oauth2',
+  'openIdConnect',
+];
+
+/**
+ * The parsed operation `createRestApiTool` accepts.
+ *
+ * `name` and `description` are optional and are derived from the operation
+ * when they are absent. `parameters` and `returnValue` carry an operation the
+ * caller has already parsed, so its names, locations and schemas stay
+ * authoritative.
+ */
+export interface ParsedOperationInput {
+  name?: string;
+  description?: string;
+  endpoint: OperationEndpoint;
+  operation: OpenAPIV3.OperationObject;
+  authScheme?: OpenAPIV3.SecuritySchemeObject;
+  authCredential?: AuthCredential;
+  parameters?: ApiParameter[];
+  returnValue?: ApiParameter;
+}
+
+function readSchemeType(value: unknown): unknown {
+  return typeof value === 'object' && value !== null && 'type' in value
+    ? value.type
+    : undefined;
+}
+
+function isSecurityScheme(
+  value: unknown,
+): value is OpenAPIV3.SecuritySchemeObject {
+  const type = readSchemeType(value);
+  return typeof type === 'string' && SECURITY_SCHEME_TYPES.includes(type);
+}
+
+/**
+ * Serializes cookie parameters into a `Cookie` header value.
+ *
+ * `fetch` has no cookie option, so the header is the only place a cookie
+ * parameter can go. The value comes from the model, so it is percent-encoded
+ * for the same reason a path parameter is.
+ */
+function serializeCookieHeader(cookies: Record<string, string>): string {
+  return Object.entries(cookies)
+    .map(([name, value]) => `${name}=${encodeURIComponent(value)}`)
+    .join('; ');
+}
 
 @experimental
 export class RestApiTool extends BaseTool {
@@ -38,14 +99,21 @@ export class RestApiTool extends BaseTool {
       preservePropertyNames?: boolean;
       headerProvider?: (context: ReadonlyContext) => Record<string, string>;
       credentialKey?: string;
+      operationParser?: OperationParser;
+      /**
+       * @deprecated Emits a whole-body parameter for unconstrained object schemas.
+       * Will be removed in a future release.
+       */
+      unconstrainedObjectBodyAsParameter?: boolean;
     } = {},
   ) {
-    super({name, description});
+    super({name: name.slice(0, MAX_TOOL_NAME_LENGTH), description});
     this.authScheme = authScheme;
     this.authCredential = authCredential;
     this.headerProvider = options.headerProvider;
     this.credentialKey = options.credentialKey;
-    this.operationParser = new OperationParser(operation, options);
+    this.operationParser =
+      options.operationParser ?? new OperationParser(operation, options);
   }
 
   @experimental
@@ -65,11 +133,12 @@ export class RestApiTool extends BaseTool {
 
   @experimental
   override _getDeclaration(): FunctionDeclaration {
-    const schema = this.operationParser.getJsonSchema();
     return {
       name: this.name,
       description: this.description,
-      parameters: schema,
+      parameters: openApiSchemaToGeminiSchema(
+        this.operationParser.getJsonSchema(),
+      ),
     };
   }
 
@@ -102,6 +171,7 @@ export class RestApiTool extends BaseTool {
       headers,
       body: parsedBody,
       bodyData,
+      cookies,
     } = prepareRequestParams(
       this.endpoint,
       this.operationParser.getParameters(),
@@ -116,12 +186,14 @@ export class RestApiTool extends BaseTool {
       headers,
     );
 
-    // Handle Auth
+    // Prefer the scheme on the result: it is the copy the handler prepared the
+    // credential against, so the two cannot disagree if this tool's own field
+    // was mutated in between. A result with no scheme means the tool has none.
     const url = applyCredential(
       initialUrl,
       headers,
       credential,
-      this.authScheme,
+      authResult.authScheme ?? this.authScheme,
     );
 
     // Apply dynamic headers from provider
@@ -130,24 +202,52 @@ export class RestApiTool extends BaseTool {
       Object.assign(headers, providerHeaders);
     }
 
-    try {
-      const response = await globalThis.fetch(url, {
-        method,
-        headers,
-        // eslint-disable-next-line no-undef
-        body: body as BodyInit,
-      });
+    const hasCookieHeader = Object.keys(headers).some(
+      (header) => header.toLowerCase() === 'cookie',
+    );
+    if (Object.keys(cookies).length > 0 && !hasCookieHeader) {
+      headers['Cookie'] = serializeCookieHeader(cookies);
+    }
 
-      const contentType = response.headers.get('content-type');
-      if (contentType && contentType.includes('application/json')) {
-        return await response.json();
-      } else {
-        return await response.text();
-      }
-    } catch (error) {
+    // The reference issues the request OUTSIDE its try (`rest_api_tool.py:465`),
+    // so a transport failure -- DNS, refused connection, TLS -- propagates to
+    // the caller. Catching it here and returning `{error: ...}` would hand the
+    // model a string to reason about where adk-python raises, so the fetch
+    // stays outside too.
+    const response = await globalThis.fetch(url, {
+      method,
+      headers,
+      // eslint-disable-next-line no-undef
+      body: body as BodyInit,
+    });
+
+    // `raise_for_status()` -> the HTTPError branch (`rest_api_tool.py:471`).
+    //
+    // `status >= 400`, not `!response.ok`. `raise_for_status()` raises only for
+    // 400-599, while `response.ok` is false for any non-2xx -- so an
+    // unfollowed 3xx (a 304, which neither `requests` nor `fetch` follows)
+    // takes the error branch here and falls through to `.json()` there,
+    // yielding `{"text": ""}` on the empty body.
+    if (response.status >= 400) {
+      const errorDetails = await response.text();
       return {
-        error: `Failed to execute API call: ${(error as Error).message}`,
+        error:
+          `Tool ${this.name} execution failed. Analyze this execution error ` +
+          `and your inputs. Retry with adjustments if applicable. But make ` +
+          `sure don't retry more than 3 times. Execution Error: ${errorDetails}`,
       };
+    }
+
+    // `return response.json()` with a `ValueError` fallback to
+    // `{"text": response.text}` (`rest_api_tool.py:472, 481`). Decode first and
+    // fall back on failure rather than testing `content-type`: a malformed body
+    // served as `application/json` is exactly the case the reference's
+    // `ValueError` branch is for, and a content-type test would instead throw.
+    const text = await response.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      return {text};
     }
   }
 }
@@ -157,6 +257,7 @@ export interface PreparedParams {
   headers: Record<string, string>;
   body: unknown;
   bodyData: Record<string, unknown>;
+  cookies: Record<string, string>;
 }
 
 /**
@@ -181,6 +282,67 @@ function encodePathParamValue(name: string, value: string): string {
   return encodeURIComponent(value);
 }
 
+/**
+ * Serializes a path, header, or cookie parameter value using OpenAPI's default
+ * `simple` style, matching `adk-python`'s `_to_param_string`.
+ *
+ * Arrays and plain objects are comma-joined while omitting `null` and
+ * `undefined` entries.
+ */
+function toParamString(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value
+      .filter((item) => item !== undefined && item !== null)
+      .map(toParamString)
+      .join(',');
+  }
+  if (typeof value === 'object' && value !== null) {
+    return Object.entries(value)
+      .filter(([, v]) => v !== undefined && v !== null)
+      .map(([k, v]) => `${k},${toParamString(v)}`)
+      .join(',');
+  }
+  return String(value);
+}
+
+/**
+ * Serializes one element of a query parameter value.
+ *
+ * Plain objects have no string form, so they are JSON-encoded rather than
+ * rendered as `[object Object]`.
+ */
+function serializeQueryValue(value: unknown): string {
+  return typeof value === 'object' && value !== null
+    ? JSON.stringify(value)
+    : String(value);
+}
+
+/**
+ * Appends a model-supplied value to `target`, a `URLSearchParams` or a
+ * `FormData`.
+ *
+ * OpenAPI query parameters and form fields default to `style: form` and
+ * `explode: true`, so an array is sent as one `name=value` pair per element
+ * (`id=1&id=2&id=3`), the same as adk-python, which hands the list to httpx.
+ * `null` and `undefined` elements are skipped and an empty array sends
+ * nothing.
+ */
+function appendParamValue(
+  target: Pick<URLSearchParams, 'append'>,
+  name: string,
+  value: unknown,
+): void {
+  if (!Array.isArray(value)) {
+    target.append(name, serializeQueryValue(value));
+    return;
+  }
+  for (const item of value) {
+    if (item !== undefined && item !== null) {
+      target.append(name, serializeQueryValue(item));
+    }
+  }
+}
+
 export function prepareRequestParams(
   endpoint: OperationEndpoint,
   parameters: ApiParameter[],
@@ -188,6 +350,7 @@ export function prepareRequestParams(
 ): PreparedParams {
   const headers: Record<string, string> = {};
   const queryParams = new URLSearchParams();
+  const cookies: Record<string, string> = {};
   let body: unknown = undefined;
 
   const paramsMap = new Map(parameters.map((p) => [p.name, p]));
@@ -202,14 +365,27 @@ export function prepareRequestParams(
     const location = param.paramLocation;
 
     if (location === 'path') {
-      pathParams[originalName] = encodePathParamValue(
-        originalName,
-        String(argValue),
-      );
+      if (argValue !== undefined && argValue !== null) {
+        pathParams[originalName] = encodePathParamValue(
+          originalName,
+          toParamString(argValue),
+        );
+      }
     } else if (location === 'query') {
-      queryParams.append(originalName, String(argValue));
+      // An unset query parameter is not sent. `0` and `false` are sent, unlike
+      // the reference implementation, which drops every falsy value and so
+      // loses `?count=0` and `?flag=false`.
+      if (argValue !== undefined && argValue !== null && argValue !== '') {
+        appendParamValue(queryParams, originalName, argValue);
+      }
     } else if (location === 'header') {
-      headers[originalName] = String(argValue);
+      if (argValue !== undefined && argValue !== null) {
+        headers[originalName] = toParamString(argValue);
+      }
+    } else if (location === 'cookie') {
+      if (argValue !== undefined && argValue !== null) {
+        cookies[originalName] = toParamString(argValue);
+      }
     } else if (location === 'body') {
       if (
         originalName === 'body' ||
@@ -231,7 +407,12 @@ export function prepareRequestParams(
     (placeholder, name: string) =>
       Object.hasOwn(pathParams, name) ? pathParams[name] : placeholder,
   );
-  let url = `${endpoint.baseUrl}${resolvedPath}`;
+  // A base URL ending in `/` would otherwise meet a path starting with `/` and
+  // produce a double slash.
+  const baseUrl = endpoint.baseUrl.endsWith('/')
+    ? endpoint.baseUrl.slice(0, -1)
+    : endpoint.baseUrl;
+  let url = `${baseUrl}${resolvedPath}`;
 
   // Extract query parameters from path if any
   const urlParts = url.split('?');
@@ -249,14 +430,45 @@ export function prepareRequestParams(
     url += `?${queryString}`;
   }
 
-  return {url, headers, body, bodyData};
+  return {url, headers, body, bodyData, cookies};
+}
+
+/**
+ * Whether `value` can go on the wire as an `application/octet-stream` body
+ * without conversion. `fetch` accepts each of these as a `BodyInit`.
+ */
+function isRawBody(value: unknown): boolean {
+  return (
+    typeof value === 'string' ||
+    ArrayBuffer.isView(value) ||
+    value instanceof ArrayBuffer ||
+    value instanceof Blob
+  );
+}
+
+function isFormFields(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Appends each field of a form request body to `target`. An array becomes one
+ * entry per element and an object is JSON-encoded, as for query parameters. A
+ * `null` or `undefined` field is omitted.
+ */
+function appendFormFields(
+  target: Pick<URLSearchParams, 'append'>,
+  fields: Record<string, unknown>,
+): void {
+  for (const [name, value] of Object.entries(fields)) {
+    if (value !== undefined && value !== null) {
+      appendParamValue(target, name, value);
+    }
+  }
 }
 
 export function prepareRequestBody(
   requestBody:
-    | OpenAPIV3.RequestBodyObject
-    | OpenAPIV3.ReferenceObject
-    | undefined,
+    OpenAPIV3.RequestBodyObject | OpenAPIV3.ReferenceObject | undefined,
   body: unknown,
   bodyData: Record<string, unknown>,
   headers: Record<string, string>,
@@ -279,15 +491,21 @@ export function prepareRequestBody(
           ? finalData
           : JSON.stringify(finalData);
       } else if (mimeType === 'application/x-www-form-urlencoded') {
+        if (isFormFields(finalData)) {
+          const formParams = new URLSearchParams();
+          appendFormFields(formParams, finalData);
+          return formParams;
+        }
         return new URLSearchParams(finalData as Record<string, string>);
       } else if (mimeType === 'multipart/form-data') {
         const formData = new FormData();
         if (typeof finalData === 'object' && finalData !== null) {
-          for (const [key, value] of Object.entries(finalData)) {
-            formData.append(key, String(value));
-          }
+          appendFormFields(formData, finalData as Record<string, unknown>);
         }
         return formData;
+      } else if (mimeType === 'application/octet-stream') {
+        headers['Content-Type'] = mimeType;
+        return isRawBody(finalData) ? finalData : String(finalData);
       } else if (mimeType === 'text/plain') {
         headers['Content-Type'] = mimeType;
         return String(finalData);
@@ -303,27 +521,66 @@ export function prepareRequestBody(
   return undefined;
 }
 
+/**
+ * Builds a `RestApiTool` from a parsed operation.
+ *
+ * @param parsed The operation, with the parameters already parsed when the
+ *   caller has them.
+ * @param options Options forwarded to the tool and to its operation parser.
+ * @returns The tool for that operation.
+ */
 export function createRestApiTool(
-  parsed: {
-    name: string;
-    description: string;
-    endpoint: OperationEndpoint;
-    operation: OpenAPIV3.OperationObject;
-    authScheme?: OpenAPIV3.SecuritySchemeObject;
-  },
+  parsed: ParsedOperationInput,
   options: {
     preservePropertyNames?: boolean;
     headerProvider?: (context: ReadonlyContext) => Record<string, string>;
     credentialKey?: string;
+    /**
+     * @deprecated Emits a whole-body parameter for unconstrained object schemas.
+     * Will be removed in a future release.
+     */
+    unconstrainedObjectBodyAsParameter?: boolean;
   } = {},
 ): RestApiTool {
+  const operationParser = parsed.parameters
+    ? OperationParser.load(
+        parsed.operation,
+        parsed.parameters,
+        parsed.returnValue,
+      )
+    : new OperationParser(parsed.operation, options);
+
   return new RestApiTool(
-    parsed.name,
-    parsed.description,
+    parsed.name ?? operationParser.getFunctionName(),
+    parsed.description ?? operationParser.getDescription(),
     parsed.endpoint,
     parsed.operation,
     parsed.authScheme,
-    undefined,
-    options,
+    parsed.authCredential,
+    {...options, operationParser},
   );
+}
+
+/**
+ * Builds a `RestApiTool` from the JSON string form of a parsed operation.
+ *
+ * This is the only entry point that accepts undecoded input, so it is where
+ * the auth scheme is checked. A scheme reaching `createRestApiTool` as an
+ * object is already constrained by its type.
+ *
+ * @param parsedOperationJson A serialized {@link ParsedOperationInput}.
+ * @returns The tool for that operation.
+ * @throws {Error} If the auth scheme does not declare a known `type`.
+ */
+export function createRestApiToolFromJson(
+  parsedOperationJson: string,
+): RestApiTool {
+  const parsed = JSON.parse(parsedOperationJson) as ParsedOperationInput;
+  if (parsed.authScheme && !isSecurityScheme(parsed.authScheme)) {
+    throw new Error(
+      `Unsupported security scheme type: ${JSON.stringify(readSchemeType(parsed.authScheme))}. ` +
+        `Expected one of: ${SECURITY_SCHEME_TYPES.join(', ')}.`,
+    );
+  }
+  return createRestApiTool(parsed);
 }

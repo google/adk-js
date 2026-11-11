@@ -102,6 +102,42 @@ describe('FileArtifactService', () => {
       }
     });
 
+    it('allows filenames that only start with two dots', async () => {
+      rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-artifacts-test-'));
+      const service = new FileArtifactService(rootDir);
+      const appName = 'test-app';
+      const userId = 'test-user';
+      const sessionId = 'test-session';
+
+      try {
+        for (const filename of ['..notes.txt', '..drafts/report.txt']) {
+          await service.saveArtifact({
+            appName,
+            userId,
+            sessionId,
+            filename,
+            artifact: {text: filename},
+          });
+          const loaded = await service.loadArtifact({
+            appName,
+            userId,
+            sessionId,
+            filename,
+          });
+          expect(loaded?.text).toBe(filename);
+        }
+
+        const keys = await service.listArtifactKeys({
+          appName,
+          userId,
+          sessionId,
+        });
+        expect(keys.sort()).toEqual(['..drafts/report.txt', '..notes.txt']);
+      } finally {
+        await fs.rm(rootDir, {recursive: true, force: true});
+      }
+    });
+
     const ROOT = '/tmp/adk-test-root';
 
     describe('assertSafeSegment - valid inputs', () => {

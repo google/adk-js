@@ -8,10 +8,8 @@ import {Content, Part} from '@google/genai';
 import {BaseAgent} from '../agents/base_agent.js';
 import {Context} from '../agents/context.js';
 import {InvocationContext} from '../agents/invocation_context.js';
-import {getLogger} from '../utils/logger.js';
+import {logger} from '../utils/logger.js';
 import {BasePlugin} from './base_plugin.js';
-
-const logger = getLogger();
 
 const MODEL_ACCESSIBLE_URI_SCHEMES = new Set(['gs', 'https', 'http']);
 
@@ -249,9 +247,6 @@ export class SaveFilesAsArtifactsPlugin extends BasePlugin {
 function getInlineDataSizeBytes(data?: string): number {
   if (!data) {
     return 0;
-  }
-  if (typeof Buffer !== 'undefined') {
-    return Buffer.from(data, 'base64').byteLength;
   }
   const len = data.length;
   let padding = 0;

@@ -4,11 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {context, type Span, SpanStatusCode, trace} from '@opentelemetry/api';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {createEvent, Event} from '../events/event.js';
-import {traceNodeExecution, tracer} from '../telemetry/tracing.js';
-import {formatError} from '../utils/error_utils.js';
+import {
+  type NodeInvocationScope,
+  recordNodeInvocation,
+} from '../telemetry/api/instrumentation.js';
 import {BaseNode} from './base_node.js';
 import {createSubBranch} from './branch_path.js';
 import {
@@ -114,27 +115,29 @@ export function executeChildNode(
   // this node. Nodes are raced concurrently in `Workflow.runLoop`, so a parent
   // captured any later would nest concurrent siblings inside whichever task
   // happened to resolve first.
-  const span = tracer.startSpan(`execute_node ${nodeName}`);
+  const scope = recordNodeInvocation({
+    node,
+    nodeName,
+    sessionId: parent.invocationContext.session.id,
+  });
 
   // Deliberately not `async`, and the callback is deliberately not `async`
-  // either: `context.with` hands the inner promise straight back, so the child
+  // either: `scope.run` hands the inner promise straight back, so the child
   // settles on exactly the same microtask it did before tracing existed. Async
   // wrappers here would each add promise-adoption ticks, which is enough to
   // change how concurrently scheduled nodes interleave — an observability
   // change must not move execution around.
-  return context.with(trace.setSpan(context.active(), span), () =>
-    runChildNode({params, nodeName, nodePath, span}),
-  );
+  return scope.run(() => runChildNode({params, nodeName, nodePath, scope}));
 }
 
 interface RunChildNodeParams {
   params: ExecuteChildNodeParams;
   nodeName: string;
   nodePath: string;
-  span: Span;
+  scope: NodeInvocationScope;
 }
 
-/** The body of {@link executeChildNode}, running under its `execute_node` span. */
+/** The body of {@link executeChildNode}, running under its node scope. */
 async function runChildNode({
   params: {
     parent,
@@ -147,7 +150,7 @@ async function runChildNode({
   },
   nodeName,
   nodePath,
-  span,
+  scope,
 }: RunChildNodeParams): Promise<NodeContext> {
   const runId = options.runId ?? nodeName;
 
@@ -224,15 +227,6 @@ async function runChildNode({
       });
       if (skipOutput !== undefined) {
         child.output = skipOutput;
-        // A skipped node still fills its slot in the trace, so record it as
-        // completed rather than leaving an attribute-less span behind.
-        traceNodeExecution({
-          nodePath,
-          runId,
-          attempt: nodeState.attemptCount,
-          status: 'completed',
-          interruptCount: child.interruptIds.length,
-        });
         if (options.useAsOutput) {
           parent.output = child.output;
           parent.route = child.route;
@@ -247,16 +241,14 @@ async function runChildNode({
       resetState(child);
       child.attemptCount = nodeState.attemptCount;
       try {
-        inputRecorded = await runAttempt({
+        inputRecorded = await runOnce({
           node,
           child,
           input,
           nodeName,
           branch,
           isolationScope,
-          nodePath,
-          runId,
-          attempt: nodeState.attemptCount,
+          scope,
         });
         failIfNodeReportedError(child, nodeName);
         succeeded = true;
@@ -297,14 +289,6 @@ async function runChildNode({
       recordInputForResume({child, nodeName, branch, isolationScope, input});
     }
 
-    traceNodeExecution({
-      nodePath,
-      runId,
-      attempt: nodeState.attemptCount,
-      status: child.interruptIds.length > 0 ? 'waiting' : 'completed',
-      interruptCount: child.interruptIds.length,
-    });
-
     if (pluginManager?.hasPlugins) {
       const replacedOutput = await pluginManager.runAfterNodeCallback({
         node,
@@ -324,70 +308,11 @@ async function runChildNode({
 
     return child;
   } catch (err) {
-    traceNodeExecution({
-      nodePath,
-      runId,
-      attempt: nodeState.attemptCount,
-      status: 'failed',
-      interruptCount: child.interruptIds.length,
-    });
-    span.setStatus({code: SpanStatusCode.ERROR, message: formatError(err)});
+    scope.end(err);
     throw err;
   } finally {
-    span.end();
+    scope.end();
   }
-}
-
-interface RunAttemptParams extends RunOnceParams {
-  nodePath: string;
-  runId: string;
-  attempt: number;
-}
-
-/**
- * Not `async`: a node without a retry config must reach `runOnce` and settle on
- * exactly the microtask it would have without tracing (see `executeChildNode`).
- *
- * Resolves to whether the attempt recorded the node's input for resume (see
- * {@link runOnce}).
- */
-function runAttempt(params: RunAttemptParams): Promise<boolean> {
-  const {node, nodePath, runId, attempt} = params;
-  if (!node.preparedRetryConfig) {
-    return runOnce(params);
-  }
-  return tracer.startActiveSpan(
-    `execute_node_attempt ${params.nodeName}`,
-    async (span) => {
-      try {
-        const inputRecorded = await runOnce(params);
-        traceNodeExecution({
-          nodePath,
-          runId,
-          attempt,
-          status:
-            params.child.interruptIds.length > 0 ? 'waiting' : 'completed',
-          interruptCount: params.child.interruptIds.length,
-        });
-        return inputRecorded;
-      } catch (err) {
-        traceNodeExecution({
-          nodePath,
-          runId,
-          attempt,
-          status: 'failed',
-          interruptCount: params.child.interruptIds.length,
-        });
-        span.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: formatError(err),
-        });
-        throw err;
-      } finally {
-        span.end();
-      }
-    },
-  );
 }
 
 /**
@@ -445,6 +370,8 @@ interface RunOnceParams {
   nodeName: string;
   branch: string | undefined;
   isolationScope: string | undefined;
+  /** The node's telemetry scope, which records every event it emits. */
+  scope: NodeInvocationScope;
 }
 
 /**
@@ -475,9 +402,10 @@ async function runOnce({
   nodeName,
   branch,
   isolationScope,
+  scope,
 }: RunOnceParams): Promise<boolean> {
   let inputRecorded = false;
-  const consume = (event: Event): void => {
+  const consume = async (event: Event): Promise<void> => {
     enrichEvent({event, child, nodeName, branch, isolationScope});
     // An event can carry a state delta that never went through `ctx.state`,
     // so the schema is enforced here too rather than only on the setter.
@@ -521,7 +449,17 @@ async function runOnce({
       };
       inputRecorded = true;
     }
-    child.channel.push(event);
+    scope.recordEvent(event);
+    // A non-partial event waits until the runner has processed it, so it is in
+    // the session before the node continues. A tool call is then stored (and
+    // seen by plugins) before the tool runs. Partial events are streamed only,
+    // so they do not wait. Mirrors adk-python's
+    // `InvocationContext._enqueue_event`.
+    if (event.partial) {
+      child.channel.push(event);
+    } else {
+      await child.channel.pushAndWait(event);
+    }
   };
 
   const parentSignal = child.invocationContext.abortSignal;
@@ -530,7 +468,7 @@ async function runOnce({
   // Fast path: no per-node deadline and no external cancellation to observe.
   if (!hasTimeout && !parentSignal) {
     for await (const event of node.run(child, input)) {
-      consume(event);
+      await consume(event);
     }
     return inputRecorded;
   }
@@ -545,7 +483,7 @@ async function runOnce({
     child.abortSignal = parentSignal;
     try {
       for await (const event of node.run(child, input)) {
-        consume(event);
+        await consume(event);
       }
     } finally {
       child.abortSignal = undefined;
@@ -600,7 +538,7 @@ async function runOnce({
   try {
     let result = await Promise.race([iterator.next(), aborted]);
     while (!result.done) {
-      consume(result.value);
+      await Promise.race([consume(result.value), aborted]);
       result = await Promise.race([iterator.next(), aborted]);
     }
   } finally {

@@ -13,16 +13,21 @@ import {afterEach, beforeEach, describe, expect, it} from 'vitest';
  *
  * @param createService A function that returns a promise that resolves to the artifact service.
  * @param cleanup A function that returns a promise that cleans up the artifact service.
- * @param suiteName The name of the test suite.
+ * @param stringifiesCustomMetadata Set for backends whose storage accepts only string metadata values (e.g. GCS).
  */
 export function runArtifactServiceTests(
   createService: () => Promise<BaseArtifactService>,
   cleanup: () => Promise<void>,
+  stringifiesCustomMetadata = false,
 ) {
   let service: BaseArtifactService;
   const appName = 'test-app';
   const userId = 'test-user';
   const sessionId = 'test-session';
+  const expectMeta = (m: Record<string, unknown>) =>
+    stringifiesCustomMetadata
+      ? Object.fromEntries(Object.entries(m).map(([k, v]) => [k, String(v)]))
+      : m;
 
   beforeEach(async () => {
     service = await createService();
@@ -356,7 +361,9 @@ export function runArtifactServiceTests(
       });
 
       expect(versionMetadata).toBeDefined();
-      expect(versionMetadata?.customMetadata).toMatchObject(customMetadata);
+      expect(versionMetadata?.customMetadata).toMatchObject(
+        expectMeta(customMetadata),
+      );
     });
   });
 
@@ -389,9 +396,9 @@ export function runArtifactServiceTests(
 
       expect(versions).toHaveLength(2);
       expect(versions[0].version).toBe(0);
-      expect(versions[0].customMetadata).toMatchObject({v: 1});
+      expect(versions[0].customMetadata).toMatchObject(expectMeta({v: 1}));
       expect(versions[1].version).toBe(1);
-      expect(versions[1].customMetadata).toMatchObject({v: 2});
+      expect(versions[1].customMetadata).toMatchObject(expectMeta({v: 2}));
     });
 
     it('returns empty list for non-existent artifact', async () => {
@@ -432,7 +439,7 @@ export function runArtifactServiceTests(
         filename,
         version: 0,
       });
-      expect(v0?.customMetadata).toMatchObject({v: 1});
+      expect(v0?.customMetadata).toMatchObject(expectMeta({v: 1}));
 
       const v1 = await service.getArtifactVersion({
         appName,
@@ -441,7 +448,7 @@ export function runArtifactServiceTests(
         filename,
         version: 1,
       });
-      expect(v1?.customMetadata).toMatchObject({v: 2});
+      expect(v1?.customMetadata).toMatchObject(expectMeta({v: 2}));
 
       const latest = await service.getArtifactVersion({
         appName,
@@ -449,7 +456,7 @@ export function runArtifactServiceTests(
         sessionId,
         filename,
       });
-      expect(latest?.customMetadata).toMatchObject({v: 2});
+      expect(latest?.customMetadata).toMatchObject(expectMeta({v: 2}));
     });
 
     it('returns undefined for non-existent version', async () => {
@@ -480,6 +487,40 @@ export function runArtifactServiceTests(
         filename: 'non-existent',
       });
       expect(missing).toBeUndefined();
+    });
+  });
+
+  describe('canonicalUri', () => {
+    it('records a canonical URI on every saved version', async () => {
+      // The scheme differs per implementation, so only presence is asserted.
+      for (const filename of ['canonical.txt', 'user:canonical.txt']) {
+        const version = await service.saveArtifact({
+          appName,
+          userId,
+          sessionId,
+          filename,
+          artifact: {text: '.'},
+        });
+
+        const fetched = await service.getArtifactVersion({
+          appName,
+          userId,
+          sessionId,
+          filename,
+          version,
+        });
+        expect(fetched?.canonicalUri).toEqual(expect.any(String));
+        expect(fetched?.canonicalUri).not.toBe('');
+
+        const versions = await service.listArtifactVersions({
+          appName,
+          userId,
+          sessionId,
+          filename,
+        });
+        expect(versions).toHaveLength(1);
+        expect(versions[0].canonicalUri).toBe(fetched?.canonicalUri);
+      }
     });
   });
 

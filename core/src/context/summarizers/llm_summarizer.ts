@@ -77,20 +77,21 @@ export class LlmSummarizer implements BaseSummarizer {
       liveConnectConfig: {},
     };
 
-    const responseGen = this.llm.generateContentAsync(request, false);
+    // A response can hold several text parts, e.g. one per request of a
+    // generation that @google/genai resumed after continuation pauses.
     let compactedContent = '';
-
-    const firstResponse = await responseGen.next();
-    if (firstResponse.done || !firstResponse.value.content?.parts?.[0]?.text) {
-      throw new Error('LLM failed to return a valid summary.');
-    }
-    compactedContent += firstResponse.value.content.parts[0].text;
-
-    // consume the rest of the stream
-    for await (const chunk of responseGen) {
-      if (chunk.content?.parts?.[0]?.text) {
-        compactedContent += chunk.content.parts[0].text;
+    for await (const response of this.llm.generateContentAsync(
+      request,
+      false,
+    )) {
+      for (const part of response.content?.parts ?? []) {
+        if (part.text && !part.thought) {
+          compactedContent += part.text;
+        }
       }
+    }
+    if (!compactedContent) {
+      throw new Error('LLM failed to return a valid summary.');
     }
 
     return createCompactedEvent({

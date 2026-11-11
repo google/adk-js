@@ -10,6 +10,7 @@ import {BaseAgent} from '../../src/agents/base_agent.js';
 import {Context} from '../../src/agents/context.js';
 import {InvocationContext} from '../../src/agents/invocation_context.js';
 import {LlmAgent} from '../../src/agents/llm_agent.js';
+import {createRunConfig} from '../../src/agents/run_config.js';
 import {ArtifactVersion} from '../../src/artifacts/base_artifact_service.js';
 import {InMemoryArtifactService} from '../../src/artifacts/in_memory_artifact_service.js';
 import {SessionArtifactService} from '../../src/artifacts/session_artifact_service.js';
@@ -22,6 +23,7 @@ import {
 import {Runner} from '../../src/runner/runner.js';
 import {InMemorySessionService} from '../../src/sessions/in_memory_session_service.js';
 import {createSession, Session} from '../../src/sessions/session.js';
+import {logger} from '../../src/utils/logger.js';
 
 describe('SaveFilesAsArtifactsPlugin', () => {
   let plugin: SaveFilesAsArtifactsPlugin;
@@ -47,19 +49,21 @@ describe('SaveFilesAsArtifactsPlugin', () => {
       deleteArtifact: vi.fn().mockResolvedValue(undefined),
       listVersions: vi.fn().mockResolvedValue([0]),
       listArtifactVersions: vi.fn().mockResolvedValue([]),
-      getArtifactVersion: vi.fn().mockImplementation(
-        async ({
-          filename,
-          version,
-        }: {
-          filename: string;
-          version?: number;
-        }): Promise<ArtifactVersion> => ({
-          version: version ?? 0,
-          canonicalUri: `gs://mock-bucket/${filename}/versions/${version ?? 0}`,
-          mimeType: 'application/pdf',
-        }),
-      ),
+      getArtifactVersion: vi
+        .fn()
+        .mockImplementation(
+          async ({
+            filename,
+            version,
+          }: {
+            filename: string;
+            version?: number;
+          }): Promise<ArtifactVersion> => ({
+            version: version ?? 0,
+            canonicalUri: `gs://mock-bucket/${filename}/versions/${version ?? 0}`,
+            mimeType: 'application/pdf',
+          }),
+        ),
     };
 
     mockContext = {
@@ -697,5 +701,107 @@ describe('SaveFilesAsArtifactsPlugin', () => {
     );
     expect(agentDeltaEvent).toBeDefined();
     expect(agentDeltaEvent!.actions!.artifactDelta).toEqual({'upload.pdf': 0});
+  });
+
+  it('computes inline data byte length from base64 string without Buffer.from allocation', async () => {
+    const bufferFromSpy = vi.spyOn(Buffer, 'from');
+    try {
+      const userMessage: Content = {
+        role: 'user',
+        parts: [
+          {
+            inlineData: {
+              displayName: 'no_buffer_alloc.txt',
+              data: 'aGVsbG8=',
+              mimeType: 'text/plain',
+            },
+          },
+        ],
+      };
+
+      const result = await plugin.onUserMessageCallback({
+        invocationContext: mockContext,
+        userMessage,
+      });
+
+      expect(result).toBeDefined();
+      expect(bufferFromSpy).not.toHaveBeenCalled();
+    } finally {
+      bufferFromSpy.mockRestore();
+    }
+  });
+
+  it('logs saveInputBlobsAsArtifacts deprecation warning at most once per process', async () => {
+    const sessionService = new InMemorySessionService();
+    const artifactService = new InMemoryArtifactService();
+
+    class TestAgent extends BaseAgent {
+      constructor() {
+        super({name: 'test_agent'});
+      }
+
+      protected override async *runAsyncImpl(
+        context: InvocationContext,
+      ): AsyncGenerator<import('../../src/events/event.js').Event, void, void> {
+        yield createEvent({
+          invocationId: context.invocationId,
+          author: this.name,
+          content: {role: 'model', parts: [{text: 'done'}]},
+        });
+      }
+
+      protected override async *runLiveImpl(): AsyncGenerator<
+        import('../../src/events/event.js').Event,
+        void,
+        void
+      > {}
+    }
+
+    const runner = new Runner({
+      appName: 'test_app',
+      agent: new TestAgent(),
+      sessionService,
+      artifactService,
+    });
+
+    const session = await sessionService.createSession({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId: 'test_session_depr',
+    });
+
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const runConfig = createRunConfig({saveInputBlobsAsArtifacts: true});
+      const newMessage: Content = {
+        role: 'user',
+        parts: [
+          {
+            inlineData: {
+              mimeType: 'text/plain',
+              data: 'aGVsbG8=',
+            },
+          },
+        ],
+      };
+
+      for (let i = 0; i < 2; i++) {
+        for await (const _ of runner.runAsync({
+          userId: session.userId,
+          sessionId: session.id,
+          newMessage,
+          runConfig,
+        })) {
+          // Consume stream
+        }
+      }
+
+      const deprecationCalls = warnSpy.mock.calls.filter((call) =>
+        String(call[0]).includes('saveInputBlobsAsArtifacts'),
+      );
+      expect(deprecationCalls).toHaveLength(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });

@@ -4,19 +4,26 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {describe, expect, it} from 'vitest';
+import {InputValidationError} from '@google/adk';
+import {describe, expect, it, vi} from 'vitest';
+import {createEvent} from '../../src/events/event.js';
 import {BaseExampleProvider} from '../../src/examples/base_example_provider.js';
 import {Example} from '../../src/examples/example.js';
 import {
+  _getLatestMessageFromUser,
   buildExampleSi,
   convertExamplesToText,
+  getLatestMessageFromUser,
+  validateExamples,
 } from '../../src/examples/example_util.js';
+import {createSession} from '../../src/sessions/session.js';
+import {logger} from '../../src/utils/logger.js';
 
 class FixedExampleProvider extends BaseExampleProvider {
   constructor(private readonly examples: Example[]) {
     super();
   }
-  override getExamples(_query: string): Example[] {
+  override async getExamples(_query: string): Promise<Example[]> {
     return this.examples;
   }
 }
@@ -106,8 +113,8 @@ describe('convertExamplesToText', () => {
 });
 
 describe('buildExampleSi', () => {
-  it('delegates to convertExamplesToText when given an array', () => {
-    const result = buildExampleSi(
+  it('delegates to convertExamplesToText when given an array', async () => {
+    const result = await buildExampleSi(
       [SIMPLE_EXAMPLE],
       'query',
       'gemini-2.0-flash',
@@ -116,22 +123,177 @@ describe('buildExampleSi', () => {
     expect(result).toContain('4');
   });
 
-  it('calls getExamples on a BaseExampleProvider', () => {
+  it('calls getExamples on a BaseExampleProvider', async () => {
     const provider = new FixedExampleProvider([SIMPLE_EXAMPLE]);
-    const result = buildExampleSi(provider, 'my query');
+    const result = await buildExampleSi(provider, 'my query');
     expect(result).toContain('What is 2+2?');
   });
 
-  it('passes the model string through to the provider path', () => {
+  it('passes the model string through to the provider path', async () => {
     const provider = new FixedExampleProvider([FUNCTION_CALL_EXAMPLE]);
-    const result = buildExampleSi(provider, 'query', 'gemini-1.5-pro');
+    const result = await buildExampleSi(provider, 'query', 'gemini-1.5-pro');
     expect(result).toContain('```tool_code');
   });
 
-  it('throws an error for invalid input', () => {
+  it('throws an error for invalid input', async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect(() => buildExampleSi({} as any, 'query')).toThrow(
+    await expect(buildExampleSi({} as any, 'query')).rejects.toThrow(
       'Invalid example configuration',
     );
+  });
+});
+
+// --- v0.1.0 parity tests (example_util) ---
+describe('example_util (v0.1.0 parity)', () => {
+  it('returns empty string when session has no events', () => {
+    const session = createSession({id: 's1', appName: 'app', events: []});
+    expect(getLatestMessageFromUser(session)).toBe('');
+    expect(_getLatestMessageFromUser(session)).toBe('');
+  });
+
+  it('returns latest user message text when last event is from user without function responses', () => {
+    const session = createSession({
+      id: 's1',
+      appName: 'app',
+      events: [
+        createEvent({
+          author: 'model',
+          content: {role: 'model', parts: [{text: 'Previous answer'}]},
+        }),
+        createEvent({
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'Latest user question'}]},
+        }),
+      ],
+    });
+    expect(getLatestMessageFromUser(session)).toBe('Latest user question');
+  });
+
+  it('returns empty string when last event is not from user', () => {
+    const session = createSession({
+      id: 's1',
+      appName: 'app',
+      events: [
+        createEvent({
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'User question'}]},
+        }),
+        createEvent({
+          author: 'agent',
+          content: {role: 'model', parts: [{text: 'Agent response'}]},
+        }),
+      ],
+    });
+    expect(getLatestMessageFromUser(session)).toBe('');
+  });
+
+  it('returns empty string when last user event contains a function response', () => {
+    const session = createSession({
+      id: 's1',
+      appName: 'app',
+      events: [
+        createEvent({
+          author: 'user',
+          content: {
+            role: 'user',
+            parts: [
+              {
+                functionResponse: {
+                  name: 'my_tool',
+                  response: {result: 'ok'},
+                },
+              },
+            ],
+          },
+        }),
+      ],
+    });
+    expect(getLatestMessageFromUser(session)).toBe('');
+  });
+
+  it('logs a warning and returns empty string when last user event has no text part', () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const session = createSession({
+        id: 's1',
+        appName: 'app',
+        events: [
+          createEvent({
+            author: 'user',
+            content: {role: 'user', parts: []},
+          }),
+        ],
+      });
+      expect(getLatestMessageFromUser(session)).toBe('');
+      expect(warnSpy).toHaveBeenCalledWith(
+        'No message from user for fetching example.',
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+});
+
+describe('validateExamples', () => {
+  it('accepts a valid list', () => {
+    expect(() =>
+      validateExamples([SIMPLE_EXAMPLE, FUNCTION_CALL_EXAMPLE]),
+    ).not.toThrow();
+  });
+
+  it('accepts an empty list', () => {
+    expect(() => validateExamples([])).not.toThrow();
+  });
+
+  it('rejects an entry without an output', () => {
+    expect(() => validateExamples([{input: {parts: [{text: 'q'}]}}])).toThrow(
+      InputValidationError,
+    );
+  });
+
+  it('rejects an entry without an input', () => {
+    expect(() =>
+      validateExamples([{output: [{role: 'model', parts: [{text: 'a'}]}]}]),
+    ).toThrow(InputValidationError);
+  });
+
+  it('rejects an output that is not an array', () => {
+    expect(() =>
+      validateExamples([
+        {
+          input: {parts: [{text: 'q'}]},
+          output: {role: 'model', parts: [{text: 'a'}]},
+        },
+      ]),
+    ).toThrow(InputValidationError);
+  });
+
+  it('rejects input parts that are not an array', () => {
+    expect(() => validateExamples([{input: {parts: 'q'}, output: []}])).toThrow(
+      InputValidationError,
+    );
+  });
+
+  it('rejects a value that is not a list at all', () => {
+    expect(() => validateExamples('not a list')).toThrow(
+      /expected array, received string/,
+    );
+  });
+
+  it('names the offending index and field in the message', () => {
+    expect(() => validateExamples([{input: {parts: [{text: 'q'}]}}])).toThrow(
+      /at \[0\]\.output/,
+    );
+  });
+
+  it('accepts unknown keys on a content object', () => {
+    expect(() =>
+      validateExamples([
+        {
+          input: {role: 'user', parts: [{text: 'q', thought: true}]},
+          output: [{role: 'model', parts: [{text: 'a'}], newField: 1}],
+        },
+      ]),
+    ).not.toThrow();
   });
 });

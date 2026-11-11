@@ -10,14 +10,17 @@ import {
   AuthCredentialTypes,
   Context,
   createRestApiTool,
+  createRestApiToolFromJson,
   createSession,
   InvocationContext,
   LlmAgent,
   OpenApiSpecParser,
+  OperationParser,
   PluginManager,
   RestApiTool,
   ToolAuthHandler,
 } from '@google/adk';
+import {Type} from '@google/genai';
 import {OpenAPIV3} from 'openapi-types';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {
@@ -28,6 +31,17 @@ import {
   prepareRequestBody,
   prepareRequestParams,
 } from '../../../src/tools/openapi_tool/rest_api_tool.js';
+
+function createParityToolContext(): Context {
+  return new Context({
+    invocationContext: new InvocationContext({
+      invocationId: 'invocation-1',
+      agent: new LlmAgent({name: 'test_agent'}),
+      session: createSession({id: 'session-1', appName: 'test_app'}),
+      pluginManager: new PluginManager(),
+    }),
+  });
+}
 
 describe('RestApiTool', () => {
   afterEach(() => {
@@ -309,7 +323,10 @@ describe('RestApiTool', () => {
     expect(declaration).toEqual({
       name: 'test_tool',
       description: 'description',
-      parameters: mockSchema,
+      parameters: {
+        type: Type.OBJECT,
+        properties: {},
+      },
     });
   });
 
@@ -480,14 +497,11 @@ describe('RestApiTool', () => {
 
     globalThis.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
 
-    const result = await tool.runAsync({
-      args: {},
-      toolContext: {} as unknown as Context,
-    });
-
-    expect(result).toEqual({
-      error: 'Failed to execute API call: Network error',
-    });
+    // Propagates, matching the reference: `requests.request()` sits outside
+    // the try (`rest_api_tool.py:465`).
+    await expect(
+      tool.runAsync({args: {}, toolContext: {} as unknown as Context}),
+    ).rejects.toThrow('Network error');
   });
 
   it('should apply auth credentials to fetch request', async () => {
@@ -584,6 +598,50 @@ describe('RestApiTool', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
+  it('applies the credential with the scheme the auth result carries', async () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/test',
+      method: 'GET',
+    };
+    const operation: OpenAPIV3.OperationObject = {responses: {}};
+    const tool = new RestApiTool(
+      'test_tool',
+      'description',
+      endpoint,
+      operation,
+      {type: 'apiKey', name: 'X-Stale-Key', in: 'header'},
+    );
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: {get: () => 'text/plain'},
+      text: async () => 'ok',
+    });
+
+    // The handler deep-copies the scheme, so the copy on the result is what it
+    // prepared the credential against. Here the two disagree, which pins that
+    // the result wins.
+    const mockAuthHandler = {
+      prepareAuthCredentials: async () => ({
+        state: 'done',
+        authScheme: {type: 'apiKey', name: 'X-Prepared-Key', in: 'header'},
+        authCredential: {apiKey: 'secret_key'},
+      }),
+    };
+    vi.spyOn(ToolAuthHandler, 'fromToolContext').mockReturnValue(
+      mockAuthHandler as unknown as ToolAuthHandler,
+    );
+
+    await tool.runAsync({args: {}, toolContext: {} as unknown as Context});
+
+    const init = vi.mocked(globalThis.fetch).mock.calls[0][1];
+    expect(init?.headers).toEqual(
+      expect.objectContaining({'X-Prepared-Key': 'secret_key'}),
+    );
+    expect(init?.headers).not.toHaveProperty('X-Stale-Key');
+  });
+
   it('should fallback to JSON if no requestBody in spec', async () => {
     const endpoint = {
       baseUrl: 'http://api.example.com',
@@ -645,6 +703,7 @@ describe('RestApiTool', () => {
         get: (name: string) =>
           name === 'content-type' ? 'application/json' : null,
       },
+      text: async () => JSON.stringify(jsonResponse),
       json: async () => jsonResponse,
     });
 
@@ -730,6 +789,43 @@ describe('RestApiTool Utilities', () => {
       expect(tool).toBeInstanceOf(RestApiTool);
       expect(tool.name).toBe('test_tool');
       expect(tool.description).toBe('description');
+    });
+
+    it('should give the tool the credential on the parsed operation', async () => {
+      const authCredential = {
+        authType: AuthCredentialTypes.API_KEY,
+        apiKey: 'parsed-operation-key',
+      };
+      const tool = createRestApiTool({
+        name: 'credentialed_tool',
+        description: 'description',
+        endpoint: {
+          baseUrl: 'http://api.example.com',
+          path: '/test',
+          method: 'GET',
+        },
+        operation: {responses: {}},
+        authScheme: createApiKeyScheme('X-API-Key', 'header'),
+        authCredential,
+      });
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        headers: {get: () => 'text/plain'},
+        text: async () => 'ok',
+      });
+      const spy = vi.spyOn(ToolAuthHandler, 'fromToolContext').mockReturnValue({
+        prepareAuthCredentials: async () => ({state: 'done', authCredential}),
+      } as unknown as ToolAuthHandler);
+
+      await tool.runAsync({args: {}, toolContext: {} as unknown as Context});
+
+      expect(spy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        authCredential,
+        expect.anything(),
+      );
     });
   });
 
@@ -1086,6 +1182,175 @@ describe('RestApiTool Utilities', () => {
     });
   });
 
+  describe('query parameter serialization', () => {
+    const itemsEndpoint = {
+      baseUrl: 'https://example.com',
+      path: '/items',
+      method: 'GET',
+    };
+    const queryParam = (name: string, paramSchema: object) => ({
+      name,
+      originalName: name,
+      paramLocation: 'query',
+      paramSchema,
+      required: false,
+    });
+    const parameters = [
+      queryParam('id', {type: 'array', items: {type: 'integer'}}),
+      queryParam('filter', {type: 'object'}),
+      queryParam('tag', {type: 'array', items: {type: 'string'}}),
+    ];
+    const queryOf = (args: Record<string, unknown>) =>
+      new URL(prepareRequestParams(itemsEndpoint, parameters, args).url)
+        .searchParams;
+
+    it('repeats the key once per array element (form, explode: true)', () => {
+      const result = prepareRequestParams(itemsEndpoint, parameters, {
+        id: [1, 2, 3],
+      });
+
+      expect(result.url).toBe('https://example.com/items?id=1&id=2&id=3');
+    });
+
+    it('keeps array elements that contain reserved characters intact', () => {
+      const query = queryOf({tag: ['a,b', 'c&d', 'e f']});
+
+      expect(query.getAll('tag')).toEqual(['a,b', 'c&d', 'e f']);
+    });
+
+    it('sends falsy array elements but skips null and undefined ones', () => {
+      const query = queryOf({id: [0, null, undefined, 2]});
+
+      expect(query.getAll('id')).toEqual(['0', '2']);
+    });
+
+    it('sends nothing for an empty array', () => {
+      const result = prepareRequestParams(itemsEndpoint, parameters, {id: []});
+
+      expect(result.url).toBe('https://example.com/items');
+    });
+
+    it('JSON-encodes an object instead of "[object Object]"', () => {
+      const query = queryOf({filter: {a: 1, b: ['x']}});
+
+      expect(query.getAll('filter')).toEqual(['{"a":1,"b":["x"]}']);
+    });
+
+    it('JSON-encodes object elements of an array', () => {
+      const query = queryOf({filter: [{a: 1}, {a: 2}]});
+
+      expect(query.getAll('filter')).toEqual(['{"a":1}', '{"a":2}']);
+    });
+
+    it('still sends scalar values as before', () => {
+      const result = prepareRequestParams(itemsEndpoint, parameters, {
+        id: 7,
+        tag: 'x',
+      });
+
+      expect(result.url).toBe('https://example.com/items?id=7&tag=x');
+    });
+
+    it('merges array parameters with query parameters from the path', () => {
+      const result = prepareRequestParams(
+        {...itemsEndpoint, path: '/items?v=2'},
+        parameters,
+        {id: [1, 2]},
+      );
+
+      expect(result.url).toBe('https://example.com/items?id=1&id=2&v=2');
+    });
+  });
+
+  describe('path, header, and cookie parameter serialization', () => {
+    const itemFilterEndpoint = {
+      baseUrl: 'https://example.com',
+      path: '/items/{item_filter}',
+      method: 'GET',
+    };
+    const param = (name: string, paramLocation: string): ApiParameter => ({
+      name,
+      originalName: name,
+      paramLocation,
+      paramSchema: {},
+      required: false,
+    });
+    const parameters: ApiParameter[] = [
+      param('item_filter', 'path'),
+      param('X-Page-Size', 'header'),
+      param('page_size', 'cookie'),
+    ];
+
+    it.each([
+      [50, '50', '50'],
+      [1.5, '1.5', '1.5'],
+      [true, 'true', 'true'],
+      [false, 'false', 'false'],
+      [['a', 'b', 3], 'a,b,3', 'a%2Cb%2C3'],
+      [[true, false], 'true,false', 'true%2Cfalse'],
+      [[1, null, undefined, true], '1,true', '1%2Ctrue'],
+      [
+        {a: 1, b: null, d: undefined, c: true},
+        'a,1,c,true',
+        'a%2C1%2Cc%2Ctrue',
+      ],
+      ['already-a-string', 'already-a-string', 'already-a-string'],
+    ])(
+      'serializes %j using OpenAPI simple style across path, header, and cookie',
+      (value, expected, expectedPath) => {
+        const result = prepareRequestParams(itemFilterEndpoint, parameters, {
+          item_filter: value,
+          'X-Page-Size': value,
+          page_size: value,
+        });
+
+        expect(result.url).toBe(`https://example.com/items/${expectedPath}`);
+        expect(result.headers['X-Page-Size']).toBe(expected);
+        expect(result.cookies['page_size']).toBe(expected);
+      },
+    );
+
+    it('omits null and undefined header, cookie, and path values', () => {
+      const resultForNull = prepareRequestParams(
+        itemFilterEndpoint,
+        parameters,
+        {
+          item_filter: null,
+          'X-Page-Size': null,
+          page_size: null,
+        },
+      );
+
+      expect(resultForNull.url).toBe('https://example.com/items/{item_filter}');
+      expect(resultForNull.headers).toEqual({});
+      expect(resultForNull.cookies).toEqual({});
+
+      const resultForUndefined = prepareRequestParams(
+        itemFilterEndpoint,
+        parameters,
+        {
+          item_filter: undefined,
+          'X-Page-Size': undefined,
+          page_size: undefined,
+        },
+      );
+
+      expect(resultForUndefined.url).toBe(
+        'https://example.com/items/{item_filter}',
+      );
+      expect(resultForUndefined.headers).toEqual({});
+      expect(resultForUndefined.cookies).toEqual({});
+    });
+
+    it('still rejects dot-segment path parameters after array serialization', () => {
+      expect(() =>
+        prepareRequestParams(itemFilterEndpoint, parameters, {
+          item_filter: ['..', null],
+        }),
+      ).toThrow(/relative path segments/);
+    });
+  });
+
   describe('prepareRequestBody', () => {
     it('should format JSON body correctly', () => {
       const requestBody: OpenAPIV3.RequestBodyObject = {
@@ -1220,5 +1485,489 @@ describe('RestApiTool Utilities', () => {
       expect(result).toBeUndefined();
       expect(headers).toEqual({});
     });
+
+    describe('form bodies', () => {
+      const urlencoded: OpenAPIV3.RequestBodyObject = {
+        content: {
+          'application/x-www-form-urlencoded': {schema: {type: 'object'}},
+        },
+      };
+      const multipart: OpenAPIV3.RequestBodyObject = {
+        content: {'multipart/form-data': {schema: {type: 'object'}}},
+      };
+
+      const entriesOf = (form: FormData): Array<[string, string]> => {
+        const entries: Array<[string, string]> = [];
+        form.forEach((value, key) => entries.push([key, String(value)]));
+        return entries;
+      };
+
+      it('should send an array as repeated keys in a urlencoded body', () => {
+        const result = prepareRequestBody(
+          urlencoded,
+          undefined,
+          {tags: ['a', 'b'], n: 5},
+          {},
+        ) as URLSearchParams;
+
+        expect(result.toString()).toBe('tags=a&tags=b&n=5');
+        expect(result.getAll('tags')).toEqual(['a', 'b']);
+      });
+
+      it('should JSON-encode an object in a urlencoded body', () => {
+        const result = prepareRequestBody(
+          urlencoded,
+          undefined,
+          {filter: {k: 1}},
+          {},
+        ) as URLSearchParams;
+
+        expect(result.toString()).toBe('filter=%7B%22k%22%3A1%7D');
+        expect(result.get('filter')).toBe('{"k":1}');
+      });
+
+      it('should JSON-encode an object element of an array in a urlencoded body', () => {
+        const result = prepareRequestBody(
+          urlencoded,
+          undefined,
+          {items: [{id: 1}, 'x']},
+          {},
+        ) as URLSearchParams;
+
+        expect(result.getAll('items')).toEqual(['{"id":1}', 'x']);
+      });
+
+      it('should skip null and undefined fields and elements in a urlencoded body', () => {
+        const result = prepareRequestBody(
+          urlencoded,
+          undefined,
+          {a: null, b: undefined, c: [1, null, undefined, 2], d: []},
+          {},
+        ) as URLSearchParams;
+
+        expect(result.toString()).toBe('c=1&c=2');
+      });
+
+      it('should keep scalar fields as strings in a urlencoded body', () => {
+        const result = prepareRequestBody(
+          urlencoded,
+          undefined,
+          {s: 'a b', n: 0, flag: false},
+          {},
+        ) as URLSearchParams;
+
+        expect(result.toString()).toBe('s=a+b&n=0&flag=false');
+      });
+
+      it('should still parse a string body as a urlencoded query string', () => {
+        const result = prepareRequestBody(
+          urlencoded,
+          'a=1&a=2',
+          {},
+          {},
+        ) as URLSearchParams;
+
+        expect(result.getAll('a')).toEqual(['1', '2']);
+      });
+
+      it('should send an array as repeated keys in a multipart body', () => {
+        const result = prepareRequestBody(
+          multipart,
+          undefined,
+          {tags: ['a', 'b'], n: 5},
+          {},
+        ) as FormData;
+
+        expect(entriesOf(result)).toEqual([
+          ['tags', 'a'],
+          ['tags', 'b'],
+          ['n', '5'],
+        ]);
+      });
+
+      it('should JSON-encode an object in a multipart body', () => {
+        const result = prepareRequestBody(
+          multipart,
+          undefined,
+          {filter: {k: 1}, items: [{id: 1}]},
+          {},
+        ) as FormData;
+
+        expect(entriesOf(result)).toEqual([
+          ['filter', '{"k":1}'],
+          ['items', '{"id":1}'],
+        ]);
+      });
+
+      it('should skip null and undefined fields and elements in a multipart body', () => {
+        const result = prepareRequestBody(
+          multipart,
+          undefined,
+          {a: null, b: undefined, c: [1, null, 2], d: []},
+          {},
+        ) as FormData;
+
+        expect(entriesOf(result)).toEqual([
+          ['c', '1'],
+          ['c', '2'],
+        ]);
+      });
+    });
+  });
+
+  describe('schema-less request body', () => {
+    it('should send the body parsed from a media type without a schema', () => {
+      const operation: OpenAPIV3.OperationObject = {
+        operationId: 'testOp',
+        requestBody: {
+          description: 'Arbitrary JSON payload.',
+          content: {'application/json': {}},
+        },
+        responses: {},
+      };
+      const endpoint = {
+        baseUrl: 'http://api.example.com',
+        path: '/payloads',
+        method: 'POST',
+      };
+      const parameters = new OperationParser(operation).getParameters();
+
+      const prepared = prepareRequestParams(endpoint, parameters, {
+        body: {any: 'payload'},
+      });
+      const result = prepareRequestBody(
+        operation.requestBody,
+        prepared.body,
+        prepared.bodyData,
+        prepared.headers,
+      );
+
+      expect(result).toBe(JSON.stringify({any: 'payload'}));
+      expect(prepared.headers).toEqual({
+        'Content-Type': 'application/json',
+      });
+    });
+  });
+});
+
+describe('RestApiTool v0.1.0 parity behaviour', () => {
+  const endpoint = {
+    baseUrl: 'http://api.example.com',
+    path: '/test',
+    method: 'GET',
+  };
+  const operation: OpenAPIV3.OperationObject = {
+    operationId: 'getThing',
+    description: 'Gets a thing.',
+    responses: {},
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('falls through to the body for an unfollowed 3xx, as raise_for_status does', async () => {
+    // `raise_for_status()` raises only for 400-599 (`rest_api_tool.py:471`),
+    // so a 304 -- which neither `requests` nor `fetch` follows -- reaches
+    // `.json()`, fails on the empty body and returns `{"text": ""}` via the
+    // reference's `ValueError` branch (`:481`). Testing `response.ok` instead
+    // would return an `{error: ...}` the model then reasons about.
+    const tool = new RestApiTool('test_tool', 'description', endpoint, {
+      responses: {},
+    });
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 304,
+      headers: {get: () => 'application/json'},
+      text: async () => '',
+    });
+
+    const result = await tool.runAsync({
+      args: {},
+      toolContext: createParityToolContext(),
+    });
+
+    expect(result).toEqual({text: ''});
+  });
+
+  it('should return an error object for a 4xx/5xx response', async () => {
+    const tool = new RestApiTool('test_tool', 'description', endpoint, {
+      responses: {},
+    });
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      // A real `Response` always carries a status, and the code follows
+      // `raise_for_status()` by testing `status >= 400` rather than `ok`.
+      // Without it the mock exercised a state no `Response` can be in.
+      status: 404,
+      headers: {get: () => 'application/json'},
+      text: async () => '{"error":"no such pet"}',
+    });
+
+    const result = await tool.runAsync({
+      args: {},
+      toolContext: createParityToolContext(),
+    });
+
+    expect(result).toEqual({
+      error:
+        'Tool test_tool execution failed. Analyze this execution error and ' +
+        'your inputs. Retry with adjustments if applicable. But make sure ' +
+        "don't retry more than 3 times. Execution Error: " +
+        '{"error":"no such pet"}',
+    });
+  });
+
+  it('should truncate a tool name longer than 60 characters', () => {
+    const longName = 'a'.repeat(70);
+
+    const tool = new RestApiTool(longName, 'description', endpoint, {
+      responses: {},
+    });
+
+    expect(tool.name).toHaveLength(60);
+    expect(tool.name).toBe('a'.repeat(60));
+  });
+
+  it('should send cookie parameters as a single Cookie header', async () => {
+    const tool = new RestApiTool('test_tool', 'description', endpoint, {
+      responses: {},
+      parameters: [
+        {name: 'session_id', in: 'cookie', schema: {type: 'string'}},
+        {name: 'theme', in: 'cookie', schema: {type: 'string'}},
+      ],
+    });
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: {get: () => 'text/plain'},
+      text: async () => 'ok',
+    });
+
+    await tool.runAsync({
+      args: {session_id: 'abc def', theme: 'dark'},
+      toolContext: createParityToolContext(),
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Cookie: 'session_id=abc%20def; theme=dark',
+        }),
+      }),
+    );
+  });
+
+  it('should keep an explicit Cookie header parameter', async () => {
+    const tool = new RestApiTool('test_tool', 'description', endpoint, {
+      responses: {},
+      parameters: [
+        {name: 'session_id', in: 'cookie', schema: {type: 'string'}},
+        {name: 'Cookie', in: 'header', schema: {type: 'string'}},
+      ],
+    });
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: {get: () => 'text/plain'},
+      text: async () => 'ok',
+    });
+
+    await tool.runAsync({
+      args: {session_id: 'abc', cookie: 'caller=wins'},
+      toolContext: createParityToolContext(),
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        headers: expect.objectContaining({Cookie: 'caller=wins'}),
+      }),
+    );
+  });
+
+  // Guards the deliberate divergence from the reference, which drops every
+  // falsy query value and so loses `?count=0` and `?flag=false`.
+  it('should send falsy query values but not unset ones', () => {
+    const parameters = [
+      'count',
+      'flag',
+      'blank',
+      'missing',
+      'absent',
+      'kept',
+    ].map((name) => ({
+      name,
+      originalName: name,
+      paramLocation: 'query',
+      paramSchema: {},
+      required: false,
+    }));
+
+    const result = prepareRequestParams(endpoint, parameters, {
+      count: 0,
+      flag: false,
+      blank: '',
+      missing: null,
+      absent: undefined,
+      kept: 'yes',
+    });
+
+    expect(result.url).toBe(
+      'http://api.example.com/test?count=0&flag=false&kept=yes',
+    );
+  });
+
+  it('should not double a slash between the base URL and the path', () => {
+    const result = prepareRequestParams(
+      {baseUrl: 'http://api.example.com/', path: '/test', method: 'GET'},
+      [],
+      {},
+    );
+
+    expect(result.url).toBe('http://api.example.com/test');
+  });
+
+  it('should use supplied parameters instead of re-parsing the operation', () => {
+    const parameters = [
+      {
+        name: 'renamed',
+        originalName: 'X-Renamed',
+        paramLocation: 'header',
+        paramSchema: {type: 'string' as const},
+        required: false,
+      },
+    ];
+
+    const tool = createRestApiTool({
+      endpoint,
+      operation: {
+        ...operation,
+        parameters: [{name: 'ignored', in: 'query', schema: {type: 'string'}}],
+      },
+      parameters,
+    });
+
+    expect(tool.name).toBe('get_thing');
+    expect(tool.description).toBe('Gets a thing.');
+    expect(tool._getDeclaration().parameters?.properties).toEqual({
+      renamed: {type: Type.STRING},
+    });
+  });
+
+  it('should keep an explicit name and description', () => {
+    const tool = createRestApiTool({
+      name: 'explicit_name',
+      description: 'Explicit description.',
+      endpoint,
+      operation,
+    });
+
+    expect(tool.name).toBe('explicit_name');
+    expect(tool.description).toBe('Explicit description.');
+  });
+
+  it('should round-trip a serialized parsed operation', () => {
+    const tool = createRestApiToolFromJson(
+      JSON.stringify({
+        name: 'json_tool',
+        description: 'From JSON.',
+        endpoint,
+        operation,
+        parameters: [],
+      }),
+    );
+
+    expect(tool.name).toBe('json_tool');
+    expect(tool.description).toBe('From JSON.');
+  });
+
+  it('should reject an auth scheme with an unknown type from JSON', () => {
+    const serialize = (authScheme: unknown) =>
+      JSON.stringify({name: 'json_tool', endpoint, operation, authScheme});
+
+    expect(
+      createRestApiToolFromJson(
+        serialize({type: 'apiKey', name: 'X-Api-Key', in: 'header'}),
+      ).name,
+    ).toBe('json_tool');
+    expect(() => createRestApiToolFromJson(serialize({type: 'magic'}))).toThrow(
+      'Unsupported security scheme type: "magic". Expected one of: ' +
+        'apiKey, http, oauth2, openIdConnect.',
+    );
+    expect(() => createRestApiToolFromJson(serialize({}))).toThrow(
+      'Unsupported security scheme type: undefined.',
+    );
+  });
+
+  it('should send an octet-stream body unchanged', () => {
+    const requestBody: OpenAPIV3.RequestBodyObject = {
+      content: {'application/octet-stream': {schema: {type: 'string'}}},
+    };
+    const headers: Record<string, string> = {};
+    const payload = new Uint8Array([1, 2, 3]);
+
+    expect(prepareRequestBody(requestBody, payload, {}, headers)).toBe(payload);
+    expect(headers['Content-Type']).toBe('application/octet-stream');
+  });
+
+  it('should stringify a non-binary octet-stream body', () => {
+    const requestBody: OpenAPIV3.RequestBodyObject = {
+      content: {'application/octet-stream': {schema: {type: 'string'}}},
+    };
+    const headers: Record<string, string> = {};
+
+    expect(prepareRequestBody(requestBody, {a: 1}, {}, headers)).toBe(
+      '[object Object]',
+    );
+    expect(headers['Content-Type']).toBe('application/octet-stream');
+  });
+
+  it('should omit whole-body parameter for empty object request body by default', () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/test',
+      method: 'POST',
+    };
+    const operation: OpenAPIV3.OperationObject = {
+      operationId: 'testEmptyObj',
+      requestBody: {
+        content: {'application/json': {schema: {type: 'object'}}},
+      },
+      responses: {},
+    };
+    const tool = createRestApiTool({
+      name: 'test_tool',
+      description: 'description',
+      endpoint,
+      operation,
+    });
+    const declaration = tool._getDeclaration();
+    expect(declaration.parameters?.properties).toEqual({});
+  });
+
+  it('should include whole-body parameter for empty object request body when unconstrainedObjectBodyAsParameter is true', () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/test',
+      method: 'POST',
+    };
+    const operation: OpenAPIV3.OperationObject = {
+      operationId: 'testEmptyObj',
+      requestBody: {
+        content: {'application/json': {schema: {type: 'object'}}},
+      },
+      responses: {},
+    };
+    const tool = createRestApiTool(
+      {
+        name: 'test_tool',
+        description: 'description',
+        endpoint,
+        operation,
+      },
+      {unconstrainedObjectBodyAsParameter: true},
+    );
+    const declaration = tool._getDeclaration();
+    expect(declaration.parameters?.properties).toHaveProperty('body');
   });
 });

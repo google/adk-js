@@ -16,6 +16,9 @@ import {
   InMemoryMemoryService,
   InMemorySessionService,
   isApp,
+  loadDotenvForAgent,
+  markRestored,
+  publicSession,
   requiresUserInput,
   RunnableRoot,
   Runner,
@@ -76,8 +79,7 @@ function renderUserInputRequest(request: UserInputRequest): string {
   }
 
   const scheme = request.authConfig?.authScheme as
-    | {type?: string; in?: string; name?: string}
-    | undefined;
+    {type?: string; in?: string; name?: string} | undefined;
   if (scheme?.type) {
     const where =
       scheme.in && scheme.name ? ` (${scheme.in} ${scheme.name})` : '';
@@ -127,12 +129,16 @@ function printEvent(event: Event, options: PrintEventOptions = {}): void {
     console.log(`[${author}]: ${renderOutput(event.output)}`);
   }
 
-  // Reported on the event, not as a text part, so text-only printing drops it.
+  // Model failures (invalid API key, quota, safety blocks, ...) are surfaced as
+  // events carrying `errorCode`/`errorMessage` and no `content`, so printing
+  // only `content.parts` makes the whole run look like it succeeded silently.
+  // Report the error on stderr and mark the process as failed.
   if (event.errorCode || event.errorMessage) {
     const detail = [event.errorCode, event.errorMessage]
       .filter(Boolean)
       .join(': ');
     console.error(`[${author}] error: ${detail}`);
+    process.exitCode = 1;
   }
 
   if (!announcePauses) {
@@ -147,6 +153,34 @@ function printEvent(event: Event, options: PrintEventOptions = {}): void {
 interface InputFile {
   state: Record<string, unknown>;
   queries: string[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+async function loadInputFile(filePath: string): Promise<InputFile | undefined> {
+  const absolutePath = getAbsolutePath(filePath);
+  const contents = await loadFileData<unknown>(absolutePath);
+  if (contents === undefined) {
+    return;
+  }
+
+  if (
+    !isRecord(contents) ||
+    !isRecord(contents.state) ||
+    !Array.isArray(contents.queries) ||
+    !contents.queries.every((query) => typeof query === 'string')
+  ) {
+    throw new Error(
+      `Invalid replay file ${absolutePath}: expected an object with an object "state" and an array of string "queries".`,
+    );
+  }
+
+  return {
+    state: contents.state,
+    queries: contents.queries,
+  };
 }
 
 /**
@@ -189,15 +223,13 @@ interface RunFromInputFileOptions {
   artifactService: BaseArtifactService;
   sessionService: BaseSessionService;
   memoryService?: BaseMemoryService;
-  filePath: string;
+  fileContent: InputFile | undefined;
 }
 async function runFromInputFile(
   options: RunFromInputFileOptions,
 ): Promise<Session | undefined> {
-  const fileContent = await loadFileData<InputFile>(
-    getAbsolutePath(options.filePath),
-  );
-  if (!fileContent) {
+  const {fileContent} = options;
+  if (fileContent === undefined) {
     return;
   }
 
@@ -283,12 +315,13 @@ async function runInteractively(
 
   while (true) {
     const query = await getUserInput('[user]: ');
+    const trimmed = query.trim();
 
-    if (!query || !query.trim()) {
+    if (!trimmed) {
       continue;
     }
 
-    if (query === 'exit') {
+    if (trimmed === 'exit') {
       break;
     }
 
@@ -335,46 +368,57 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
     options.artifactService || new InMemoryArtifactService();
   const sessionService = options.sessionService || new InMemorySessionService();
   const memoryService = options.memoryService || new InMemoryMemoryService();
-  await using agentFile = new AgentFile(
-    getAbsolutePath(options.agentPath),
-    options.agentFileLoadOptions,
-  );
-  const loaded = await agentFile.load();
-  const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
-  const app = isApp(loaded) ? loaded : undefined;
 
-  let session = await sessionService.createSession({
-    appName: app?.name ?? rootAgent.name,
-    userId,
-  });
-
-  const reloadSubscribers: Array<(agent: RunnableRoot) => void> = [];
+  // The whole run is wrapped so a failure loading, building or running the
+  // agent is reported (with a readable stack) on stderr and marks the process
+  // as failed, rather than being swallowed or printed to stdout with exit 0.
   let watcher: fs.FSWatcher | undefined;
-
-  if (options.reloadAgents) {
-    const agentFilePath = getAbsolutePath(options.agentPath);
-    watcher = fs.watch(agentFilePath, async () => {
-      try {
-        await using reloadedFile = new AgentFile(
-          agentFilePath,
-          options.agentFileLoadOptions,
-        );
-        const reloaded = await reloadedFile.load();
-        const newAgent = isApp(reloaded) ? reloaded.rootAgent : reloaded;
-        for (const subscriber of reloadSubscribers) {
-          subscriber(newAgent);
-        }
-      } catch (err) {
-        console.warn('Failed to reload agent:', (err as Error).message);
-      }
-    });
-  }
-
-  const onAgentFileReloaded = (subscribe: (agent: RunnableRoot) => void) => {
-    reloadSubscribers.push(subscribe);
-  };
-
   try {
+    const absAgentPath = getAbsolutePath(options.agentPath);
+    loadDotenvForAgent(path.basename(absAgentPath), path.dirname(absAgentPath));
+
+    const inputFileContent = options.inputFile
+      ? await loadInputFile(options.inputFile)
+      : undefined;
+
+    await using agentFile = new AgentFile(
+      getAbsolutePath(options.agentPath),
+      options.agentFileLoadOptions,
+    );
+    const loaded = await agentFile.load();
+    const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
+    const app = isApp(loaded) ? loaded : undefined;
+
+    let session = await sessionService.createSession({
+      appName: app?.name ?? rootAgent.name,
+      userId,
+    });
+
+    const reloadSubscribers: Array<(agent: RunnableRoot) => void> = [];
+
+    if (options.reloadAgents) {
+      const agentFilePath = getAbsolutePath(options.agentPath);
+      watcher = fs.watch(agentFilePath, async () => {
+        try {
+          await using reloadedFile = new AgentFile(
+            agentFilePath,
+            options.agentFileLoadOptions,
+          );
+          const reloaded = await reloadedFile.load();
+          const newAgent = isApp(reloaded) ? reloaded.rootAgent : reloaded;
+          for (const subscriber of reloadSubscribers) {
+            subscriber(newAgent);
+          }
+        } catch (err) {
+          console.warn('Failed to reload agent:', (err as Error).message);
+        }
+      });
+    }
+
+    const onAgentFileReloaded = (subscribe: (agent: RunnableRoot) => void) => {
+      reloadSubscribers.push(subscribe);
+    };
+
     if (options.inputFile) {
       session =
         (await runFromInputFile({
@@ -384,7 +428,7 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
           artifactService,
           sessionService,
           memoryService,
-          filePath: options.inputFile,
+          fileContent: inputFileContent,
         })) || session;
     } else if (options.savedSessionFile) {
       const loadedSession = await loadFileData<Session>(
@@ -392,7 +436,10 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
       );
       if (loadedSession) {
         for (const event of loadedSession.events) {
-          await sessionService.appendEvent({session, event});
+          await sessionService.appendEvent({
+            session,
+            event: markRestored(event),
+          });
           printEvent(event, {announcePauses: false});
         }
 
@@ -448,10 +495,16 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
         userId: session.userId,
         sessionId: session.id,
       });
-      await saveToFile(getAbsolutePath(sessionPath), sessionToStore);
+      await saveToFile(
+        getAbsolutePath(sessionPath),
+        sessionToStore && publicSession(sessionToStore),
+      );
 
       console.log('Session saved to', sessionPath);
     }
+  } catch (e) {
+    console.error(e);
+    process.exitCode = 1;
   } finally {
     // A throw out of the run or the save step must still release these, or the
     // shared interface holds stdin open for an in-process caller.

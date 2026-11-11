@@ -7,6 +7,8 @@
 import {
   AgentTool,
   BaseAgent,
+  BaseTool,
+  EXIT_LOOP,
   LlmAgent,
   LoopAgent,
   MCPToolset,
@@ -22,8 +24,20 @@ import {
 } from './agent_types.js';
 import {AnyFunctionTool, IntegrationRegistry} from './integration_registry.js';
 
-const BUILTIN_TOOLS = [
-  'exit_loop',
+/**
+ * Built-in tools that a YAML config can name directly, mirroring adk-python's
+ * `LlmAgent._resolve_tools`, which resolves a bare built-in name to the real
+ * tool object. Looked up with `Object.hasOwn` so that a YAML string naming an
+ * inherited member such as `constructor` does not resolve to one.
+ */
+const BUILTIN_TOOLS: Record<string, BaseTool> = {exit_loop: EXIT_LOOP};
+
+/**
+ * Server-side built-ins that are dropped instead of resolved: they are executed
+ * by the Gemini backend and their `processLlmRequest` throws for the replay
+ * harness' `DummyLlm` model name.
+ */
+const SKIPPED_BUILTIN_TOOLS = [
   'google_search',
   'url_context',
   'google_maps_grounding',
@@ -135,8 +149,11 @@ export class AgentRegistry {
 
       const tools = config.tools
         ?.map((toolConfig) => {
-          // Built in tools are skipped
-          if (BUILTIN_TOOLS.includes(toolConfig.name)) {
+          if (Object.hasOwn(BUILTIN_TOOLS, toolConfig.name)) {
+            return BUILTIN_TOOLS[toolConfig.name];
+          }
+
+          if (SKIPPED_BUILTIN_TOOLS.includes(toolConfig.name)) {
             return undefined;
           }
 
@@ -174,7 +191,7 @@ export class AgentRegistry {
 
           return this.findToolOrThrow(toolConfig.name);
         })
-        // remove entries for built-in tools
+        // remove entries for the server-side built-in tools
         .filter((tool) => tool !== undefined);
 
       const options = {

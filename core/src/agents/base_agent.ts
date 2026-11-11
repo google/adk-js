@@ -5,15 +5,12 @@
  */
 
 import {Content} from '@google/genai';
-import {context, trace} from '@opentelemetry/api';
 
 import {createEvent, Event} from '../events/event.js';
 
-import {
-  runAsyncGeneratorWithOtelContext,
-  traceAgentInvocation,
-  tracer,
-} from '../telemetry/tracing.js';
+import {recordAgentInvocation} from '../telemetry/api/instrumentation.js';
+import {isInvocationCancellation, toError} from '../utils/error_utils.js';
+import {logger} from '../utils/logger.js';
 import {BaseNode, BaseNodeConfig} from '../workflow/base_node.js';
 import type {NodeContext} from '../workflow/node_context.js';
 import {Context} from './context.js';
@@ -254,17 +251,15 @@ export abstract class BaseAgent<
   async *runAsync(
     parentContext: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    const span = tracer.startSpan(`invoke_agent ${this.name}`);
-    const ctx = trace.setSpan(context.active(), span);
-    try {
-      yield* runAsyncGeneratorWithOtelContext<BaseAgent, Event>(
-        ctx,
-        this,
-        async function* () {
-          const context = this.createInvocationContext(parentContext);
+    const agentCtx = this;
+    yield* recordAgentInvocation(
+      {agent: this, invocationContext: parentContext},
+      async function* () {
+        const context = agentCtx.createInvocationContext(parentContext);
 
+        try {
           const beforeAgentCallbackEvent =
-            await this.handleBeforeAgentCallback(context);
+            await agentCtx.handleBeforeAgentCallback(context);
           if (beforeAgentCallbackEvent) {
             yield beforeAgentCallbackEvent;
           }
@@ -273,8 +268,7 @@ export abstract class BaseAgent<
             return;
           }
 
-          traceAgentInvocation({agent: this, invocationContext: context});
-          for await (const event of this.runAsyncImpl(context)) {
+          for await (const event of agentCtx.runAsyncImpl(context)) {
             yield event;
           }
 
@@ -283,15 +277,18 @@ export abstract class BaseAgent<
           }
 
           const afterAgentCallbackEvent =
-            await this.handleAfterAgentCallback(context);
+            await agentCtx.handleAfterAgentCallback(context);
           if (afterAgentCallbackEvent) {
             yield afterAgentCallbackEvent;
           }
-        },
-      );
-    } finally {
-      span.end();
-    }
+        } catch (error) {
+          if (!isInvocationCancellation(error, context.abortSignal)) {
+            await agentCtx.handleAgentErrorCallback(context, error);
+          }
+          throw error;
+        }
+      },
+    );
   }
 
   /**
@@ -333,17 +330,15 @@ export abstract class BaseAgent<
   async *runLive(
     parentContext: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    const span = tracer.startSpan(`invoke_agent ${this.name}`);
-    const ctx = trace.setSpan(context.active(), span);
-    try {
-      yield* runAsyncGeneratorWithOtelContext<BaseAgent, Event>(
-        ctx,
-        this,
-        async function* () {
-          const context = this.createInvocationContext(parentContext);
+    const agentCtx = this;
+    yield* recordAgentInvocation(
+      {agent: this, invocationContext: parentContext},
+      async function* () {
+        const context = agentCtx.createInvocationContext(parentContext);
 
+        try {
           const beforeAgentCallbackEvent =
-            await this.handleBeforeAgentCallback(context);
+            await agentCtx.handleBeforeAgentCallback(context);
           if (beforeAgentCallbackEvent) {
             yield beforeAgentCallbackEvent;
           }
@@ -352,7 +347,7 @@ export abstract class BaseAgent<
             return;
           }
 
-          for await (const event of this.runLiveImpl(context)) {
+          for await (const event of agentCtx.runLiveImpl(context)) {
             yield event;
           }
 
@@ -361,14 +356,36 @@ export abstract class BaseAgent<
           }
 
           const afterAgentCallbackEvent =
-            await this.handleAfterAgentCallback(context);
+            await agentCtx.handleAfterAgentCallback(context);
           if (afterAgentCallbackEvent) {
             yield afterAgentCallbackEvent;
           }
-        },
+        } catch (error) {
+          if (!isInvocationCancellation(error, context.abortSignal)) {
+            await agentCtx.handleAgentErrorCallback(context, error);
+          }
+          throw error;
+        }
+      },
+    );
+  }
+
+  /** Reports execution failures without replacing the original thrown value. */
+  private async handleAgentErrorCallback(
+    invocationContext: InvocationContext,
+    error: unknown,
+  ): Promise<void> {
+    try {
+      await invocationContext.pluginManager.runOnAgentErrorCallback({
+        agent: this,
+        callbackContext: new Context({invocationContext}),
+        error: toError(error),
+      });
+    } catch (callbackError) {
+      logger.error(
+        'Agent error notification failed; preserving the original error.',
+        callbackError,
       );
-    } finally {
-      span.end();
     }
   }
 
@@ -441,6 +458,24 @@ export abstract class BaseAgent<
   }
 
   /**
+   * The resolved beforeAgentCallback field as a list of SingleAgentCallback.
+   *
+   * This method is only for use by Agent Development Kit.
+   */
+  get canonicalBeforeAgentCallbacks(): SingleAgentCallback[] {
+    return this.beforeAgentCallback;
+  }
+
+  /**
+   * The resolved afterAgentCallback field as a list of SingleAgentCallback.
+   *
+   * This method is only for use by Agent Development Kit.
+   */
+  get canonicalAfterAgentCallbacks(): SingleAgentCallback[] {
+    return this.afterAgentCallback;
+  }
+
+  /**
    * Runs the before agent callback if it exists.
    *
    * @param invocationContext The invocation context of the agent.
@@ -451,52 +486,52 @@ export abstract class BaseAgent<
     invocationContext: InvocationContext,
   ): Promise<Event | undefined> {
     const hasPlugins = Boolean(invocationContext.pluginManager?.hasPlugins);
-    if (this.beforeAgentCallback.length === 0 && !hasPlugins) {
+    if (!hasPlugins && this.canonicalBeforeAgentCallbacks.length === 0) {
       return undefined;
     }
 
     const callbackContext = new Context({invocationContext});
-
-    let beforeAgentCallbackContent: Content | undefined;
-    if (hasPlugins) {
-      beforeAgentCallbackContent =
-        await invocationContext.pluginManager.runBeforeAgentCallback({
+    let content = hasPlugins
+      ? await invocationContext.pluginManager.runBeforeAgentCallback({
           agent: this,
           callbackContext,
-        });
-    }
+        })
+      : undefined;
 
     if (invocationContext.abortSignal?.aborted) {
-      return undefined;
+      return;
     }
 
-    if (!beforeAgentCallbackContent && this.beforeAgentCallback.length > 0) {
-      for (const callback of this.beforeAgentCallback) {
-        beforeAgentCallbackContent = await callback(callbackContext);
+    if (!content) {
+      for (const callback of this.canonicalBeforeAgentCallbacks) {
+        content = await callback(callbackContext);
 
         if (invocationContext.abortSignal?.aborted) {
-          return undefined;
+          return;
         }
 
-        if (beforeAgentCallbackContent) {
+        if (content) {
           break;
         }
       }
     }
 
-    if (beforeAgentCallbackContent) {
+    if (content) {
       invocationContext.endInvocation = true;
 
       return createEvent({
         invocationId: invocationContext.invocationId,
         author: this.name,
         branch: invocationContext.branch,
-        content: beforeAgentCallbackContent,
+        content,
         actions: callbackContext.eventActions,
       });
     }
 
-    if (callbackContext.state.hasDelta()) {
+    if (
+      callbackContext.state.hasDelta() ||
+      Object.keys(callbackContext.eventActions.artifactDelta).length > 0
+    ) {
       return createEvent({
         invocationId: invocationContext.invocationId,
         author: this.name,
@@ -519,50 +554,50 @@ export abstract class BaseAgent<
     invocationContext: InvocationContext,
   ): Promise<Event | undefined> {
     const hasPlugins = Boolean(invocationContext.pluginManager?.hasPlugins);
-    if (this.afterAgentCallback.length === 0 && !hasPlugins) {
+    if (!hasPlugins && this.canonicalAfterAgentCallbacks.length === 0) {
       return undefined;
     }
 
     const callbackContext = new Context({invocationContext});
-
-    let afterAgentCallbackContent: Content | undefined;
-    if (hasPlugins) {
-      afterAgentCallbackContent =
-        await invocationContext.pluginManager.runAfterAgentCallback({
+    let content = hasPlugins
+      ? await invocationContext.pluginManager.runAfterAgentCallback({
           agent: this,
           callbackContext,
-        });
-    }
+        })
+      : undefined;
 
     if (invocationContext.abortSignal?.aborted) {
-      return undefined;
+      return;
     }
 
-    if (!afterAgentCallbackContent && this.afterAgentCallback.length > 0) {
-      for (const callback of this.afterAgentCallback) {
-        afterAgentCallbackContent = await callback(callbackContext);
+    if (!content) {
+      for (const callback of this.canonicalAfterAgentCallbacks) {
+        content = await callback(callbackContext);
 
         if (invocationContext.abortSignal?.aborted) {
-          return undefined;
+          return;
         }
 
-        if (afterAgentCallbackContent) {
+        if (content) {
           break;
         }
       }
     }
 
-    if (afterAgentCallbackContent) {
+    if (content) {
       return createEvent({
         invocationId: invocationContext.invocationId,
         author: this.name,
         branch: invocationContext.branch,
-        content: afterAgentCallbackContent,
+        content,
         actions: callbackContext.eventActions,
       });
     }
 
-    if (callbackContext.state.hasDelta()) {
+    if (
+      callbackContext.state.hasDelta() ||
+      Object.keys(callbackContext.eventActions.artifactDelta).length > 0
+    ) {
       return createEvent({
         invocationId: invocationContext.invocationId,
         author: this.name,

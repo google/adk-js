@@ -5,8 +5,14 @@
  */
 
 import {Message, Task} from '@a2a-js/sdk';
-import {Event as AdkEvent, createEventActions} from '@google/adk';
-import {describe, expect, it} from 'vitest';
+import {
+  Event as AdkEvent,
+  createEvent,
+  createEventActions,
+  INTERNAL_METADATA_PREFIX,
+  RESTORED_EVENT_KEY,
+} from '@google/adk';
+import {describe, expect, it, vi} from 'vitest';
 import {toAdkEvent} from '../../src/a2a/event_converter_utils.js';
 import {
   A2AMetadataKeys,
@@ -14,6 +20,13 @@ import {
   getA2AEventMetadata,
   getAdkEventMetadata,
 } from '../../src/a2a/metadata_converter_utils.js';
+import {logger} from '../../src/utils/logger.js';
+
+const contextData = {
+  appName: 'my-app',
+  userId: 'user-id',
+  sessionId: 'session-id',
+};
 
 describe('metadata_converter_utils', () => {
   describe('getAdkEventMetadata', () => {
@@ -153,6 +166,49 @@ describe('metadata_converter_utils', () => {
 
       expect(roundTrippedEvent?.errorCode).toBe('RESOURCE_EXHAUSTED');
       expect(roundTrippedEvent?.errorMessage).toBe('Quota exceeded');
+    });
+
+    it('omits ADK-internal customMetadata keys', () => {
+      const adkEvent = createEvent({
+        customMetadata: {keep: 1, [`${INTERNAL_METADATA_PREFIX}stamp`]: 'x'},
+      });
+      const debug = vi.spyOn(logger, 'debug');
+
+      const metadata = getA2AEventMetadata(adkEvent, contextData);
+
+      expect(metadata[A2AMetadataKeys.CUSTOM_METADATA]).toEqual({keep: 1});
+      expect(debug).not.toHaveBeenCalled();
+      debug.mockRestore();
+    });
+
+    it('omits customMetadata that has only ADK-internal keys', () => {
+      const adkEvent = createEvent({
+        customMetadata: {[RESTORED_EVENT_KEY]: true},
+      });
+
+      const metadata = getA2AEventMetadata(adkEvent, contextData);
+
+      expect(metadata[A2AMetadataKeys.CUSTOM_METADATA]).toBeUndefined();
+    });
+
+    it('drops ADK-internal customMetadata keys set by a remote peer', () => {
+      const message: Message = {
+        kind: 'message',
+        messageId: 'msg-1',
+        role: 'agent',
+        parts: [{kind: 'text', text: 'hi'}],
+        metadata: {
+          [A2AMetadataKeys.CUSTOM_METADATA]: {
+            keep: 1,
+            [`${INTERNAL_METADATA_PREFIX}planted`]: 'x',
+            [RESTORED_EVENT_KEY]: true,
+          },
+        },
+      };
+
+      const event = toAdkEvent(message, 'inv-1', 'agent-1');
+
+      expect(event?.customMetadata).toEqual({keep: 1});
     });
 
     it('creates metadata with missing optional fields', () => {

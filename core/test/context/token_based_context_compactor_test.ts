@@ -87,6 +87,56 @@ function createMockInvocationContext(events: Event[]): InvocationContext {
 }
 
 describe('TokenBasedContextCompactor', () => {
+  it('does not summarize events from another isolation scope', async () => {
+    const summarized: Event[][] = [];
+    const summarizer: BaseSummarizer = {
+      async summarize(events) {
+        summarized.push(events);
+        return {
+          id: 'summary',
+          invocationId: '',
+          author: 'system',
+          timestamp: Date.now(),
+          isCompacted: true,
+          startTime: events[0].timestamp,
+          endTime: events[events.length - 1].timestamp,
+          compactedContent: 'summary',
+          content: {role: 'model', parts: [{text: 'summary'}]},
+        } as CompactedEvent;
+      },
+    };
+    const current = createMockEvent(
+      'current',
+      undefined,
+      false,
+      false,
+      'current',
+    );
+    current.isolationScope = 'current';
+    const current2 = createMockEvent(
+      'current2',
+      undefined,
+      false,
+      false,
+      'current2',
+    );
+    current2.isolationScope = 'current';
+    const peer = createMockEvent('peer', undefined, false, false, 'peer');
+    peer.isolationScope = 'peer';
+    const context = createMockInvocationContext([current, peer, current2]);
+    context.isolationScope = 'current';
+    const compactor = new TokenBasedContextCompactor({
+      tokenThreshold: 0,
+      eventRetentionSize: 1,
+      summarizer,
+    });
+
+    await compactor.compact(context);
+
+    expect(summarized).toHaveLength(1);
+    expect(summarized[0]).toEqual([current]);
+    expect(context.session.events.at(-1)?.isolationScope).toBe('current');
+  });
   it('should not compact if event count is within retention size', async () => {
     const compactor = new TokenBasedContextCompactor({
       tokenThreshold: 10,
@@ -187,6 +237,23 @@ describe('TokenBasedContextCompactor', () => {
       createMockEvent('2', 7),
       createMockEvent('3', 8),
       createMockEvent('4', 9),
+    ]);
+
+    expect(await compactor.shouldCompact(context)).toBe(false);
+  });
+
+  it('uses the initial prompt token count of a resumed generation', async () => {
+    const compactor = new TokenBasedContextCompactor({
+      tokenThreshold: 10,
+      eventRetentionSize: 2,
+      summarizer: new MockSummarizer(),
+    });
+    const resumed = createMockEvent('3');
+    resumed.usageMetadata = {promptTokenCount: 27, initialPromptTokenCount: 9};
+    const context = createMockInvocationContext([
+      createMockEvent('1', 6),
+      createMockEvent('2', 7),
+      resumed,
     ]);
 
     expect(await compactor.shouldCompact(context)).toBe(false);

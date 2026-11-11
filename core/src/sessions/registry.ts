@@ -30,7 +30,11 @@ export function getSessionServiceFromUri(uri: string): BaseSessionService {
 
   if (isVertexAiConnectionString(uri)) {
     // uri is something like vertexai://projects/abc/locations/us-central1
-    return new VertexAiSessionService({});
+    return new VertexAiSessionService({
+      projectId: process.env.GOOGLE_CLOUD_PROJECT,
+      location: process.env.GOOGLE_CLOUD_LOCATION,
+      agentEngineId: process.env.GOOGLE_CLOUD_AGENT_ENGINE_ID,
+    });
   }
 
   throw new Error(`Unsupported session service URI: ${redactUriPassword(uri)}`);

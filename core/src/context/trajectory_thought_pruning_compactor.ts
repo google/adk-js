@@ -7,6 +7,7 @@
 import {InvocationContext} from '../agents/invocation_context.js';
 import {hasThoughts, pruneThoughts} from '../events/event.js';
 import {BaseContextCompactor} from './base_context_compactor.js';
+import {isEventVisibleInIsolationScope} from './compaction_utils.js';
 
 /**
  * Options for TrajectoryThoughtPruningCompactor.
@@ -37,28 +38,40 @@ export class TrajectoryThoughtPruningCompactor implements BaseContextCompactor {
     invocationContext: InvocationContext,
   ): boolean | Promise<boolean> {
     const events = invocationContext.session.events;
-    if (events.length <= this.eventRetentionSize) {
+    const visibleIndices = events.flatMap((event, index) =>
+      isEventVisibleInIsolationScope(event, invocationContext.isolationScope)
+        ? [index]
+        : [],
+    );
+    if (visibleIndices.length <= this.eventRetentionSize) {
       return false;
     }
 
-    const olderEvents = events.slice(
-      0,
-      events.length - this.eventRetentionSize,
-    );
+    const olderEvents = visibleIndices
+      .slice(0, visibleIndices.length - this.eventRetentionSize)
+      .map((index) => events[index]);
     return olderEvents.some((event) => hasThoughts(event));
   }
 
   compact(invocationContext: InvocationContext): void | Promise<void> {
     const events = invocationContext.session.events;
-    if (events.length <= this.eventRetentionSize) {
+    const visibleIndices = events.flatMap((event, index) =>
+      isEventVisibleInIsolationScope(event, invocationContext.isolationScope)
+        ? [index]
+        : [],
+    );
+    if (visibleIndices.length <= this.eventRetentionSize) {
       return;
     }
 
-    const pruneLimit = events.length - this.eventRetentionSize;
-    for (let i = 0; i < pruneLimit; i++) {
-      const event = events[i];
+    const pruneIndices = visibleIndices.slice(
+      0,
+      visibleIndices.length - this.eventRetentionSize,
+    );
+    for (const index of pruneIndices) {
+      const event = events[index];
       if (hasThoughts(event)) {
-        events[i] = pruneThoughts(event);
+        events[index] = pruneThoughts(event);
       }
     }
   }

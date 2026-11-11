@@ -40,6 +40,24 @@ describe('OpenAPIToolset Integration', () => {
     expect(toolNames).toContain('get_token');
   });
 
+  it('should resolve a truanon tool by name with getTool', async () => {
+    const toolset = new OpenAPIToolset({
+      specStr: truanonSpec,
+      specType: 'yaml',
+    });
+
+    const getProfileTool = toolset.getTool('get_profile');
+    if (!getProfileTool) expect.fail('get_profile tool was not created');
+
+    const declaration = getProfileTool._getDeclaration();
+    expect(declaration?.name).toBe('get_profile');
+    expect(Object.keys(declaration?.parameters?.properties ?? {})).toEqual([
+      'id',
+      'service',
+    ]);
+    expect(toolset.getTool('get_profiles')).toBeUndefined();
+  });
+
   it('should execute a tool with mocked fetch', async () => {
     const toolset = new OpenAPIToolset({
       specStr: truanonSpec,
@@ -102,7 +120,9 @@ describe('OpenAPIToolset Integration', () => {
       toolContext: mockContext as unknown as Context,
     });
 
-    expect(result).toBe('plain text response');
+    // `{"text": response.text}`, as the reference's ValueError branch returns
+    // (`rest_api_tool.py:481`), not a bare string.
+    expect(result).toEqual({text: 'plain text response'});
   });
 
   it('should handle fetch error', async () => {
@@ -121,14 +141,15 @@ describe('OpenAPIToolset Integration', () => {
       state: {},
     };
 
-    const result = await getProfileTool!.runAsync({
-      args: {id: 'user1', service: 'myservice'},
-      toolContext: mockContext as unknown as Context,
-    });
-
-    expect(result).toEqual({
-      error: 'Failed to execute API call: Network error',
-    });
+    // The reference issues the request outside its try, so a transport
+    // failure propagates rather than becoming an `{error: ...}` the model
+    // reasons about (`rest_api_tool.py:465`).
+    await expect(
+      getProfileTool!.runAsync({
+        args: {id: 'user1', service: 'myservice'},
+        toolContext: mockContext as unknown as Context,
+      }),
+    ).rejects.toThrow('Network error');
   });
 
   it('should keep a malicious path argument inside the declared endpoint', async () => {

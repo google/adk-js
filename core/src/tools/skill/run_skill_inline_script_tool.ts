@@ -84,9 +84,7 @@ export class RunSkillInlineScriptTool extends BaseTool {
     const inlineScriptContent = args['script_content'] as string;
     const language = args['language'] as string;
     const scriptArgs = args['args'] as
-      | string[]
-      | Record<string, string | number | boolean>
-      | undefined;
+      string[] | Record<string, string | number | boolean> | undefined;
 
     if (!inlineScriptContent) {
       return {
