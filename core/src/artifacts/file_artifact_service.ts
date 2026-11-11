@@ -23,8 +23,10 @@ import {
 
 const USER_NAMESPACE_PREFIX = 'user:';
 
-// Characters Windows does not allow in a file or directory name.
-const WINDOWS_INVALID_NAME_CHARS = /[<>:"|?*]/g;
+// Characters Windows does not allow in a file or directory name, plus '%' so
+// percent-encoding is injective (e.g. `foo:bar` -> `foo%3Abar` does not
+// collide with `foo%3Abar` -> `foo%253Abar`).
+const WINDOWS_INVALID_NAME_CHARS = /[%<>:"|?*]/g;
 
 /**
  * Metadata for a file artifact version.
@@ -96,14 +98,14 @@ export class FileArtifactService implements BaseArtifactService {
     if (versions.length > 0) {
       // On a case-insensitive file system, `Report.txt` and `report.txt` share
       // a directory; refuse to append one as a new version of the other.
-      const existing = await getLatestMetadata(artifactDir);
-      if (
-        existing?.fileName &&
-        normalizeArtifactName(existing.fileName) !==
-          normalizeArtifactName(filename)
-      ) {
+      const conflictingFilename = await getConflictingStoredFilename(
+        artifactDir,
+        filename,
+        versions,
+      );
+      if (conflictingFilename) {
         throw new Error(
-          `Artifact filename ${filename} maps to the same location as existing artifact ${existing.fileName} on this file system.`,
+          `Artifact filename ${filename} maps to the same location as existing artifact ${conflictingFilename} on this file system.`,
         );
       }
     }
@@ -180,7 +182,10 @@ export class FileArtifactService implements BaseArtifactService {
       }
 
       const versions = await getArtifactVersionsFromDir(artifactDir);
-      if (versions.length === 0) {
+      if (
+        versions.length === 0 ||
+        (await getConflictingStoredFilename(artifactDir, filename, versions))
+      ) {
         return undefined;
       }
 
@@ -308,6 +313,9 @@ export class FileArtifactService implements BaseArtifactService {
         sessionId,
         filename,
       );
+      if (await getConflictingStoredFilename(artifactDir, filename)) {
+        return;
+      }
       await fs.rm(artifactDir, {recursive: true, force: true});
     } catch (e) {
       logger.warn(
@@ -329,7 +337,14 @@ export class FileArtifactService implements BaseArtifactService {
         sessionId,
         filename,
       );
-      return await getArtifactVersionsFromDir(artifactDir);
+      const versions = await getArtifactVersionsFromDir(artifactDir);
+      if (
+        versions.length === 0 ||
+        (await getConflictingStoredFilename(artifactDir, filename, versions))
+      ) {
+        return [];
+      }
+      return versions;
     } catch (e) {
       logger.warn(
         `[FileArtifactService] listVersions: Failed to list versions for artifact ${filename}`,
@@ -352,6 +367,12 @@ export class FileArtifactService implements BaseArtifactService {
         filename,
       );
       const versions = await getArtifactVersionsFromDir(artifactDir);
+      if (
+        versions.length === 0 ||
+        (await getConflictingStoredFilename(artifactDir, filename, versions))
+      ) {
+        return [];
+      }
       const artifactVersions: ArtifactVersion[] = [];
 
       for (const version of versions) {
@@ -395,7 +416,10 @@ export class FileArtifactService implements BaseArtifactService {
       );
 
       const versions = await getArtifactVersionsFromDir(artifactDir);
-      if (versions.length === 0) {
+      if (
+        versions.length === 0 ||
+        (await getConflictingStoredFilename(artifactDir, filename, versions))
+      ) {
         return undefined;
       }
 
@@ -515,17 +539,21 @@ function getArtifactDir(
     cleanFilename = cleanFilename.substring(USER_NAMESPACE_PREFIX.length);
   }
   cleanFilename = cleanFilename.trim();
+
+  if (
+    path.isAbsolute(cleanFilename) ||
+    (process.platform === 'win32' && /^[a-zA-Z]:/.test(cleanFilename))
+  ) {
+    throw new Error(`Absolute artifact filename ${filename} is not permitted.`);
+  }
+
   if (process.platform === 'win32') {
-    // Percent-encode characters Windows rejects in names, such as the colons
-    // of an ISO timestamp, so they can be stored at all.
+    // Percent-encode '%' and characters Windows rejects in names, such as the
+    // colons of an ISO timestamp, so they can be stored without collisions.
     cleanFilename = cleanFilename.replace(
       WINDOWS_INVALID_NAME_CHARS,
       (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
     );
-  }
-
-  if (path.isAbsolute(cleanFilename)) {
-    throw new Error(`Absolute artifact filename ${filename} is not permitted.`);
   }
 
   const artifactDir = path.resolve(scopeRoot, cleanFilename);
@@ -647,16 +675,19 @@ async function readMetadata(
  * Gets the latest metadata for an artifact.
  *
  * @param artifactDir The artifact directory.
+ * @param versions Optional pre-fetched sorted version numbers.
  * @returns A promise that resolves to the latest metadata.
  */
 async function getLatestMetadata(
   artifactDir: string,
+  versions?: number[],
 ): Promise<FileArtifactVersion | undefined> {
-  const versions = await getArtifactVersionsFromDir(artifactDir);
-  if (versions.length === 0) {
+  const resolvedVersions =
+    versions ?? (await getArtifactVersionsFromDir(artifactDir));
+  if (resolvedVersions.length === 0) {
     return undefined;
   }
-  const latestVersion = versions[versions.length - 1];
+  const latestVersion = resolvedVersions[resolvedVersions.length - 1];
   const metadataPath = path.join(
     getVersionsDir(artifactDir),
     latestVersion.toString(),
@@ -671,6 +702,26 @@ async function getLatestMetadata(
     );
     return undefined;
   }
+}
+
+/**
+ * Returns the stored artifact's filename if `artifactDir` holds an artifact
+ * whose normalized name differs from `filename` (such as a case-only
+ * difference on a case-insensitive filesystem).
+ */
+async function getConflictingStoredFilename(
+  artifactDir: string,
+  filename: string,
+  versions?: number[],
+): Promise<string | undefined> {
+  const existing = await getLatestMetadata(artifactDir, versions);
+  if (
+    existing?.fileName &&
+    normalizeArtifactName(existing.fileName) !== normalizeArtifactName(filename)
+  ) {
+    return existing.fileName;
+  }
+  return undefined;
 }
 
 /**
