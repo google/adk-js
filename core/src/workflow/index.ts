@@ -88,9 +88,11 @@ export {
   NodeReportedError,
   NodeSchemaValidationError,
   NodeTimeoutError,
+  WorkflowDataError,
   isNodeReportedError,
   isNodeSchemaValidationError,
   isNodeTimeoutError,
+  isWorkflowDataError,
 } from './errors.js';
 export {createNodeErrorEvent, isNodeErrorEvent} from './node_error_event.js';
 export type {

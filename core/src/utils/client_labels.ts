@@ -62,6 +62,16 @@ function _getDefaultLabels(): string[] {
 }
 
 /**
+ * Returns the client label for calls made by a classifier, such as `'llm'`.
+ *
+ * @param kind Identifier for the classifier implementation.
+ * @return The formatted classifier client label token.
+ */
+export function classifierClientLabel(kind: string): string {
+  return `google-adk-classifier/${version}+${kind}`;
+}
+
+/**
  * Runs the given callback within a context that has the specified client label.
  * All LLM calls made within this callback will include the client label in their tracking headers.
  *
@@ -78,6 +88,24 @@ export function runWithClientLabel<R>(
   }
 
   return clientLabelLocalStorage.run(clientLabel, callback);
+}
+
+/**
+ * Runs `callback` with `clientLabel` unless an outer client label is already
+ * active in the current async context.
+ *
+ * @param clientLabel The fallback client label to apply when none is active.
+ * @param callback The callback function to execute.
+ * @return The result of the callback.
+ */
+export function runWithDefaultClientLabel<R>(
+  clientLabel: string,
+  callback: () => R,
+): R {
+  if (clientLabelLocalStorage.getStore() !== undefined) {
+    return callback();
+  }
+  return runWithClientLabel(clientLabel, callback);
 }
 
 /**

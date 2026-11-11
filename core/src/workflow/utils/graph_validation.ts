@@ -209,6 +209,19 @@ function detectUnconditionalCycles(
   }
 }
 
+function validateNodeOutgoingEdges(nodes: BaseNode[], edges: Edge[]): void {
+  const outgoing = new Map<string, Edge[]>();
+  for (const node of nodes) {
+    outgoing.set(node.name, []);
+  }
+  for (const edge of edges) {
+    outgoing.get(edge.fromNode.name)?.push(edge);
+  }
+  for (const node of nodes) {
+    node.validateOutgoingEdges(outgoing.get(node.name) ?? []);
+  }
+}
+
 function computeTerminalNodes(nodes: BaseNode[], edges: Edge[]): Set<string> {
   const fromNames = new Set(edges.map((e) => e.fromNode.name));
   return new Set(
@@ -229,5 +242,6 @@ export function validateGraph(nodes: BaseNode[], edges: Edge[]): Set<string> {
   validateDuplicateEdges(edges);
   validateDefaultRoutes(edges);
   detectUnconditionalCycles(edges, nodeNames);
+  validateNodeOutgoingEdges(nodes, edges);
   return computeTerminalNodes(nodes, edges);
 }

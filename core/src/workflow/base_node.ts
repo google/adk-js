@@ -8,6 +8,7 @@ import {Content, createModelContent, PartListUnion} from '@google/genai';
 import {createEvent, Event, isEvent} from '../events/event.js';
 import {parseWithSchema, SchemaLike} from '../utils/schema.js';
 import {NodeSchemaValidationError} from './errors.js';
+import type {Edge} from './graph.js';
 import type {NodeContext} from './node_context.js';
 import {isRequestInput} from './request_input.js';
 import {
@@ -134,6 +135,16 @@ export abstract class BaseNode<TInput = unknown, TOutput = unknown> {
   get requiresAllPredecessors(): boolean {
     return false;
   }
+
+  /**
+   * Checks this node's outgoing edges when its workflow graph is validated.
+   *
+   * Subclasses override this to reject wiring they cannot serve, such as routes
+   * they never emit. The default implementation accepts any edges.
+   *
+   * @param _edges Every edge in the graph whose `fromNode` is this node.
+   */
+  validateOutgoingEdges(_edges: readonly Edge[]): void {}
 
   /**
    * Core execution contract. Subclasses yield one of:
