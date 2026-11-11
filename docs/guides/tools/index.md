@@ -124,18 +124,18 @@ When `agent` is an `LlmAgent` with `inputSchema`, `AgentTool` uses that schema a
 
 ### `ToolboxToolsetOptions`
 
-The `ToolboxToolsetOptions` interface configures `new ToolboxToolset(options)` or `new ToolboxToolset(serverUrl, options)`.
+The `ToolboxToolsetOptions` interface configures `new ToolboxToolset(options)`.
 
-| Option             | Type                                              | Default     | Description                                                                                              |
-| :----------------- | :------------------------------------------------ | :---------- | :------------------------------------------------------------------------------------------------------- |
-| `serverUrl`        | `string`                                          | Required    | Base URL of the Google GenAI Toolbox server.                                                             |
-| `toolsetName`      | `string`                                          | `undefined` | Name of the Toolbox toolset to load; at least one of `toolsetName` or `toolNames` is required.           |
-| `toolNames`        | `readonly string[]`                               | `undefined` | Individual tool names to load from the Toolbox server.                                                   |
-| `authTokenGetters` | `Record<string, () => string \| Promise<string>>` | `{}`        | Mapping of authentication service names to callables returning authentication tokens.                    |
-| `boundParams`      | `Record<string, unknown>`                         | `{}`        | Mapping of parameter names bound to fixed values or value-producing callables.                           |
-| `client`           | `ToolboxToolsetClientLike`                        | `undefined` | Optional pre-configured Toolbox client implementing `loadToolset`/`load_toolset` and `loadTool`/`close`. |
-| `toolFilter`       | `ToolPredicate \| string[]`                       | `[]`        | Optional filter restricting which loaded tools are returned by `getTools(context)`.                      |
-| `prefix`           | `string`                                          | `undefined` | Optional prefix prepended (`${prefix}_`) to every loaded tool name.                                      |
+| Option             | Type                                              | Default     | Description                                                                                    |
+| :----------------- | :------------------------------------------------ | :---------- | :--------------------------------------------------------------------------------------------- |
+| `serverUrl`        | `string`                                          | `undefined` | Base URL of the Google GenAI Toolbox server; required when `client` is not provided.           |
+| `toolsetName`      | `string`                                          | `undefined` | Name of the Toolbox toolset to load; at least one of `toolsetName` or `toolNames` is required. |
+| `toolNames`        | `readonly string[]`                               | `undefined` | Individual tool names to load from the Toolbox server.                                         |
+| `authTokenGetters` | `Record<string, () => string \| Promise<string>>` | `{}`        | Mapping of authentication service names to functions returning authentication tokens.          |
+| `boundParams`      | `Record<string, unknown>`                         | `{}`        | Mapping of parameter names bound to fixed values or value-producing functions.                 |
+| `client`           | `ToolboxToolsetClientLike`                        | `undefined` | Optional pre-configured Toolbox client implementing `loadToolset`, `loadTool` and `close`.     |
+| `toolFilter`       | `ToolPredicate \| string[]`                       | `[]`        | Optional filter restricting which loaded tools are returned by `getTools(context)`.            |
+| `prefix`           | `string`                                          | `undefined` | Optional prefix prepended (`${prefix}_`) to every loaded tool name.                            |
 
 `ToolboxToolset` extends `BaseToolset`, loads tools asynchronously via `getTools(context)` while forwarding `authTokenGetters` and `boundParams`, wraps functions and tool descriptors into `BaseTool` instances, and releases client resources via `close()`. Its `toolFilter` option accepts an array of tool names or a `ToolPredicate` function (`(tool, readonlyContext?) => boolean`).
 

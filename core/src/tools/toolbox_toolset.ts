@@ -44,13 +44,13 @@ export interface ToolboxToolLike {
  */
 export interface ToolboxLoadOptions {
   /**
-   * Mapping of authentication service names to callables that return the
+   * Mapping of authentication service names to functions that return the
    * corresponding authentication token.
    */
   authTokenGetters?: Record<string, () => string | Promise<string>>;
 
   /**
-   * Mapping of parameter names to bind to fixed values or callables that
+   * Mapping of parameter names to bind to fixed values or functions that
    * produce values as needed.
    */
   boundParams?: Record<string, unknown>;
@@ -62,11 +62,12 @@ export interface ToolboxLoadOptions {
  */
 export interface ToolboxToolsetClientLike {
   /**
-   * Loads a single tool by name (camelCase convention).
+   * Loads a single tool by name.
    */
   loadTool?: (
     toolName: string,
-    options?: ToolboxLoadOptions,
+    authTokenGetters?: Record<string, () => string | Promise<string>>,
+    boundParams?: Record<string, unknown>,
   ) =>
     | BaseTool
     | ToolboxToolLike
@@ -74,35 +75,12 @@ export interface ToolboxToolsetClientLike {
     | Promise<BaseTool | ToolboxToolLike | ((...args: never[]) => unknown)>;
 
   /**
-   * Loads a single tool by name (snake_case convention).
-   */
-  load_tool?: (
-    toolName: string,
-    options?: ToolboxLoadOptions,
-  ) =>
-    | BaseTool
-    | ToolboxToolLike
-    | ((...args: never[]) => unknown)
-    | Promise<BaseTool | ToolboxToolLike | ((...args: never[]) => unknown)>;
-
-  /**
-   * Loads a toolset by name (camelCase convention).
+   * Loads a toolset by name.
    */
   loadToolset?: (
     toolsetName: string,
-    options?: ToolboxLoadOptions,
-  ) =>
-    | Array<BaseTool | ToolboxToolLike | ((...args: never[]) => unknown)>
-    | Promise<
-        Array<BaseTool | ToolboxToolLike | ((...args: never[]) => unknown)>
-      >;
-
-  /**
-   * Loads a toolset by name (snake_case convention).
-   */
-  load_toolset?: (
-    toolsetName: string,
-    options?: ToolboxLoadOptions,
+    authTokenGetters?: Record<string, () => string | Promise<string>>,
+    boundParams?: Record<string, unknown>,
   ) =>
     | Array<BaseTool | ToolboxToolLike | ((...args: never[]) => unknown)>
     | Promise<
@@ -120,9 +98,9 @@ export interface ToolboxToolsetClientLike {
  */
 export interface ToolboxToolsetOptions {
   /**
-   * The URL of the Toolbox server.
+   * The URL of the Toolbox server. Required when `client` is not provided.
    */
-  serverUrl: string;
+  serverUrl?: string;
 
   /**
    * The name of the Toolbox toolset to load.
@@ -135,13 +113,13 @@ export interface ToolboxToolsetOptions {
   toolNames?: readonly string[];
 
   /**
-   * Mapping of authentication service names to callables that return the
+   * Mapping of authentication service names to functions that return the
    * corresponding authentication token.
    */
   authTokenGetters?: Record<string, () => string | Promise<string>>;
 
   /**
-   * Mapping of parameter names to bind to fixed values or callables that
+   * Mapping of parameter names to bind to fixed values or functions that
    * produce values as needed.
    */
   boundParams?: Record<string, unknown>;
@@ -204,28 +182,64 @@ function isToolOptionsObject(
   );
 }
 
+function wrapPrefixedBaseTool(rawTool: BaseTool, name: string): BaseTool {
+  return new Proxy(rawTool, {
+    get(target, prop, receiver) {
+      if (prop === 'name') {
+        return name;
+      }
+      if (prop === '_getDeclaration') {
+        return () => {
+          const declaration = target._getDeclaration();
+          return declaration ? {...declaration, name} : undefined;
+        };
+      }
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
+interface ToolboxSdkFunction {
+  toolName?: string;
+  description?: string;
+  parameters?: ToolInputParameters;
+  getName?: () => string;
+  getDescription?: () => string;
+  getParamSchema?: () => ToolInputParameters;
+}
+
 function wrapLoadedTool(rawTool: unknown, prefix?: string): BaseTool {
   if (isBaseTool(rawTool)) {
-    if (!prefix) {
+    const name = prefix ? `${prefix}_${rawTool.name}` : rawTool.name;
+    if (name === rawTool.name) {
       return rawTool;
     }
-    return Object.assign(
-      Object.create(Object.getPrototypeOf(rawTool)) as BaseTool,
-      rawTool,
-      {name: `${prefix}_${rawTool.name}`},
-    );
+    return wrapPrefixedBaseTool(rawTool, name);
   }
 
   if (typeof rawTool === 'function') {
-    const fn = rawTool as ToolExecuteFunction<ToolInputParameters> & {
-      description?: string;
-    };
-    const baseName = fn.name || 'toolbox_tool';
+    const fn = rawTool as ToolExecuteFunction<ToolInputParameters> &
+      ToolboxSdkFunction;
+    const baseName =
+      typeof fn.getName === 'function'
+        ? fn.getName()
+        : fn.toolName ||
+          (fn.name && fn.name !== 'callable' ? fn.name : undefined) ||
+          'toolbox_tool';
     const name = prefix ? `${prefix}_${baseName}` : baseName;
-    const description = fn.description ?? '';
+    const description =
+      typeof fn.getDescription === 'function'
+        ? fn.getDescription()
+        : (fn.description ?? '');
+    const parameters =
+      typeof fn.getParamSchema === 'function'
+        ? fn.getParamSchema()
+        : fn.parameters;
     return new FunctionTool({
       name,
       description,
+      parameters,
       execute: fn,
     });
   }
@@ -255,9 +269,9 @@ export class ToolboxToolset extends BaseToolset {
   readonly [TOOLBOX_TOOLSET_SIGNATURE_SYMBOL] = true;
 
   /**
-   * The URL of the Toolbox server.
+   * The URL of the Toolbox server, if configured.
    */
-  readonly serverUrl: string;
+  readonly serverUrl?: string;
 
   /**
    * The name of the Toolbox toolset to load, if configured.
@@ -285,6 +299,9 @@ export class ToolboxToolset extends BaseToolset {
   readonly toolboxClient: ToolboxToolsetClientLike;
 
   constructor(options: ToolboxToolsetOptions);
+  /**
+   * @deprecated Use `new ToolboxToolset({serverUrl, ...options})` instead.
+   */
   constructor(
     serverUrl: string,
     options: Omit<ToolboxToolsetOptions, 'serverUrl'>,
@@ -297,6 +314,11 @@ export class ToolboxToolset extends BaseToolset {
       typeof serverUrlOrOptions === 'string'
         ? {serverUrl: serverUrlOrOptions, ...extraOptions}
         : serverUrlOrOptions;
+
+    const normalizedServerUrl = options.serverUrl?.trim();
+    if (!options.client && !normalizedServerUrl) {
+      throw new Error('Either client or a non-empty serverUrl is required.');
+    }
 
     if (
       (!options.toolNames || options.toolNames.length === 0) &&
@@ -312,7 +334,8 @@ export class ToolboxToolset extends BaseToolset {
     this.authTokenGetters = options.authTokenGetters ?? {};
     this.boundParams = options.boundParams ?? {};
     this.toolboxClient =
-      options.client ?? createUnconfiguredToolboxToolsetClient(this.serverUrl);
+      options.client ??
+      createUnconfiguredToolboxToolsetClient(normalizedServerUrl ?? '');
   }
 
   /**
@@ -320,38 +343,32 @@ export class ToolboxToolset extends BaseToolset {
    * client and returns the selected {@link BaseTool} instances.
    */
   override async getTools(context?: ReadonlyContext): Promise<BaseTool[]> {
-    const loadOptions: ToolboxLoadOptions = {
-      authTokenGetters: this.authTokenGetters,
-      boundParams: this.boundParams,
-    };
     const tools: BaseTool[] = [];
 
     if (this.toolsetName) {
-      const loader =
-        this.toolboxClient.loadToolset?.bind(this.toolboxClient) ??
-        this.toolboxClient.load_toolset?.bind(this.toolboxClient);
+      const loader = this.toolboxClient.loadToolset?.bind(this.toolboxClient);
       if (!loader) {
-        throw new Error(
-          'ToolboxClient does not implement loadToolset or load_toolset.',
-        );
+        throw new Error('ToolboxClient does not implement loadToolset.');
       }
-      const loadedToolset = await loader(this.toolsetName, loadOptions);
+      const loadedToolset = await loader(
+        this.toolsetName,
+        this.authTokenGetters,
+        this.boundParams,
+      );
       for (const rawTool of loadedToolset) {
         tools.push(wrapLoadedTool(rawTool, this.prefix));
       }
     }
 
     if (this.toolNames && this.toolNames.length > 0) {
-      const loader =
-        this.toolboxClient.loadTool?.bind(this.toolboxClient) ??
-        this.toolboxClient.load_tool?.bind(this.toolboxClient);
+      const loader = this.toolboxClient.loadTool?.bind(this.toolboxClient);
       if (!loader) {
-        throw new Error(
-          'ToolboxClient does not implement loadTool or load_tool.',
-        );
+        throw new Error('ToolboxClient does not implement loadTool.');
       }
       const loadedSingleTools = await Promise.all(
-        this.toolNames.map((toolName) => loader(toolName, loadOptions)),
+        this.toolNames.map((toolName) =>
+          loader(toolName, this.authTokenGetters, this.boundParams),
+        ),
       );
       for (const rawTool of loadedSingleTools) {
         tools.push(wrapLoadedTool(rawTool, this.prefix));
