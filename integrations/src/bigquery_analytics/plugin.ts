@@ -1246,15 +1246,7 @@ export class BigQueryAgentAnalyticsPlugin extends BasePlugin {
     });
   }
 
-  /**
-   * adk-python `on_agent_error_callback`. `BasePlugin` has no agent-error
-   * hook, so the runner never calls this; it is public so hosts that catch
-   * agent failures can report them.
-   *
-   * @experimental  (Experimental, subject to change) The signature follows
-   * the agent-error hook once `BasePlugin` defines one.
-   */
-  async onAgentErrorCallback({
+  override async onAgentErrorCallback({
     callbackContext,
     error,
   }: {
@@ -1276,15 +1268,7 @@ export class BigQueryAgentAnalyticsPlugin extends BasePlugin {
     });
   }
 
-  /**
-   * adk-python `on_run_error_callback`. `BasePlugin` has no run-error hook,
-   * so the runner never calls this; hosts that catch a failed run can call it
-   * to record the error and clean up.
-   *
-   * @experimental  (Experimental, subject to change) The signature follows
-   * the run-error hook once `BasePlugin` defines one.
-   */
-  async onRunErrorCallback({
+  override async onRunErrorCallback({
     invocationContext,
     error,
   }: {

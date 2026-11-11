@@ -51,9 +51,8 @@ interface InvocationState {
 }
 
 /**
- * adk-js runs `afterRunCallback` only when a run ends normally, so an aborted
- * or failed run leaves its state behind. State untouched this long belongs to
- * such a run and is dropped.
+ * Safety bound if a custom host starts a trace without calling a completion or
+ * error callback: state untouched this long is dropped.
  */
 const ABANDONED_INVOCATION_MS = 6 * 60 * 60 * 1000;
 
