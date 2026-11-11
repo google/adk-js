@@ -5,12 +5,17 @@
  */
 
 import {
+  AddSessionToEvalSetRequest,
   App,
-  BaseAgent,
   BaseArtifactService,
   BaseMemoryService,
   BaseSessionService,
   bearerTokenUserBuilder,
+  convertSessionToEvalFormat,
+  createEmptyState,
+  EVAL_SESSION_ID_PREFIX,
+  EvalEntry,
+  EvalMetric,
   Event,
   getFunctionCalls,
   getFunctionResponses,
@@ -18,23 +23,39 @@ import {
   InMemoryMemoryService,
   InMemorySessionService,
   isApp,
+  LiveRequest,
+  LiveRequestQueue,
+  loadDotenvForAgent,
   Logger,
   LogLevel,
+  publicEvent,
+  publicSession,
   RunConfig,
+  RunEvalRequest,
+  RunEvalResult,
+  runEvals,
+  RunnableRoot,
   Runner,
   StreamingMode,
   toA2a,
+  tryGetResetFunc,
 } from '@google/adk';
 import {Content} from '@google/genai';
 import {trace, TracerProvider} from '@opentelemetry/api';
 import {SimpleSpanProcessor} from '@opentelemetry/sdk-trace-base';
 import cors from 'cors';
 import express, {Request, Response} from 'express';
+import {createHash} from 'node:crypto';
+import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as path from 'node:path';
+import {Duplex} from 'node:stream';
 import {version} from '../version.js';
 
+export type {AddSessionToEvalSetRequest, RunEvalRequest, RunEvalResult};
+
 import {AgentFileOptions, AgentLoader} from '../utils/agent_loader.js';
+import {formatHeaderForLog} from '../utils/log_utils.js';
 import {AdkLogger} from '../utils/logger.js';
 import {
   ApiServerSpanExporter,
@@ -50,6 +71,14 @@ import {
   serializeAgent,
   serializeAppInfo,
 } from './app_info.js';
+import {
+  getAllowedRequestHosts,
+  isDnsRebindingRequest,
+} from './dns_rebinding_guard.js';
+import {
+  createOriginCheckMiddleware,
+  parseAllowedOrigins,
+} from './origin_check.js';
 import {renderStructureGraphAsDot} from './structure_graph.js';
 
 /**
@@ -69,7 +98,23 @@ interface ServerOptions {
   agentLoader?: AgentLoader;
   agentFileLoadOptions?: AgentFileOptions;
   serveDebugUI?: boolean;
+  /**
+   * Comma-separated list of origins allowed to send cross-origin requests.
+   * More than a CORS header: an entry both allows that origin at the request
+   * gate and adds its host to the DNS-rebinding allowlist. Each entry must be
+   * an `http://` or `https://` origin; a scheme-less entry is dropped with a
+   * warning. `'*'` allows every origin and disables the DNS-rebinding guard.
+   */
   allowOrigins?: string;
+  /**
+   * Additional Host header values the DNS-rebinding guard accepts besides
+   * loopback and any host derivable from `allowOrigins`. Independent of
+   * CORS: this widens what the guard accepts without opening
+   * `allowOrigins` to `'*'`, which is the only way to do so otherwise. Set
+   * this to the host an operator's reverse proxy presents to this server
+   * when the server itself binds to loopback behind that proxy.
+   */
+  allowedHosts?: string[];
   otelToCloud?: boolean;
   logger?: Logger;
   logLevel?: LogLevel;
@@ -88,17 +133,22 @@ export class AdkApiServer {
   private readonly host: string;
   private readonly port: number;
 
-  get url(): string {
+  private get effectivePort(): number {
     if (this.server) {
       const address = this.server.address();
       if (address && typeof address !== 'string') {
-        return `http://${this.host}:${address.port}`;
+        return address.port;
       }
     }
-    return `http://${this.host}:${this.port}`;
+    return this.port;
+  }
+
+  get url(): string {
+    return `http://${this.host}:${this.effectivePort}`;
   }
 
   readonly app: express.Application;
+  private readonly agentsDir?: string;
   private readonly agentLoader: AgentLoader;
   /**
    * Caches below are keyed by request path parameters (`appName`, `eventId`,
@@ -113,7 +163,8 @@ export class AdkApiServer {
   private readonly memoryService: BaseMemoryService;
   private readonly artifactService: BaseArtifactService;
   private readonly serveDebugUI: boolean;
-  private readonly allowOrigins?: string;
+  private readonly allowedOrigins: string[];
+  private readonly allowedHosts?: string[];
   private readonly otelToCloud: boolean;
   private readonly registerProcessors?: (
     tracerProvider: TracerProvider,
@@ -131,6 +182,7 @@ export class AdkApiServer {
   constructor(options: ServerOptions) {
     this.host = options.host ?? 'localhost';
     this.port = options.port ?? 0; // 0 means random free port
+    this.agentsDir = options.agentsDir;
     this.sessionService =
       options.sessionService ?? new InMemorySessionService();
     this.memoryService = options.memoryService ?? new InMemoryMemoryService();
@@ -144,8 +196,17 @@ export class AdkApiServer {
         options.reloadAgents ?? false,
       );
     this.serveDebugUI = options.serveDebugUI ?? false;
-    this.allowOrigins = options.allowOrigins;
-    this.otelToCloud = options.otelToCloud ?? false;
+    // A browser sends one Origin per request, so a comma-separated
+    // `--allow_origins` must become a list: `cors` never matches the joined
+    // string, and the DNS-rebinding guard reads only its first host from it.
+    const {origins: allowedOrigins, rejected: rejectedOrigins} =
+      parseAllowedOrigins(options.allowOrigins);
+    this.allowedOrigins = allowedOrigins;
+    this.allowedHosts = options.allowedHosts;
+    const envTraceToCloud = process.env['ADK_TRACE_TO_CLOUD']?.toLowerCase();
+    this.otelToCloud =
+      options.otelToCloud ??
+      (envTraceToCloud === 'true' || envTraceToCloud === '1');
     this.registerProcessors = options.registerProcessors;
     this.memoryExporter = new InMemoryExporter(this.sessionTraceDict);
     this.logger =
@@ -159,6 +220,12 @@ export class AdkApiServer {
         },
       });
     this.logger.setLogLevel(options.logLevel ?? LogLevel.INFO);
+    for (const rejected of rejectedOrigins) {
+      this.logger.warn(
+        `Ignoring --allow_origins entry ${formatHeaderForLog(rejected)}: ` +
+          'only http:// and https:// origins are allowed.',
+      );
+    }
     this.a2a = options.a2a ?? false;
     // An exported-but-empty value means "no token"; anything else is handed
     // to the authenticator, which rejects a token that is not usable.
@@ -197,7 +264,7 @@ export class AdkApiServer {
       await toA2a(agent, {
         protocol: 'http',
         host: this.host,
-        port: this.port,
+        port: this.effectivePort,
         basePath: `/a2a/${appName}`,
         sessionService: this.sessionService,
         memoryService: this.memoryService,
@@ -217,6 +284,52 @@ export class AdkApiServer {
   private async init() {
     const app = this.app;
     await this.setupTelemetry();
+
+    // Registered before any route (including /health, /, /version) so the
+    // DNS-rebinding guard applies to every endpoint, not just the ones
+    // registered after this point. Origin cannot be relied on here: a
+    // DNS-rebound page's requests look same-origin to the browser, which
+    // omits Origin for them, so safe methods (GET/HEAD/OPTIONS) get the
+    // same check as everything else.
+    const allowedRequestHosts = getAllowedRequestHosts(
+      this.allowedOrigins,
+      this.allowedHosts,
+    );
+    app.use((req: Request, res: Response, next: express.NextFunction) => {
+      if (
+        isDnsRebindingRequest(req.headers.host, this.host, allowedRequestHosts)
+      ) {
+        this.logger.warn(
+          `Rejected request with Host ${formatHeaderForLog(req.headers.host)}: the server is bound to ` +
+            `${this.host} and only loopback hosts are accepted. Set the ` +
+            `allowedHosts server option (or --allowed_hosts on the CLI) to ` +
+            `the host you are reaching this server through.`,
+        );
+        res
+          .status(403)
+          .type('text/plain')
+          .send('Forbidden: possible DNS-rebinding request');
+        return;
+      }
+      next();
+    });
+
+    // The Origin gate covers cross-origin state-changing requests, which the
+    // Host guard above does not. Registered before the CORS block so a rejected
+    // origin never receives Access-Control-Allow-Origin headers.
+    app.use(createOriginCheckMiddleware(this.allowedOrigins, this.logger));
+
+    // Registered before any route so that /, /health, /dev-ui and /version all
+    // carry CORS headers, not only the routes declared further down.
+    if (this.allowedOrigins.length > 0) {
+      app.use(
+        cors({
+          // `cors` only emits the wildcard header for the literal '*' string.
+          origin: this.allowedOrigins.includes('*') ? '*' : this.allowedOrigins,
+          credentials: true,
+        }),
+      );
+    }
 
     if (this.serveDebugUI) {
       app.get('/', (req: Request, res: Response) => {
@@ -244,14 +357,6 @@ export class AdkApiServer {
     app.get('/version', (req: Request, res: Response) => {
       res.status(200).json({version});
     });
-
-    if (this.allowOrigins) {
-      app.use(
-        cors({
-          origin: this.allowOrigins!,
-        }),
-      );
-    }
 
     app.use(
       express.json({
@@ -369,7 +474,8 @@ export class AdkApiServer {
 
           const functionCalls = getFunctionCalls(event);
           const functionResponses = getFunctionResponses(event);
-          await using agentFile = await this.agentLoader.getAgentFile(appName);
+          const agentFile = await this.agentLoader.getAgentFile(appName);
+          await using _bundleLease = agentFile.retain();
           const loaded = await agentFile.load();
           const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
 
@@ -442,7 +548,10 @@ export class AdkApiServer {
             return res.status(404).json({error: `App not found: ${appName}`});
           }
 
-          return res.json(serializeAppInfo(appName, rootAgent));
+          const agentFile = await this.agentLoader.getAgentFile(appName);
+          return res.json(
+            serializeAppInfo(appName, rootAgent, await agentFile.readReadme()),
+          );
         } catch (e) {
           const error = `Failed to get app info: ${e}`;
 
@@ -532,7 +641,7 @@ export class AdkApiServer {
             return;
           }
 
-          res.json(session);
+          res.json(publicSession(session));
         } catch (e: unknown) {
           const error = `Failed to get session: ${e}`;
 
@@ -554,7 +663,12 @@ export class AdkApiServer {
             userId,
           });
 
-          res.json(sessions);
+          res.json({
+            ...sessions,
+            sessions: sessions.sessions
+              .filter((s) => !s.id.startsWith(EVAL_SESSION_ID_PREFIX))
+              .map((s) => publicSession(s)),
+          });
         } catch (e: unknown) {
           const error = `Failed to list sessions: ${e}`;
 
@@ -593,7 +707,7 @@ export class AdkApiServer {
             sessionId,
           });
 
-          res.json(createdSession);
+          res.json(publicSession(createdSession));
         } catch (e: unknown) {
           const error = `Failed to create session: ${e}`;
 
@@ -617,7 +731,7 @@ export class AdkApiServer {
             state,
           });
 
-          res.json(createdSession);
+          res.json(publicSession(createdSession));
         } catch (e: unknown) {
           const error = `Failed to create session: ${e}`;
 
@@ -671,12 +785,20 @@ export class AdkApiServer {
           const userId = req.params['userId'];
           const sessionId = req.params['sessionId'];
           const artifactName = req.params['artifactName'];
+          const versionParam = req.query['version'];
+          const parsedVersion =
+            typeof versionParam === 'string' && versionParam.length > 0
+              ? parseInt(versionParam, 10)
+              : undefined;
 
           const artifact = await this.artifactService.loadArtifact({
             appName,
             userId,
             sessionId,
             filename: artifactName,
+            ...(parsedVersion !== undefined && !Number.isNaN(parsedVersion)
+              ? {version: parsedVersion}
+              : {}),
           });
 
           if (!artifact) {
@@ -808,32 +930,179 @@ export class AdkApiServer {
     );
 
     // --------------------- Eval Sets related endpoints -----------------------
-    // TODO: Implement eval set related endpoints.
+    const EVAL_SET_FILE_EXTENSION = '.evalset.json';
+    const VALID_EVAL_ID_PATTERN = /^[a-zA-Z0-9_]+$/;
+    const getEvalSetFilePath = (appName: string, evalSetId: string): string => {
+      return path.join(
+        this.agentsDir ?? process.cwd(),
+        appName,
+        `${evalSetId}${EVAL_SET_FILE_EXTENSION}`,
+      );
+    };
+
     app.post(
       '/apps/:appName/eval_sets/:evalSetId',
       (req: Request, res: Response) => {
-        return res.status(501).json({error: 'Not implemented'});
+        try {
+          const appName = req.params['appName'];
+          const evalSetId = req.params['evalSetId'];
+          if (!VALID_EVAL_ID_PATTERN.test(evalSetId)) {
+            return res.status(400).json({
+              error: `Invalid eval set ID. Eval set ID should have the \`${VALID_EVAL_ID_PATTERN}\` format`,
+            });
+          }
+
+          const newEvalSetPath = getEvalSetFilePath(appName, evalSetId);
+          if (fs.existsSync(newEvalSetPath)) {
+            return res.status(400).json({
+              error: `Eval set ${evalSetId} already exists.`,
+            });
+          }
+
+          fs.mkdirSync(path.dirname(newEvalSetPath), {recursive: true});
+          fs.writeFileSync(newEvalSetPath, '[]', 'utf-8');
+          return res.status(200).json({});
+        } catch (e: unknown) {
+          const error = `Failed to create eval set: ${e}`;
+          this.logger.error(error);
+          return res.status(500).json({error});
+        }
       },
     );
 
     app.get('/apps/:appName/eval_sets', (req: Request, res: Response) => {
-      return res.status(501).json({error: 'Not implemented'});
+      try {
+        const appName = req.params['appName'];
+        const evalSetFolderPath = path.join(
+          this.agentsDir ?? process.cwd(),
+          appName,
+        );
+        if (!fs.existsSync(evalSetFolderPath)) {
+          return res.json([]);
+        }
+
+        const evalSets: string[] = [];
+        for (const file of fs.readdirSync(evalSetFolderPath)) {
+          if (file.endsWith(EVAL_SET_FILE_EXTENSION)) {
+            evalSets.push(path.basename(file, EVAL_SET_FILE_EXTENSION));
+          }
+        }
+        return res.json(evalSets.sort());
+      } catch (e: unknown) {
+        const error = `Failed to list eval sets: ${e}`;
+        this.logger.error(error);
+        return res.status(500).json({error});
+      }
     });
 
     app.post(
       '/apps/:appName/eval_sets/:evalSetId/add_session',
-      (req: Request, res: Response) => {
-        return res.status(501).json({error: 'Not implemented'});
+      async (req: Request, res: Response) => {
+        try {
+          const appName = req.params['appName'];
+          const evalSetId = req.params['evalSetId'];
+          const body = (req.body ?? {}) as Record<string, unknown>;
+          const evalId = String(body['evalId'] ?? body['eval_id'] ?? '');
+          const sessionId = String(
+            body['sessionId'] ?? body['session_id'] ?? '',
+          );
+          const userId = String(body['userId'] ?? body['user_id'] ?? '');
+
+          if (!VALID_EVAL_ID_PATTERN.test(evalId)) {
+            return res.status(400).json({
+              error: `Invalid eval ID. Eval ID should have the \`${VALID_EVAL_ID_PATTERN}\` format`,
+            });
+          }
+
+          const evalSetFilePath = getEvalSetFilePath(appName, evalSetId);
+          if (!fs.existsSync(evalSetFilePath)) {
+            return res.status(400).json({
+              error: `Eval set ${evalSetId} not found.`,
+            });
+          }
+
+          const evalSetData = JSON.parse(
+            fs.readFileSync(evalSetFilePath, 'utf-8'),
+          ) as EvalEntry[];
+
+          if (evalSetData.some((x) => x.name === evalId)) {
+            return res.status(400).json({
+              error: `Eval id ${evalId} already exists in ${evalSetId} eval set.`,
+            });
+          }
+
+          const session = await this.sessionService.getSession({
+            appName,
+            userId,
+            sessionId,
+          });
+          if (!session) {
+            return res
+              .status(404)
+              .json({error: `Session not found: ${sessionId}`});
+          }
+
+          const testData = convertSessionToEvalFormat(session);
+          const agentFile = await this.agentLoader.getAgentFile(appName);
+          await using _bundleLease = agentFile.retain();
+          const loaded = await agentFile.load();
+          const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
+          const initialSessionState = isApp(rootAgent)
+            ? {...session.state}
+            : 'subAgents' in rootAgent
+              ? createEmptyState(rootAgent, session.state)
+              : {...session.state};
+
+          evalSetData.push({
+            name: evalId,
+            data: testData,
+            initial_session: {
+              state: initialSessionState,
+              app_name: appName,
+              user_id: userId,
+            },
+          });
+
+          fs.writeFileSync(
+            evalSetFilePath,
+            JSON.stringify(evalSetData, null, 2),
+            'utf-8',
+          );
+          return res.status(200).json({});
+        } catch (e: unknown) {
+          const error = `Failed to add session to eval set: ${e}`;
+          this.logger.error(error);
+          return res.status(500).json({error});
+        }
       },
     );
 
     app.get(
       '/apps/:appName/eval_sets/:evalSetId/evals',
       (req: Request, res: Response) => {
-        return res.status(501).json({error: 'Not implemented'});
+        try {
+          const appName = req.params['appName'];
+          const evalSetId = req.params['evalSetId'];
+          const evalSetFilePath = getEvalSetFilePath(appName, evalSetId);
+          if (!fs.existsSync(evalSetFilePath)) {
+            return res.status(400).json({
+              error: `Eval set ${evalSetId} not found.`,
+            });
+          }
+
+          const evalSetData = JSON.parse(
+            fs.readFileSync(evalSetFilePath, 'utf-8'),
+          ) as EvalEntry[];
+          return res.json(evalSetData.map((x) => x.name).sort());
+        } catch (e: unknown) {
+          const error = `Failed to list evals: ${e}`;
+          this.logger.error(error);
+          return res.status(500).json({error});
+        }
       },
     );
 
+    // TODO: Implement eval set related endpoints.
     app.get(
       '/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
       (req: Request, res: Response) => {
@@ -857,8 +1126,85 @@ export class AdkApiServer {
 
     app.post(
       '/apps/:appName/eval_sets/:evalSetId/run_eval',
-      (req: Request, res: Response) => {
-        return res.status(501).json({error: 'Not implemented'});
+      async (req: Request, res: Response) => {
+        try {
+          const appName = req.params['appName'];
+          const evalSetId = req.params['evalSetId'];
+          const evalSetFilePath = getEvalSetFilePath(appName, evalSetId);
+          if (!fs.existsSync(evalSetFilePath)) {
+            return res.status(400).json({
+              error: `Eval set ${evalSetId} not found.`,
+            });
+          }
+
+          if (this.agentsDir) {
+            loadDotenvForAgent(appName, this.agentsDir);
+          }
+
+          const body = (req.body ?? {}) as Record<string, unknown>;
+          const evalIds = Array.isArray(body['evalIds'] ?? body['eval_ids'])
+            ? ((body['evalIds'] ?? body['eval_ids']) as string[])
+            : [];
+          const evalMetrics = Array.isArray(
+            body['evalMetrics'] ?? body['eval_metrics'],
+          )
+            ? ((body['evalMetrics'] ?? body['eval_metrics']) as EvalMetric[])
+            : [];
+
+          const evalSetData = JSON.parse(
+            fs.readFileSync(evalSetFilePath, 'utf-8'),
+          ) as EvalEntry[];
+
+          const evalCases =
+            evalIds.length > 0
+              ? evalSetData.filter((e) => evalIds.includes(e.name))
+              : evalSetData;
+
+          const agentFile = await this.agentLoader.getAgentFile(appName);
+          await using _bundleLease = agentFile.retain();
+          const loaded = await agentFile.load();
+          const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
+          if (!('subAgents' in rootAgent)) {
+            return res.status(400).json({
+              error: 'Evaluation requires a BaseAgent rootAgent.',
+            });
+          }
+
+          const resetFunc = this.agentsDir
+            ? await tryGetResetFunc(path.join(this.agentsDir, appName))
+            : undefined;
+
+          const runEvalResults: RunEvalResult[] = [];
+          for await (const evalResult of runEvals(
+            {[evalSetId]: evalCases},
+            rootAgent,
+            resetFunc,
+            evalMetrics.length > 0 ? evalMetrics : undefined,
+            /* printDetailedResults= */ false,
+            this.sessionService,
+            this.artifactService,
+          )) {
+            runEvalResults.push({
+              ...evalResult,
+              evalSetFile: evalResult.eval_set_file,
+              evalSetId,
+              evalId: evalResult.eval_id,
+              finalEvalStatus: evalResult.final_eval_status,
+              evalMetricResults: evalResult.eval_metric_results,
+              overallEvalMetricResults: evalResult.overall_eval_metric_results,
+              evalMetricResultPerInvocation:
+                evalResult.eval_metric_result_per_invocation,
+              userId: evalResult.user_id,
+              sessionId: evalResult.session_id,
+            });
+          }
+
+          return res.json(runEvalResults);
+        } catch (e: unknown) {
+          const error = `Failed to run eval: ${e}`;
+          this.logger.error(error);
+          return res.status(500).json({error});
+        }
       },
     );
 
@@ -881,7 +1227,14 @@ export class AdkApiServer {
 
     // -------------------------- Run related endpoints ------------------------
     app.post('/run', async (req: Request, res: Response) => {
-      const {appName, userId, sessionId, newMessage, stateDelta} = req.body;
+      const {
+        appName,
+        userId,
+        sessionId,
+        newMessage,
+        stateDelta,
+        customMetadata,
+      } = req.body;
       const session = await this.sessionService.getSession({
         appName,
         userId,
@@ -905,14 +1258,15 @@ export class AdkApiServer {
         }
       });
 
+      const events: Event[] = [];
       try {
-        const events: Event[] = [];
         for await (const e of this.executeAgentRun({
           appName,
           userId,
           sessionId,
           newMessage,
           stateDelta,
+          customMetadata,
           abortSignal: abortController.signal,
         })) {
           events.push(e);
@@ -923,16 +1277,12 @@ export class AdkApiServer {
       } catch (e: unknown) {
         const error = `Failed to run agent: ${e}`;
 
-        res.status(500).json({error});
+        res.status(500).json({error, events});
         this.logger.error(error);
       }
     });
 
     app.post('/api/reasoning_engine', async (req: Request, res: Response) => {
-      this.logger.info(
-        `Received Reasoning Engine query headers: ${JSON.stringify(req.headers)}`,
-      );
-
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const executeQuery = async (body: any) => {
         const input = body.input || {};
@@ -942,10 +1292,12 @@ export class AdkApiServer {
           input.sessionId || body.sessionId || 'default-session';
         const newMessage = input.newMessage || body.newMessage;
         const stateDelta = input.stateDelta || body.stateDelta;
+        const customMetadata = input.customMetadata || body.customMetadata;
         if (!appName) {
           res.status(400).json({error: 'appName is required in input'});
           return;
         }
+        const events: Event[] = [];
         try {
           await this.sessionService.getOrCreateSession({
             appName,
@@ -953,7 +1305,6 @@ export class AdkApiServer {
             sessionId,
             state: {},
           });
-          const events: Event[] = [];
           const abortController = new AbortController();
           req.on('close', () => {
             abortController.abort();
@@ -964,6 +1315,7 @@ export class AdkApiServer {
             sessionId,
             newMessage,
             stateDelta,
+            customMetadata,
             abortSignal: abortController.signal,
           })) {
             events.push(e);
@@ -971,7 +1323,7 @@ export class AdkApiServer {
           res.json({output: events});
         } catch (e: unknown) {
           const error = `Failed to run agent via Reasoning Engine API: ${e}`;
-          res.status(500).json({error});
+          res.status(500).json({error, output: events});
           this.logger.error(error);
         }
       };
@@ -979,9 +1331,6 @@ export class AdkApiServer {
       const isParsed =
         req.body && (Object.keys(req.body).length > 0 || !req.readable);
       if (isParsed) {
-        this.logger.info(
-          `Using already parsed body: ${JSON.stringify(req.body)}`,
-        );
         await executeQuery(req.body);
       } else {
         let rawBody = '';
@@ -989,7 +1338,6 @@ export class AdkApiServer {
           rawBody += chunk;
         });
         req.on('end', async () => {
-          this.logger.info(`Received Reasoning Engine raw body: ${rawBody}`);
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           let body: any = {};
           if (rawBody) {
@@ -1005,8 +1353,15 @@ export class AdkApiServer {
     });
 
     app.post('/run_sse', async (req: Request, res: Response) => {
-      const {appName, userId, sessionId, newMessage, streaming, stateDelta} =
-        req.body;
+      const {
+        appName,
+        userId,
+        sessionId,
+        newMessage,
+        streaming,
+        stateDelta,
+        customMetadata,
+      } = req.body;
 
       const session = await this.sessionService.getSession({
         appName,
@@ -1046,6 +1401,7 @@ export class AdkApiServer {
           sessionId,
           newMessage,
           stateDelta,
+          customMetadata,
           runConfig: {
             streamingMode: streaming ? StreamingMode.SSE : StreamingMode.NONE,
           },
@@ -1083,6 +1439,7 @@ export class AdkApiServer {
     return new Promise((resolve, reject) => {
       this.server = this.app.listen(this.port, this.host, async () => {
         try {
+          process.env.ADK_API_SERVER_PORT = this.effectivePort.toString();
           if (this.a2a) {
             await this.initA2A();
           }
@@ -1100,6 +1457,13 @@ export class AdkApiServer {
         }
       });
 
+      this.server.on(
+        'upgrade',
+        (req: http.IncomingMessage, socket: Duplex, head: Buffer) => {
+          void this.handleWebSocketUpgrade(req, socket, head);
+        },
+      );
+
       this.server.on('error', (err: unknown) => {
         if ((err as {code: string}).code === 'EADDRINUSE') {
           const error = new Error();
@@ -1113,13 +1477,230 @@ export class AdkApiServer {
     });
   }
 
+  private async handleWebSocketUpgrade(
+    req: http.IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+  ): Promise<void> {
+    const reqUrl = new URL(
+      req.url ?? '/',
+      `http://${req.headers.host ?? 'localhost'}`,
+    );
+    if (reqUrl.pathname !== '/run_live') {
+      socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    const wsKey = req.headers['sec-websocket-key'];
+    if (typeof wsKey !== 'string' || !wsKey) {
+      socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    const acceptKey = createHash('sha1')
+      .update(`${wsKey}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+      .digest('base64');
+
+    socket.write(
+      'HTTP/1.1 101 Switching Protocols\r\n' +
+        'Upgrade: websocket\r\n' +
+        'Connection: Upgrade\r\n' +
+        `Sec-WebSocket-Accept: ${acceptKey}\r\n\r\n`,
+    );
+
+    const sendWsText = (text: string) => {
+      if (socket.destroyed || !socket.writable) {
+        return;
+      }
+      const payload = Buffer.from(text, 'utf-8');
+      const len = payload.length;
+      let header: Buffer;
+      if (len < 126) {
+        header = Buffer.from([0x81, len]);
+      } else if (len < 65536) {
+        header = Buffer.alloc(4);
+        header[0] = 0x81;
+        header[1] = 126;
+        header.writeUInt16BE(len, 2);
+      } else {
+        header = Buffer.alloc(10);
+        header[0] = 0x81;
+        header[1] = 127;
+        header.writeBigUInt64BE(BigInt(len), 2);
+      }
+      socket.write(Buffer.concat([header, payload]));
+    };
+
+    const sendWsClose = (code = 1000, reason = '') => {
+      if (socket.destroyed || !socket.writable) {
+        return;
+      }
+      const reasonBuf = Buffer.from(reason, 'utf-8');
+      const payload = Buffer.alloc(2 + reasonBuf.length);
+      payload.writeUInt16BE(code, 0);
+      reasonBuf.copy(payload, 2);
+      const header = Buffer.from([0x88, payload.length]);
+      socket.write(Buffer.concat([header, payload]));
+      socket.end();
+    };
+
+    const appName =
+      reqUrl.searchParams.get('app_name') ??
+      reqUrl.searchParams.get('appName') ??
+      '';
+    const userId =
+      reqUrl.searchParams.get('user_id') ??
+      reqUrl.searchParams.get('userId') ??
+      '';
+    const sessionId =
+      reqUrl.searchParams.get('session_id') ??
+      reqUrl.searchParams.get('sessionId') ??
+      '';
+    const modalitiesParam = reqUrl.searchParams.getAll('modalities');
+
+    const session = await this.sessionService.getSession({
+      appName,
+      userId,
+      sessionId,
+    });
+    if (!session) {
+      sendWsClose(1002, 'Session not found');
+      return;
+    }
+
+    if (this.agentsDir) {
+      loadDotenvForAgent(appName, this.agentsDir);
+    }
+
+    const liveRequestQueue = new LiveRequestQueue();
+    let buffer = head.length > 0 ? Buffer.from(head) : Buffer.alloc(0);
+
+    const parseIncomingFrames = () => {
+      while (buffer.length >= 2) {
+        const firstByte = buffer[0];
+        const secondByte = buffer[1];
+        const opcode = firstByte & 0x0f;
+        const isMasked = (secondByte & 0x80) !== 0;
+        let payloadLength = secondByte & 0x7f;
+        let offset = 2;
+
+        if (payloadLength === 126) {
+          if (buffer.length < 4) {
+            return;
+          }
+          payloadLength = buffer.readUInt16BE(2);
+          offset = 4;
+        } else if (payloadLength === 127) {
+          if (buffer.length < 10) {
+            return;
+          }
+          payloadLength = Number(buffer.readBigUInt64BE(2));
+          offset = 10;
+        }
+
+        const maskLength = isMasked ? 4 : 0;
+        if (buffer.length < offset + maskLength + payloadLength) {
+          return;
+        }
+
+        const mask = isMasked
+          ? buffer.subarray(offset, offset + 4)
+          : Buffer.alloc(0);
+        offset += maskLength;
+        const payload = Buffer.from(
+          buffer.subarray(offset, offset + payloadLength),
+        );
+        buffer = buffer.subarray(offset + payloadLength);
+
+        if (isMasked) {
+          for (let i = 0; i < payload.length; i++) {
+            payload[i] ^= mask[i % 4];
+          }
+        }
+
+        if (opcode === 0x08) {
+          liveRequestQueue.close();
+          sendWsClose(1000);
+          return;
+        } else if (opcode === 0x09) {
+          if (!socket.destroyed && socket.writable) {
+            socket.write(
+              Buffer.concat([Buffer.from([0x8a, payload.length]), payload]),
+            );
+          }
+        } else if (opcode === 0x01 || opcode === 0x02) {
+          try {
+            const text = payload.toString('utf-8');
+            const parsed = JSON.parse(text) as LiveRequest;
+            liveRequestQueue.send(parsed);
+          } catch (e: unknown) {
+            this.logger.error(`Invalid WebSocket LiveRequest payload: ${e}`);
+          }
+        }
+      }
+    };
+
+    socket.on('data', (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, Buffer.from(chunk)]);
+      parseIncomingFrames();
+    });
+    socket.on('close', () => {
+      liveRequestQueue.close();
+    });
+    socket.on('error', () => {
+      liveRequestQueue.close();
+    });
+
+    if (buffer.length > 0) {
+      parseIncomingFrames();
+    }
+
+    try {
+      const agentFile = await this.agentLoader.getAgentFile(appName);
+      await using _bundleLease = agentFile.retain();
+      const loaded = await agentFile.load();
+      const runner = await this.getRunner(loaded, appName);
+      const runConfig: RunConfig =
+        modalitiesParam.length > 0
+          ? {
+              responseModalities: modalitiesParam as NonNullable<
+                RunConfig['responseModalities']
+              >,
+            }
+          : {};
+
+      for await (const event of runner.runLive({
+        userId: session.userId,
+        sessionId: session.id,
+        liveRequestQueue,
+        runConfig,
+      })) {
+        sendWsText(JSON.stringify(publicEvent(event)));
+      }
+    } catch (e: unknown) {
+      this.logger.error(`Error in run_live WebSocket: ${e}`);
+      sendWsClose(1011, String((e as Error)?.message ?? e).slice(0, 120));
+    } finally {
+      liveRequestQueue.close();
+      if (!socket.destroyed) {
+        socket.destroy();
+      }
+    }
+  }
+
   stop(): Promise<void> {
-    if (!this.server) {
+    const server = this.server;
+    // A failed `start()` (EADDRINUSE) and an already-closed server both leave
+    // `this.server` assigned, and `close()` on either rejects with
+    // ERR_SERVER_NOT_RUNNING. Neither has a listener left, so both are stopped.
+    if (!server?.listening) {
       return Promise.resolve();
     }
 
     return new Promise((resolve, reject) => {
-      this.server!.close((err) => {
+      server.close((err) => {
         if (err) {
           reject(err);
           return;
@@ -1150,19 +1731,23 @@ export class AdkApiServer {
       return undefined;
     }
 
-    await using agentFile = await this.agentLoader.getAgentFile(appName);
+    const agentFile = await this.agentLoader.getAgentFile(appName);
+    await using _bundleLease = agentFile.retain();
     const loaded = await agentFile.load();
 
     return isApp(loaded) ? loaded.rootAgent : loaded;
   }
 
   private async getRunner(
-    agentOrApp: BaseAgent | App,
+    agentOrApp: RunnableRoot | App,
     appName: string,
   ): Promise<Runner> {
-    if (!(appName in this.runnerCache)) {
-      const isAppInstance = isApp(agentOrApp);
-      const agent = isAppInstance ? agentOrApp.rootAgent : agentOrApp;
+    const isAppInstance = isApp(agentOrApp);
+    const agent = isAppInstance ? agentOrApp.rootAgent : agentOrApp;
+    if (
+      !(appName in this.runnerCache) ||
+      this.runnerCache[appName].agent !== agent
+    ) {
       this.runnerCache[appName] = new Runner({
         app: isAppInstance ? agentOrApp : undefined,
         appName,
@@ -1182,22 +1767,31 @@ export class AdkApiServer {
     sessionId: string;
     newMessage: Content;
     stateDelta?: Record<string, unknown>;
+    customMetadata?: Record<string, unknown>;
     runConfig?: RunConfig;
     abortSignal: AbortSignal;
   }): AsyncGenerator<Event> {
-    await using agentFile = await this.agentLoader.getAgentFile(
-      options.appName,
-    );
+    if (this.agentsDir) {
+      loadDotenvForAgent(options.appName, this.agentsDir);
+    }
+
+    const agentFile = await this.agentLoader.getAgentFile(options.appName);
+    await using _bundleLease = agentFile.retain();
     const loaded = await agentFile.load();
     const runner = await this.getRunner(loaded, options.appName);
 
-    yield* runner.runAsync({
+    // Every run endpoint streams through here, so events leave without
+    // ADK-internal customMetadata.
+    for await (const event of runner.runAsync({
       userId: options.userId,
       sessionId: options.sessionId,
       newMessage: options.newMessage,
       runConfig: options.runConfig,
       stateDelta: options.stateDelta,
+      customMetadata: options.customMetadata,
       abortSignal: options.abortSignal,
-    });
+    })) {
+      yield publicEvent(event);
+    }
   }
 }

@@ -12,6 +12,7 @@
 
 import type {BaseLlmConnection, LlmRequest, LlmResponse} from '@google/adk';
 import {BaseLlm, LLMRegistry} from '@google/adk';
+import {randomUUID} from 'node:crypto';
 import {existsSync, readdirSync, readFileSync} from 'node:fs';
 import path from 'node:path';
 import {afterEach, describe, expect, it, vi} from 'vitest';
@@ -311,6 +312,21 @@ describe('record/replay matching', () => {
       expect(warn.mock.calls[0][0]).toContain('Stale fixture');
     });
 
+    it('normalizes an id the sample printed into its prompt', async () => {
+      // A HITL sample interpolates state built from a function response, so the
+      // id the framework generated for it lands in the instruction. Keyed on,
+      // the exact match would be lost on every run — and a re-record could not
+      // win it back, since recording generates a fresh id too.
+      const withId = (id: string) =>
+        request('revise it', `The reviewer said: {"id":"${id}"}`);
+      const fixture = await record('live answer', withId(randomUUID()));
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      installRecordReplay({mode: 'replay', recordedCalls: fixture});
+
+      expect(await replay(withId(randomUUID()))).toBe('live answer');
+      expect(warn).not.toHaveBeenCalled();
+    });
+
     it('normalizes volatile function-call ids the same way on both sides', async () => {
       // Ids are generated per run, so a recorded key only matches a replayed
       // one because both sides scrub them.
@@ -332,6 +348,63 @@ describe('record/replay matching', () => {
       expect(await replay(withId('call-2'))).toBe('live answer');
       expect(warn).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('replay across the scenarios that share a fixture', () => {
+  afterEach(() => {
+    restoreRecordReplay();
+    vi.restoreAllMocks();
+  });
+
+  /** Two scenarios recording the same request, in the order they ran. */
+  const twoScenarios = (req: LlmRequest) => [
+    recorded(req, 'scenario 1 draft'),
+    recorded(req, 'scenario 2 draft'),
+  ];
+
+  it('serves a repeated request in recording order, one scenario after another', async () => {
+    // A scenario is its own `runSample`, so this only holds if the read
+    // position survives the reinstall between them. When it does not, both
+    // scenarios draft "scenario 1 draft", and a later call whose conversation
+    // quotes the draft — the revise turn of a HITL sample — matches nothing.
+    const req = request('phone broke', 'You are a drafter.');
+    const fixture = twoScenarios(req);
+
+    installRecordReplay({
+      mode: 'replay',
+      recordedCalls: fixture,
+      fixtureId: '/samples/drafter/model_responses.json',
+    });
+    expect(await replay(req)).toBe('scenario 1 draft');
+    restoreRecordReplay();
+
+    installRecordReplay({
+      mode: 'replay',
+      recordedCalls: fixture,
+      fixtureId: '/samples/drafter/model_responses.json',
+    });
+    expect(await replay(req)).toBe('scenario 2 draft');
+  });
+
+  it('keeps each sample on its own read position', async () => {
+    const req = request('phone broke', 'You are a drafter.');
+    const fixture = twoScenarios(req);
+
+    installRecordReplay({
+      mode: 'replay',
+      recordedCalls: fixture,
+      fixtureId: '/samples/first/model_responses.json',
+    });
+    expect(await replay(req)).toBe('scenario 1 draft');
+    restoreRecordReplay();
+
+    installRecordReplay({
+      mode: 'replay',
+      recordedCalls: fixture,
+      fixtureId: '/samples/second/model_responses.json',
+    });
+    expect(await replay(req)).toBe('scenario 1 draft');
   });
 });
 

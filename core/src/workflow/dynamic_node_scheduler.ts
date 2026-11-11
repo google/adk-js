@@ -5,6 +5,11 @@
  */
 
 import {BaseNode} from './base_node.js';
+import {
+  DynamicNodeFailError,
+  isDynamicNodeFailError,
+  isNodeInterruptedError,
+} from './errors.js';
 import {NodeContext, NodeResult} from './node_context.js';
 import {executeChildNode} from './node_runner.js';
 import {createNodeState} from './node_state.js';
@@ -44,7 +49,37 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
     private readonly abortSignal?: AbortSignal,
   ) {}
 
+  /**
+   * Runs a `ctx.runNode()` call and reports any interrupt it is still waiting
+   * on to the caller's own context.
+   *
+   * A child's interrupt is the caller's problem: the caller cannot produce a
+   * trustworthy result until the human answers, and until the engine knows the
+   * caller is waiting it marks it COMPLETED and schedules its successor —
+   * which then runs on the `undefined` the caller returned when it bailed out.
+   * `ParallelWorker` has always copied its items' interrupt ids onto its own
+   * context for exactly this reason; doing it here extends that to every
+   * caller instead of only the one that remembered.
+   *
+   * Only unresolved interrupts arrive here. A child fast-forwarded from a
+   * checkpoint, or handed a resolved reply as its output, reports none.
+   */
   async schedule(
+    ctx: NodeContext,
+    node: BaseNode,
+    input: unknown,
+    options: ScheduleDynamicNodeOptions,
+  ): Promise<NodeContext | NodeResult> {
+    const result = await this.scheduleRun(ctx, node, input, options);
+    for (const id of result.interruptIds) {
+      if (!ctx.interruptIds.includes(id)) {
+        ctx.interruptIds.push(id);
+      }
+    }
+    return result;
+  }
+
+  private async scheduleRun(
     ctx: NodeContext,
     node: BaseNode,
     input: unknown,
@@ -61,6 +96,11 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
       // Deduplicate concurrent calls: await the in-flight task.
       return existing.task;
     }
+    if (existing?.result) {
+      // Already settled this turn without executing its body. Re-running it
+      // here would discard the recorded run and duplicate its side effects.
+      return this.handBack(ctx, existing.result, options);
+    }
 
     // Cross-turn resume: rehydrate this dynamic run from the events of the run
     // still in progress (a run that already completed must not be replayed).
@@ -68,8 +108,12 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
       const prior = reconstructNodeStatesByPath(
         eventsForCurrentRun(ctx.session?.events ?? [], ctx.invocationId),
       ).get(nodePath);
-      if (prior && !node.rerunOnResume && isFastForwardable(prior)) {
+      if (prior && isFastForwardable(prior)) {
         // Completed in a prior turn -> return cached output, do not re-execute.
+        // `rerunOnResume` is deliberately not consulted, as in the static twin
+        // (`Workflow.startNodeTask`): it says what to do with an interrupt the
+        // node is still waiting on, and `isFastForwardable` has already ruled
+        // a waiting node out. Consulted here it would replay the whole run.
         return this.completeWithoutRunning(
           ctx,
           {nodePath, runId, options},
@@ -80,7 +124,7 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
       // (raised interrupts, produced no output) does NOT re-run its body. It
       // completes with the resolved resume value(s) as its output, which
       // `ctx.runNode()` hands back to the caller. Mirrors the static-graph
-      // handoff in `Workflow.scheduleNode`; without it such a child re-runs,
+      // handoff in `Workflow.startNodeTask`; without it such a child re-runs,
       // raises a brand-new interrupt, and the workflow can never resume.
       const handoff = this.resumeHandoff(ctx, node, prior);
       if (handoff) {
@@ -118,8 +162,21 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
         parentRunId: ctx.runId,
       }),
       output: result.output,
+      result,
     });
-    if (run.options.useAsOutput) {
+    return this.handBack(ctx, result, run.options);
+  }
+
+  /**
+   * Applies a settled result to the caller's context and returns it, so a first
+   * call and a repeat call for the same path are indistinguishable.
+   */
+  private handBack(
+    ctx: NodeContext,
+    result: NodeResult,
+    options: ScheduleDynamicNodeOptions,
+  ): NodeResult {
+    if (options.useAsOutput) {
       ctx.output = result.output;
       ctx.route = result.route;
     }
@@ -191,7 +248,21 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
       },
     });
 
-    const childCtx = await run.task;
+    let childCtx: NodeContext;
+    try {
+      childCtx = await run.task;
+    } catch (err) {
+      if (isNodeInterruptedError(err) || isDynamicNodeFailError(err)) {
+        throw err;
+      }
+      run.state.status = NodeStatus.FAILED;
+      const error = err instanceof Error ? err : new Error(String(err));
+      throw new DynamicNodeFailError({
+        message: `Dynamic node ${name} failed: ${error.message}`,
+        error,
+        errorNodePath: nodePath,
+      });
+    }
     this.recordResult(run, childCtx, node);
     return childCtx;
   }

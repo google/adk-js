@@ -9,7 +9,6 @@ import {BaseAgent} from '../../src/agents/base_agent.js';
 import {InvocationContext} from '../../src/agents/invocation_context.js';
 import {createEvent, Event} from '../../src/events/event.js';
 import {node} from '../../src/workflow/node.js';
-import {LLMAgentWrapper} from '../../src/workflow/nodes/llm_agent_wrapper.js';
 import {createIc, driveNode, FnNode} from './test_helpers.js';
 
 /**
@@ -20,8 +19,9 @@ class EchoAgent extends BaseAgent {
   constructor(
     name: string,
     private readonly reply: string,
+    nodeConfig: {timeout?: number; rerunOnResume?: boolean} = {},
   ) {
-    super({name, description: `echoes ${reply}`});
+    super({name, description: `echoes ${reply}`, ...nodeConfig});
   }
 
   protected async *runAsyncImpl(
@@ -49,6 +49,34 @@ describe('an agent is a node', () => {
     expect(events).toHaveLength(1);
     expect(events[0].author).toBe('echo');
     expect(events[0].nodeInfo?.path).toBe('echo');
+  });
+
+  it('runs a non-LlmAgent agent through plain delegation to runAsync', async () => {
+    const seen: Array<Event[]> = [];
+    class QuietAgent extends BaseAgent {
+      protected async *runAsyncImpl(
+        ctx: InvocationContext,
+      ): AsyncGenerator<Event, void, void> {
+        seen.push([...ctx.session.events]);
+        yield createEvent({
+          author: this.name,
+          invocationId: ctx.invocationId,
+          content: {role: 'model', parts: [{text: 'a reply'}]},
+        });
+      }
+      // eslint-disable-next-line require-yield
+      protected async *runLiveImpl(): AsyncGenerator<Event, void, void> {
+        return;
+      }
+    }
+
+    const {output} = await driveNode(
+      new QuietAgent({name: 'quiet'}),
+      'ignored',
+    );
+
+    expect(seen[0]).toEqual([]);
+    expect(output).toBeUndefined();
   });
 
   it('runs an agent as a dynamic child via ctx.runNode()', async () => {
@@ -118,12 +146,19 @@ describe('an agent is a node', () => {
     expect(agent.waitForOutput).toBe(true);
   });
 
-  it('still wraps an agent that is placed in a graph', () => {
-    // An agent is a node now, so `buildNode` would otherwise hand it back
-    // as-is and skip the wrapper that drives prompt injection and task mode.
-    const built = node(new EchoAgent('graphed', 'x'));
-    expect(built).toBeInstanceOf(LLMAgentWrapper);
-    expect(built.name).toBe('graphed');
+  it('places an agent in a graph as itself, unwrapped', () => {
+    const agent = new EchoAgent('graphed', 'x');
+    expect(node(agent)).toBe(agent);
+  });
+
+  it('honours node configuration set on the agent, once it is the node', () => {
+    const agent = new EchoAgent('configured', 'x', {
+      timeout: 5,
+      rerunOnResume: true,
+    });
+    const built = node(agent);
+    expect(built.timeout).toBe(5);
+    expect(built.rerunOnResume).toBe(true);
   });
 
   it('keeps the agent name rules, which are stricter than a node’s', () => {

@@ -116,10 +116,50 @@ export class PluginManager {
       } catch (e) {
         const errorMessage = `Error in plugin '${plugin.name}' during '${callbackName}' callback: ${e}`;
         logger.error(errorMessage);
-        throw new Error(errorMessage);
+        throw new Error(errorMessage, {cause: e});
       }
     }
     return undefined;
+  }
+
+  /** Notifies every plugin without allowing one failure to hide another. */
+  private async runNotificationCallbacks(
+    callback: (plugin: BasePlugin) => Promise<void>,
+    callbackName: string,
+  ): Promise<void> {
+    for (const plugin of this.plugins) {
+      try {
+        await callback(plugin);
+      } catch (error) {
+        logger.error(
+          `Error in plugin '${plugin.name}' during '${callbackName}' callback:`,
+          error,
+        );
+      }
+    }
+  }
+
+  /** Runs the notification-only agent error callback for every plugin. */
+  async runOnAgentErrorCallback(params: {
+    agent: BaseAgent;
+    callbackContext: Context;
+    error: Error;
+  }): Promise<void> {
+    await this.runNotificationCallbacks(
+      (plugin) => plugin.onAgentErrorCallback(params),
+      'onAgentErrorCallback',
+    );
+  }
+
+  /** Runs the notification-only run error callback for every plugin. */
+  async runOnRunErrorCallback(params: {
+    invocationContext: InvocationContext;
+    error: Error;
+  }): Promise<void> {
+    await this.runNotificationCallbacks(
+      (plugin) => plugin.onRunErrorCallback(params),
+      'onRunErrorCallback',
+    );
   }
 
   /**

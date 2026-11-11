@@ -18,12 +18,20 @@ import {
   Skill,
   SkillToolset,
 } from '@google/adk';
-import {describe, expect, it, vi} from 'vitest';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {materializeFiles} from '../../../src/utils/file_utils.js';
 
-vi.mock('../../../src/utils/file_utils.js', () => ({
-  materializeFiles: vi.fn(),
-}));
+vi.mock('../../../src/utils/file_utils.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../../src/utils/file_utils.js')>();
+  return {
+    ...actual,
+    materializeFiles: vi.fn(),
+  };
+});
 
 class MockCodeExecutor extends BaseCodeExecutor {
   mockResult: CodeExecutionResult = {
@@ -51,6 +59,20 @@ interface ToolErrorResponse {
 }
 
 describe('RunSkillScriptTool', () => {
+  // Running a script resolves an output directory and creates it on disk, even
+  // here where materializeFiles itself is mocked. Point the tests at a temp
+  // directory of their own and remove it in afterEach, so a failing assertion
+  // cannot leave directories behind.
+  let outputDir: string;
+
+  beforeEach(async () => {
+    outputDir = await fs.mkdtemp(path.join(os.tmpdir(), 'skill_script_test_'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(outputDir, {recursive: true, force: true});
+  });
+
   function createMockContext(
     agentName = 'test-agent',
     agentExecutor?: BaseCodeExecutor,
@@ -161,7 +183,10 @@ describe('RunSkillScriptTool', () => {
 
   it('executes script successfully via mock executor with JS wrapper', async () => {
     const mockExecutor = new MockCodeExecutor();
-    const toolset = new SkillToolset([mockSkill], {codeExecutor: mockExecutor});
+    const toolset = new SkillToolset([mockSkill], {
+      codeExecutor: mockExecutor,
+      scriptOutputDir: outputDir,
+    });
     const tool = new RunSkillScriptTool(toolset);
 
     const result = (await tool.runAsync({
@@ -178,9 +203,30 @@ describe('RunSkillScriptTool', () => {
     );
   });
 
+  it('runs a script named without the scripts/ prefix from scripts/', async () => {
+    const mockExecutor = new MockCodeExecutor();
+    const toolset = new SkillToolset([mockSkill], {
+      codeExecutor: mockExecutor,
+      scriptOutputDir: outputDir,
+    });
+    const tool = new RunSkillScriptTool(toolset);
+
+    await tool.runAsync({
+      args: {skill_name: 'test-skill', script_path: 'setup.js'},
+      toolContext: createMockContext(),
+    });
+
+    expect(mockExecutor.executeCodeParams?.codeExecutionInput.code).toBe(
+      "require('./scripts/setup.js');",
+    );
+  });
+
   it('extracts skill resource files correctly', async () => {
     const mockExecutor = new MockCodeExecutor();
-    const toolset = new SkillToolset([mockSkill], {codeExecutor: mockExecutor});
+    const toolset = new SkillToolset([mockSkill], {
+      codeExecutor: mockExecutor,
+      scriptOutputDir: outputDir,
+    });
     const tool = new RunSkillScriptTool(toolset);
 
     await tool.runAsync({
@@ -205,6 +251,40 @@ describe('RunSkillScriptTool', () => {
     expect(binaryFile?.contentEncoding).toBe('base64');
   });
 
+  it('sends a TypeScript script resource as UTF-8 text', async () => {
+    const typescriptSkill: Skill = {
+      frontmatter: {
+        name: 'typescript-skill',
+        description: 'A skill with a TypeScript script',
+      },
+      instructions: 'Test instructions',
+      resources: {
+        scripts: {'helper.ts': {src: 'export const x = 1;'}},
+      },
+    };
+    const mockExecutor = new MockCodeExecutor();
+    const toolset = new SkillToolset([typescriptSkill], {
+      codeExecutor: mockExecutor,
+    });
+    const tool = new RunSkillScriptTool(toolset);
+
+    await tool.runAsync({
+      args: {
+        skill_name: 'typescript-skill',
+        script_path: 'scripts/helper.ts',
+      },
+      toolContext: createMockContext(),
+    });
+
+    const helper =
+      mockExecutor.executeCodeParams?.codeExecutionInput.inputFiles?.find(
+        (f) => f.name === 'scripts/helper.ts',
+      );
+    expect(helper?.contentEncoding).toBe(FileContentEncoding.UTF8);
+    expect(helper?.mimeType).toBe('text/javascript');
+    expect(helper?.content).toBe('export const x = 1;');
+  });
+
   it('calls materializeFiles with output files from executor', async () => {
     const mockExecutor = new MockCodeExecutor();
     const testFile: File = {
@@ -219,7 +299,10 @@ describe('RunSkillScriptTool', () => {
       outputFiles: [testFile],
     };
 
-    const toolset = new SkillToolset([mockSkill], {codeExecutor: mockExecutor});
+    const toolset = new SkillToolset([mockSkill], {
+      codeExecutor: mockExecutor,
+      scriptOutputDir: outputDir,
+    });
     const tool = new RunSkillScriptTool(toolset);
 
     await tool.runAsync({
@@ -227,6 +310,61 @@ describe('RunSkillScriptTool', () => {
       toolContext: createMockContext(),
     });
 
-    expect(materializeFiles).toHaveBeenCalledWith([testFile]);
+    expect(materializeFiles).toHaveBeenCalledWith([testFile], outputDir);
+  });
+
+  it('materializes output files into a dedicated dir, never the cwd', async () => {
+    // Output file names are chosen by the executed script, i.e. by whatever a
+    // prompt injection persuaded the model/skill to emit. Resolving them
+    // against process.cwd() would let that content drop files into the host
+    // application's working directory.
+    const mockExecutor = new MockCodeExecutor();
+    mockExecutor.mockResult = {stdout: '', stderr: '', outputFiles: []};
+
+    const toolset = new SkillToolset([mockSkill], {codeExecutor: mockExecutor});
+    const tool = new RunSkillScriptTool(toolset);
+
+    // The module mock is shared by every test in this file and nothing clears
+    // it between them, so reset first: otherwise a run that never reached
+    // materializeFiles would silently assert against an earlier test's call.
+    vi.mocked(materializeFiles).mockClear();
+
+    await tool.runAsync({
+      args: {skill_name: 'test-skill', script_path: 'scripts/setup.js'},
+      toolContext: createMockContext(),
+    });
+
+    expect(materializeFiles).toHaveBeenCalledTimes(1);
+    const [, dir] = vi.mocked(materializeFiles).mock.calls[0];
+
+    // This is the one test that exercises the default directory, so it owns
+    // the cleanup: nothing else knows the generated name.
+    try {
+      expect(dir).toBeTypeOf('string');
+      expect(dir).not.toBe(process.cwd());
+      expect(path.resolve(dir)).toBe(dir);
+      expect(dir.startsWith(os.tmpdir())).toBe(true);
+    } finally {
+      await fs.rm(dir, {recursive: true, force: true});
+    }
+  });
+
+  it('honors an explicitly configured script output dir', async () => {
+    const mockExecutor = new MockCodeExecutor();
+    mockExecutor.mockResult = {stdout: '', stderr: '', outputFiles: []};
+
+    const toolset = new SkillToolset([mockSkill], {
+      codeExecutor: mockExecutor,
+      scriptOutputDir: outputDir,
+    });
+    const tool = new RunSkillScriptTool(toolset);
+
+    const result = (await tool.runAsync({
+      args: {skill_name: 'test-skill', script_path: 'scripts/setup.js'},
+      toolContext: createMockContext(),
+    })) as {outputDirectory: string};
+
+    expect(materializeFiles).toHaveBeenLastCalledWith([], outputDir);
+    expect(result.outputDirectory).toBe(outputDir);
   });
 });

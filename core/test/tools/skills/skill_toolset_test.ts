@@ -14,6 +14,9 @@ import {
   Skill,
   SkillToolset,
 } from '@google/adk';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {describe, expect, it, vi} from 'vitest';
 
 describe('skill_toolset', () => {
@@ -312,6 +315,142 @@ describe('skill_toolset', () => {
       const tools2 = await toolset.getTools(context);
       expect(tools2.map((t) => t.name)).toContain('cached_tool');
       expect(mockInnerGetTools).toHaveBeenCalledTimes(1);
+    });
+
+    describe('SkillToolset close', () => {
+      const remoteSkill: Skill = {
+        frontmatter: {
+          name: 'remote-skill',
+          description: 'A remote skill',
+        },
+        instructions: 'Remote instructions',
+      };
+
+      it('awaits the registry close exactly once', async () => {
+        const registry = {
+          getSkill: vi.fn(),
+          searchSkills: vi.fn(),
+          close: vi.fn().mockResolvedValue(undefined),
+        };
+        const toolset = new SkillToolset([mockSkill], {registry});
+
+        await toolset.close();
+
+        expect(registry.close).toHaveBeenCalledTimes(1);
+        expect(registry.close).toHaveBeenCalledWith();
+      });
+
+      it('does not resolve until the registry close settles', async () => {
+        let releaseClose: () => void = () => {};
+        const registry = {
+          getSkill: vi.fn(),
+          searchSkills: vi.fn(),
+          close: vi.fn(
+            () =>
+              new Promise<void>((resolve) => {
+                releaseClose = resolve;
+              }),
+          ),
+        };
+        const toolset = new SkillToolset([mockSkill], {registry});
+
+        let settled = false;
+        const closing = toolset.close().then(() => {
+          settled = true;
+        });
+
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(settled).toBe(false);
+
+        releaseClose();
+        await closing;
+        expect(settled).toBe(true);
+      });
+
+      it('closes cleanly when the registry has no close method', async () => {
+        const registry = {getSkill: vi.fn(), searchSkills: vi.fn()};
+        const toolset = new SkillToolset([mockSkill], {registry});
+
+        await expect(toolset.close()).resolves.toBeUndefined();
+      });
+
+      it('closes cleanly when there is no registry', async () => {
+        const toolset = new SkillToolset([mockSkill]);
+
+        await expect(toolset.close()).resolves.toBeUndefined();
+      });
+
+      it('clears the fetched-skill cache even when the registry close rejects', async () => {
+        const registry = {
+          getSkill: vi.fn().mockResolvedValue(remoteSkill),
+          searchSkills: vi.fn(),
+          close: vi.fn().mockRejectedValue(new Error('close failed')),
+        };
+        const toolset = new SkillToolset([mockSkill], {registry});
+
+        await toolset.getOrFetchSkill('remote-skill', 'inv-1');
+        expect(registry.getSkill).toHaveBeenCalledTimes(1);
+
+        await expect(toolset.close()).rejects.toThrow('close failed');
+
+        await toolset.getOrFetchSkill('remote-skill', 'inv-1');
+        expect(registry.getSkill).toHaveBeenCalledTimes(2);
+      });
+    });
+  });
+
+  describe('script output directory', () => {
+    it('creates one private temp directory and reuses it', async () => {
+      const toolset = new SkillToolset([mockSkill]);
+      const dir = await toolset.getScriptOutputDir();
+
+      try {
+        // Collision suffixing (`out_2.txt`) is only coherent if repeated calls
+        // land in the same directory.
+        expect(await toolset.getScriptOutputDir()).toBe(dir);
+        expect(path.dirname(dir)).toBe(os.tmpdir());
+        expect(dir).not.toBe(process.cwd());
+      } finally {
+        await fs.rm(dir, {recursive: true, force: true});
+      }
+    });
+
+    it('creates a configured directory that does not exist yet', async () => {
+      const parent = await fs.mkdtemp(
+        path.join(os.tmpdir(), 'skill_toolset_test_'),
+      );
+      const configuredDir = path.join(parent, 'nested', 'output');
+
+      try {
+        const toolset = new SkillToolset([mockSkill], {
+          scriptOutputDir: configuredDir,
+        });
+
+        expect(await toolset.getScriptOutputDir()).toBe(configuredDir);
+        await fs.access(configuredDir);
+      } finally {
+        await fs.rm(parent, {recursive: true, force: true});
+      }
+    });
+
+    it('resolves a relative configured directory to an absolute path', async () => {
+      // materializeFiles resolves output names against this directory, so a
+      // relative value must be pinned to an absolute path rather than left to
+      // follow the process working directory.
+      const absoluteDir = await fs.mkdtemp(
+        path.join(os.tmpdir(), 'skill_toolset_test_'),
+      );
+
+      try {
+        const toolset = new SkillToolset([mockSkill], {
+          scriptOutputDir: path.relative(process.cwd(), absoluteDir),
+        });
+
+        expect(await toolset.getScriptOutputDir()).toBe(absoluteDir);
+      } finally {
+        await fs.rm(absoluteDir, {recursive: true, force: true});
+      }
     });
   });
 });

@@ -6,16 +6,7 @@
 
 import {isCancel, select, text} from '@clack/prompts';
 import {execSync} from 'node:child_process';
-import {
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  Mock,
-  vi,
-} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 import {createAgent} from '../../src/cli/cli_create.js';
 import {
   createFolder,
@@ -25,7 +16,6 @@ import {
   saveToFile,
 } from '../../src/utils/file_utils.js';
 
-// Mock dependencies
 vi.mock('@clack/prompts', () => ({
   isCancel: vi.fn(),
   select: vi.fn(),
@@ -65,13 +55,17 @@ describe('createAgent', () => {
     language: '',
   });
 
-  beforeAll(() => {
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-  });
-
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    // getGcpProject()/getGcpRegion() read these before falling back to
+    // `gcloud config get-value`, so on a developer machine that exports them
+    // the mocked execSync is never consulted and the assertions below see the
+    // real local project/region instead of the mocked gcloud output. Clear
+    // them so the gcloud fallback is what actually gets exercised.
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', undefined);
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', undefined);
     (isCancel as unknown as Mock).mockReturnValue(false);
     (listFiles as Mock).mockResolvedValue(['file1', 'file2']);
     // `createAgent` prefers these over `gcloud config`, so a machine with
@@ -83,6 +77,7 @@ describe('createAgent', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
@@ -123,7 +118,7 @@ describe('createAgent', () => {
       );
     });
 
-    it('should set Vertex AI env vars if project/region provided', async () => {
+    it('should set enterprise-mode env vars if project/region provided', async () => {
       await createAgent({
         ...getFreshOptions(),
         forceYes: true,
@@ -137,7 +132,7 @@ describe('createAgent', () => {
       );
       expect(saveToFile).toHaveBeenCalledWith(
         expect.stringContaining('.env'),
-        expect.stringContaining('GOOGLE_GENAI_USE_VERTEXAI=1'),
+        expect.stringContaining('GOOGLE_GENAI_USE_ENTERPRISE=1'),
       );
     });
 
@@ -275,6 +270,37 @@ describe('createAgent', () => {
       );
 
       expect(saveToFile).not.toHaveBeenCalled();
+    });
+
+    it('should seed the region prompt with the --region value', async () => {
+      (select as Mock).mockResolvedValueOnce('gemini-2.5-flash'); // Model
+      (select as Mock).mockResolvedValueOnce('ts'); // Language
+      (select as Mock).mockResolvedValueOnce('vertex'); // Backend
+
+      // gcloud and the environment offer a different region, so the assertion
+      // below can only pass if the flag wins.
+      vi.stubEnv('GOOGLE_CLOUD_LOCATION', '');
+      (execSync as Mock).mockImplementation((cmd: string) => {
+        if (cmd.includes('project')) return 'gcloud-project\n';
+        if (cmd.includes('region')) return 'gcloud-region\n';
+        return '';
+      });
+
+      (text as Mock).mockResolvedValueOnce('gcloud-project'); // Project
+      (text as Mock).mockResolvedValueOnce('europe-west4'); // Region
+
+      await createAgent({...getFreshOptions(), region: 'europe-west4'});
+
+      expect(text).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Enter the Google Cloud Region',
+          initialValue: 'europe-west4',
+        }),
+      );
+      expect(execSync).not.toHaveBeenCalledWith(
+        'gcloud config get-value compute/region',
+        expect.anything(),
+      );
     });
   });
 

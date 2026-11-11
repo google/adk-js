@@ -84,9 +84,7 @@ export class RunSkillInlineScriptTool extends BaseTool {
     const inlineScriptContent = args['script_content'] as string;
     const language = args['language'] as string;
     const scriptArgs = args['args'] as
-      | string[]
-      | Record<string, string | number | boolean>
-      | undefined;
+      string[] | Record<string, string | number | boolean> | undefined;
 
     if (!inlineScriptContent) {
       return {
@@ -140,10 +138,17 @@ export class RunSkillInlineScriptTool extends BaseTool {
         },
       });
 
+      // Output file names are chosen by the executed script, so they are
+      // materialized into a dedicated output directory rather than being
+      // resolved against the host application's working directory.
+      const outputDir = await this.toolset.getScriptOutputDir();
       // Final filename could be different if there was a collision, so update the result.
-      result.outputFiles = await materializeFiles(result.outputFiles);
+      result.outputFiles = await materializeFiles(
+        result.outputFiles,
+        outputDir,
+      );
 
-      return result;
+      return {...result, outputDirectory: outputDir};
     } catch (e: unknown) {
       return {
         error: `Failed to execute inline script: ${(e as Error).message}`,

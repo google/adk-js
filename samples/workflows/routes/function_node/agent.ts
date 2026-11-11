@@ -30,7 +30,7 @@ import {
   createEvent,
   node,
   NodeContext,
-  WorkflowAgent,
+  Workflow,
   type FunctionNodeHandler,
 } from '@google/adk';
 
@@ -47,7 +47,7 @@ const myFunctionNode: FunctionNodeHandler<string, string> = (
 const myExplicitEventNode = (_ctx: NodeContext, nodeInput: string) =>
   createEvent({output: `${nodeInput} IS AWESOME!`});
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'function_node_pipeline',
   edges: [
     [

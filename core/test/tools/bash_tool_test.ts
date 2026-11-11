@@ -5,23 +5,22 @@
  */
 
 import {
-  BashTool,
   BashToolPolicy,
   Context,
   createSession,
   ExecuteBashTool,
   InvocationContext,
-  isBashTool,
   isBashToolPolicy,
   isExecuteBashTool,
   LlmAgent,
+  logger,
   PluginManager,
   ToolConfirmation,
 } from '@google/adk';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 /**
  * Commands are built from the Node binary running the tests, quoted so the
@@ -94,8 +93,6 @@ describe('ExecuteBashTool & BashToolPolicy', () => {
       expect(tool.description).toContain('Executes a command');
       expect(tool.description).toContain('any command');
       expect(isExecuteBashTool(tool)).toBe(true);
-      expect(isBashTool(tool)).toBe(true);
-      expect(BashTool).toBe(ExecuteBashTool);
     });
 
     it('initializes with custom options and policy', () => {
@@ -215,12 +212,232 @@ describe('ExecuteBashTool & BashToolPolicy', () => {
         error: `Command blocked. Permitted prefixes are: ${NODE}, npm run test`,
       });
     });
+
+    it.each([
+      'gitk',
+      'gitk --all',
+      'git-shell',
+      'git-shell -c id',
+      './git',
+      '/usr/bin/git',
+      'git/../../bin/sh',
+      'git/../../../../../../bin/sh',
+    ])(
+      'rejects prefix lookalike or path traversal %s against ["git"]',
+      async (command) => {
+        const tool = new ExecuteBashTool({
+          policy: {allowedCommandPrefixes: ['git']},
+          requireConfirmation: false,
+        });
+
+        const res = await tool.runAsync({
+          args: {command},
+          toolContext: makeContext(),
+        });
+        expect(res).toEqual({
+          error: 'Command blocked. Permitted prefixes are: git',
+        });
+      },
+    );
+
+    it('rejects subcommand lookalike "npm run test-e2e" against "npm run test"', async () => {
+      const tool = new ExecuteBashTool({
+        policy: {allowedCommandPrefixes: ['npm run test']},
+        requireConfirmation: false,
+      });
+
+      const res = await tool.runAsync({
+        args: {command: 'npm run test-e2e'},
+        toolContext: makeContext(),
+      });
+      expect(res).toEqual({
+        error: 'Command blocked. Permitted prefixes are: npm run test',
+      });
+    });
+
+    it('enforces multi-token subcommand prefixes', async () => {
+      const tool = new ExecuteBashTool({
+        policy: {allowedCommandPrefixes: ['git status']},
+        requireConfirmation: false,
+      });
+
+      const lookalikeRes = await tool.runAsync({
+        args: {command: 'git statuses'},
+        toolContext: makeContext(),
+      });
+      expect(lookalikeRes).toEqual({
+        error: 'Command blocked. Permitted prefixes are: git status',
+      });
+
+      const otherSubcommandRes = await tool.runAsync({
+        args: {command: 'git push'},
+        toolContext: makeContext(),
+      });
+      expect(otherSubcommandRes).toEqual({
+        error: 'Command blocked. Permitted prefixes are: git push'.replace(
+          'git push',
+          'git status',
+        ),
+      });
+    });
+
+    it('enforces exact path entries when configured in allowedCommandPrefixes', async () => {
+      const tool = new ExecuteBashTool({
+        policy: {
+          allowedCommandPrefixes: ['/bin/ls', '/usr/bin/unbuffer /bin/cat'],
+        },
+        requireConfirmation: true,
+      });
+
+      // Permitted commands reach the confirmation check.
+      const allowed1 = await tool.runAsync({
+        args: {command: '/bin/ls -la'},
+        toolContext: makeContext(),
+      });
+      expect(allowed1).toEqual({
+        error:
+          'This tool call requires confirmation, please approve or reject.',
+      });
+
+      const allowed2 = await tool.runAsync({
+        args: {command: '/usr/bin/unbuffer /bin/cat f'},
+        toolContext: makeContext(),
+      });
+      expect(allowed2).toEqual({
+        error:
+          'This tool call requires confirmation, please approve or reject.',
+      });
+
+      // Blocked commands are rejected before confirmation.
+      for (const blocked of ['/bin/lsof', 'ls', '/usr/bin/unbuffer sh']) {
+        const res = await tool.runAsync({
+          args: {command: blocked},
+          toolContext: makeContext(),
+        });
+        expect(res).toEqual({
+          error:
+            'Command blocked. Permitted prefixes are: /bin/ls, /usr/bin/unbuffer /bin/cat',
+        });
+      }
+    });
+
+    it('blocks everything when allowedCommandPrefixes is empty', async () => {
+      const policy = new BashToolPolicy({allowedCommandPrefixes: []});
+      const tool = new ExecuteBashTool({
+        workspace: tempDir,
+        policy,
+        requireConfirmation: false,
+      });
+      expect(tool.description).toContain(
+        'Allowed: commands matching prefixes: <none>.',
+      );
+
+      const res = await tool.runAsync({
+        args: {command: 'ls'},
+        toolContext: makeContext(),
+      });
+      expect(res).toEqual({
+        error: 'Command blocked. Permitted prefixes are: <none>',
+      });
+    });
+
+    it('ignores empty or whitespace prefix entries with a warning', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        const policy = new BashToolPolicy({
+          allowedCommandPrefixes: ['', '   '],
+        });
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'Ignoring empty allowedCommandPrefixes entry',
+          ),
+        );
+
+        const tool = new ExecuteBashTool({
+          policy,
+          requireConfirmation: false,
+        });
+        const res = await tool.runAsync({
+          args: {command: 'ls'},
+          toolContext: makeContext(),
+        });
+        expect(res).toEqual({
+          error: 'Command blocked. Permitted prefixes are: ,    ',
+        });
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('ignores unparsable prefix entries with a warning and keeps valid ones', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        const policy = new BashToolPolicy({
+          allowedCommandPrefixes: ["git commit -m 'unterminated", 'ls'],
+        });
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'Ignoring unparsable allowedCommandPrefixes entry',
+          ),
+        );
+
+        const tool = new ExecuteBashTool({
+          policy,
+          requireConfirmation: true,
+        });
+        const blockedRes = await tool.runAsync({
+          args: {command: 'git status'},
+          toolContext: makeContext(),
+        });
+        expect(blockedRes).toEqual({
+          error:
+            "Command blocked. Permitted prefixes are: git commit -m 'unterminated, ls",
+        });
+
+        const allowedRes = await tool.runAsync({
+          args: {command: 'ls -la'},
+          toolContext: makeContext(),
+        });
+        expect(allowedRes).toEqual({
+          error:
+            'This tool call requires confirmation, please approve or reject.',
+        });
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('blocks unparsable commands against a restricted policy', async () => {
+      const tool = new ExecuteBashTool({
+        policy: {allowedCommandPrefixes: ['ls']},
+        requireConfirmation: false,
+      });
+
+      const res = await tool.runAsync({
+        args: {command: "ls 'unterminated"},
+        toolContext: makeContext(),
+      });
+      expect(res).toEqual({error: 'Unable to parse command.'});
+    });
   });
 
   describeOnPosix('Allowed Prefixes', () => {
     it('runs a command matching an allowed prefix', async () => {
       const tool = new ExecuteBashTool({
         policy: {allowedCommandPrefixes: [NODE, 'npm run test']},
+        requireConfirmation: false,
+      });
+
+      const res = await tool.runAsync({
+        args: {command: `${NODE} --version`},
+        toolContext: makeContext(),
+      });
+      expect('returncode' in res).toBe(true);
+    });
+
+    it('ignores trailing padding on prefix entries', async () => {
+      const tool = new ExecuteBashTool({
+        policy: {allowedCommandPrefixes: [`${NODE} `]},
         requireConfirmation: false,
       });
 
@@ -483,6 +700,60 @@ describe('ExecuteBashTool & BashToolPolicy', () => {
 
       expect(res.error).toContain('Execution failed:');
     });
+
+    it('preserves multi-byte UTF-8 characters split across chunks', async () => {
+      const scriptPath = path.join(tempDir, 'split_utf8.js');
+      // 🚀 is 4 bytes in UTF-8: [0xf0, 0x9f, 0x9a, 0x80]. Write two halves in
+      // separate ticks so they arrive in separate 'data' chunks.
+      await fs.writeFile(
+        scriptPath,
+        `const buf = Buffer.from('🚀', 'utf8');\n` +
+          `process.stdout.write(buf.subarray(0, 2));\n` +
+          `setTimeout(() => process.stdout.write(buf.subarray(2)), 30);\n`,
+      );
+
+      const tool = new ExecuteBashTool({
+        workspace: tempDir,
+        requireConfirmation: false,
+      });
+
+      const res = (await tool.runAsync({
+        args: {command: `${NODE} ${JSON.stringify(scriptPath)}`},
+        toolContext: makeContext(),
+      })) as {stdout: string; returncode: number};
+
+      expect(res.returncode).toBe(0);
+      expect(res.stdout).toBe('🚀');
+    });
+
+    it('caps streaming output at 1 MiB and kills the process group', async () => {
+      const scriptPath = path.join(tempDir, 'flood.js');
+      await fs.writeFile(
+        scriptPath,
+        `const chunk = Buffer.alloc(65536, 'a');\n` +
+          `function write() {\n` +
+          `  while (process.stdout.write(chunk)) {}\n` +
+          `  process.stdout.once('drain', write);\n` +
+          `}\n` +
+          `write();\n`,
+      );
+
+      const tool = new ExecuteBashTool({
+        workspace: tempDir,
+        policy: {timeoutSeconds: 30},
+        requireConfirmation: false,
+      });
+
+      const res = (await tool.runAsync({
+        args: {command: `${NODE} ${JSON.stringify(scriptPath)}`},
+        toolContext: makeContext(),
+      })) as {error?: string; stdout?: string};
+
+      expect(res.error).toBe(
+        'Command output exceeded maximum size of 1048576 bytes.',
+      );
+      expect(Buffer.byteLength(res.stdout ?? '', 'utf8')).toBe(1024 * 1024);
+    });
   });
 
   describeOnPosix('Timeouts', () => {
@@ -553,21 +824,6 @@ describe('ExecuteBashTool & BashToolPolicy', () => {
 
       expect(res.error).toBeUndefined();
       expect(res.returncode).toBeNull();
-    });
-  });
-
-  describe('Telemetry Hook', () => {
-    it('detects tool error in response', () => {
-      const tool = new ExecuteBashTool();
-      expect(tool._detectErrorInResponse({error: 'Failed'})).toBe('TOOL_ERROR');
-      expect(
-        tool._detectErrorInResponse({
-          stdout: 'ok',
-          stderr: '<no stderr captured>',
-          returncode: 0,
-        }),
-      ).toBeUndefined();
-      expect(tool._detectErrorInResponse(null)).toBeUndefined();
     });
   });
 });

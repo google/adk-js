@@ -85,6 +85,32 @@ describe('LlmSummarizer', () => {
     expect(compactedEvent.id).toBeDefined();
   });
 
+  it('joins the text parts of a response and skips thoughts', async () => {
+    const mockLlm = new MockLlm([
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {text: 'Planning the summary.', thought: true},
+            {text: 'The user said '},
+            {text: 'hello.'},
+          ],
+        },
+      },
+    ]);
+    const summarizer = new LlmSummarizer({llm: mockLlm});
+
+    const compactedEvent = await summarizer.summarize([
+      createEvent({
+        author: 'user',
+        timestamp: 1000,
+        content: {role: 'user', parts: [{text: 'Hello'}]},
+      }),
+    ]);
+
+    expect(compactedEvent.compactedContent).toBe('The user said hello.');
+  });
+
   it('should throw an error if the LLM fails to return valid summary', async () => {
     const mockLlm = new MockLlm([
       {

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Client} from '@google-cloud/vertexai/build/src/genai/client.js';
+import {Client} from '@google-cloud/vertexai';
 import {Sessions} from '@google-cloud/vertexai/build/src/genai/sessions.js';
 import {
   EventActions as ApiEventActions,
@@ -48,6 +48,7 @@ import {createSession, Session} from './session.js';
 const DEFAULT_MAX_ATTEMPTS = 30;
 const GRPC_NOT_FOUND = 5;
 const HTTP_NOT_FOUND = 404;
+const HTTP_BAD_REQUEST = 400;
 
 /**
  * `eventMetadata.customMetadata` key carrying the workflow fields of an
@@ -82,8 +83,30 @@ export function quoteFilterLiteral(value: string): string {
   return `"${escaped}"`;
 }
 
+/**
+ * Copies an API-returned state map into a null-prototype map.
+ *
+ * Copying onto a null-prototype target also keeps an own `__proto__` key as an
+ * own data property instead of invoking the inherited `__proto__` setter.
+ *
+ * Shallow, like `trimTempState`.
+ */
+function toStateMap(
+  state: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  return Object.assign(Object.create(null), state);
+}
+
 export interface VertexAiSessionServiceOptions {
+  /**
+   * Google Cloud project ID. Defaults to `process.env.GOOGLE_CLOUD_PROJECT`
+   * unless `expressModeApiKey` is passed.
+   */
   projectId?: string;
+  /**
+   * Google Cloud location. Defaults to `process.env.GOOGLE_CLOUD_LOCATION`
+   * unless `expressModeApiKey` is passed.
+   */
   location?: string;
   agentEngineId?: string;
   expressModeApiKey?: string;
@@ -104,6 +127,11 @@ export interface VertexAiCreateSessionRequest extends CreateSessionRequest {
   expireTime?: string;
 }
 
+type EventsPage = {
+  sessionEvents?: VertexAiSessionEvent[];
+  nextPageToken?: string;
+};
+
 /**
  * A session service implementation that integrates with Vertex AI Agent Engine Sessions.
  */
@@ -118,13 +146,23 @@ export class VertexAiSessionService extends BaseSessionService {
   constructor(options: VertexAiSessionServiceOptions) {
     super();
     this.agentEngineId = options.agentEngineId;
-    this.projectId = options.projectId;
-    this.location = options.location;
+    // Only the options the caller passed decide express mode. Resolving the
+    // environment first would make an explicit `expressModeApiKey` clash with
+    // an ambient GOOGLE_CLOUD_PROJECT.
     this.expressModeApiKey = getExpressModeApiKey(
-      this.projectId,
-      this.location,
+      options.projectId,
+      options.location,
       options.expressModeApiKey,
     );
+    // A key the caller passed must never be dropped in favor of the
+    // environment, so the fallback only applies when no key was passed.
+    const useEnvironment = !options.expressModeApiKey;
+    this.projectId =
+      options.projectId ||
+      (useEnvironment ? process.env['GOOGLE_CLOUD_PROJECT'] : undefined);
+    this.location =
+      options.location ||
+      (useEnvironment ? process.env['GOOGLE_CLOUD_LOCATION'] : undefined);
 
     // sessions is primarily for testing to inject a mock client.
     if (options.sessions) {
@@ -223,7 +261,7 @@ export class VertexAiSessionService extends BaseSessionService {
       id,
       appName,
       userId,
-      state: getSessionResponse.sessionState,
+      state: toStateMap(getSessionResponse.sessionState),
       events: [],
       lastUpdateTime: getSessionResponse.updateTime
         ? Date.parse(getSessionResponse.updateTime)
@@ -242,14 +280,15 @@ export class VertexAiSessionService extends BaseSessionService {
 
     try {
       let getSessionResponse: VertexAiSession | undefined;
-      let eventsIterator: VertexAiSessionEvent[] = [];
+      const eventsIterator: VertexAiSessionEvent[] = [];
+      const listConfig: Record<string, string> = {};
+      let pageToken: string | undefined;
 
       if (config && config.numRecentEvents === 0) {
         getSessionResponse = (await this.sessions.get({
           name: sessionResourceName,
         })) as VertexAiSession;
       } else {
-        const listConfig: Record<string, string> = {};
         if (config && config.afterTimestamp) {
           listConfig.filter = `timestamp>="${new Date(
             config.afterTimestamp,
@@ -264,9 +303,9 @@ export class VertexAiSessionService extends BaseSessionService {
           }),
         ]);
         getSessionResponse = sessionRes as VertexAiSession;
-        eventsIterator =
-          (eventsRes as {sessionEvents?: VertexAiSessionEvent[]})
-            .sessionEvents || [];
+        const firstPage = eventsRes as EventsPage;
+        eventsIterator.push(...(firstPage.sessionEvents || []));
+        pageToken = firstPage.nextPageToken;
       }
 
       const sessionObj = getSessionResponse!;
@@ -277,23 +316,39 @@ export class VertexAiSessionService extends BaseSessionService {
         );
       }
 
+      // The Agent Engine events.list API returns events oldest-first and does
+      // not support reverse ordering, so all pages must be fetched to reach the
+      // newest events at the end of the stream.
+      while (pageToken) {
+        const eventsRes = (await this.sessions.events.listInternal({
+          name: sessionResourceName,
+          config: {
+            ...listConfig,
+            pageToken,
+          },
+        })) as EventsPage;
+        eventsIterator.push(...(eventsRes.sessionEvents || []));
+        pageToken = eventsRes.nextPageToken;
+      }
+
       const session = createSession({
         id: sessionId,
         appName,
         userId,
-        state: sessionObj.sessionState,
+        state: toStateMap(sessionObj.sessionState),
         events: [],
         lastUpdateTime: sessionObj.updateTime
           ? Date.parse(sessionObj.updateTime)
           : Date.now(),
       });
 
-      for (const event of eventsIterator) {
-        session.events.push(_fromApiEvent(event));
-      }
+      const recentEvents =
+        config && config.numRecentEvents
+          ? eventsIterator.slice(-config.numRecentEvents)
+          : eventsIterator;
 
-      if (config && config.numRecentEvents) {
-        session.events = session.events.slice(-config.numRecentEvents);
+      for (const event of recentEvents) {
+        session.events.push(_fromApiEvent(event));
       }
 
       return session;
@@ -346,7 +401,7 @@ export class VertexAiSessionService extends BaseSessionService {
             id,
             appName,
             userId: sessionObj.userId,
-            state: sessionObj.sessionState,
+            state: toStateMap(sessionObj.sessionState),
             events: [],
             lastUpdateTime: sessionObj.updateTime
               ? new Date(sessionObj.updateTime).getTime()
@@ -456,11 +511,19 @@ export class VertexAiSessionService extends BaseSessionService {
     }
 
     const config = partialCopy<AppendAgentEngineSessionEventConfig>(event, [
-      'content',
       'errorCode',
       'errorMessage',
     ]);
     config.actions = toApiActions(event.actions);
+
+    // Strip Part fields the Sessions API rejects (e.g. `partMetadata`) from
+    // both the wire content and the `rawEvent` blob it is stored under, so the
+    // append is not rejected with 400 INVALID_ARGUMENT.
+    const content = dropUnsupportedPartFields(event.content);
+    // @google-cloud/vertexai types Content with its own, older @google/genai,
+    // whose enums lack newer members such as ToolType.TOOL_TYPE_UNSPECIFIED.
+    // The wire format is the same, so only the type needs bridging.
+    config.content = content as AppendAgentEngineSessionEventConfig['content'];
 
     config.eventMetadata = {
       ...partialCopy<EventMetadata>(event, [
@@ -475,7 +538,7 @@ export class VertexAiSessionService extends BaseSessionService {
         Object.keys(customMetadata).length > 0 ? customMetadata : undefined,
     };
 
-    config.rawEvent = JSON.parse(JSON.stringify(event)) as Record<
+    config.rawEvent = JSON.parse(JSON.stringify({...event, content})) as Record<
       string,
       unknown
     >;
@@ -491,6 +554,12 @@ export class VertexAiSessionService extends BaseSessionService {
     try {
       await this.sessions.events.append(params);
     } catch (error) {
+      // Only a rejected payload (400) is safe to retry without `rawEvent`. Any
+      // other failure may already have persisted the event, so re-appending
+      // would duplicate it; let it propagate.
+      if (!isInvalidArgumentError(error)) {
+        throw error;
+      }
       logger.warn(
         'Failed to append event with rawEvent; retrying without it. The event ' +
           'will be reconstructed from its structured fields and ' +
@@ -498,13 +567,7 @@ export class VertexAiSessionService extends BaseSessionService {
         error,
       );
       delete config.rawEvent;
-      await this.sessions.events.append({
-        name: `reasoningEngines/${reasoningEngineId}/sessions/${session.id}`,
-        author: event.author || 'user',
-        invocationId: event.invocationId || `inv-${Date.now()}`,
-        timestamp: new Date(event.timestamp).toISOString(),
-        config,
-      });
+      await this.sessions.events.append(params);
     }
 
     return event;
@@ -586,6 +649,42 @@ function toApiActions(
   } as ApiEventActions;
 }
 
+/**
+ * Returns a copy of `content` without Part fields the Agent Engine Sessions
+ * API rejects, passing `undefined` through unchanged.
+ *
+ * `partMetadata` is a Gemini Developer API-only field; the Sessions API fails
+ * appendEvent with 400 INVALID_ARGUMENT ("Unknown name \"part_metadata\"").
+ * The input is never mutated, so the caller's event keeps its metadata.
+ */
+function dropUnsupportedPartFields(
+  content: Content | undefined,
+): Content | undefined {
+  if (!content?.parts) {
+    return content;
+  }
+  return {
+    ...content,
+    parts: content.parts.map((part) => {
+      const copy = {...part};
+      delete copy.partMetadata;
+      return copy;
+    }),
+  };
+}
+
+/**
+ * True when the service rejected the request payload itself, which is what an
+ * API that does not know `rawEvent` returns. Any other failure must propagate:
+ * the event may already be persisted, so retrying would append it twice.
+ *
+ * Matched structurally on the `ApiError`'s `status`, for the reason given in
+ * getSession's catch.
+ */
+function isInvalidArgumentError(error: unknown): boolean {
+  return (error as {status?: number} | null)?.status === HTTP_BAD_REQUEST;
+}
+
 interface ExtendedEventActions extends EventActions {
   compaction?: {
     startTime: number;
@@ -619,8 +718,7 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
   const eventMetadata = apiEventObj.eventMetadata || {};
 
   let customMetadata = eventMetadata.customMetadata as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   let compactionData: {
     startTime: number;
     endTime: number;
@@ -655,7 +753,9 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
   }
 
   const eventActions: ExtendedEventActions = {
-    stateDelta: (actions['stateDelta'] as {[key: string]: unknown}) || {},
+    stateDelta: toStateMap(
+      actions['stateDelta'] as Record<string, unknown> | undefined,
+    ),
     artifactDelta: (actions['artifactDelta'] as {[key: string]: number}) || {},
     requestedAuthConfigs:
       (actions.requestedAuthConfigs as Record<string, AuthConfig>) || {},
@@ -664,7 +764,11 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
         'requestedToolConfirmations'
       ] as Record<string, ToolConfirmation>) || {},
     skipSummarization: actions['skipSummarization'] as boolean | undefined,
-    transferToAgent: actions['transferAgent'] as string | undefined,
+    // Earlier adk-js versions copied `event.actions` onto the request
+    // verbatim, so sessions they wrote store ADK's own `transferToAgent` key.
+    transferToAgent: (actions['transferAgent'] ??
+      (actions as Record<string, unknown>)['transferToAgent']) as
+      string | undefined,
     escalate: actions['escalate'] as boolean | undefined,
     compaction: compactionData || undefined,
   };
@@ -686,11 +790,9 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
     branch: eventMetadata['branch'] as string | undefined,
     customMetadata,
     longRunningToolIds: eventMetadata['longRunningToolIds'] as
-      | string[]
-      | undefined,
+      string[] | undefined,
     groundingMetadata: eventMetadata['groundingMetadata'] as
-      | GroundingMetadata
-      | undefined,
+      GroundingMetadata | undefined,
     usageMetadata:
       usageMetadataData as unknown as GenerateContentResponseUsageMetadata,
   };

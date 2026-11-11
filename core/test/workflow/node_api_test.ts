@@ -14,10 +14,9 @@ import {node, WorkflowNode} from '../../src/workflow/node.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
 import {FunctionNode} from '../../src/workflow/nodes/function_node.js';
 import {JoinNode} from '../../src/workflow/nodes/join_node.js';
-import {LLMAgentWrapper} from '../../src/workflow/nodes/llm_agent_wrapper.js';
 import {ToolNode} from '../../src/workflow/nodes/tool_node.js';
 import {Workflow} from '../../src/workflow/workflow.js';
-import {createIc} from './test_helpers.js';
+import {createIc, replyAgent} from './test_helpers.js';
 
 async function runNode(
   n: BaseNode,
@@ -146,11 +145,14 @@ describe('Phase 3 — node() factory', () => {
     expect(node(existing)).toBe(existing);
   });
 
-  it('wraps an agent into an LLMAgentWrapper', () => {
+  it('returns an agent unchanged, because an agent is a node', () => {
+    const agent = replyAgent('a');
+    expect(node(agent)).toBe(agent);
+  });
+
+  it('rejects a value that merely looks like an agent', () => {
     const fakeAgent = {name: 'a', runAsync: async function* () {}};
-    const n = node(fakeAgent as unknown as never);
-    expect(n).toBeInstanceOf(LLMAgentWrapper);
-    expect(n.name).toBe('a');
+    expect(() => node(fakeAgent as unknown as never)).toThrow(/unsupported/);
   });
 });
 

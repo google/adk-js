@@ -176,6 +176,23 @@ describe('AnchoredContextCompactor', () => {
     expect(context.session.events[2].id).toBe('4');
   });
 
+  it('counts the initial prompt tokens of a resumed generation', async () => {
+    const compactor = new AnchoredContextCompactor({
+      tokenThreshold: 10,
+      eventRetentionSize: 2,
+      summarizer: new MockSummarizer(),
+    });
+    const resumed = createMockEvent('3');
+    resumed.usageMetadata = {promptTokenCount: 9, initialPromptTokenCount: 3};
+    const context = createMockInvocationContext([
+      createMockEvent('1', 2),
+      createMockEvent('2', 2),
+      resumed,
+    ]);
+
+    expect(await compactor.shouldCompact(context)).toBe(false);
+  });
+
   it('should compact if token threshold exceeded (subsequent compaction - merges into existing scratchpad)', async () => {
     const compactor = new AnchoredContextCompactor({
       tokenThreshold: 10,
@@ -209,6 +226,60 @@ describe('AnchoredContextCompactor', () => {
     );
     expect(context.session.events[1].id).toBe('3');
     expect(context.session.events[2].id).toBe('4');
+  });
+
+  it('should preserve shared history during scoped compaction', async () => {
+    const compactor = new AnchoredContextCompactor({
+      tokenThreshold: 0,
+      eventRetentionSize: 1,
+      summarizer: new MockSummarizer(),
+    });
+
+    const sharedScratchpad = createMockScratchpadEvent(
+      'shared-scratchpad',
+      5,
+      'shared summary',
+    );
+    sharedScratchpad.timestamp = 1;
+    sharedScratchpad.startTime = 0;
+    sharedScratchpad.endTime = 1;
+
+    const sharedEvent = createMockEvent('shared', 5);
+    sharedEvent.timestamp = 2;
+
+    const currentEvent = createMockEvent('current', 5);
+    currentEvent.timestamp = 3;
+    currentEvent.isolationScope = 'current';
+
+    const retainedCurrentEvent = createMockEvent('current-retained', 5);
+    retainedCurrentEvent.timestamp = 4;
+    retainedCurrentEvent.isolationScope = 'current';
+
+    const peerEvent = createMockEvent('peer', 5);
+    peerEvent.timestamp = 5;
+    peerEvent.isolationScope = 'peer';
+
+    const context = createMockInvocationContext([
+      sharedScratchpad,
+      sharedEvent,
+      currentEvent,
+      retainedCurrentEvent,
+      peerEvent,
+    ]);
+    context.isolationScope = 'current';
+
+    await compactor.compact(context);
+
+    expect(context.session.events).toContain(sharedScratchpad);
+    expect(context.session.events).toContain(sharedEvent);
+    expect(context.session.events).not.toContain(currentEvent);
+    expect(context.session.events).toContain(retainedCurrentEvent);
+    expect(context.session.events).toContain(peerEvent);
+
+    const scopedScratchpad = context.session.events.find(
+      (event) => event.id === 'mock-id',
+    );
+    expect(scopedScratchpad?.isolationScope).toBe('current');
   });
 
   it('should not split tool call and responses', async () => {

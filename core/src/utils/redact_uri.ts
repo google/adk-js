@@ -13,22 +13,40 @@ const SECRET_QUERY_PARAMS = new Set([
   'passwd',
   'pwd',
   'sslpassword',
+  // OAuth2 callback/authorization-response URIs carry their own secrets as
+  // query parameters rather than in userinfo: an authorization `code` is a
+  // single-use, bearer-equivalent credential, and a token response echoed
+  // back via URI can carry `access_token`/`id_token`/`refresh_token`.
+  // Only the query string is scanned: in the implicit and hybrid flows those
+  // token parameters arrive in the fragment, which is left untouched.
+  // `client_secret` is not meant to travel in a URL at all, but is included
+  // here in case a misconfigured flow puts it there anyway.
+  'code',
+  'access_token',
+  'id_token',
+  'refresh_token',
+  'client_secret',
+  'code_verifier',
 ]);
 
 /**
- * Redacts the credentials from a connection URI so the URI can be safely
- * included in error messages and logs.
+ * Redacts credentials from a URI so it can be safely included in error
+ * messages and logs.
  *
  * A database or session-service connection URI such as
  * `postgres://user:password@host:5432/db` embeds the password in its userinfo
- * component. Including such a URI verbatim in a thrown Error or log entry leaks
- * the credential to wherever those are collected (log files, error-tracking
+ * component. An OAuth2 callback/authorization-response URI instead carries
+ * its secret (an authorization code, or an echoed token) as a query
+ * parameter, for example `https://app/callback?code=SECRET&state=xyz`.
+ * Including either verbatim in a thrown Error or log entry leaks the
+ * credential to wherever those are collected (log files, error-tracking
  * services, stdout captured by an orchestrator), which is frequently a
- * different trust boundary from whoever provisioned the connection string.
+ * different trust boundary from whoever holds the credential.
  *
- * The same credential can instead arrive as a query parameter, for example
- * `postgres://user@host/db?password=secret`, which several drivers accept and
- * which reaches the same error paths. Both forms are masked.
+ * The same connection-string credential can also arrive as a query
+ * parameter rather than userinfo, for example
+ * `postgres://user@host/db?password=secret`, which several drivers accept
+ * and which reaches the same error paths. All forms above are masked.
  *
  * The rest of the URI is kept intact for debugging, mirroring the semantics of
  * Go's `net/url.URL.Redacted()`. A URI carrying no credential is returned

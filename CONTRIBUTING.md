@@ -53,6 +53,57 @@ To maintain high code quality and consistency:
 The project uses `husky` and `lint-staged` to automatically lint and format
 your changes before each commit.
 
+### Commit notation
+
+Pull requests are squash merged, so the PR title becomes the commit subject on
+`main`. `release-please` reads those subjects to pick the next version and
+write the changelog, so the PR title must follow
+[Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+<type>(<optional scope>): <description>
+```
+
+- **Types**: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`,
+  `revert`, `style`, `test`. `feat` cuts a minor release, `fix` and `perf` a
+  patch, and the rest appear in the changelog only.
+- **Breaking changes**: add `!` before the colon, as in `feat(core)!: ...`, or
+  add a `BREAKING CHANGE: <what broke>` footer to the commit body.
+- **Scope** is optional and free-form, but lowercase — `dev`, `workflow`,
+  `sessions`. It groups the changelog, so `fix(Dev)` and `fix(dev)` would split
+  into two sections.
+- Keep the subject to 100 characters, and leave off the trailing period.
+
+Examples:
+
+```
+fix(dev): stop dropping piped stdin lines
+feat(core): implement Runner.runLive
+refactor(workflow)!: collapse LLMAgentWrapper into LlmAgent
+```
+
+The `commit-convention` CI check enforces this on every pull request. To check
+a subject before you open one:
+
+```bash
+node scripts/check_commit_message.mjs "fix(dev): stop dropping piped stdin lines"
+```
+
+### Dependency declarations
+
+A workspace declares exactly what its own `src/` imports. `package.json` cannot
+hold comments, so the two deliberate exceptions are recorded here:
+
+1. **The five `@mikro-orm` dialect drivers in `dev/package.json`.** Core loads
+   them with a dynamic `import()` (`core/src/sessions/db/operations.ts`) and
+   declares them only as `peerDependencies`, and `adk deploy` generates a
+   Dockerfile that installs just `@google/adk-devtools` — so that package has to
+   ship them. Enforced by
+   `tests/integration/lazy_load_db_drivers/driver_manifest_test.ts`.
+1. **`@google/adk` in `integrations/package.json`.** Workspace hoisting means an
+   integration could import it undeclared and still resolve locally and in CI,
+   breaking only consumers of the published tarball.
+
 ### Sign our Contributor License Agreement
 
 Contributions to this project must be accompanied by a

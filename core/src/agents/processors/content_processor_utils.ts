@@ -3,7 +3,7 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {Content, createUserContent} from '@google/genai';
+import {Content, createUserContent, Part} from '@google/genai';
 import {cloneDeep} from 'lodash-es';
 
 import {
@@ -18,11 +18,16 @@ import {
 } from '../../events/event.js';
 import {isSegmentPrefix} from '../../utils/branch_trie.js';
 
+import {isEventVisibleInIsolationScope} from '../../context/compaction_utils.js';
 import {
   AF_FUNCTION_CALL_ID_PREFIX,
   REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
   REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+  REQUEST_INPUT_FUNCTION_CALL_NAME,
 } from '../functions.js';
+
+/** Returned by {@link safeStringify} when a value defeats every conversion. */
+const UNSTRINGIFIABLE_VALUE = '<unstringifiable value>';
 
 /**
  * Removes the client-generated function call IDs from a given content object.
@@ -49,6 +54,8 @@ export function removeClientFunctionCallId(content: Content): void {
  * @param agentName: The name of the agent.
  * @param currentBranch: The current branch of the agent.
  * @param currentIsolationScope: The isolation scope of the current node, if any.
+ * @param preserveFunctionCallIds: Whether to preserve client-generated
+ *     `adk-*` function call and response IDs instead of stripping them.
  *
  * @returns A list of processed contents.
  */
@@ -57,48 +64,33 @@ export function getContents(
   agentName: string,
   currentBranch?: string,
   currentIsolationScope?: string,
+  preserveFunctionCallIds = false,
 ): Content[] {
   const filteredEvents: Event[] = [];
 
   for (const event of events) {
+    if (!isEventVisibleInIsolationScope(event, currentIsolationScope)) {
+      continue;
+    }
     if (isCompactedEvent(event)) {
       filteredEvents.push(convertCompactedEvent(event));
       continue;
     }
 
-    // Skip events without content, or generated neither by user nor by model.
-    // E.g. events purely for mutating session states.
-    if (!event.content?.role || event.content.parts?.[0]?.text === '') {
-      continue;
-    }
-
-    // Skip events not in the current branch.
-    // simplicity: direct segment prefix check avoids per-invocation Trie allocations; upgrade to Trie index if unique branches > 100
     if (
-      currentBranch &&
-      event.branch &&
-      !isSegmentPrefix(currentBranch, event.branch)
+      !shouldIncludeEventInContext(event, currentBranch, currentIsolationScope)
     ) {
       continue;
     }
 
-    if (isOutsideIsolationScope(event, currentIsolationScope)) {
-      continue;
+    if (isEventFromAnotherAgent(agentName, event)) {
+      const converted = convertForeignEvent(event);
+      if (converted) {
+        filteredEvents.push(converted);
+      }
+    } else {
+      filteredEvents.push(event);
     }
-
-    if (isAuthEvent(event)) {
-      continue;
-    }
-
-    if (isToolConfirmationEvent(event)) {
-      continue;
-    }
-
-    filteredEvents.push(
-      isEventFromAnotherAgent(agentName, event)
-        ? convertForeignEvent(event)
-        : event,
-    );
   }
 
   let resultEvents = rearrangeEventsForLatestFunctionResponse(filteredEvents);
@@ -107,10 +99,71 @@ export function getContents(
   const contents = [];
   for (const event of resultEvents) {
     const content = cloneDeep(event.content!);
-    removeClientFunctionCallId(content);
+    if (!preserveFunctionCallIds) {
+      removeClientFunctionCallId(content);
+    }
     contents.push(content);
   }
   return contents;
+}
+
+/**
+ * Whether an event may appear in an LLM request at all: it carries content,
+ * belongs to the current branch and isolation scope, and is not an internal
+ * auth/confirmation event.
+ *
+ * Shared by {@link getContents} and {@link getCurrentTurnContents} so the scan
+ * for where a turn starts cannot settle on an event the build then drops —
+ * which yields empty contents. Mirrors Python's
+ * `_should_include_event_in_context`, which its equivalent scan also applies.
+ */
+function shouldIncludeEventInContext(
+  event: Event,
+  currentBranch?: string,
+  currentIsolationScope?: string,
+): boolean {
+  if (!event.content?.role || event.content.parts?.[0]?.text === '') {
+    return false;
+  }
+  if (
+    currentBranch &&
+    event.branch &&
+    !isSegmentPrefix(currentBranch, event.branch)
+  ) {
+    return false;
+  }
+  if (!isEventVisibleInIsolationScope(event, currentIsolationScope)) {
+    return false;
+  }
+  return (
+    !isAuthEvent(event) &&
+    !isToolConfirmationEvent(event) &&
+    !isRequestInputEvent(event)
+  );
+}
+
+/**
+ * Whether the event is a workflow human-input interrupt or its reply.
+ *
+ * Like the auth and tool-confirmation interrupts alongside it, this exchange is
+ * between the framework and the client, not something the model asked for. An
+ * agent that never issued the call must not be shown its reply: the reply would
+ * arrive as a function response with no matching call in view, which the
+ * rearrange step rejects outright.
+ */
+function isRequestInputEvent(event: Event): boolean {
+  if (!event.content?.parts) {
+    return false;
+  }
+  for (const part of event.content.parts) {
+    if (
+      part.functionCall?.name === REQUEST_INPUT_FUNCTION_CALL_NAME ||
+      part.functionResponse?.name === REQUEST_INPUT_FUNCTION_CALL_NAME
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -136,24 +189,64 @@ export function getCurrentTurnContents(
   agentName: string,
   currentBranch?: string,
   currentIsolationScope?: string,
+  preserveFunctionCallIds = false,
 ): Content[] {
   // Find the latest event that starts the current turn and process from there.
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
-    if (isOutsideIsolationScope(event, currentIsolationScope)) {
+    if (
+      !shouldIncludeEventInContext(event, currentBranch, currentIsolationScope)
+    ) {
       continue;
     }
-    if (event.author === 'user' || isEventFromAnotherAgent(agentName, event)) {
+    if (
+      event.author === 'user' ||
+      (isEventFromAnotherAgent(agentName, event) &&
+        event.content!.parts?.some(isVisibleForeignPart))
+    ) {
       return getContents(
-        events.slice(i),
+        events.slice(turnStart(events, i)),
         agentName,
         currentBranch,
         currentIsolationScope,
+        preserveFunctionCallIds,
       );
     }
   }
 
   return [];
+}
+
+/**
+ * Widens the turn window back over a function call the turn answers.
+ *
+ * A tool that paused for confirmation is called in one turn and answered in the
+ * next, so the response falls inside the turn while the call that earned it
+ * sits before it. Left split, the model is shown a result for a call it cannot
+ * see — it re-issues the call, and the confirmation never resolves.
+ */
+function turnStart(events: Event[], anchor: number): number {
+  const answered = new Set<string>();
+  for (const event of events.slice(anchor)) {
+    for (const part of event.content?.parts ?? []) {
+      if (part.functionResponse?.id) {
+        answered.add(part.functionResponse.id);
+      }
+    }
+  }
+  if (answered.size === 0) {
+    return anchor;
+  }
+  let start = anchor;
+  for (let i = anchor - 1; i >= 0; i--) {
+    const answersACall = (events[i].content?.parts ?? []).some((p) =>
+      p.functionCall?.id ? answered.has(p.functionCall.id) : false,
+    );
+    if (answersACall) {
+      start = i;
+    }
+  }
+  return start;
 }
 
 /**
@@ -164,16 +257,6 @@ export function getCurrentTurnContents(
  * shared history and visible everywhere. So an isolated node sees the ambient
  * conversation plus its own turns, while its peers never see those turns.
  */
-function isOutsideIsolationScope(
-  event: Event,
-  currentIsolationScope?: string,
-): boolean {
-  return (
-    event.isolationScope !== undefined &&
-    event.isolationScope !== currentIsolationScope
-  );
-}
-
 /**
  * Whether the event is an auth event.
  *
@@ -226,6 +309,21 @@ function isEventFromAnotherAgent(agentName: string, event: Event): boolean {
 }
 
 /**
+ * Whether a part from another agent's event produces visible context.
+ *
+ * Thought parts and empty-text parts (such as trailing `{text: '',
+ * thoughtSignature}` chunks from streamed responses) are excluded unless they
+ * carry a `functionCall` or `functionResponse`, which are summarized as plain
+ * text without thought metadata.
+ */
+function isVisibleForeignPart(part: Part): boolean {
+  if (part.functionCall || part.functionResponse) {
+    return true;
+  }
+  return !part.thought && part.text !== '';
+}
+
+/**
  * Formats an event authored by another agent to a user-content event.
  *
  * This is to provide another agent's output as context to the current agent,
@@ -234,9 +332,10 @@ function isEventFromAnotherAgent(agentName: string, event: Event): boolean {
  *
  * @param event The event to convert.
  *
- * @returns The converted event.
+ * @returns The converted event, or `undefined` if no parts remain after
+ *     excluding invisible parts.
  */
-function convertForeignEvent(event: Event): Event {
+function convertForeignEvent(event: Event): Event | undefined {
   if (!event.content?.parts?.length) {
     return event;
   }
@@ -251,9 +350,14 @@ function convertForeignEvent(event: Event): Event {
   };
 
   for (const part of event.content.parts) {
-    // Exclude thoughts from the context.
+    // Exclude thoughts and empty-text signature parts from the context, except
+    // function calls and responses which are summarized as plain text without
+    // thought metadata.
     // TODO - b/425992518: filtring should be configurable.
-    if (part.text && !part.thought) {
+    if (!isVisibleForeignPart(part)) {
+      continue;
+    }
+    if (part.text) {
       content.parts?.push({
         text: `[${event.author}] said: ${part.text}`,
       });
@@ -270,8 +374,19 @@ function convertForeignEvent(event: Event): Event {
         )}`,
       });
     } else {
-      content.parts?.push(cloneDeep(part));
+      const {
+        thought: _thought,
+        thoughtSignature: _thoughtSignature,
+        ...rest
+      } = part;
+      content.parts?.push(cloneDeep(rest));
     }
+  }
+
+  // Only the "For context:" preamble is present when all parts were filtered out.
+  const preambleOnly = content.parts!.length === 1;
+  if (preambleOnly) {
+    return undefined;
   }
 
   return createEvent({
@@ -547,16 +662,29 @@ function rearrangeEventsForAsyncFunctionResponsesInHistory(
 }
 
 /**
- * Safely stringifies an object, handling circular references.
+ * Safely stringifies a value for inclusion in LLM-facing text.
+ *
+ * Always returns a string and never throws. `JSON.stringify` is typed as
+ * returning `string` but yields `undefined` when `toJSON` yields nothing, and
+ * it throws on a cycle or a BigInt. `String` throws on a null-prototype object
+ * or a throwing `toString`.
  */
 function safeStringify(obj: unknown): string {
   if (typeof obj === 'string') {
     return obj;
   }
   try {
-    return JSON.stringify(obj);
-  } catch (_e: unknown) {
+    const json = JSON.stringify(obj);
+    if (typeof json === 'string') {
+      return json;
+    }
+  } catch {
+    // Falls through to `String`, which renders a cycle as `[object Object]`.
+  }
+  try {
     return String(obj);
+  } catch {
+    return UNSTRINGIFIABLE_VALUE;
   }
 }
 

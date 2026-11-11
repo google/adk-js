@@ -4,15 +4,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {
+import type {
   FilterQuery,
-  LockMode,
-  Options as MikroDBOptions,
-  MikroORM,
+  LockMode as LockModeEnum,
+  MikroORM as MikroORMClass,
 } from '@mikro-orm/core';
+import type {MikroORMOptions as MikroDBOptions} from './db/operations.js';
 
 import {Event} from '../events/event.js';
-import {randomUUID} from '../utils/env_aware_utils.js';
+import {newId} from '../utils/id_provider.js';
+import {logger} from '../utils/logger.js';
 import {
   AppendEventRequest,
   BaseSessionService,
@@ -23,21 +24,85 @@ import {
   ListSessionsResponse,
   mergeStates,
   trimTempDeltaState,
+  upsertSessionEvent,
 } from './base_session_service.js';
-import {
-  ensureDatabaseCreated,
-  getConnectionOptionsFromUri,
-  validateDatabaseSchemaVersion,
-} from './db/operations.js';
-import {
-  ENTITIES,
-  StorageAppState,
-  StorageEvent,
-  StorageSession,
-  StorageUserState,
-} from './db/schema.js';
 import {createSession, Session} from './session.js';
+import {StaleSessionError} from './stale_session_error.js';
 import {State} from './state.js';
+
+type SchemaModule = typeof import('./db/schema.js');
+type OperationsModule = typeof import('./db/operations.js');
+type StorageEventEntity = InstanceType<SchemaModule['StorageEvent']>;
+type StorageSessionEntity = InstanceType<SchemaModule['StorageSession']>;
+
+let MikroORM: typeof MikroORMClass;
+let LockMode: typeof LockModeEnum;
+let ENTITIES: SchemaModule['ENTITIES'];
+let StorageAppState: SchemaModule['StorageAppState'];
+let StorageEvent: SchemaModule['StorageEvent'];
+let StorageSession: SchemaModule['StorageSession'];
+let StorageUserState: SchemaModule['StorageUserState'];
+let ensureDatabaseCreated: OperationsModule['ensureDatabaseCreated'];
+let getConnectionOptionsFromUri: OperationsModule['getConnectionOptionsFromUri'];
+let validateDatabaseSchemaVersion: OperationsModule['validateDatabaseSchemaVersion'];
+
+let mikroOrmLoad: Promise<void> | undefined;
+
+/**
+ * Resolves (and memoizes) MikroORM plus the ADK database modules.
+ *
+ * These stay off the static import graph so that `@mikro-orm/core` is not
+ * evaluated when an agent imports `@google/adk` and never opens a database.
+ * A rejected promise stays cached, so a broken install keeps producing the
+ * same error instead of retrying module resolution on every call.
+ */
+function loadMikroOrm(): Promise<void> {
+  mikroOrmLoad ??= importMikroOrm();
+  return mikroOrmLoad;
+}
+
+async function importMikroOrm(): Promise<void> {
+  const [core, schema, operations] = await Promise.all([
+    import('@mikro-orm/core'),
+    import('./db/schema.js'),
+    import('./db/operations.js'),
+  ]);
+
+  ({MikroORM, LockMode} = core);
+  ({ENTITIES, StorageAppState, StorageEvent, StorageSession, StorageUserState} =
+    schema);
+  ({
+    ensureDatabaseCreated,
+    getConnectionOptionsFromUri,
+    validateDatabaseSchemaVersion,
+  } = operations);
+}
+
+export {isStaleSessionError, StaleSessionError} from './stale_session_error.js';
+
+/**
+ * Formats a Date or timestamp into 'YYYY-MM-DD HH:mm:ss' in UTC.
+ */
+function formatDateTime(dateOrEpochMs: Date | number): string {
+  const date =
+    typeof dateOrEpochMs === 'number' ? new Date(dateOrEpochMs) : dateOrEpochMs;
+  return date.toISOString().replace('T', ' ').slice(0, 19);
+}
+
+/**
+ * Options for configuring {@link DatabaseSessionService}.
+ */
+export interface DatabaseSessionServiceOptions extends MikroDBOptions {
+  /**
+   * How to handle stale sessions in {@link DatabaseSessionService.appendEvent}.
+   *
+   * - `'reject'` (default): throws a {@link StaleSessionError} without persisting changes.
+   * - `'reload'`: reloads stored events and state into the session object after writing.
+   *
+   * @deprecated 'reload' is deprecated and will be removed in a future release. Use 'reject' (the default) and re-read the session with `getSession` to retry.
+   */
+  staleSession?: 'reject' | 'reload';
+}
 
 /**
  * Checks if a URI is a database connection URI.
@@ -64,24 +129,34 @@ export function isDatabaseConnectionString(uri?: string): boolean {
  * A session service that uses a SQL database for storage via MikroORM.
  */
 export class DatabaseSessionService extends BaseSessionService {
-  private orm?: MikroORM;
+  private orm?: MikroORMClass;
   private initialized = false;
   private options?: MikroDBOptions;
   private connectionString?: string;
+  private readonly staleSession: 'reject' | 'reload';
 
-  constructor(connectionStringOrOptions: MikroDBOptions | string) {
+  constructor(
+    connectionStringOrOptions: DatabaseSessionServiceOptions | string,
+    options?: DatabaseSessionServiceOptions,
+  ) {
     super();
     if (typeof connectionStringOrOptions === 'string') {
       this.connectionString = connectionStringOrOptions;
+      if (options) {
+        const {staleSession, ...mikroOptions} = options;
+        this.options = mikroOptions;
+        this.staleSession = staleSession ?? 'reject';
+      } else {
+        this.staleSession = 'reject';
+      }
     } else {
       if (!connectionStringOrOptions.driver) {
         throw new Error('Driver is required when passing options object.');
       }
 
-      this.options = {
-        ...connectionStringOrOptions,
-        entities: ENTITIES,
-      };
+      const {staleSession, ...mikroOptions} = connectionStringOrOptions;
+      this.options = mikroOptions;
+      this.staleSession = staleSession ?? 'reject';
     }
   }
 
@@ -90,11 +165,20 @@ export class DatabaseSessionService extends BaseSessionService {
       return;
     }
 
-    if (this.connectionString && (!this.options || !this.options.driver)) {
-      this.options = await getConnectionOptionsFromUri(this.connectionString);
-    }
+    await loadMikroOrm();
 
-    this.orm = await MikroORM.init(this.options!);
+    // ENTITIES overrides a caller-supplied `entities`, exactly as the
+    // constructor did before the schema module became lazy.
+    const options: MikroDBOptions = this.connectionString
+      ? {
+          ...(await getConnectionOptionsFromUri(this.connectionString)),
+          ...this.options,
+          entities: ENTITIES,
+        }
+      : {...this.options, entities: ENTITIES};
+    this.options = options;
+
+    this.orm = await MikroORM.init(options);
     await ensureDatabaseCreated(this.orm!);
     await validateDatabaseSchemaVersion(this.orm!);
     this.initialized = true;
@@ -109,7 +193,7 @@ export class DatabaseSessionService extends BaseSessionService {
     await this.init();
     const em = this.orm!.em.fork();
 
-    const id = sessionId || randomUUID();
+    const id = sessionId || newId();
     const now = new Date();
     const existing = await em.findOne(StorageSession, {
       id,
@@ -210,7 +294,7 @@ export class DatabaseSessionService extends BaseSessionService {
       return undefined;
     }
 
-    const eventWhere: FilterQuery<StorageEvent> = {
+    const eventWhere: FilterQuery<StorageEventEntity> = {
       appName,
       userId,
       sessionId,
@@ -262,8 +346,8 @@ export class DatabaseSessionService extends BaseSessionService {
     await this.init();
     const em = this.orm!.em.fork();
 
-    const where: FilterQuery<StorageSession> = {appName};
-    if (userId) {
+    const where: FilterQuery<StorageSessionEntity> = {appName};
+    if (userId !== undefined) {
       where.userId = userId;
     }
 
@@ -328,7 +412,7 @@ export class DatabaseSessionService extends BaseSessionService {
     const appState = appStateModel?.state || {};
     const userStateMap: Record<string, Record<string, unknown>> = {};
 
-    if (userId) {
+    if (userId !== undefined) {
       const u = await em.findOne(StorageUserState, {appName, userId});
       if (u) userStateMap[userId] = u.state;
     } else {
@@ -377,7 +461,9 @@ export class DatabaseSessionService extends BaseSessionService {
       return event;
     }
 
+    const stateDelta = event.actions?.stateDelta ?? {};
     const trimmedEvent = trimTempDeltaState(event);
+    let sessionWasStale = false;
 
     await em.transactional(async (txEm) => {
       const storageSession = await txEm.findOne(
@@ -392,6 +478,15 @@ export class DatabaseSessionService extends BaseSessionService {
 
       if (!storageSession) {
         throw new Error(`Session ${session.id} not found for appendEvent`);
+      }
+
+      if (storageSession.updateTime.getTime() > session.lastUpdateTime) {
+        if (this.staleSession === 'reject') {
+          throw new StaleSessionError(
+            `The last_update_time provided in the session object ${formatDateTime(session.lastUpdateTime)} is earlier than the update_time in the storage_session ${formatDateTime(storageSession.updateTime)}. Please check if it is a stale session.`,
+          );
+        }
+        sessionWasStale = true;
       }
 
       let appStateModel = await txEm.findOne(StorageAppState, {
@@ -417,28 +512,6 @@ export class DatabaseSessionService extends BaseSessionService {
           state: {},
         });
         txEm.persist(userStateModel);
-      }
-
-      // Stale session check
-      if (storageSession.updateTime.getTime() > session.lastUpdateTime) {
-        // Reload state
-        const events = await txEm.find(
-          StorageEvent,
-          {
-            appName: session.appName,
-            userId: session.userId,
-            sessionId: session.id,
-          },
-          {orderBy: {timestamp: 'ASC'}},
-        );
-
-        const mergedState = mergeStates(
-          appStateModel.state,
-          userStateModel.state,
-          storageSession.state,
-        );
-        session.state = mergedState;
-        session.events = events.map((e) => e.eventData);
       }
 
       if (event.actions && event.actions.stateDelta) {
@@ -490,26 +563,57 @@ export class DatabaseSessionService extends BaseSessionService {
         });
         txEm.persist(newStorageEvent);
       }
-      await txEm.commit();
 
-      // Update session timestamp to match event timestamp
       storageSession.updateTime = new Date(event.timestamp);
+
+      // `em.transactional` owns the single commit for this block, so every
+      // mutation has to be staged before the callback returns. MikroORM v7 no
+      // longer picks up scalar and JSON mutations on its own either, so the
+      // three models edited above are persisted explicitly.
+      txEm.persist([appStateModel, userStateModel, storageSession]);
 
       const newMergedState = mergeStates(
         appStateModel.state,
         userStateModel.state,
         storageSession.state,
       );
+      // temp: keys are never stored, but stay in the in-memory session for the
+      // rest of the invocation: carry over earlier ones, then this event's
+      for (const source of [session.state, stateDelta]) {
+        for (const [key, value] of Object.entries(source)) {
+          if (key.startsWith(State.TEMP_PREFIX)) {
+            newMergedState[key] = value;
+          }
+        }
+      }
       session.state = newMergedState;
 
-      const index = session.events.findIndex((e) => e.id === event.id);
-      if (index >= 0) {
-        session.events[index] = event;
-      } else {
-        session.events.push(event);
-      }
+      upsertSessionEvent(session, event);
       session.lastUpdateTime = storageSession.updateTime.getTime();
     });
+
+    if (sessionWasStale) {
+      try {
+        const storageEvents = await em.find(
+          StorageEvent,
+          {
+            appName: session.appName,
+            userId: session.userId,
+            sessionId: session.id,
+          },
+          {orderBy: {timestamp: 'ASC'}},
+        );
+        session.events = storageEvents.map((se) => se.eventData);
+        upsertSessionEvent(session, event);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        logger.warn(
+          `Failed to reload events for stale session ${session.id} after ` +
+            `appendEvent; the event was persisted but session.events may be ` +
+            `missing concurrent appends: ${message}`,
+        );
+      }
+    }
 
     return event;
   }

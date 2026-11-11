@@ -7,7 +7,13 @@
 import {FunctionDeclaration, Type} from '@google/genai';
 import {ChildProcess, spawn} from 'node:child_process';
 import * as path from 'node:path';
+import {logger} from '../utils/logger.js';
 import {BaseTool, RunAsyncToolRequest} from './base_tool.js';
+
+/**
+ * Maximum number of bytes captured from each subprocess output stream (1 MiB).
+ */
+const MAX_OUTPUT_BYTES = 1024 * 1024;
 
 /**
  * Configuration options for BashToolPolicy.
@@ -17,9 +23,10 @@ export interface BashToolPolicyOptions {
    * Allowed command prefixes. Use `['*']` (default) to allow all commands,
    * or list specific prefixes (e.g. `['git', 'ls', 'cat']`).
    *
-   * Because commands are executed without a shell, a prefix constrains the
-   * program that actually runs: with `['git']` the only binary this tool can
-   * exec is `git`.
+   * Entries are matched on whole shell tokens, so `['git']` permits
+   * `git status` but not `gitk`, `git-shell`, `./git` or `/usr/bin/git`. Use
+   * `['/usr/bin/git']` to pin an exact binary path, and `['git status']` to
+   * pin a subcommand.
    */
   allowedCommandPrefixes?: string[];
 
@@ -69,6 +76,25 @@ export class BashToolPolicy {
       ...(options.blockedOperators ?? []),
     ]);
     this.timeoutSeconds = options.timeoutSeconds ?? 30;
+
+    for (const prefix of this.allowedCommandPrefixes) {
+      if (prefix === '*') {
+        continue;
+      }
+      try {
+        const prefixArgv = tokenizeCommand(prefix);
+        if (prefixArgv.length === 0) {
+          logger.warn(
+            `Ignoring empty allowedCommandPrefixes entry ${JSON.stringify(prefix)}`,
+          );
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.warn(
+          `Ignoring unparsable allowedCommandPrefixes entry ${JSON.stringify(prefix)}: ${message}`,
+        );
+      }
+    }
   }
 }
 
@@ -109,13 +135,36 @@ function validateCommand(
     return undefined;
   }
 
+  // Prefix match (`ls` -> `lsof`) is bypassable, and matching only the
+  // basename would accept a planted `./ls`. Parse both sides the same way and
+  // compare whole tokens, which also keeps a path entry meaningful.
+  let argv: string[];
+  try {
+    argv = tokenizeCommand(stripped);
+  } catch {
+    return 'Unable to parse command.';
+  }
+  if (argv.length === 0) {
+    return 'Command is required.';
+  }
+
   for (const prefix of policy.allowedCommandPrefixes) {
-    if (stripped.startsWith(prefix)) {
+    let prefixArgv: string[];
+    try {
+      prefixArgv = tokenizeCommand(prefix);
+    } catch {
+      continue;
+    }
+    if (
+      prefixArgv.length > 0 &&
+      argv.length >= prefixArgv.length &&
+      prefixArgv.every((token, index) => argv[index] === token)
+    ) {
       return undefined;
     }
   }
 
-  const allowed = policy.allowedCommandPrefixes.join(', ');
+  const allowed = policy.allowedCommandPrefixes.join(', ') || '<none>';
   return `Command blocked. Permitted prefixes are: ${allowed}`;
 }
 
@@ -128,9 +177,10 @@ const TOKENIZER_WHITESPACE = new Set([' ', '\t', '\r', '\n']);
  * Only quoting and escaping are honoured. There is no expansion of variables,
  * globs, command substitutions or tildes, and no operator handling: `;`, `|`,
  * `&&`, `>` and newlines are ordinary characters that end up as literal
- * arguments. That is what makes
- * {@link BashToolPolicyOptions.allowedCommandPrefixes} meaningful — the vector
- * is exec'd directly, so only `argv[0]` ever runs.
+ * arguments. Both the command and each
+ * {@link BashToolPolicyOptions.allowedCommandPrefixes} entry are split with
+ * these rules and compared on whole leading tokens: full paths pin an exact
+ * binary, and multi-token prefixes like `'git status'` pin a subcommand.
  *
  * @throws Error if the command ends inside a quote or a trailing escape, using
  *   the same messages `shlex` raises.
@@ -346,7 +396,7 @@ export class ExecuteBashTool extends BaseTool {
     const requireConfirmation = options.requireConfirmation ?? true;
     const allowedHint = policy.allowedCommandPrefixes.includes('*')
       ? 'any command'
-      : `commands matching prefixes: ${policy.allowedCommandPrefixes.join(', ')}`;
+      : `commands matching prefixes: ${policy.allowedCommandPrefixes.join(', ') || '<none>'}`;
     const confirmationHint = requireConfirmation
       ? ' All commands require user confirmation.'
       : '';
@@ -469,10 +519,21 @@ export class ExecuteBashTool extends BaseTool {
         return;
       }
 
-      let stdout = '';
-      let stderr = '';
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
+      let stdoutBytes = 0;
+      let stderrBytes = 0;
+      let outputLimitExceeded = false;
       let timedOut = false;
       let settled = false;
+
+      const decodeChunks = (chunks: Buffer[], fallback: string): string => {
+        if (chunks.length === 0) {
+          return fallback;
+        }
+        const decoded = Buffer.concat(chunks).toString('utf8');
+        return decoded || fallback;
+      };
 
       const settle = (result: BashToolResult) => {
         if (settled) return;
@@ -480,12 +541,40 @@ export class ExecuteBashTool extends BaseTool {
         resolve(result);
       };
 
-      child.stdout?.on('data', (chunk) => {
-        stdout += chunk.toString();
+      child.stdout?.on('data', (chunk: Buffer | string) => {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        const remaining = MAX_OUTPUT_BYTES - stdoutBytes;
+        if (buf.length <= remaining) {
+          stdoutChunks.push(buf);
+          stdoutBytes += buf.length;
+        } else {
+          if (remaining > 0) {
+            stdoutChunks.push(buf.subarray(0, remaining));
+            stdoutBytes = MAX_OUTPUT_BYTES;
+          }
+          if (!outputLimitExceeded) {
+            outputLimitExceeded = true;
+            killProcessGroup(child);
+          }
+        }
       });
 
-      child.stderr?.on('data', (chunk) => {
-        stderr += chunk.toString();
+      child.stderr?.on('data', (chunk: Buffer | string) => {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        const remaining = MAX_OUTPUT_BYTES - stderrBytes;
+        if (buf.length <= remaining) {
+          stderrChunks.push(buf);
+          stderrBytes += buf.length;
+        } else {
+          if (remaining > 0) {
+            stderrChunks.push(buf.subarray(0, remaining));
+            stderrBytes = MAX_OUTPUT_BYTES;
+          }
+          if (!outputLimitExceeded) {
+            outputLimitExceeded = true;
+            killProcessGroup(child);
+          }
+        }
       });
 
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -508,46 +597,43 @@ export class ExecuteBashTool extends BaseTool {
         if (timer) clearTimeout(timer);
         settle({
           error: `Execution failed: ${err.message}`,
-          stdout: stdout || '<no stdout captured>',
-          stderr: stderr || '<no stderr captured>',
+          stdout: decodeChunks(stdoutChunks, '<no stdout captured>'),
+          stderr: decodeChunks(stderrChunks, '<no stderr captured>'),
         });
       });
 
       child.on('close', (exitCode) => {
         if (timer) clearTimeout(timer);
+        const stdout = decodeChunks(stdoutChunks, '<no stdout captured>');
+        const stderr = decodeChunks(stderrChunks, '<no stderr captured>');
 
         if (timedOut) {
           settle({
             error: `Command timed out after ${this.policy.timeoutSeconds} seconds.`,
-            stdout: stdout || '<no stdout captured>',
-            stderr: stderr || '<no stderr captured>',
+            stdout,
+            stderr,
+            returncode: exitCode,
+          });
+          return;
+        }
+
+        if (outputLimitExceeded) {
+          settle({
+            error: `Command output exceeded maximum size of ${MAX_OUTPUT_BYTES} bytes.`,
+            stdout,
+            stderr,
             returncode: exitCode,
           });
           return;
         }
 
         settle({
-          stdout: stdout || '<no stdout captured>',
-          stderr: stderr || '<no stderr captured>',
+          stdout,
+          stderr,
           returncode: exitCode,
         });
       });
     });
-  }
-
-  /**
-   * Telemetry hook: returns an error type if the response indicates an error.
-   */
-  _detectErrorInResponse(response: unknown): string | undefined {
-    if (
-      typeof response === 'object' &&
-      response !== null &&
-      'error' in response &&
-      Boolean((response as {error?: unknown}).error)
-    ) {
-      return 'TOOL_ERROR';
-    }
-    return undefined;
   }
 }
 
@@ -562,9 +648,3 @@ export function isExecuteBashTool(obj: unknown): obj is ExecuteBashTool {
     obj[EXECUTE_BASH_TOOL_SIGNATURE_SYMBOL] === true
   );
 }
-
-/**
- * Alias of ExecuteBashTool for convenience.
- */
-export {ExecuteBashTool as BashTool};
-export const isBashTool = isExecuteBashTool;

@@ -18,8 +18,7 @@ const answer = node(
 );
 
 /**
- * An entrypoint that exports a graph as the root, with no `WorkflowAgent` and no
- * `App` around it. Function nodes rather than an `LlmAgent`, so the run needs no
+ * An entrypoint that exports a graph as the root, with no `App` around it. Function nodes rather than an `LlmAgent`, so the run needs no
  * model and no recorded response.
  */
 export const rootAgent = new Workflow({

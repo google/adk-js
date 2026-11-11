@@ -7,7 +7,8 @@ import {GenerateContentConfig} from '@google/genai';
 
 import {isGemini1Model, isGeminiModel} from '../utils/model_name.js';
 
-import {BaseTool, ToolProcessLlmRequest} from './base_tool.js';
+import {ToolProcessLlmRequest} from './base_tool.js';
+import {BuiltInTool} from './built_in_tool.js';
 
 /**
  * A built-in tool that is automatically invoked by Gemini 2 models to retrieve
@@ -16,18 +17,12 @@ import {BaseTool, ToolProcessLlmRequest} from './base_tool.js';
  * This tool operates internally within the model and does not require or
  * perform local code execution.
  */
-export class GoogleSearchTool extends BaseTool {
+export class GoogleSearchTool extends BuiltInTool {
   constructor() {
     super({name: 'google_search', description: 'Google Search Tool'});
   }
 
-  runAsync(): Promise<unknown> {
-    // This is a built-in tool on server side, it's triggered by setting the
-    // corresponding request parameters.
-    return Promise.resolve();
-  }
-
-  override async processLlmRequest({
+  protected override async applyBuiltInConfig({
     llmRequest,
   }: ToolProcessLlmRequest): Promise<void> {
     if (!llmRequest.model) {

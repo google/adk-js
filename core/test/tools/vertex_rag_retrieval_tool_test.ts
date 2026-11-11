@@ -148,12 +148,12 @@ describe('VertexRagRetrievalTool', () => {
   });
 
   describe('runAsync', () => {
-    it('resolves immediately (server-side tool)', async () => {
+    it('tells the model the server-side tool is not callable', async () => {
       const tool = new VertexRagRetrievalTool({
         ragResources: [{ragCorpus: RAG_CORPUS}],
       });
-      const result = await tool.runAsync();
-      expect(result).toBeUndefined();
+      const {error} = (await tool.runAsync()) as {error: string};
+      expect(error).toContain('vertex_rag_retrieval runs inside the model');
     });
   });
 });

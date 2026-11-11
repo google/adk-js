@@ -128,7 +128,6 @@ describe('PreloadMemoryTool', () => {
   it('handles searchMemory throwing an error gracefully', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     const toolContext = new StubToolContext([]) as unknown as Context;
-    // Override searchMemory to throw
     toolContext.searchMemory = async () => {
       throw new Error('Search failed');
     };

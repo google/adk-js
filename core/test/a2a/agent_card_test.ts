@@ -4,22 +4,80 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {describe, expect, it, vi} from 'vitest';
-import {buildAgentSkills} from '../../src/a2a/agent_card.js';
+import {mkdtemp, rm, writeFile} from 'node:fs/promises';
+import * as http from 'node:http';
+import type {AddressInfo} from 'node:net';
+import * as os from 'node:os';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {
+  buildAgentSkills,
+  resolveAgentCard,
+  ResolveAgentCardOptions,
+} from '../../src/a2a/agent_card.js';
+import {logger} from '../../src/utils/logger.js';
 import {node} from '../../src/workflow/node.js';
-import {WorkflowAgent} from '../../src/workflow/workflow_agent.js';
+import {Workflow} from '../../src/workflow/workflow.js';
 
+import {AGENT_CARD_PATH, type AgentCard} from '@a2a-js/sdk';
 import {
   BaseAgent,
   BaseTool,
   BaseToolset,
+  BuiltInCodeExecutor,
   FunctionTool,
   getA2AAgentCard,
   LlmAgent,
   LoopAgent,
   ParallelAgent,
   SequentialAgent,
+  toA2a,
 } from '@google/adk';
+
+/**
+ * The `{all: true}` overload of `dns.lookup` the guard calls, declared here so
+ * the mock is typed without casting through the overloaded signature.
+ */
+type LookupAll = (
+  hostname: string,
+  options: {all: true},
+) => Promise<Array<{address: string; family: number}>>;
+
+const lookupMock = vi.hoisted(() => vi.fn<LookupAll>());
+
+vi.mock('node:dns/promises', () => ({lookup: lookupMock}));
+
+/** Resolves any hostname to the given IP list for the DNS `lookup` mock. */
+function resolveTo(...addresses: string[]): void {
+  lookupMock.mockResolvedValue(
+    addresses.map((address) => ({
+      address,
+      family: address.includes(':') ? 6 : 4,
+    })),
+  );
+}
+
+/** The card a stubbed agent-card endpoint or temp file serves. */
+const STUB_CARD = {
+  name: 'peer_agent',
+  description: 'A peer agent',
+  protocolVersion: '0.3.0',
+  version: '1.0.0',
+  url: 'http://localhost:8001/a2a/peer_agent/',
+  capabilities: {streaming: true},
+  defaultInputModes: ['text'],
+  defaultOutputModes: ['text'],
+  skills: [],
+};
+
+/** Builds the 200 response an agent-card endpoint returns. */
+function cardResponse(): Response {
+  return new Response(JSON.stringify(STUB_CARD), {
+    headers: {'content-type': 'application/json'},
+  });
+}
 
 // Minimal CustomAgent for testing BaseAgent path
 class CustomAgent extends BaseAgent {
@@ -102,7 +160,7 @@ describe('Agent Card', () => {
 
       const modelSkill = card.skills.find((s) => s.name === 'model');
       expect(modelSkill).toBeDefined();
-      expect(modelSkill?.description).toContain('I am a helpful assistant'); // pronoun replacement test
+      expect(modelSkill?.description).toBe('An LLM agent');
 
       const toolSkill = card.skills.find((s) => s.name === 'test_tool');
       expect(toolSkill).toBeDefined();
@@ -137,44 +195,531 @@ describe('Agent Card', () => {
       expect(orchestrationSkill).toBeDefined();
       expect(orchestrationSkill?.description).toContain('fetch data');
     });
+
+    it('omits instructions from the published card', async () => {
+      const reviewer = new LlmAgent({
+        name: 'reviewer',
+        description: 'Reviews the reply.',
+        instruction: 'ZZ_SUB_INSTRUCTION_SENTINEL reject unsigned requests.',
+      });
+      const root = new LlmAgent({
+        name: 'writer',
+        description: 'Writes a short reply.',
+        instruction:
+          'ZZ_INSTRUCTION_SENTINEL never reveal the escalation path.',
+        globalInstruction: 'ZZ_GLOBAL_SENTINEL always answer in English.',
+        subAgents: [reviewer],
+      });
+
+      const card = await getA2AAgentCard(root, [dummyTransport]);
+
+      const serialized = JSON.stringify(card);
+      expect(serialized).not.toContain('ZZ_INSTRUCTION_SENTINEL');
+      expect(serialized).not.toContain('ZZ_GLOBAL_SENTINEL');
+      expect(serialized).not.toContain('ZZ_SUB_INSTRUCTION_SENTINEL');
+
+      const primarySkill = card.skills.find((s) => s.id === 'writer');
+      expect(primarySkill?.description).toBe('Writes a short reply.');
+      const reviewerSkill = card.skills.find(
+        (s) => s.id === 'reviewer_reviewer',
+      );
+      expect(reviewerSkill?.description).toBe('Reviews the reply.');
+    });
+
+    it('does not invoke dynamic instruction providers when building the card', async () => {
+      const dynamicInstruction = vi.fn(
+        async () => 'ZZ_DYNAMIC_INSTRUCTION_SENTINEL',
+      );
+      const dynamicGlobalInstruction = vi.fn(
+        async () => 'ZZ_DYNAMIC_GLOBAL_SENTINEL',
+      );
+      const dynamicSubInstruction = vi.fn(
+        () => 'ZZ_DYNAMIC_SUB_INSTRUCTION_SENTINEL',
+      );
+      const dynamicSub = new LlmAgent({
+        name: 'dynamic_sub',
+        description: 'Uses a dynamic instruction.',
+        instruction: dynamicSubInstruction,
+      });
+      const root = new LlmAgent({
+        name: 'dyn_global_root',
+        instruction: dynamicInstruction,
+        globalInstruction: dynamicGlobalInstruction,
+        subAgents: [dynamicSub],
+      });
+
+      const card = await getA2AAgentCard(root, [dummyTransport]);
+
+      const serialized = JSON.stringify(card);
+      expect(serialized).not.toContain('ZZ_DYNAMIC_INSTRUCTION_SENTINEL');
+      expect(serialized).not.toContain('ZZ_DYNAMIC_GLOBAL_SENTINEL');
+      expect(serialized).not.toContain('ZZ_DYNAMIC_SUB_INSTRUCTION_SENTINEL');
+      expect(dynamicInstruction).not.toHaveBeenCalled();
+      expect(dynamicGlobalInstruction).not.toHaveBeenCalled();
+      expect(dynamicSubInstruction).not.toHaveBeenCalled();
+
+      const primarySkill = card.skills.find((s) => s.id === 'dyn_global_root');
+      expect(primarySkill?.description).toBe('An LLM-based agent');
+      const subSkill = card.skills.find(
+        (s) => s.id === 'dynamic_sub_dynamic_sub',
+      );
+      expect(subSkill?.description).toBe('Uses a dynamic instruction.');
+    });
+
+    it('omits LlmAgent child instructions from composite and workflow cards', async () => {
+      const seqAgent = new SequentialAgent({
+        name: 'seq_root',
+        subAgents: [
+          new LlmAgent({
+            name: 'seq_child',
+            description: 'Seq child desc',
+            instruction: 'ZZ_SEQ_CHILD_SENTINEL',
+          }),
+        ],
+      });
+      const parAgent = new ParallelAgent({
+        name: 'par_root',
+        subAgents: [
+          new LlmAgent({
+            name: 'par_child',
+            description: 'Par child desc',
+            instruction: 'ZZ_PAR_CHILD_SENTINEL',
+          }),
+        ],
+      });
+      const loopAgent = new LoopAgent({
+        name: 'loop_root',
+        maxIterations: 2,
+        subAgents: [
+          new LlmAgent({
+            name: 'loop_child',
+            description: 'Loop child desc',
+            instruction: 'ZZ_LOOP_CHILD_SENTINEL',
+          }),
+        ],
+      });
+      const workflowAgent = new Workflow({
+        name: 'wf_root',
+        description: 'Workflow desc',
+        edges: [
+          [
+            'START',
+            new LlmAgent({
+              name: 'wf_child',
+              description: 'Wf child desc',
+              instruction: 'ZZ_WF_CHILD_SENTINEL',
+            }),
+          ],
+        ],
+      });
+
+      const cards = await Promise.all([
+        getA2AAgentCard(seqAgent, [dummyTransport]),
+        getA2AAgentCard(parAgent, [dummyTransport]),
+        getA2AAgentCard(loopAgent, [dummyTransport]),
+        getA2AAgentCard(workflowAgent, [dummyTransport]),
+      ]);
+
+      const serialized = JSON.stringify(cards);
+      expect(serialized).not.toContain('ZZ_SEQ_CHILD_SENTINEL');
+      expect(serialized).not.toContain('ZZ_PAR_CHILD_SENTINEL');
+      expect(serialized).not.toContain('ZZ_LOOP_CHILD_SENTINEL');
+      expect(serialized).not.toContain('ZZ_WF_CHILD_SENTINEL');
+    });
+
+    it('serves /.well-known/agent-card.json via toA2a without leaking instructions', async () => {
+      const agent = new LlmAgent({
+        name: 'support-agent',
+        description: 'Customer support agent',
+        instruction: 'ZZ_HTTP_INSTRUCTION_SENTINEL',
+        globalInstruction: 'ZZ_HTTP_GLOBAL_SENTINEL',
+        subAgents: [
+          new LlmAgent({
+            name: 'sub-support',
+            description: 'Sub support agent',
+            instruction: 'ZZ_HTTP_SUB_SENTINEL',
+          }),
+        ],
+      });
+
+      const app = await toA2a(agent, {
+        authentication: async () => ({
+          isAuthenticated: false,
+          userName: '',
+        }),
+      });
+      const server = app.listen(0, '127.0.0.1');
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.once('listening', () => {
+          server.off('error', reject);
+          resolve();
+        });
+      });
+      try {
+        const port = (server.address() as AddressInfo).port;
+        const response = await fetch(
+          `http://127.0.0.1:${port}/${AGENT_CARD_PATH}`,
+        );
+        expect(response.status).toBe(200);
+        const bodyText = await response.text();
+        expect(bodyText).not.toContain('ZZ_HTTP_INSTRUCTION_SENTINEL');
+        expect(bodyText).not.toContain('ZZ_HTTP_GLOBAL_SENTINEL');
+        expect(bodyText).not.toContain('ZZ_HTTP_SUB_SENTINEL');
+
+        const card = JSON.parse(bodyText) as AgentCard;
+        expect(card.name).toBe('support-agent');
+        expect(card.description).toBe('Customer support agent');
+        const primarySkill = card.skills.find((s) => s.id === 'support-agent');
+        expect(primarySkill?.description).toBe('Customer support agent');
+      } finally {
+        server.closeAllConnections();
+        await new Promise<void>((resolve, reject) => {
+          server.close((err) => (err ? reject(err) : resolve()));
+        });
+      }
+    });
+  });
+
+  describe('resolveAgentCard', () => {
+    // Card responses in this suite are served by a real local http server so
+    // resolveAgentCard's actual network fetch path is exercised, not a mock
+    // of the SDK's resolver -- the vulnerability this suite pins was in how
+    // a genuinely-fetched card's contents were (not) checked.
+
+    function baseCard(url: string, extra: Partial<AgentCard> = {}) {
+      return {
+        name: 'test-agent',
+        description: '',
+        protocolVersion: '0.3.0',
+        version: '1.0.0',
+        url,
+        preferredTransport: 'JSONRPC',
+        capabilities: {},
+        skills: [],
+        defaultInputModes: ['text/plain'],
+        defaultOutputModes: ['text/plain'],
+        ...extra,
+      };
+    }
+
+    async function withCardServer<T>(
+      cardFactory: (port: number) => object,
+      fn: (source: string) => Promise<T>,
+      bindHost = '127.0.0.1',
+    ): Promise<T> {
+      const server = http.createServer((req, res) => {
+        const port = (server.address() as AddressInfo).port;
+        res.writeHead(200, {'Content-Type': 'application/json'});
+        res.end(JSON.stringify(cardFactory(port)));
+      });
+      await new Promise<void>((resolve) => server.listen(0, bindHost, resolve));
+      try {
+        const port = (server.address() as AddressInfo).port;
+        return await fn(`http://${bindHost}:${port}`);
+      } finally {
+        server.close();
+      }
+    }
+
+    /**
+     * Returns the address of a non-loopback IPv4 interface on this machine,
+     * or `undefined` if none is configured (e.g. a fully network-isolated
+     * CI sandbox with only a loopback interface). Used to exercise the
+     * scheme check's non-loopback branch against a real, locally-bindable
+     * address rather than an external domain this environment can't
+     * actually route a request to and get back.
+     */
+    function findNonLoopbackIPv4(): string | undefined {
+      const interfaces = os.networkInterfaces();
+      for (const addrs of Object.values(interfaces)) {
+        for (const addr of addrs ?? []) {
+          if (addr.family === 'IPv4' && !addr.internal) {
+            return addr.address;
+          }
+        }
+      }
+      return undefined;
+    }
+
+    it('accepts a card whose RPC url shares the fetch origin', async () => {
+      await withCardServer(
+        (port) => baseCard(`http://127.0.0.1:${port}/rpc`),
+        async (source) => {
+          const card = await resolveAgentCard(source);
+          expect(card.url).toBe(`${source}/rpc`);
+        },
+      );
+    });
+
+    it('accepts a same-origin additionalInterfaces entry', async () => {
+      await withCardServer(
+        (port) =>
+          baseCard(`http://127.0.0.1:${port}/rpc`, {
+            additionalInterfaces: [
+              {transport: 'JSONRPC', url: `http://127.0.0.1:${port}/rpc2`},
+            ],
+          }),
+        async (source) => {
+          const card = await resolveAgentCard(source);
+          expect(card.url).toBe(`${source}/rpc`);
+        },
+      );
+    });
+
+    it('rejects an off-origin RPC url on a fetched card', async () => {
+      // The reported vulnerability: a card fetched from a trusted,
+      // configured source can declare an RPC url pointing anywhere at
+      // all, and it was followed with no check that it matched where the
+      // card actually came from.
+      await withCardServer(
+        () => baseCard('https://attacker.example.net/rpc'),
+        async (source) => {
+          await expect(resolveAgentCard(source)).rejects.toThrow(/same origin/);
+        },
+      );
+    });
+
+    it('rejects an off-origin additionalInterfaces entry even when the primary url is same-origin', async () => {
+      // Every url the card offers must be checked, not only the one a
+      // particular transport negotiation would pick.
+      await withCardServer(
+        (port) =>
+          baseCard(`http://127.0.0.1:${port}/rpc`, {
+            additionalInterfaces: [
+              {transport: 'JSONRPC', url: 'https://attacker.example.net/rpc2'},
+            ],
+          }),
+        async (source) => {
+          await expect(resolveAgentCard(source)).rejects.toThrow(/same origin/);
+        },
+      );
+    });
+
+    it('does not validate a directly-provided card object', async () => {
+      // A card passed in directly (or read from a local file) did not
+      // come off the network here; its target is left to the caller.
+      const card = await resolveAgentCard(
+        baseCard('https://anywhere.example.com/rpc') as AgentCard,
+      );
+      expect(card.url).toBe('https://anywhere.example.com/rpc');
+    });
+
+    it('rejects a same-origin http url on a non-loopback host', async () => {
+      // Every existing case above serves from 127.0.0.1, so none of them
+      // ever reach the scheme check -- isLoopbackHost is always true
+      // there, regardless of what it's fixed to accept or reject. This
+      // pins that branch specifically, isolated from the origin check
+      // (the url below shares the fetch origin exactly).
+      const nonLoopback = findNonLoopbackIPv4();
+      if (!nonLoopback) {
+        // No non-loopback IPv4 interface on this machine (e.g. a fully
+        // network-isolated sandbox) -- nothing to bind to.
+        return;
+      }
+      await withCardServer(
+        (port) => baseCard(`http://${nonLoopback}:${port}/rpc`),
+        async (source) => {
+          await expect(resolveAgentCard(source)).rejects.toThrow(
+            /must use https, or http on a loopback host/,
+          );
+        },
+        nonLoopback,
+      );
+    });
+
+    it('rejects a card with an empty url', async () => {
+      await withCardServer(
+        () => baseCard(''),
+        async (source) => {
+          await expect(resolveAgentCard(source)).rejects.toThrow(
+            /Invalid RPC URL/,
+          );
+        },
+      );
+    });
+
+    describe('loopback origin comparison', () => {
+      // Different loopback hostnames all name this same machine in
+      // practice: adk-js's own toA2a defaults host to localhost, and
+      // `adk deploy` passes --host=0.0.0.0, which a request to
+      // 0.0.0.0:<port> does reach. A plain origin-string comparison would
+      // treat these as different origins and break both flows.
+      it('accepts localhost source with a 127.0.0.1 rpc url', async () => {
+        const server = http.createServer((req, res) => {
+          const port = (server.address() as AddressInfo).port;
+          res.writeHead(200, {'Content-Type': 'application/json'});
+          res.end(JSON.stringify(baseCard(`http://127.0.0.1:${port}/rpc`)));
+        });
+        await new Promise<void>((resolve) =>
+          server.listen(0, '127.0.0.1', resolve),
+        );
+        try {
+          const port = (server.address() as AddressInfo).port;
+          const card = await resolveAgentCard(`http://localhost:${port}`);
+          expect(card.url).toBe(`http://127.0.0.1:${port}/rpc`);
+        } finally {
+          server.close();
+        }
+      });
+
+      it('accepts a 0.0.0.0 source with a 0.0.0.0 rpc url', async () => {
+        // A server bound to 0.0.0.0 (as `adk deploy --host=0.0.0.0` runs
+        // one) listens on every interface, including 127.0.0.1, so the
+        // fetch itself goes through 127.0.0.1 while the card's own
+        // declared url uses 0.0.0.0 -- the shape such a server actually
+        // reports for itself.
+        const server = http.createServer((req, res) => {
+          const port = (server.address() as AddressInfo).port;
+          res.writeHead(200, {'Content-Type': 'application/json'});
+          res.end(JSON.stringify(baseCard(`http://0.0.0.0:${port}/rpc`)));
+        });
+        await new Promise<void>((resolve) =>
+          server.listen(0, '0.0.0.0', resolve),
+        );
+        try {
+          const port = (server.address() as AddressInfo).port;
+          const card = await resolveAgentCard(`http://127.0.0.1:${port}`);
+          expect(card.url).toBe(`http://0.0.0.0:${port}/rpc`);
+        } finally {
+          server.close();
+        }
+      });
+
+      it('accepts an IPv6 wildcard source with an IPv6 wildcard rpc url', async () => {
+        // Not every environment supports binding to the IPv6 wildcard
+        // address (this sandbox's kernel does not) -- skip gracefully
+        // rather than fail the suite on an environment limitation, the
+        // same reasoning as findNonLoopbackIPv4()'s skip above.
+        const server = http.createServer((req, res) => {
+          const port = (server.address() as AddressInfo).port;
+          res.writeHead(200, {'Content-Type': 'application/json'});
+          res.end(JSON.stringify(baseCard(`http://[::]:${port}/rpc`)));
+        });
+        const bound = await new Promise<boolean>((resolve) => {
+          server.once('error', () => resolve(false));
+          server.listen(0, '::', () => resolve(true));
+        });
+        if (!bound) {
+          return;
+        }
+        try {
+          const port = (server.address() as AddressInfo).port;
+          const card = await resolveAgentCard(`http://[::1]:${port}`);
+          expect(card.url).toBe(`http://[::]:${port}/rpc`);
+        } finally {
+          server.close();
+        }
+      });
+
+      it('still rejects two loopback origins that differ on port', async () => {
+        await withCardServer(
+          (port) => baseCard(`http://127.0.0.1:${port + 1}/rpc`),
+          async (source) => {
+            await expect(resolveAgentCard(source)).rejects.toThrow(
+              /same origin/,
+            );
+          },
+        );
+      });
+    });
+
+    describe('resolveAgentCardOptions escape hatches', () => {
+      it('allowInsecureRpc accepts a same-origin http url on a non-loopback host, with a warning', async () => {
+        const nonLoopback = findNonLoopbackIPv4();
+        if (!nonLoopback) {
+          return;
+        }
+        const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+        try {
+          await withCardServer(
+            (port) => baseCard(`http://${nonLoopback}:${port}/rpc`),
+            async (source) => {
+              const options: ResolveAgentCardOptions = {
+                allowInsecureRpc: true,
+              };
+              const card = await resolveAgentCard(source, options);
+              expect(card.url).toBe(`${source}/rpc`);
+            },
+            nonLoopback,
+          );
+        } finally {
+          warn.mockRestore();
+        }
+      });
+
+      it('allowCrossOriginRpc accepts an off-origin RPC url, with a warning', async () => {
+        const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+        try {
+          await withCardServer(
+            () => baseCard('https://api.example.com/rpc'),
+            async (source) => {
+              const options: ResolveAgentCardOptions = {
+                allowCrossOriginRpc: true,
+              };
+              const card = await resolveAgentCard(source, options);
+              expect(card.url).toBe('https://api.example.com/rpc');
+            },
+          );
+        } finally {
+          warn.mockRestore();
+        }
+      });
+
+      it('still rejects an off-origin RPC url when allowCrossOriginRpc is not set', async () => {
+        // Pins that the escape hatch defaults to false: omitting the
+        // options object entirely (the shape every other test in this
+        // file already uses) must keep failing closed.
+        await withCardServer(
+          () => baseCard('https://api.example.com/rpc'),
+          async (source) => {
+            await expect(resolveAgentCard(source)).rejects.toThrow(
+              /same origin/,
+            );
+          },
+        );
+      });
+    });
   });
 
   describe('buildAgentSkills', () => {
-    it('handles dynamic instructions safely', async () => {
+    it('excludes instructions and global instructions from LlmAgent skill descriptions', async () => {
+      const agent = new LlmAgent({
+        name: 'test_agent',
+        description: 'Test agent',
+        instruction: 'You should help users.',
+        globalInstruction: 'Your role is to assist.',
+      });
+
+      const skills = await buildAgentSkills(agent);
+      const modelSkill = skills.find((s) => s.name === 'model');
+      expect(modelSkill?.description).toBe('Test agent');
+    });
+
+    it('falls back to the default description when an LlmAgent has instructions but no description', async () => {
       const mockProvider = vi
         .fn()
         .mockResolvedValue('You are dynamically created');
       const agent = new LlmAgent({
         name: 'dyn_agent',
         instruction: mockProvider,
+        globalInstruction: 'You are global',
       });
 
       const skills = await buildAgentSkills(agent);
       const modelSkill = skills.find((s) => s.name === 'model');
-      expect(modelSkill?.description).toContain('I am dynamically created');
+      expect(modelSkill?.description).toBe('An LLM-based agent');
+      expect(mockProvider).not.toHaveBeenCalled();
     });
 
-    it('handles dynamic instruction failure safely', async () => {
-      const mockProvider = vi.fn().mockRejectedValue(new Error('fail'));
-      const agent = new LlmAgent({
-        name: 'dyn_agent_fail',
-        description: 'Fallback desc',
-        instruction: mockProvider,
-      });
-
-      const skills = await buildAgentSkills(agent);
-      const modelSkill = skills.find((s) => s.name === 'model');
-      // If instruction fails, it falls back to empty, but still uses description
-      expect(modelSkill?.description).toContain('Fallback desc');
-    });
-
-    it('handles global instructions', async () => {
+    it('excludes root globalInstruction when building skills for a sub-agent', async () => {
       const properRoot = new LlmAgent({
         name: 'root',
         globalInstruction: 'You are global',
         subAgents: [
           new LlmAgent({
             name: 'sub',
+            description: 'Sub agent description',
             instruction: 'You are sub',
           }),
         ],
@@ -185,8 +730,7 @@ describe('Agent Card', () => {
       const skills = await buildAgentSkills(properlyWiredSub);
       const modelSkill = skills.find((s) => s.name === 'model');
 
-      expect(modelSkill?.description).toContain('I am sub');
-      expect(modelSkill?.description).toContain('I am global');
+      expect(modelSkill?.description).toBe('Sub agent description');
     });
 
     it('supports parallel agent description', async () => {
@@ -222,8 +766,8 @@ describe('Agent Card', () => {
       );
     });
 
-    it('classifies a graph WorkflowAgent as a workflow, not a custom agent', async () => {
-      const agent = new WorkflowAgent({
+    it('classifies a graph Workflow as a workflow, not a custom agent', async () => {
+      const agent = new Workflow({
         name: 'graph_workflow',
         description: 'Runs a graph',
         edges: [['START', node(() => 'done', {name: 'step'})]],
@@ -234,6 +778,252 @@ describe('Agent Card', () => {
       const workflowSkill = skills.find((s) => s.name === 'workflow');
       expect(workflowSkill?.description).toBe('Runs a graph');
       expect(skills.find((s) => s.name === 'custom')).toBeUndefined();
+    });
+
+    it('publishes a code-execution skill for an agent with a code executor', async () => {
+      const agent = new LlmAgent({
+        name: 'coder',
+        description: 'Writes code',
+        codeExecutor: new BuiltInCodeExecutor(),
+      });
+
+      const skills = await buildAgentSkills(agent);
+
+      const codeSkill = skills.find((s) => s.id === 'coder-code-executor');
+      expect(codeSkill).toBeDefined();
+      expect(codeSkill?.name).toBe('code-execution');
+      expect(codeSkill?.description).toBe('Can execute code');
+      expect(codeSkill?.tags).toEqual(['llm', 'code_execution']);
+    });
+
+    it('publishes no code-execution skill for an agent without a code executor', async () => {
+      const agent = new LlmAgent({
+        name: 'coder',
+        description: 'Writes code',
+      });
+
+      const skills = await buildAgentSkills(agent);
+
+      expect(skills.find((s) => s.name === 'code-execution')).toBeUndefined();
+      expect(skills).toHaveLength(1);
+    });
+
+    it('appends the code-execution skill after the tool skills', async () => {
+      const agent = new LlmAgent({
+        name: 'coder',
+        description: 'Writes code',
+        tools: [
+          new FunctionTool({
+            name: 'lookup',
+            description: 'Looks something up',
+            execute: async () => 'ok',
+          }),
+        ],
+        codeExecutor: new BuiltInCodeExecutor(),
+      });
+
+      const skills = await buildAgentSkills(agent);
+
+      expect(skills.map((s) => s.name)).toEqual([
+        'model',
+        'lookup',
+        'code-execution',
+      ]);
+    });
+
+    it('prefixes the code-execution skill of a sub-agent', async () => {
+      const root = new LlmAgent({
+        name: 'root',
+        description: 'Delegates to a coder',
+        subAgents: [
+          new LlmAgent({
+            name: 'coder',
+            description: 'Writes code',
+            codeExecutor: new BuiltInCodeExecutor(),
+          }),
+        ],
+      });
+
+      const skills = await buildAgentSkills(root);
+
+      const codeSkill = skills.find((s) => s.name === 'coder: code-execution');
+      expect(codeSkill).toBeDefined();
+      expect(codeSkill?.id).toBe('coder_coder-code-executor');
+      expect(codeSkill?.description).toBe('Can execute code');
+      expect(codeSkill?.tags).toEqual([
+        'sub_agent:coder',
+        'llm',
+        'code_execution',
+      ]);
+    });
+  });
+
+  describe('resolveAgentCard', () => {
+    let fetchMock: ReturnType<typeof vi.fn<typeof fetch>>;
+    let tempDir: string;
+    let cardPath: string;
+
+    beforeEach(async () => {
+      fetchMock = vi.fn<typeof fetch>();
+      vi.stubGlobal('fetch', fetchMock);
+      lookupMock.mockReset();
+      tempDir = await mkdtemp(join(tmpdir(), 'adk-agent-card-'));
+      cardPath = join(tempDir, 'card.json');
+      await writeFile(cardPath, JSON.stringify(STUB_CARD), 'utf-8');
+    });
+
+    afterEach(async () => {
+      vi.unstubAllGlobals();
+      await rm(tempDir, {recursive: true, force: true});
+    });
+
+    it('returns an AgentCard object without any I/O', async () => {
+      const card = await resolveAgentCard(STUB_CARD);
+
+      expect(card).toBe(STUB_CARD);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(lookupMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      'http://169.254.169.254/',
+      'http://[fe80::1]/',
+      'http://[64:ff9b::a9fe:a9fe]/',
+    ])('refuses the link-local literal %s without fetching', async (source) => {
+      await expect(resolveAgentCard(source)).rejects.toThrow(
+        /Refusing to fetch agent card from a link-local address/,
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('refuses a hostname that resolves to a link-local address', async () => {
+      resolveTo('169.254.169.254');
+
+      await expect(
+        resolveAgentCard('http://cards.example.com/'),
+      ).rejects.toThrow(
+        'Refusing to fetch agent card from a link-local address: cards.example.com',
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('refuses a hostname that resolves to both a global and a link-local address', async () => {
+      resolveTo('93.184.216.34', '169.254.169.254');
+
+      await expect(
+        resolveAgentCard('http://cards.example.com/'),
+      ).rejects.toThrow(
+        /Refusing to fetch agent card from a link-local address/,
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('refuses a redirect instead of following it', async () => {
+      resolveTo('93.184.216.34');
+      fetchMock.mockResolvedValue(
+        new Response(null, {
+          status: 302,
+          headers: {location: 'http://169.254.169.254/'},
+        }),
+      );
+
+      await expect(
+        resolveAgentCard('http://cards.example.com/'),
+      ).rejects.toThrow(
+        /Refusing to follow a redirect .* \(status 302, location http:\/\/169\.254\.169\.254\/\)/,
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.any(URL),
+        expect.objectContaining({redirect: 'manual'}),
+      );
+    });
+
+    it('refuses an opaque redirect response', async () => {
+      resolveTo('93.184.216.34');
+      fetchMock.mockResolvedValue(Response.error());
+
+      await expect(
+        resolveAgentCard('http://cards.example.com/'),
+      ).rejects.toThrow(/status 0, location null/);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['http://localhost:8001/a2a/agent/', 'http://127.0.0.1:8001/'])(
+      'fetches the card from the loopback URL %s',
+      async (source) => {
+        resolveTo('127.0.0.1');
+        fetchMock.mockResolvedValue(cardResponse());
+
+        const card = await resolveAgentCard(source);
+
+        expect(card.name).toBe('peer_agent');
+        expect(fetchMock.mock.calls[0][0].toString()).toBe(
+          `${source}.well-known/agent-card.json`,
+        );
+      },
+    );
+
+    it('fetches the card from a private address', async () => {
+      fetchMock.mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            ...STUB_CARD,
+            url: 'https://10.0.0.5/a2a/peer_agent/',
+          }),
+          {headers: {'content-type': 'application/json'}},
+        ),
+      );
+
+      const card = await resolveAgentCard('https://10.0.0.5/');
+
+      expect(card.name).toBe('peer_agent');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      'ftp://cards.example.com/card.json',
+      'gopher://cards.example.com/',
+      'htp://cards.example.com/card.json',
+      'data:application/json,{}',
+    ])('refuses the unsupported scheme in %s', async (source) => {
+      const rejection = resolveAgentCard(source);
+
+      await expect(rejection).rejects.toThrow(
+        /Unsupported agent card URL scheme/,
+      );
+      await expect(rejection).rejects.not.toThrow(
+        /Failed to read agent card from file/,
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('reads the card from a filesystem path', async () => {
+      const card = await resolveAgentCard(cardPath);
+
+      expect(card.name).toBe('peer_agent');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('reads the card from a file:// URL', async () => {
+      const card = await resolveAgentCard(pathToFileURL(cardPath).href);
+
+      expect(card.name).toBe('peer_agent');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('treats a Windows drive letter as a path, not a scheme', async () => {
+      await expect(resolveAgentCard('C:\\cards\\card.json')).rejects.toThrow(
+        /^Failed to read agent card from file C:\\cards\\card\.json: /,
+      );
+    });
+
+    it('reports a missing card file with its source', async () => {
+      await expect(
+        resolveAgentCard('./no-such-agent-card.json'),
+      ).rejects.toThrow(
+        /^Failed to read agent card from file \.\/no-such-agent-card\.json: ENOENT/,
+      );
     });
   });
 });

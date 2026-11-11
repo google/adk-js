@@ -4,43 +4,72 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content, createPartFromText, Part} from '@google/genai';
-import {context, trace} from '@opentelemetry/api';
+import {Content, createPartFromText, Modality, Part} from '@google/genai';
 
-import {BaseAgent} from '../agents/base_agent.js';
-import {findMatchingFunctionCall} from '../agents/functions.js';
+import {BaseAgent, isBaseAgent} from '../agents/base_agent.js';
+import {reservedFunctionCallName} from '../agents/framework_function_calls.js';
+import {
+  findMatchingFunctionCall,
+  getConflictingFunctionResponseAuthors,
+} from '../agents/functions.js';
 import {
   InvocationContext,
   newInvocationContextId,
+  requireAgent,
 } from '../agents/invocation_context.js';
+import {LiveRequestQueue} from '../agents/live_request_queue.js';
 import {isLlmAgent} from '../agents/llm_agent.js';
 import {createRunConfig, RunConfig} from '../agents/run_config.js';
 import {App} from '../apps/app.js';
 import {ResumabilityConfig} from '../apps/resumability_config.js';
 import {BaseArtifactService} from '../artifacts/base_artifact_service.js';
 import {ScopedArtifactService} from '../artifacts/scoped_artifact_service.js';
+import {
+  isSessionArtifactService,
+  SessionArtifactService,
+} from '../artifacts/session_artifact_service.js';
 
 import {BaseCredentialService} from '../auth/credential_service/base_credential_service.js';
 import {
   BuiltInCodeExecutor,
   isBuiltInCodeExecutor,
 } from '../code_executors/built_in_code_executor.js';
+import {buildAbortEvents, isAbortEvent} from '../events/abort_events.js';
 import {createEvent, Event} from '../events/event.js';
 import {createEventActions} from '../events/event_actions.js';
+import {
+  internalMetadata,
+  withoutInternalMetadata,
+} from '../events/internal_metadata.js';
 import {BaseMemoryService} from '../memory/base_memory_service.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
 import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
-import {CompositeSessionKey, Session} from '../sessions/session.js';
-import {
-  runAsyncGeneratorWithOtelContext,
-  tracer,
-} from '../telemetry/tracing.js';
+import {Session} from '../sessions/session.js';
+import {recordInvocation} from '../telemetry/api/instrumentation.js';
 import {BaseToolset, isBaseToolset} from '../tools/base_toolset.js';
+import {
+  formatError,
+  isInvocationCancellation,
+  toError,
+} from '../utils/error_utils.js';
 import {logger} from '../utils/logger.js';
 import {isGemini2OrAbove} from '../utils/model_name.js';
+import {stringifyWithRedactedInlineData} from '../utils/redact_inline_data.js';
+import type {BaseNode} from '../workflow/base_node.js';
 import type {RunnableNode} from '../workflow/graph.js';
-import {asRootAgent} from '../workflow/workflow_agent.js';
+import {isParallelWorker, isWorkflow} from '../workflow/index.js';
+import {
+  asRunnableRoot,
+  RunnableRoot,
+  runNodeAsInvocation,
+} from '../workflow/run_node_as_invocation.js';
+
+const TOOLSET_CLEANUP_TIMEOUT_MS = 10_000;
+
+const TOOLSET_CLEANUP_TIMEOUT_SYMBOL = Symbol(
+  'google.adk.runner.toolsetCleanupTimeout',
+);
 
 /**
  * The configuration parameters for the Runner.
@@ -60,10 +89,9 @@ export interface RunnerConfig {
    * The agent or workflow to run. Required if `app` is not provided.
    *
    * A bare node — a `Workflow`, most usefully — is accepted as the root and
-   * adapted internally, so a graph does not have to be wrapped by hand to be
-   * run. The accepted set is the same one an edge and `WorkflowAgent` take, so
-   * `{agent: node}` and `{agent: new WorkflowAgent(node)}` mean the same thing.
-   * Mirrors adk-python, whose `Runner.agent` is typed `BaseNode`.
+   * driven directly, so a graph does not have to be wrapped by hand to be run.
+   * The accepted set is the one an edge takes: any other node-like value
+   * becomes the single node of a one-node workflow.
    */
   agent?: RunnableNode;
 
@@ -75,7 +103,7 @@ export interface RunnerConfig {
   /**
    * An optional service for storing and retrieving artifacts.
    */
-  artifactService?: BaseArtifactService;
+  artifactService?: BaseArtifactService | SessionArtifactService;
 
   /**
    * The service for managing sessions.
@@ -96,6 +124,18 @@ export interface RunnerConfig {
    * An optional resumability configuration applied to the runner.
    */
   resumabilityConfig?: ResumabilityConfig;
+
+  /**
+   * Whether to create the session when `runAsync` is given a session id that
+   * does not exist. Defaults to `false`, which reports the missing session as
+   * an error instead.
+   *
+   * Enabling this trades a loud failure for a silent one: a caller that
+   * mistypes a session id gets a new empty conversation rather than an error.
+   * Turn it on only where the session id is a key the caller owns and a first
+   * use is expected to create it.
+   */
+  autoCreateSession?: boolean;
 }
 
 /**
@@ -146,13 +186,18 @@ export function isRunner(obj: unknown): obj is Runner {
 export class Runner {
   readonly [RUNNER_SIGNATURE_SYMBOL] = true;
   readonly appName: string;
-  readonly agent: BaseAgent;
+  /**
+   * The root being run: an agent, or a bare node (a `Workflow`) that the
+   * runner drives directly.
+   */
+  readonly agent: RunnableRoot;
   readonly pluginManager: PluginManager;
-  readonly artifactService?: BaseArtifactService;
+  readonly artifactService?: BaseArtifactService | SessionArtifactService;
   readonly sessionService: BaseSessionService;
   readonly memoryService?: BaseMemoryService;
   readonly credentialService?: BaseCredentialService;
   readonly resumabilityConfig?: ResumabilityConfig;
+  readonly autoCreateSession: boolean;
 
   /**
    * Creates a new Runner instance.
@@ -160,7 +205,7 @@ export class Runner {
    * @param input The configuration for the runner.
    */
   constructor(input: RunnerConfig) {
-    const appName = input.app?.name ?? input.appName;
+    const appName = input.appName ?? input.app?.name;
     const agent = input.app?.rootAgent ?? input.agent;
     if (!agent) {
       throw new Error(
@@ -168,7 +213,9 @@ export class Runner {
       );
     }
     this.appName = appName!;
-    this.agent = asRootAgent(agent);
+    // A workflow is kept as itself rather than wrapped: the runner drives a
+    // node directly (see `runRoot`), so there is no agent to manufacture.
+    this.agent = asRunnableRoot(agent);
     const appPlugins = input.app?.plugins ?? [];
     const configPlugins = input.plugins ?? [];
     this.pluginManager = new PluginManager([...appPlugins, ...configPlugins]);
@@ -178,6 +225,24 @@ export class Runner {
     this.credentialService = input.credentialService;
     this.resumabilityConfig =
       input.app?.resumabilityConfig ?? input.resumabilityConfig;
+    this.autoCreateSession = input.autoCreateSession ?? false;
+  }
+
+  /**
+   * Looks the session up, creating it first when `autoCreateSession` is set.
+   *
+   * A runner with no `appName` cannot address a session, so it falls through to
+   * the plain lookup rather than creating one under an undefined app name.
+   */
+  private async resolveSession(
+    userId: string,
+    sessionId: string,
+  ): Promise<Session | undefined> {
+    const key = {appName: this.appName, userId, sessionId};
+    if (this.autoCreateSession && this.appName) {
+      return this.sessionService.getOrCreateSession(key);
+    }
+    return this.sessionService.getSession(key);
   }
 
   /**
@@ -247,69 +312,69 @@ export class Runner {
     if (newMessage && !newMessage.role) {
       newMessage.role = 'user';
     }
+    rejectReservedFunctionCalls(newMessage);
 
     // =========================================================================
     // Setup the session and invocation context
     // =========================================================================
-    const span = tracer.startSpan('invocation');
-    const ctx = trace.setSpan(context.active(), span);
+    const runnerCtx = this;
     try {
-      yield* runAsyncGeneratorWithOtelContext<Runner, Event>(
-        ctx,
-        this,
+      yield* recordInvocation(
+        {entrypoint: this.agent, sessionId, runConfig},
         async function* () {
-          const session = await this.sessionService.getSession({
-            appName: this.appName,
-            userId,
-            sessionId,
-          });
+          const session = await runnerCtx.resolveSession(userId, sessionId);
 
           if (params.abortSignal?.aborted) {
             return;
           }
 
           if (!session) {
-            if (!this.appName) {
+            if (!runnerCtx.appName) {
               throw new Error(
                 `Session lookup failed: appName must be provided in runner constructor (or via app.name)`,
               );
             }
-            throw new Error(`Session not found: ${sessionId}`);
+            throw new Error(
+              `Session not found: ${sessionId} (appName=${runnerCtx.appName}, userId=${userId})`,
+            );
           }
 
-          if (runConfig.supportCfc && isLlmAgent(this.agent)) {
-            const modelName = this.agent.canonicalModel.model;
+          if (runConfig.supportCfc && isLlmAgent(runnerCtx.agent)) {
+            const modelName = runnerCtx.agent.canonicalModel.model;
             if (!isGemini2OrAbove(modelName)) {
               throw new Error(
                 `CFC is not supported for model: ${
                   modelName
-                } in agent: ${this.agent.name}`,
+                } in agent: ${runnerCtx.agent.name}`,
               );
             }
 
-            if (!isBuiltInCodeExecutor(this.agent.codeExecutor)) {
-              this.agent.codeExecutor = new BuiltInCodeExecutor();
+            if (!isBuiltInCodeExecutor(runnerCtx.agent.codeExecutor)) {
+              runnerCtx.agent.codeExecutor = new BuiltInCodeExecutor();
             }
           }
 
           const invocationContext = new InvocationContext({
-            artifactService: this.artifactService
-              ? new ScopedArtifactService(
-                  this.artifactService,
-                  this.appName,
-                  userId,
-                  sessionId,
-                )
+            artifactService: runnerCtx.artifactService
+              ? isSessionArtifactService(runnerCtx.artifactService)
+                ? runnerCtx.artifactService
+                : new ScopedArtifactService(
+                    runnerCtx.artifactService,
+                    runnerCtx.appName,
+                    userId,
+                    sessionId,
+                  )
               : undefined,
-            sessionService: this.sessionService,
-            memoryService: this.memoryService,
-            credentialService: this.credentialService,
+            sessionService: runnerCtx.sessionService,
+            memoryService: runnerCtx.memoryService,
+            credentialService: runnerCtx.credentialService,
             invocationId: newInvocationContextId(),
-            agent: this.agent,
+            agent: isBaseAgent(runnerCtx.agent) ? runnerCtx.agent : undefined,
             session,
             userContent: newMessage,
             runConfig,
-            pluginManager: this.pluginManager,
+            a2aMetadata: runConfig.a2aMetadata,
+            pluginManager: runnerCtx.pluginManager,
             abortSignal: params.abortSignal,
           });
 
@@ -317,7 +382,7 @@ export class Runner {
           // Preprocess plugins on user message
           // =========================================================================
           const pluginUserMessage =
-            await this.pluginManager.runOnUserMessageCallback({
+            await runnerCtx.pluginManager.runOnUserMessageCallback({
               userMessage: newMessage,
               invocationContext,
             });
@@ -340,12 +405,10 @@ export class Runner {
 
             // Directly saves the artifacts (if applicable) in the user message and
             // replaces the artifact data with a file name placeholder.
-            // TODO - b/425992518: fix Runner<>>ArtifactService leaky abstraction.
             if (runConfig.saveInputBlobsAsArtifacts) {
-              newMessage = await this.saveArtifacts(
+              newMessage = await runnerCtx.saveArtifacts(
+                invocationContext.artifactService,
                 invocationContext.invocationId,
-                session.userId,
-                session.id,
                 newMessage,
               );
               if (params.abortSignal?.aborted) {
@@ -353,7 +416,7 @@ export class Runner {
               }
             }
             // Append the user message to the session with optional state delta.
-            await this.sessionService.appendEvent({
+            await runnerCtx.sessionService.appendEvent({
               session,
               event: createEvent({
                 invocationId: invocationContext.invocationId,
@@ -362,7 +425,8 @@ export class Runner {
                   ? createEventActions({stateDelta})
                   : undefined,
                 content: newMessage,
-                customMetadata: params.customMetadata,
+                // Callers cannot set ADK-internal keys.
+                customMetadata: withoutInternalMetadata(params.customMetadata),
               }),
             });
             if (params.abortSignal?.aborted) {
@@ -373,10 +437,14 @@ export class Runner {
           // =========================================================================
           // Determine which agent should handle the workflow resumption.
           // =========================================================================
-          invocationContext.agent = this.determineAgentForResumption(
-            session,
-            this.agent,
-          );
+          // Only meaningful for an agent root: this resolves an event author
+          // against the agent tree, and a node subtree is not in that tree.
+          if (isBaseAgent(runnerCtx.agent)) {
+            invocationContext.agent = runnerCtx.determineAgentForResumption(
+              session,
+              runnerCtx.agent,
+            );
+          }
 
           // =========================================================================
           // Run the agent with the plugins (aka hooks to apply in the lifecycle)
@@ -385,110 +453,260 @@ export class Runner {
             // =========================================================================
             // Run the agent with the plugins (aka hooks to apply in the lifecycle)
             // =========================================================================
-            // Step 1: Run the before_run callbacks to see if we should early exit.
-            const beforeRunCallbackResponse =
-              await this.pluginManager.runBeforeRunCallback({
-                invocationContext,
-              });
-            if (params.abortSignal?.aborted) {
-              return;
-            }
-
-            if (beforeRunCallbackResponse) {
-              const earlyExitEvent = createEvent({
-                invocationId: invocationContext.invocationId,
-                author: 'model',
-                content: beforeRunCallbackResponse,
-              });
-              // TODO: b/447446338 - In the future, do *not* save live call audio
-              // content to session This is a feature in Python ADK
-              await this.sessionService.appendEvent({
-                session,
-                event: earlyExitEvent,
-              });
-              if (params.abortSignal?.aborted) {
-                return;
-              }
-
-              yield earlyExitEvent;
-            } else {
-              // Step 2: Otherwise continue with normal execution
-              for await (const event of invocationContext.agent.runAsync(
-                invocationContext,
-              )) {
-                if (params.abortSignal?.aborted) {
-                  return;
-                }
-
-                // Step 3: Run the on_event callbacks before persisting so callback
-                // changes are stored in the session and match the streamed event.
-                const modifiedEvent =
-                  await this.pluginManager.runOnEventCallback({
-                    invocationContext,
-                    event,
-                  });
-                const outputEvent = modifiedEvent
-                  ? {
-                      ...modifiedEvent,
-                      id: event.id,
-                      invocationId: event.invocationId,
-                      timestamp: event.timestamp,
-                      author: modifiedEvent.author || event.author,
-                      branch: modifiedEvent.branch ?? event.branch,
-                    }
-                  : event;
-                if (!event.partial) {
-                  await this.sessionService.appendEvent({
-                    session,
-                    event: outputEvent,
-                  });
-                }
-                if (params.abortSignal?.aborted) {
-                  return;
-                }
-
-                yield outputEvent;
-              }
-              // Step 4: Run the after_run callbacks to optionally modify the context.
-              await this.pluginManager.runAfterRunCallback({invocationContext});
-              if (params.abortSignal?.aborted) {
-                return;
-              }
-            }
+            yield* runnerCtx.runWithPluginLifecycle(invocationContext, () =>
+              runnerCtx.runAsyncWithPlugins(invocationContext),
+            );
           }
         },
       );
     } finally {
-      span.end();
-      const toolsets = getAllToolsets(this.agent);
-      await Promise.allSettled(toolsets.map((t) => t.close()));
+      await this.close();
     }
+  }
+
+  /**
+   * Closes the runner and cleans up all toolsets reachable from the root agent
+   * or workflow.
+   */
+  async close(): Promise<void> {
+    await cleanupToolsets(collectToolsets(this.agent));
+  }
+
+  private async *runAsyncWithPlugins(
+    invocationContext: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
+    // Step 1: Run the before_run callbacks to see if we should early exit.
+    const beforeRunCallbackResponse =
+      await this.pluginManager.runBeforeRunCallback({
+        invocationContext,
+      });
+    if (invocationContext.abortSignal?.aborted) {
+      return;
+    }
+
+    if (beforeRunCallbackResponse) {
+      const earlyExitEvent = createEvent({
+        invocationId: invocationContext.invocationId,
+        author: 'model',
+        content: beforeRunCallbackResponse,
+      });
+      // TODO: b/447446338 - In the future, do *not* save live call
+      // audio content to the session.
+      await this.sessionService.appendEvent({
+        session: invocationContext.session,
+        event: earlyExitEvent,
+      });
+      if (invocationContext.abortSignal?.aborted) {
+        return;
+      }
+
+      yield earlyExitEvent;
+    } else {
+      // Step 2: Otherwise continue with normal execution
+      let abortSealed = false;
+      const sealAbortedInvocation = () => {
+        abortSealed = true;
+        return this.synthesizeAbortEvents(invocationContext);
+      };
+      try {
+        for await (const event of this.runRoot(invocationContext)) {
+          if (invocationContext.abortSignal?.aborted) {
+            break;
+          }
+
+          // Step 3: Run the on_event callbacks before persisting so
+          // callback changes are stored in the session and match the
+          // streamed event.
+          const outputEvent = await this.processAndAppendEvent(
+            invocationContext,
+            event,
+          );
+          if (invocationContext.abortSignal?.aborted) {
+            break;
+          }
+
+          yield outputEvent;
+        }
+        if (invocationContext.abortSignal?.aborted) {
+          for (const abortEvent of await sealAbortedInvocation()) {
+            yield abortEvent;
+          }
+          return;
+        }
+      } finally {
+        if (invocationContext.abortSignal?.aborted && !abortSealed) {
+          // Best-effort: only reached on early close or error, where
+          // throwing would mask the in-flight exception.
+          try {
+            await sealAbortedInvocation();
+          } catch (e) {
+            logger.error(
+              `Failed to seal aborted invocation ${invocationContext.invocationId}.`,
+              e,
+            );
+          }
+        }
+      }
+    }
+  }
+
+  /** Finalizes a started run, including when its consumer closes the iterator. */
+  private async *runWithPluginLifecycle(
+    invocationContext: InvocationContext,
+    execute: () => AsyncGenerator<Event, void, void>,
+  ): AsyncGenerator<Event, void, void> {
+    let failed = false;
+    let completed = false;
+    try {
+      yield* execute();
+      completed = true;
+    } catch (error) {
+      if (!isInvocationCancellation(error, invocationContext.abortSignal)) {
+        failed = true;
+        await this.notifyRunError(invocationContext, error);
+      }
+      throw error;
+    } finally {
+      if (!failed) {
+        await this.finishRun(invocationContext, !completed);
+      }
+    }
+  }
+
+  private async finishRun(
+    invocationContext: InvocationContext,
+    closingEarly: boolean,
+  ): Promise<void> {
+    try {
+      await this.pluginManager.runAfterRunCallback({invocationContext});
+    } catch (error) {
+      await this.notifyRunError(invocationContext, error);
+      // Caller return() and thrown cancellation both skip the assignment after
+      // yield*. Preserve that close or cancellation if completion fails.
+      if (!closingEarly) {
+        throw error;
+      }
+      logger.error(
+        `afterRunCallback failed while closing invocation ${invocationContext.invocationId}.`,
+        error,
+      );
+    }
+  }
+
+  private async notifyRunError(
+    invocationContext: InvocationContext,
+    error: unknown,
+  ): Promise<void> {
+    try {
+      await this.pluginManager.runOnRunErrorCallback({
+        invocationContext,
+        error: toError(error),
+      });
+    } catch (callbackError) {
+      logger.error(
+        'Run error notification failed; preserving the original error.',
+        callbackError,
+      );
+    }
+  }
+
+  /**
+   * Runs whatever this runner was given as its root.
+   *
+   * An agent is run through `runAsync`, as always. A bare node — a `Workflow`
+   * handed to the runner directly — is driven by {@link runNodeAsInvocation}.
+   *
+   * Only the execution differs. Everything around it (the run callbacks, event
+   * persistence, cancellation) is shared, so the node path cannot drift from
+   * the agent path on the things that are not about execution. adk-python has
+   * two separate loops here and a TODO noting its node one lacks tracing and
+   * plugins; there is nothing to lack if there is only one loop.
+   */
+  private async *runRoot(
+    invocationContext: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
+    if (isBaseAgent(this.agent)) {
+      yield* requireAgent(invocationContext).runAsync(invocationContext);
+      return;
+    }
+    yield* runNodeAsInvocation(this.agent, invocationContext);
+  }
+
+  /**
+   * Runs the on_event plugin callbacks on an event and appends the result to
+   * the session unless it is partial.
+   *
+   * @returns The event as streamed to the caller.
+   */
+  private async processAndAppendEvent(
+    invocationContext: InvocationContext,
+    event: Event,
+  ): Promise<Event> {
+    const modifiedEvent = await this.pluginManager.runOnEventCallback({
+      invocationContext,
+      event,
+    });
+    const outputEvent = modifiedEvent
+      ? {
+          ...withInternalMetadataOf(event, modifiedEvent),
+          id: event.id,
+          invocationId: event.invocationId,
+          timestamp: event.timestamp,
+          author: modifiedEvent.author || event.author,
+          branch: modifiedEvent.branch ?? event.branch,
+        }
+      : event;
+    if (!event.partial) {
+      await this.sessionService.appendEvent({
+        session: invocationContext.session,
+        event: outputEvent,
+      });
+    }
+    return outputEvent;
+  }
+
+  /**
+   * Seals an aborted invocation in session history: answers its dangling
+   * function calls with error responses, or records a plain abort event when
+   * there is nothing to answer.
+   *
+   * @returns The synthetic events after plugin processing and persistence.
+   */
+  private async synthesizeAbortEvents(
+    invocationContext: InvocationContext,
+  ): Promise<Event[]> {
+    const abortEvents = buildAbortEvents({
+      events: invocationContext.session.events,
+      invocationId: invocationContext.invocationId,
+      rootAgentName: this.agent.name,
+      branch: invocationContext.branch,
+    });
+    const outputEvents: Event[] = [];
+    for (const event of abortEvents) {
+      outputEvents.push(
+        await this.processAndAppendEvent(invocationContext, event),
+      );
+    }
+    return outputEvents;
   }
 
   /**
    * Saves artifacts from the message parts and replaces the inline data with
    * a file name placeholder and optional file reference.
    *
+   * @param artifactService The session-scoped artifact service to save to.
    * @param invocationId The current invocation ID.
-   * @param userId The user ID of the session.
-   * @param sessionId The session ID of the session.
    * @param message The message containing parts to process.
    */
   private async saveArtifacts(
+    artifactService: SessionArtifactService | undefined,
     invocationId: string,
-    userId: string,
-    sessionId: string,
     message: Content,
   ): Promise<Content> {
-    if (!this.artifactService || !message.parts?.length) {
+    if (!artifactService || !message.parts?.length) {
       return message;
     }
 
-    const sessionKey: CompositeSessionKey = {
-      appName: this.appName,
-      userId,
-      sessionId,
-    };
     const newParts: Part[] = [];
     let modified = false;
 
@@ -505,8 +723,7 @@ export class Runner {
           (inlineData as {displayName?: string}).displayName ||
           `artifact_${invocationId}_${i}`;
 
-        const version = await this.artifactService.saveArtifact({
-          ...sessionKey,
+        const version = await artifactService.saveArtifact({
           filename: fileName,
           artifact: part,
         });
@@ -514,13 +731,10 @@ export class Runner {
         newParts.push(createPartFromText(`[Uploaded Artifact: "${fileName}"]`));
 
         try {
-          const artifactVersion = await this.artifactService.getArtifactVersion(
-            {
-              ...sessionKey,
-              filename: fileName,
-              version,
-            },
-          );
+          const artifactVersion = await artifactService.getArtifactVersion({
+            filename: fileName,
+            version,
+          });
           if (
             artifactVersion?.canonicalUri &&
             /^(gs|https?):/i.test(artifactVersion.canonicalUri)
@@ -580,12 +794,214 @@ export class Runner {
    * Whether the agent to run can transfer to any other agent in the agent tree.
    *
    * @param agentToRun The agent to check for transferability.
-   * @returns True if the agent can transfer, False otherwise.
+   * @returns True if the agent can transfer, false otherwise.
    */
   private isRoutableLlmAgent(agentToRun: BaseAgent): boolean {
     return isRoutableLlmAgent(agentToRun);
   }
-  // TODO - b/425992518: Implement runLive and related methods.
+  /**
+   * Runs the agent in the live (bidirectional streaming) mode.
+   *
+   * Model media events that carry raw inline bytes (audio, video, or image)
+   * are yielded but not appended to the session to avoid persisting large
+   * blobs; events with `fileData` references and most other live events
+   * (transcriptions, tool calls, usage) are persisted as in `runAsync`.
+   *
+   * This feature is **experimental** and its API may change.
+   *
+   * @param params.userId The user ID of the session.
+   * @param params.sessionId The session ID of the session.
+   * @param params.liveRequestQueue The queue used to feed the live model.
+   * @param params.runConfig The run config for the agent.
+   * @param params.abortSignal Optional signal to abort the live run.
+   * @param params.liveSessionResumptionHandle Optional session resumption
+   *     handle observed from a prior `runLive` cycle on the same conversation.
+   *     When set, the agent's live flow opens the connection with
+   *     `liveConnectConfig.sessionResumption.handle` so the server restores its
+   *     state instead of relying on client-side history replay.
+   * @yields The events generated by the agent.
+   */
+  async *runLive(params: {
+    userId: string;
+    sessionId: string;
+    liveRequestQueue: LiveRequestQueue;
+    runConfig?: RunConfig;
+    abortSignal?: AbortSignal;
+    liveSessionResumptionHandle?: string;
+  }): AsyncGenerator<Event, void, undefined> {
+    if (!params.liveRequestQueue) {
+      throw new Error('liveRequestQueue is required for runLive.');
+    }
+
+    if (!isBaseAgent(this.agent)) {
+      throw new Error('runLive is only supported for agents.');
+    }
+    const agent = this.agent;
+    const {sessionId} = params;
+
+    const runConfig = createRunConfig(params.runConfig);
+    if (!runConfig.responseModalities?.length) {
+      runConfig.responseModalities = [Modality.AUDIO];
+    }
+    // For multi-agent live setups, the model's text transcription is needed
+    // as context for the transferred agent.
+    if (agent.subAgents?.length) {
+      if (runConfig.responseModalities.includes(Modality.AUDIO)) {
+        runConfig.outputAudioTranscription ??= {};
+      }
+      runConfig.inputAudioTranscription ??= {};
+    }
+
+    const runnerCtx = this;
+    yield* recordInvocation(
+      {entrypoint: agent, sessionId, runConfig},
+      async function* () {
+        const session = await runnerCtx.sessionService.getOrCreateSession({
+          appName: runnerCtx.appName,
+          userId: params.userId,
+          sessionId: params.sessionId,
+        });
+
+        if (params.abortSignal?.aborted) {
+          return;
+        }
+
+        const invocationContext = new InvocationContext({
+          artifactService: runnerCtx.artifactService
+            ? isSessionArtifactService(runnerCtx.artifactService)
+              ? runnerCtx.artifactService
+              : new ScopedArtifactService(
+                  runnerCtx.artifactService,
+                  runnerCtx.appName,
+                  params.userId,
+                  params.sessionId,
+                )
+            : undefined,
+          sessionService: runnerCtx.sessionService,
+          memoryService: runnerCtx.memoryService,
+          credentialService: runnerCtx.credentialService,
+          invocationId: newInvocationContextId(),
+          agent,
+          session,
+          runConfig,
+          a2aMetadata: runConfig.a2aMetadata,
+          pluginManager: runnerCtx.pluginManager,
+          liveRequestQueue: params.liveRequestQueue,
+          abortSignal: params.abortSignal,
+          liveSessionResumptionHandle: params.liveSessionResumptionHandle,
+        });
+
+        invocationContext.agent = runnerCtx.determineAgentForResumption(
+          session,
+          agent,
+        );
+
+        yield* runnerCtx.runWithPluginLifecycle(invocationContext, () =>
+          runnerCtx.runLiveWithPlugins(invocationContext),
+        );
+      },
+    );
+  }
+
+  private async *runLiveWithPlugins(
+    invocationContext: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
+    // Step 1: before-run plugin hook (early exit if it returns content).
+    const beforeRunCallbackResponse =
+      await this.pluginManager.runBeforeRunCallback({
+        invocationContext,
+      });
+    if (invocationContext.abortSignal?.aborted) {
+      return;
+    }
+    if (beforeRunCallbackResponse) {
+      const earlyExitEvent = createEvent({
+        invocationId: invocationContext.invocationId,
+        author: 'model',
+        content: beforeRunCallbackResponse,
+      });
+      await this.sessionService.appendEvent({
+        session: invocationContext.session,
+        event: earlyExitEvent,
+      });
+      yield earlyExitEvent;
+      return;
+    }
+
+    // Step 2: drive the agent's runLive and propagate events.
+    for await (const event of requireAgent(invocationContext).runLive(
+      invocationContext,
+    )) {
+      if (invocationContext.abortSignal?.aborted) {
+        return;
+      }
+
+      const modifiedEvent = await this.pluginManager.runOnEventCallback({
+        invocationContext,
+        event,
+      });
+      if (invocationContext.abortSignal?.aborted) {
+        return;
+      }
+
+      const eventToProcess = modifiedEvent
+        ? withInternalMetadataOf(event, modifiedEvent)
+        : event;
+
+      if (
+        !eventToProcess.partial &&
+        !isLiveModelMediaEventWithInlineData(eventToProcess)
+      ) {
+        await this.sessionService.appendEvent({
+          session: invocationContext.session,
+          event: eventToProcess,
+        });
+      }
+
+      yield eventToProcess;
+    }
+  }
+}
+
+/**
+ * Returns a plugin's replacement event carrying the ADK-internal
+ * `customMetadata` keys of the original. Those keys belong to ADK, so a
+ * replacement cannot drop them.
+ */
+function withInternalMetadataOf(original: Event, replacement: Event): Event {
+  const internal = internalMetadata(original.customMetadata);
+  if (Object.keys(internal).length === 0) {
+    return replacement;
+  }
+  return {
+    ...replacement,
+    customMetadata: {...(replacement.customMetadata ?? {}), ...internal},
+  };
+}
+
+/**
+ * Whether a live event is a model media event carrying inline data (audio,
+ * video, or image).
+ *
+ * Such events are deliberately not persisted to the session to avoid storing
+ * large raw blobs. Media referenced via `fileData` (e.g. saved as artifacts)
+ * and all non-media events (transcriptions, tool calls, usage) are persisted
+ * as in `runAsync`.
+ */
+function isLiveModelMediaEventWithInlineData(event: Event): boolean {
+  const parts = event.content?.parts;
+  if (!parts?.length) {
+    return false;
+  }
+  return parts.some((part) => {
+    const mimeType = part.inlineData?.mimeType?.toLowerCase();
+    return (
+      mimeType !== undefined &&
+      (mimeType.startsWith('audio/') ||
+        mimeType.startsWith('video/') ||
+        mimeType.startsWith('image/'))
+    );
+  });
 }
 
 /**
@@ -601,9 +1017,35 @@ export function determineAgentForResumption(
   // Case 1: If the last event is a function response and resumability is enabled,
   // this returns the agent that made the original function call.
   // =========================================================================
-  const event = findEventByLastFunctionResponseId(session.events);
+  // A synthetic abort response seals a cancelled call; it must not route the
+  // next turn back to the agent that issued the call.
+  const lastEvent = session.events[session.events.length - 1];
+  const event =
+    lastEvent && !isAbortEvent(lastEvent)
+      ? findEventByLastFunctionResponseId(session.events)
+      : null;
   const isResumable = Boolean(resumabilityConfig?.isResumable);
   if (event && event.author && isResumable) {
+    // Checked here, not inside findEventByLastFunctionResponseId /
+    // findMatchingFunctionCall: those run unconditionally above, on every
+    // runAsync for an agent root, not only when resumption is requested.
+    // Throwing there would abort a run whose result is thrown away
+    // whenever resumabilityConfig is unset, for a session whose last
+    // event merely happens to answer two agents' calls at once -- Cases
+    // 2 and 3 below would never get a chance to run. Gating the throw on
+    // isResumable, which is what actually decides whether this event
+    // matters, keeps that from happening.
+    const conflictingAuthors = getConflictingFunctionResponseAuthors(
+      session.events,
+    );
+    if (conflictingAuthors) {
+      throw new Error(
+        'Function responses in the last event resolve to function calls ' +
+          `from more than one agent (at least "${conflictingAuthors[0]}" ` +
+          `and "${conflictingAuthors[1]}"); cannot determine a single ` +
+          'agent to resume.',
+      );
+    }
     const resumedAgent = rootAgent.findAgent(event.author);
     if (resumedAgent) {
       return resumedAgent;
@@ -621,9 +1063,11 @@ export function determineAgentForResumption(
   // =========================================================================
   // simplicity: O(N) backward event scan, upgrade to indexed lookups or map if N > 1000.
   for (let i = session.events.length - 1; i >= 0; i--) {
-    logger.debug('event:', JSON.stringify(session.events[i]));
+    logger.debug('event:', stringifyWithRedactedInlineData(session.events[i]));
     const event = session.events[i];
-    if (event.author === 'user' || !event.author) {
+    // Abort-sealing events are skipped too: the root-authored one would
+    // otherwise route the next turn back to the root.
+    if (event.author === 'user' || !event.author || isAbortEvent(event)) {
       continue;
     }
 
@@ -657,7 +1101,7 @@ export function determineAgentForResumption(
  * `nodeInfo.path` is stamped on everything a node emits (`node_runner.ts`).
  * When the node emits an event of its own — a function node's output, or a HITL
  * interrupt, which carries no author at all — the node name is stamped as the
- * author. Nodes are not in the agent tree and never will be: a `WorkflowAgent`
+ * author. Nodes are not in the agent tree and never will be: a workflow
  * keeps its structure in `edges`, so its `subAgents` is empty. Looking such an
  * author up could only ever miss, so the miss is not worth warning about — it
  * fired on the happy path of every human-in-the-loop resume.
@@ -679,7 +1123,7 @@ function isWorkflowNodeEvent(event: Event): boolean {
  *    `disallowTransferToParent` set to false).
  *
  * @param agentToRun The agent to check for transferability.
- * @returns True if the agent can transfer, False otherwise.
+ * @returns True if the agent can transfer, false otherwise.
  */
 export function isRoutableLlmAgent(agentToRun: BaseAgent): boolean {
   let agent: BaseAgent | undefined = agentToRun;
@@ -706,27 +1150,113 @@ export function findEventByLastFunctionResponseId(
   return findMatchingFunctionCall(events) ?? null;
 }
 
-function getAllToolsets(agent: BaseAgent): BaseToolset[] {
-  const toolsets: BaseToolset[] = [];
-  const visited = new Set<BaseAgent>();
+function collectToolsets(root: BaseNode): Set<BaseToolset> {
+  const toolsets = new Set<BaseToolset>();
+  const visited = new Set<BaseNode>();
 
-  function traverse(curr: BaseAgent) {
-    if (visited.has(curr)) return;
+  function traverse(curr: BaseNode): void {
+    if (visited.has(curr)) {
+      return;
+    }
     visited.add(curr);
 
     if (isLlmAgent(curr)) {
       for (const tool of curr.tools) {
         if (isBaseToolset(tool)) {
-          toolsets.push(tool);
+          toolsets.add(tool);
         }
       }
     }
 
-    for (const sub of curr.subAgents) {
-      traverse(sub);
+    if (isBaseAgent(curr)) {
+      for (const sub of curr.subAgents) {
+        traverse(sub);
+      }
+    }
+
+    if (isWorkflow(curr) && curr.graph) {
+      for (const node of curr.graph.nodes) {
+        traverse(node);
+      }
+    }
+
+    if (isParallelWorker(curr)) {
+      traverse(curr.inner);
     }
   }
 
-  traverse(agent);
+  traverse(root);
   return toolsets;
+}
+
+function formatToolsetCloseError(err: unknown): string {
+  const formatted = formatError(err);
+  if (formatted !== '[object Object]') {
+    return formatted;
+  }
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return formatted;
+  }
+}
+
+async function cleanupToolsets(toolsets: Set<BaseToolset>): Promise<void> {
+  await Promise.allSettled(
+    [...toolsets].map(async (toolset) => {
+      const toolsetName = toolset.constructor?.name || 'BaseToolset';
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      try {
+        logger.debug(`Closing toolset: ${toolsetName}`);
+        const result = await Promise.race([
+          toolset.close().then(() => undefined),
+          new Promise<typeof TOOLSET_CLEANUP_TIMEOUT_SYMBOL>((resolve) => {
+            timeoutId = setTimeout(
+              () => resolve(TOOLSET_CLEANUP_TIMEOUT_SYMBOL),
+              TOOLSET_CLEANUP_TIMEOUT_MS,
+            );
+          }),
+        ]);
+        if (result === TOOLSET_CLEANUP_TIMEOUT_SYMBOL) {
+          logger.warn(`Toolset ${toolsetName} cleanup timed out`);
+        } else {
+          logger.debug(`Successfully closed toolset: ${toolsetName}`);
+        }
+      } catch (e: unknown) {
+        logger.error(
+          `Error closing toolset ${toolsetName}: ${formatToolsetCloseError(e)}`,
+        );
+      } finally {
+        if (timeoutId !== undefined) {
+          clearTimeout(timeoutId);
+        }
+      }
+    }),
+  );
+}
+
+/**
+ * Refuses a client message that carries one of the framework's own
+ * control-plane function calls.
+ *
+ * `adk_request_confirmation`, `adk_request_credential` and `adk_request_input`
+ * are questions the framework raises into agent-authored events. A client
+ * answers one with a function *response*, which stays perfectly legal here; a
+ * client that sends the *call* is writing the question — the first half of
+ * approving its own action. There is no legitimate reason to do it, so the
+ * message is rejected at the door rather than allowed into the event log for
+ * later checks to sort out.
+ *
+ * @param newMessage The message about to be appended to the session.
+ * @throws {Error} If the message contains a reserved function call.
+ */
+function rejectReservedFunctionCalls(newMessage: Content | undefined): void {
+  const reserved = reservedFunctionCallName(newMessage);
+  if (reserved) {
+    throw new Error(
+      `A client message may not contain a '${reserved}' function call: it is ` +
+        'raised by the framework, and can only be answered with a function ' +
+        'response.',
+    );
+  }
 }

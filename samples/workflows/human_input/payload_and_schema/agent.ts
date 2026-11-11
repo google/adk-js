@@ -24,7 +24,7 @@
  * Turn 1: a city, e.g. "Lisbon". Turn 2: say which activities appeal to you.
  */
 
-import {node, NodeContext, RequestInput, WorkflowAgent} from '@google/adk';
+import {node, NodeContext, RequestInput, Workflow} from '@google/adk';
 import {z} from 'zod';
 
 /**
@@ -94,7 +94,7 @@ const applyFeedback = node(
   {name: 'apply_feedback'},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'concierge_workflow',
   edges: [['START', buildItinerary, getUserFeedback, applyFeedback]],
 });

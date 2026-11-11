@@ -19,10 +19,9 @@ import {
   RawGenerateContentResponse,
 } from '../test_case_utils.js';
 
-// Mock google-auth-library
 vi.mock('google-auth-library', () => {
   return {
-    GoogleAuth: vi.fn().mockImplementation(() => {
+    GoogleAuth: vi.fn().mockImplementation(function () {
       return {
         getClient: vi.fn().mockResolvedValue({
           getRequestHeaders: vi.fn().mockResolvedValue({
@@ -52,7 +51,9 @@ const mockMcpClient = {
 // Mock MCP Client
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
   return {
-    Client: vi.fn().mockImplementation(() => mockMcpClient),
+    Client: vi.fn().mockImplementation(function () {
+      return mockMcpClient;
+    }),
   };
 });
 

@@ -23,7 +23,7 @@ import {
   DEFAULT_ROUTE,
   node,
   NodeContext,
-  WorkflowAgent,
+  Workflow,
 } from '@google/adk';
 
 const router = node(
@@ -46,7 +46,7 @@ const handleAnythingElse = node(
   {name: 'handle_anything_else'},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'routing_output_workflow',
   edges: [
     ['START', router],

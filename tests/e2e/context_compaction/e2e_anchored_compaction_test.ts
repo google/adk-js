@@ -123,7 +123,6 @@ describe('E2e Anchored Context Compaction', () => {
 
       const events = updatedSession!.events;
 
-      // Find if there is a CompactedEvent
       const compactedEvents = events.filter(isCompactedEvent);
       expect(compactedEvents.length).toBeGreaterThan(0);
 

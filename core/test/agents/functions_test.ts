@@ -4,35 +4,64 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import {
+  ActiveStreamingTool,
+  AfterToolCallback,
+  AgentTool,
+  AUTH_PREPROCESSOR,
+  AuthConfig,
+  AuthCredentialTypes,
+  BaseAgent,
   BasePlugin,
   BaseTool,
+  BeforeToolCallback,
+  ComputerUseTool,
+  Context,
   createEvent,
   createEventActions,
+  createSession,
   Event,
   functionsExportedForTestingOnly,
   FunctionTool,
   InvocationContext,
+  isToolNotFound,
+  LiveRequestQueue,
   LlmAgent,
+  LongRunningFunctionTool,
   PluginManager,
+  REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
   Session,
   SingleAfterToolCallback,
   SingleBeforeToolCallback,
   ToolConfirmation,
 } from '@google/adk';
-import {FunctionCall} from '@google/genai';
-import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {FunctionCall, FunctionResponse} from '@google/genai';
+import {context, SpanStatusCode, trace} from '@opentelemetry/api';
+import {AsyncLocalStorageContextManager} from '@opentelemetry/context-async-hooks';
+import {
+  BasicTracerProvider,
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+} from '@opentelemetry/sdk-trace-base';
+import type {MockInstance} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
 import {
   findEventByFunctionCallId,
   findMatchingFunctionCall,
   generateClientFunctionCallId,
+  getConflictingFunctionResponseAuthors,
   getLongRunningFunctionCalls,
+  handleFunctionCallsAsync,
   mergeParallelFunctionResponseEvents,
 } from '../../src/agents/functions.js';
+import {logger} from '../../src/utils/logger.js';
+import {Task} from '../../src/utils/task.js';
 
 // Get the test target function
 const {
   handleFunctionCallList,
+  handleFunctionCallsLive,
+  processFunctionLiveHelper,
   generateAuthEvent,
   generateRequestConfirmationEvent,
 } = functionsExportedForTestingOnly;
@@ -55,6 +84,28 @@ const errorTool = new FunctionTool({
     throw new Error('tool error message content');
   },
 });
+
+const typedErrorResponseTool = new FunctionTool({
+  name: 'typedErrorResponseTool',
+  description: 'returns a typed tool error response',
+  parameters: z.object({}),
+  execute: async () => ({
+    error: 'sensitive tool error details',
+    errorType: 'MCP_TOOL_ERROR',
+  }),
+});
+
+class ThrowingTool extends BaseTool {
+  constructor(private readonly thrownValue: unknown) {
+    super({name: 'throwingTool', description: 'throws a test value'});
+  }
+
+  override async runAsync(
+    _request: Parameters<BaseTool['runAsync']>[0],
+  ): Promise<unknown> {
+    throw this.thrownValue;
+  }
+}
 
 // Plugin for testing
 class TestPlugin extends BasePlugin {
@@ -114,13 +165,53 @@ function callFor(tool: BaseTool): FunctionCall {
   return {id: randomIdForTestingOnly(), name: tool.name, args: {}};
 }
 
+/**
+ * Builds a long-running tool that mutates its tool context and then returns no
+ * response.
+ */
+function createStartJobTool(mutate: (toolContext: Context) => void) {
+  return new LongRunningFunctionTool({
+    name: 'startJob',
+    description: 'starts a background job',
+    parameters: z.object({}),
+    execute: async (_args, toolContext) => {
+      mutate(toolContext!);
+      return undefined;
+    },
+  });
+}
+
 describe('handleFunctionCallList', () => {
+  let spanExporter: InMemorySpanExporter;
+  let spanContextManager: AsyncLocalStorageContextManager;
+  let spanProvider: BasicTracerProvider;
   let invocationContext: InvocationContext;
   let pluginManager: PluginManager;
   let functionCall: FunctionCall;
   let toolsDict: Record<string, BaseTool>;
+  let warnSpy: MockInstance<typeof logger.warn>;
+
+  afterEach(async () => {
+    await spanProvider.shutdown();
+    trace.disable();
+    context.disable();
+    spanContextManager.disable();
+    vi.restoreAllMocks();
+  });
 
   beforeEach(() => {
+    trace.disable();
+    context.disable();
+    spanExporter = new InMemorySpanExporter();
+    spanContextManager = new AsyncLocalStorageContextManager().enable();
+    spanProvider = new BasicTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(spanExporter)],
+    });
+    context.setGlobalContextManager(spanContextManager);
+    trace.setGlobalTracerProvider(spanProvider);
+    // These tests deliberately provoke resolution failures; keep the expected
+    // diagnostics out of the suite output.
+    warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     pluginManager = new PluginManager();
     const agent = new LlmAgent({name: 'test_agent', model: 'test_model'});
     invocationContext = new InvocationContext({
@@ -150,6 +241,31 @@ describe('handleFunctionCallList', () => {
     expect(definedEvent.content!.parts![0].functionResponse!.response).toEqual({
       result: 'tool executed',
     });
+  });
+
+  it.each([
+    ['empty Error message', new Error('')],
+    ['empty string', ''],
+    ['zero', 0],
+    ['false', false],
+    ['null', null],
+    ['undefined', undefined],
+  ])('preserves a thrown %s as an error response', async (_label, thrown) => {
+    const tool = new ThrowingTool(thrown);
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [callFor(tool)],
+      toolsDict: {[tool.name]: tool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(event).not.toBeNull();
+    const response = (event as Event).content!.parts![0].functionResponse!
+      .response;
+    const expectedError = thrown instanceof Error ? thrown.message : thrown;
+    expect(response).toHaveProperty('error', expectedError);
+    expect(response).not.toHaveProperty('result');
   });
 
   it('should wrap array responses into a {results: array} object', async () => {
@@ -326,6 +442,61 @@ describe('handleFunctionCallList', () => {
     });
   });
 
+  it('records a thrown tool error on its execution span', async () => {
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{...functionCall, name: 'errorTool'}],
+      toolsDict: {errorTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const spans = spanExporter
+      .getFinishedSpans()
+      .filter((s) => s.name === 'execute_tool errorTool');
+    expect(spans).toHaveLength(1);
+    const executionSpan = spans[0];
+    expect(executionSpan.events).toEqual([
+      expect.objectContaining({
+        name: 'exception',
+        attributes: expect.objectContaining({
+          'exception.message': expect.stringContaining(
+            'tool error message content',
+          ),
+        }),
+      }),
+    ]);
+    expect(executionSpan.attributes['error.type']).toBe('Error');
+    expect(executionSpan.status).toEqual({
+      code: SpanStatusCode.ERROR,
+      message: 'Error',
+    });
+    expect(executionSpan.ended).toBe(true);
+  });
+
+  it('records an explicit error type returned by the tool', async () => {
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{...functionCall, name: 'typedErrorResponseTool'}],
+      toolsDict: {typedErrorResponseTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const spans = spanExporter
+      .getFinishedSpans()
+      .filter((s) => s.name === 'execute_tool typedErrorResponseTool');
+    expect(spans).toHaveLength(1);
+    const executionSpan = spans[0];
+    expect(executionSpan.attributes['error.type']).toBe('MCP_TOOL_ERROR');
+    expect(executionSpan.status).toEqual({
+      code: SpanStatusCode.ERROR,
+      message: 'MCP_TOOL_ERROR',
+    });
+    expect(executionSpan.events).toEqual([]);
+    expect(executionSpan.ended).toBe(true);
+  });
+
   it('should return error message when error is thrown during tool execution, when no plugin onToolErrorCallback is provided', async () => {
     const errorFunctionCall: FunctionCall = {
       id: randomIdForTestingOnly(),
@@ -344,6 +515,220 @@ describe('handleFunctionCallList', () => {
     expect(event!.content!.parts![0].functionResponse!.response).toEqual({
       error: "Error in tool 'errorTool': tool error message content",
     });
+  });
+
+  it('should route an unregistered tool name through plugin onToolErrorCallback', async () => {
+    const plugin = new TestPlugin('testPlugin');
+    plugin.onToolErrorCallbackResponse = {
+      error: 'no such tool, try testTool',
+    };
+    pluginManager.registerPlugin(plugin);
+    const onToolErrorCallback = vi.spyOn(plugin, 'onToolErrorCallback');
+    const hallucinatedCall: FunctionCall = {
+      id: randomIdForTestingOnly(),
+      name: 'google_search',
+      args: {query: 'anything'},
+    };
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [hallucinatedCall],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(onToolErrorCallback).toHaveBeenCalledTimes(1);
+    const {tool, toolArgs} = onToolErrorCallback.mock.calls[0][0];
+    expect(tool.name).toBe('google_search');
+    expect(toolArgs).toEqual({query: 'anything'});
+
+    const functionResponse = event!.content!.parts![0].functionResponse!;
+    expect(functionResponse.id).toBe(hallucinatedCall.id);
+    expect(functionResponse.name).toBe('google_search');
+    expect(functionResponse.response).toEqual({
+      error: 'no such tool, try testTool',
+    });
+  });
+
+  it('should answer an unregistered tool name with the resolution error when no plugin handles it', async () => {
+    const unresolvableCall: FunctionCall = {
+      id: randomIdForTestingOnly(),
+      name: 'google_search',
+      args: {},
+    };
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [unresolvableCall],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    // The call has to be answered, not left dangling: the request is otherwise
+    // identical next iteration, and Gemini rejects an unpaired functionCall.
+    const functionResponse = event!.content!.parts![0].functionResponse!;
+    expect(functionResponse.id).toBe(unresolvableCall.id);
+    expect(functionResponse.name).toBe('google_search');
+    const {error} = functionResponse.response as {error: string};
+    expect(error).toContain(
+      'Function google_search is not found in the toolsDict.',
+    );
+    // The inventory and the causes are for an operator, not the model: the
+    // model already has its declarations and would otherwise pay for the whole
+    // toolset on every occurrence.
+    expect(error).not.toContain('Callable tools');
+    expect(error).not.toContain('Possible causes');
+  });
+
+  it('should warn the operator with the inventory and the possible causes', async () => {
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: 'call-1', name: 'google_search', args: {}}],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    // Without this the only trace of a misconfigured agent is a string the
+    // model sees and the operator never does.
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const warning = warnSpy.mock.calls[0][0] as string;
+    expect(warning).toContain("Could not resolve tool 'google_search'");
+    expect(warning).toContain('call-1');
+    expect(warning).toContain('Callable tools: testTool.');
+    expect(warning).toContain('Possible causes:');
+    // The cause this change tripped over in SleepyTool has to be listed.
+    expect(warning).toContain('_getDeclaration()');
+    // Built-in tools register themselves now, so they must not be blamed here.
+    expect(warning).not.toContain('google_search`');
+  });
+
+  it('should not warn when a plugin handles the unresolvable call', async () => {
+    const plugin = new TestPlugin('testPlugin');
+    plugin.onToolErrorCallbackResponse = {result: 'handled'};
+    pluginManager.registerPlugin(plugin);
+
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: 'call-1', name: 'google_search', args: {}}],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    // A plugin that answers these has made them an expected condition; the
+    // sibling path for a registered tool that throws is silent too.
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('should skip the before and after tool callbacks for an unresolvable call', async () => {
+    const plugin = new TestPlugin('testPlugin');
+    pluginManager.registerPlugin(plugin);
+    const beforeToolCallback = vi.spyOn(plugin, 'beforeToolCallback');
+    const afterToolCallback = vi.spyOn(plugin, 'afterToolCallback');
+    const canonicalAfter = vi.fn().mockResolvedValue(undefined);
+
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: 'call-1', name: 'google_search', args: {}}],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [canonicalAfter],
+    });
+
+    // Documented asymmetry with the registered-tool error path, which does run
+    // them. Pin it so the doc comment and the code cannot drift apart.
+    expect(beforeToolCallback).not.toHaveBeenCalled();
+    expect(afterToolCallback).not.toHaveBeenCalled();
+    expect(canonicalAfter).not.toHaveBeenCalled();
+  });
+
+  it('should hand plugins a placeholder that identifies itself and rethrows', async () => {
+    const plugin = new TestPlugin('testPlugin');
+    plugin.onToolErrorCallbackResponse = {result: 'handled'};
+    pluginManager.registerPlugin(plugin);
+    const onToolErrorCallback = vi.spyOn(plugin, 'onToolErrorCallback');
+
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: 'call-1', name: 'google_search', args: {}}],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const {tool} = onToolErrorCallback.mock.calls[0][0];
+    // A plugin can tell an unresolvable name from a registered tool that threw
+    // without matching on the error message.
+    expect(isToolNotFound(tool)).toBe(true);
+    expect(isToolNotFound(testTool)).toBe(false);
+    // Nothing in the framework runs it, but a plugin holding it can, and it
+    // must not invent a second, different message.
+    await expect(
+      tool.runAsync({args: {}, toolContext: {} as Context}),
+    ).rejects.toThrow('Function google_search is not found in the toolsDict.');
+  });
+
+  // `functionCall.name` is model-supplied and `toolsDict` is a plain object, so
+  // an unguarded lookup reaches `Object.prototype`. These names would resolve
+  // to a JS builtin, be treated as found, and skip the whole recovery path —
+  // `constructor` even answers under the name `Object`, breaking the pairing.
+  it.each([
+    'constructor',
+    'toString',
+    'valueOf',
+    'hasOwnProperty',
+    'isPrototypeOf',
+    'propertyIsEnumerable',
+    'toLocaleString',
+    '__proto__',
+  ])('should treat the inherited name %s as unresolvable', async (name) => {
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: 'call-1', name, args: {}}],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const functionResponse = event!.content!.parts![0].functionResponse!;
+    // The response has to name the call, or the pair dangles.
+    expect(functionResponse.name).toBe(name);
+    expect(functionResponse.id).toBe('call-1');
+    expect((functionResponse.response as {error: string}).error).toBe(
+      `Function ${name} is not found in the toolsDict.`,
+    );
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('should answer every call in a batch when one name is unresolvable', async () => {
+    const unresolvableId = randomIdForTestingOnly();
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [
+        callFor(testTool),
+        {id: unresolvableId, name: 'google_search', args: {}},
+        callFor(testTool),
+      ],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const responses = event!.content!.parts!.map((p) => p.functionResponse!);
+    expect(responses.map((r) => r.name)).toEqual([
+      'testTool',
+      'google_search',
+      'testTool',
+    ]);
+    expect(responses[0].response).toEqual({result: 'tool executed'});
+    expect(responses[2].response).toEqual({result: 'tool executed'});
+    // The id is what keeps the pairing balanced, so pin it on the
+    // unresolvable slot too — that is the one built off the placeholder.
+    expect(responses[1].id).toBe(unresolvableId);
+    expect(responses[1].response).toHaveProperty('error');
   });
 
   it('should pass abortSignal to tool execution', async () => {
@@ -437,6 +822,251 @@ describe('handleFunctionCallList', () => {
       }),
     ]);
   });
+
+  it.each([
+    [
+      'a stateDelta',
+      (toolContext: Context) => {
+        toolContext.state.set('jobStarted', true);
+      },
+      {stateDelta: {jobStarted: true}},
+    ],
+    [
+      'skipSummarization',
+      (toolContext: Context) => {
+        toolContext.actions.skipSummarization = true;
+      },
+      {skipSummarization: true},
+    ],
+    [
+      'transferToAgent',
+      (toolContext: Context) => {
+        toolContext.actions.transferToAgent = 'other_agent';
+      },
+      {transferToAgent: 'other_agent'},
+    ],
+    [
+      'a requested tool confirmation',
+      (toolContext: Context) => {
+        toolContext.requestConfirmation({hint: 'ok?'});
+      },
+      {
+        requestedToolConfirmations: {
+          'lro_1': new ToolConfirmation({hint: 'ok?', confirmed: false}),
+        },
+      },
+    ],
+  ])(
+    'should emit a content-less event carrying %s',
+    async (_label, mutate, expectedActions) => {
+      const event = await handleFunctionCallList({
+        invocationContext,
+        functionCalls: [{id: 'lro_1', name: 'startJob', args: {}}],
+        toolsDict: {'startJob': createStartJobTool(mutate)},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+
+      expect(event!.content).toBeUndefined();
+      expect(event!.actions).toMatchObject(expectedActions);
+      expect(event!.author).toBe('test_agent');
+      expect(event!.invocationId).toBe('inv_123');
+    },
+  );
+
+  it('should merge the actions of a silent long running tool into the batch event', async () => {
+    const startJob = createStartJobTool((toolContext) => {
+      toolContext.state.set('jobStarted', true);
+    });
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [callFor(startJob), callFor(testTool)],
+      toolsDict: {startJob, testTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(event!.content!.parts!.length).toBe(1);
+    expect(event!.content!.parts![0].functionResponse!.response).toEqual({
+      result: 'tool executed',
+    });
+    expect(event!.actions.stateDelta).toEqual({jobStarted: true});
+  });
+
+  it('should keep the function response of a long running tool that does respond', async () => {
+    const startJob = new LongRunningFunctionTool({
+      name: 'startJob',
+      description: 'starts a background job',
+      parameters: z.object({}),
+      execute: async (_args, toolContext) => {
+        toolContext!.state.set('jobStarted', true);
+        return {status: 'pending'};
+      },
+    });
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [callFor(startJob)],
+      toolsDict: {startJob},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(event!.content!.parts![0].functionResponse!.response).toEqual({
+      status: 'pending',
+    });
+    expect(event!.actions.stateDelta).toEqual({jobStarted: true});
+  });
+
+  it.each([
+    [
+      'object return',
+      new FunctionTool({
+        name: 't',
+        description: 'returns object',
+        execute: async () => ({ok: true}),
+      }),
+      {ok: true},
+    ],
+    [
+      'primitive string return',
+      new FunctionTool({
+        name: 't',
+        description: 'returns string',
+        execute: async () => 'hello',
+      }),
+      {result: 'hello'},
+    ],
+    [
+      'array return',
+      new FunctionTool({
+        name: 't',
+        description: 'returns array',
+        execute: async () => [1, 2],
+      }),
+      {results: [1, 2]},
+    ],
+    [
+      'null return',
+      new FunctionTool({
+        name: 't',
+        description: 'returns null',
+        execute: async () => null,
+      }),
+      {result: null},
+    ],
+    [
+      'thrown Error with no onToolErrorCallback override',
+      new FunctionTool({
+        name: 't',
+        description: 'throws Error',
+        execute: async () => {
+          throw new Error('boom');
+        },
+      }),
+      {error: "Error in tool 't': boom"},
+    ],
+    [
+      'thrown non-Error value',
+      new ThrowingTool('raw failure'),
+      {error: 'raw failure'},
+    ],
+  ])(
+    'normalizes %s to a Record<string, unknown> before plugin and canonical afterToolCallbacks run',
+    async (_label, tool, expectedNormalized) => {
+      let pluginSeen: Record<string, unknown> | undefined;
+      let canonicalSeen: Record<string, unknown> | undefined;
+
+      class InspectingPlugin extends BasePlugin {
+        constructor() {
+          super('inspect');
+        }
+        override async afterToolCallback({
+          result,
+        }: Parameters<BasePlugin['afterToolCallback']>[0]): Promise<
+          Record<string, unknown> | undefined
+        > {
+          // Verify that `'error' in result` never throws TypeError.
+          void ('error' in result);
+          pluginSeen = result;
+          return undefined;
+        }
+      }
+
+      pluginManager.registerPlugin(new InspectingPlugin());
+      const canonicalAfter: SingleAfterToolCallback = async ({response}) => {
+        void ('error' in response);
+        canonicalSeen = response;
+        return undefined;
+      };
+
+      const event = await handleFunctionCallList({
+        invocationContext,
+        functionCalls: [callFor(tool)],
+        toolsDict: {[tool.name]: tool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [canonicalAfter],
+      });
+
+      expect(pluginSeen).toStrictEqual(expectedNormalized);
+      expect(canonicalSeen).toStrictEqual(expectedNormalized);
+      expect(
+        event?.content?.parts?.[0].functionResponse?.response,
+      ).toStrictEqual(expectedNormalized);
+    },
+  );
+
+  it('hands afterToolCallback an empty record when a long-running tool returns nullish, while still deferring the event', async () => {
+    let pluginSeen: Record<string, unknown> | undefined;
+    class InspectingPlugin extends BasePlugin {
+      constructor() {
+        super('inspect');
+      }
+      override async afterToolCallback({
+        result,
+      }: Parameters<BasePlugin['afterToolCallback']>[0]): Promise<
+        Record<string, unknown> | undefined
+      > {
+        expect('error' in result).toBe(false);
+        pluginSeen = result;
+        return undefined;
+      }
+    }
+    pluginManager.registerPlugin(new InspectingPlugin());
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [callFor(silentLongRunningTool)],
+      toolsDict: {silentLongRunningTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(pluginSeen).toStrictEqual({});
+    expect(event).toBeNull();
+  });
+
+  it('allows afterToolCallback to override an unhandled tool error response', async () => {
+    const afterToolCallback: SingleAfterToolCallback = async ({response}) => {
+      if ('error' in response) {
+        return {recoveredFrom: response['error']};
+      }
+      return undefined;
+    };
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [callFor(errorTool)],
+      toolsDict: {errorTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [afterToolCallback],
+    });
+
+    expect(event?.content?.parts?.[0].functionResponse?.response).toEqual({
+      recoveredFrom: "Error in tool 'errorTool': tool error message content",
+    });
+  });
 });
 
 describe('generateAuthEvent', () => {
@@ -505,6 +1135,27 @@ describe('generateAuthEvent', () => {
     expect(call2).toBeDefined();
     expect(call2!.functionCall!.name).toBe('adk_request_credential');
     expect(call2!.functionCall!.args!['auth_config']).toBe('auth_config_2');
+  });
+
+  it('should default the role to user for a content-less event', () => {
+    const functionResponseEvent = createEvent({
+      actions: createEventActions({
+        requestedAuthConfigs: {
+          'call_1': {
+            authScheme: {type: 'apiKey', name: 'X-API-Key', in: 'header'},
+            credentialKey: 'test-credential-key',
+          },
+        },
+      }),
+    });
+
+    const event = generateAuthEvent(invocationContext, functionResponseEvent);
+
+    expect(event!.content!.role).toBe('user');
+    expect(event!.content!.parts!.length).toBe(1);
+    expect(event!.content!.parts![0].functionCall!.name).toBe(
+      'adk_request_credential',
+    );
   });
 });
 
@@ -680,6 +1331,34 @@ describe('generateRequestConfirmationEvent', () => {
     );
     expect(call1).toBeDefined();
   });
+
+  it('should default the role to user for a content-less event', () => {
+    const functionCallEvent = createEvent({
+      content: {
+        role: 'user',
+        parts: [{functionCall: {name: 'tool_1', args: {}, id: 'call_1'}}],
+      },
+    });
+    const functionResponseEvent = createEvent({
+      actions: createEventActions({
+        requestedToolConfirmations: {
+          'call_1': new ToolConfirmation({hint: 'ok?', confirmed: false}),
+        },
+      }),
+    });
+
+    const event = generateRequestConfirmationEvent({
+      invocationContext,
+      functionCallEvent,
+      functionResponseEvent,
+    });
+
+    expect(event!.content!.role).toBe('user');
+    expect(event!.content!.parts!.length).toBe(1);
+    expect(event!.content!.parts![0].functionCall!.name).toBe(
+      'adk_request_confirmation',
+    );
+  });
 });
 
 describe('generateClientFunctionCallId', () => {
@@ -838,5 +1517,1128 @@ describe('findMatchingFunctionCall', () => {
     });
     expect(findMatchingFunctionCall([callEvent])).toBeUndefined();
     expect(findMatchingFunctionCall([])).toBeUndefined();
+  });
+
+  it('checks every function response in the last event, not just the first', () => {
+    // response 0 has no matching call (a stale or unmatched id); response 1
+    // is the one that actually resolves. The pre-fix code read only
+    // functionResponses[0] and would have returned undefined here even
+    // though the event does answer a real, resumable call -- this is the
+    // shape "check every response" exists for, and the only test in this
+    // file that fails without the fix for that specific reason (the other
+    // two-response case below happens to pass either way, since it never
+    // puts the resolving response anywhere but last).
+    const callB = createEvent({
+      invocationId: 'inv-b',
+      author: 'agent_b',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-b', name: 'tool_b', args: {}}}],
+      },
+    });
+    const mixedResponses = createEvent({
+      invocationId: 'inv-new',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-does-not-exist',
+              name: 'tool_a',
+              response: {result: 'a done'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'fc-b',
+              name: 'tool_b',
+              response: {result: 'b done'},
+            },
+          },
+        ],
+      },
+    });
+
+    expect(findMatchingFunctionCall([callB, mixedResponses])).toBe(callB);
+  });
+
+  it('resolves multiple responses from the same agent without conflict', () => {
+    // Two responses in one event answering two calls from the SAME agent
+    // (parallel tool calls within a single invocation) must still resolve
+    // normally -- only responses that disagree on author are a conflict.
+    const callEvent = createEvent({
+      invocationId: 'inv-1',
+      author: 'agent_a',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'fc-1', name: 'tool_a', args: {}}},
+          {functionCall: {id: 'fc-2', name: 'tool_b', args: {}}},
+        ],
+      },
+    });
+    const bothResponses = createEvent({
+      invocationId: 'inv-new',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-1',
+              name: 'tool_a',
+              response: {result: 'done'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'fc-2',
+              name: 'tool_b',
+              response: {result: 'done'},
+            },
+          },
+        ],
+      },
+    });
+
+    expect(findMatchingFunctionCall([callEvent, bothResponses])).toBe(
+      callEvent,
+    );
+  });
+
+  it('resolves to the last match by iteration order when responses conflict, without throwing', () => {
+    // findMatchingFunctionCall is a pure lookup: it does not throw on a
+    // conflict (getConflictingFunctionResponseAuthors, tested below, is
+    // what surfaces that). This pins the documented last-wins behavior
+    // for that case, which is a change from the pre-fix code's effective
+    // first-wins behavior (it only ever read functionResponses[0]).
+    const callA = createEvent({
+      invocationId: 'inv-a',
+      author: 'agent_a',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-a', name: 'tool_a', args: {}}}],
+      },
+    });
+    const callB = createEvent({
+      invocationId: 'inv-b',
+      author: 'agent_b',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-b', name: 'tool_b', args: {}}}],
+      },
+    });
+    const bothResponses = createEvent({
+      invocationId: 'inv-new',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-a',
+              name: 'tool_a',
+              response: {result: 'a done'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'fc-b',
+              name: 'tool_b',
+              response: {result: 'b done'},
+            },
+          },
+        ],
+      },
+    });
+
+    expect(findMatchingFunctionCall([callA, callB, bothResponses])).toBe(callB);
+  });
+});
+
+describe('getConflictingFunctionResponseAuthors', () => {
+  it('returns the conflicting author pair when responses resolve to more than one agent', () => {
+    const callA = createEvent({
+      invocationId: 'inv-a',
+      author: 'agent_a',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-a', name: 'tool_a', args: {}}}],
+      },
+    });
+    const callB = createEvent({
+      invocationId: 'inv-b',
+      author: 'agent_b',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-b', name: 'tool_b', args: {}}}],
+      },
+    });
+    const bothResponses = createEvent({
+      invocationId: 'inv-new',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-a',
+              name: 'tool_a',
+              response: {result: 'a done'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'fc-b',
+              name: 'tool_b',
+              response: {result: 'b done'},
+            },
+          },
+        ],
+      },
+    });
+
+    expect(
+      getConflictingFunctionResponseAuthors([callA, callB, bothResponses]),
+    ).toEqual(['agent_a', 'agent_b']);
+  });
+
+  it('returns undefined when responses all resolve to the same agent', () => {
+    const callEvent = createEvent({
+      invocationId: 'inv-1',
+      author: 'agent_a',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'fc-1', name: 'tool_a', args: {}}},
+          {functionCall: {id: 'fc-2', name: 'tool_b', args: {}}},
+        ],
+      },
+    });
+    const bothResponses = createEvent({
+      invocationId: 'inv-new',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-1',
+              name: 'tool_a',
+              response: {result: 'done'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'fc-2',
+              name: 'tool_b',
+              response: {result: 'done'},
+            },
+          },
+        ],
+      },
+    });
+
+    expect(
+      getConflictingFunctionResponseAuthors([callEvent, bothResponses]),
+    ).toBeUndefined();
+  });
+
+  it('returns undefined when there is nothing to resolve', () => {
+    const callEvent = createEvent({
+      invocationId: 'inv-1',
+      author: 'sub-agent',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'lro-id-123', name: 'longRunningOp', args: {}}},
+        ],
+      },
+    });
+    expect(getConflictingFunctionResponseAuthors([callEvent])).toBeUndefined();
+    expect(getConflictingFunctionResponseAuthors([])).toBeUndefined();
+  });
+});
+
+describe('handleFunctionCallsLive and processFunctionLiveHelper', () => {
+  function createLiveInvocationContext(): InvocationContext {
+    const agent = new LlmAgent({
+      name: 'live_test_agent',
+      model: 'gemini-2.0-flash',
+    });
+    return new InvocationContext({
+      invocationId: 'inv-live-1',
+      agent,
+      session: createSession({
+        id: 'sess-live-1',
+        userId: 'user-live-1',
+        appName: 'app-live-1',
+      }),
+      liveRequestQueue: new LiveRequestQueue(),
+      pluginManager: new PluginManager(),
+    });
+  }
+
+  it('executes a regular function tool in live mode and merges parallel responses', async () => {
+    const ctx = createLiveInvocationContext();
+    const sumTool = new FunctionTool({
+      name: 'sumTool',
+      description: 'adds two numbers',
+      parameters: z.object({a: z.number(), b: z.number()}),
+      execute: async ({a, b}) => ({sum: a + b}),
+    });
+    const callEvent = createEvent({
+      invocationId: ctx.invocationId,
+      author: 'live_test_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'fc-sum-1',
+              name: 'sumTool',
+              args: {a: 2, b: 5},
+            },
+          },
+          {
+            functionCall: {
+              id: 'fc-test-1',
+              name: 'testTool',
+              args: {},
+            },
+          },
+        ],
+      },
+    });
+
+    const responseEvent = await handleFunctionCallsLive({
+      invocationContext: ctx,
+      functionCallEvent: callEvent,
+      toolsDict: {sumTool, testTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(responseEvent).not.toBeNull();
+    expect(responseEvent?.content?.parts).toEqual([
+      {
+        functionResponse: {
+          id: 'fc-sum-1',
+          name: 'sumTool',
+          response: {sum: 7},
+        },
+      },
+      {
+        functionResponse: {
+          id: 'fc-test-1',
+          name: 'testTool',
+          response: {result: 'tool executed'},
+        },
+      },
+    ]);
+  });
+
+  it('applies beforeToolCallbacks and afterToolCallbacks in handleFunctionCallsLive', async () => {
+    const ctx = createLiveInvocationContext();
+    const beforeCb: SingleBeforeToolCallback = async ({args}) => {
+      if (args['shortCircuit']) {
+        return {intercepted: 'before'};
+      }
+      return undefined;
+    };
+    const afterCb: SingleAfterToolCallback = async ({response}) => {
+      return {...(response as Record<string, unknown>), afterTag: true};
+    };
+    const callEvent = createEvent({
+      invocationId: ctx.invocationId,
+      author: 'live_test_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'fc-cb-1',
+              name: 'testTool',
+              args: {shortCircuit: true},
+            },
+          },
+        ],
+      },
+    });
+
+    const responseEvent = await handleFunctionCallsLive({
+      invocationContext: ctx,
+      functionCallEvent: callEvent,
+      toolsDict: {testTool},
+      beforeToolCallbacks: [beforeCb],
+      afterToolCallbacks: [afterCb],
+    });
+
+    expect(responseEvent?.content?.parts).toEqual([
+      {
+        functionResponse: {
+          id: 'fc-cb-1',
+          name: 'testTool',
+          response: {intercepted: 'before', afterTag: true},
+        },
+      },
+    ]);
+  });
+
+  it('starts a background Task for an async-generator streaming tool, preserves an existing stream, and forwards yielded values to liveRequestQueue', async () => {
+    const ctx = createLiveInvocationContext();
+    const existingStream = new LiveRequestQueue();
+    ctx.activeStreamingTools = {
+      monitorPrice: new ActiveStreamingTool({stream: existingStream}),
+    };
+    const streamTool = new FunctionTool({
+      name: 'monitorPrice',
+      description: 'streams price updates',
+      parameters: z.object({symbol: z.string()}),
+      execute: async function* ({symbol}) {
+        yield `${symbol}:101`;
+        yield `${symbol}:102`;
+      },
+    });
+    const callEvent = createEvent({
+      invocationId: ctx.invocationId,
+      author: 'live_test_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'fc-stream-1',
+              name: 'monitorPrice',
+              args: {symbol: 'GOOG'},
+            },
+          },
+        ],
+      },
+    });
+
+    const responseEvent = await handleFunctionCallsLive({
+      invocationContext: ctx,
+      functionCallEvent: callEvent,
+      toolsDict: {monitorPrice: streamTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(responseEvent?.content?.parts).toEqual([
+      {
+        functionResponse: {
+          id: 'fc-stream-1',
+          name: 'monitorPrice',
+          response: {
+            status:
+              'The function is running asynchronously and the results are pending.',
+          },
+        },
+      },
+    ]);
+    expect(ctx.activeStreamingTools?.['monitorPrice']?.stream).toBe(
+      existingStream,
+    );
+    expect(ctx.activeStreamingTools?.['monitorPrice']?.task).toBeDefined();
+    await ctx.activeStreamingTools?.['monitorPrice']?.task?.promise;
+
+    const firstQueued = await ctx.liveRequestQueue?.get();
+    const secondQueued = await ctx.liveRequestQueue?.get();
+    expect(firstQueued?.content).toEqual({
+      role: 'user',
+      parts: [{text: 'Function monitorPrice returned: GOOG:101'}],
+    });
+    expect(secondQueued?.content).toEqual({
+      role: 'user',
+      parts: [{text: 'Function monitorPrice returned: GOOG:102'}],
+    });
+  });
+
+  it('cancels an active streaming tool when stop_streaming is called', async () => {
+    const ctx = createLiveInvocationContext();
+    let releaseStream: (() => void) | undefined;
+    const streamTool = new FunctionTool({
+      name: 'tickerStream',
+      description: 'streams ticker indefinitely until cancelled',
+      parameters: z.object({}),
+      execute: async function* () {
+        yield 'tick-1';
+        await new Promise<void>((resolve) => {
+          releaseStream = resolve;
+        });
+        yield 'tick-2';
+      },
+    });
+    const stopStreamingTool = new FunctionTool({
+      name: 'stop_streaming',
+      description: 'stops a streaming tool',
+      parameters: z.object({function_name: z.string()}),
+      execute: async () => ({}),
+    });
+
+    await handleFunctionCallsLive({
+      invocationContext: ctx,
+      functionCallEvent: createEvent({
+        invocationId: ctx.invocationId,
+        author: 'live_test_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-start-1',
+                name: 'tickerStream',
+                args: {},
+              },
+            },
+          ],
+        },
+      }),
+      toolsDict: {tickerStream: streamTool, stop_streaming: stopStreamingTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const firstTick = await ctx.liveRequestQueue?.get();
+    expect(firstTick?.content?.parts?.[0]?.text).toBe(
+      'Function tickerStream returned: tick-1',
+    );
+    expect(ctx.activeStreamingTools?.['tickerStream']?.task?.done()).toBe(
+      false,
+    );
+
+    const stopResponseEvent = await handleFunctionCallsLive({
+      invocationContext: ctx,
+      functionCallEvent: createEvent({
+        invocationId: ctx.invocationId,
+        author: 'live_test_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-stop-1',
+                name: 'stop_streaming',
+                args: {function_name: 'tickerStream'},
+              },
+            },
+          ],
+        },
+      }),
+      toolsDict: {tickerStream: streamTool, stop_streaming: stopStreamingTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    releaseStream?.();
+    expect(stopResponseEvent?.content?.parts).toEqual([
+      {
+        functionResponse: {
+          id: 'fc-stop-1',
+          name: 'stop_streaming',
+          response: {
+            status: 'Successfully stopped streaming function tickerStream',
+          },
+        },
+      },
+    ]);
+    expect(ctx.activeStreamingTools?.['tickerStream']?.task).toBeUndefined();
+  });
+
+  it('returns not-found status when stop_streaming targets an inactive or unknown tool', async () => {
+    const ctx = createLiveInvocationContext();
+    const stopStreamingTool = new FunctionTool({
+      name: 'stop_streaming',
+      description: 'stops a streaming tool',
+      parameters: z.object({function_name: z.string()}),
+      execute: async () => ({}),
+    });
+
+    const result = await processFunctionLiveHelper({
+      tool: stopStreamingTool,
+      toolContext: new Context({invocationContext: ctx}),
+      functionCall: {
+        id: 'fc-stop-missing',
+        name: 'stop_streaming',
+        args: {function_name: 'nonExistentStream'},
+      },
+      functionArgs: {function_name: 'nonExistentStream'},
+      invocationContext: ctx,
+    });
+
+    expect(result).toEqual({
+      status: 'No active streaming function named nonExistentStream found',
+    });
+  });
+
+  it('logs a warning and reports not-cancelled status when a streaming task does not finish before timeout', async () => {
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const ctx = createLiveInvocationContext();
+      let resolveStuckTask: (() => void) | undefined;
+      const stuckTask = new Task<void>(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveStuckTask = resolve;
+          }),
+      );
+      ctx.activeStreamingTools = {
+        stuckStream: new ActiveStreamingTool({task: stuckTask}),
+      };
+      const stopStreamingTool = new FunctionTool({
+        name: 'stop_streaming',
+        description: 'stops a streaming tool',
+        parameters: z.object({function_name: z.string()}),
+        execute: async () => ({}),
+      });
+
+      const pendingResult = processFunctionLiveHelper({
+        tool: stopStreamingTool,
+        toolContext: new Context({invocationContext: ctx}),
+        functionCall: {
+          id: 'fc-stop-stuck',
+          name: 'stop_streaming',
+          args: {function_name: 'stuckStream'},
+        },
+        functionArgs: {function_name: 'stuckStream'},
+        invocationContext: ctx,
+      });
+
+      await vi.advanceTimersByTimeAsync(1000);
+      const result = await pendingResult;
+
+      expect(result).toEqual({
+        status: 'The task is not cancelled yet for stuckStream.',
+      });
+      expect(warnSpy).toHaveBeenCalledWith(
+        'The task for stuckStream is not cancelled yet.',
+      );
+      resolveStuckTask?.();
+    } finally {
+      warnSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('executes an AgentTool in handleFunctionCallsLive and returns the sub-agent output', async () => {
+    class StubSubAgent extends BaseAgent {
+      protected override async *runAsyncImpl(
+        context: InvocationContext,
+      ): AsyncGenerator<Event, void, void> {
+        const lastMessage =
+          context.session.events.at(-1)?.content?.parts?.[0]?.text ?? '';
+        yield createEvent({
+          invocationId: context.invocationId,
+          author: this.name,
+          content: {
+            role: 'model',
+            parts: [{text: `sub-agent answer: ${lastMessage}`}],
+          },
+          actions: createEventActions({
+            stateDelta: {subAgentRan: true},
+          }),
+        });
+      }
+
+      protected override async *runLiveImpl(
+        _context: InvocationContext,
+      ): AsyncGenerator<Event, void, void> {}
+    }
+
+    const ctx = createLiveInvocationContext();
+    const subAgent = new StubSubAgent({
+      name: 'sub_agent_tool',
+      description: 'delegates to a sub-agent',
+    });
+    const agentTool = new AgentTool({agent: subAgent});
+    const callEvent = createEvent({
+      invocationId: ctx.invocationId,
+      author: 'live_test_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'fc-agent-tool-1',
+              name: 'sub_agent_tool',
+              args: {request: 'check status'},
+            },
+          },
+        ],
+      },
+    });
+
+    const responseEvent = await handleFunctionCallsLive({
+      invocationContext: ctx,
+      functionCallEvent: callEvent,
+      toolsDict: {sub_agent_tool: agentTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(responseEvent).not.toBeNull();
+    expect(responseEvent?.content?.parts).toEqual([
+      {
+        functionResponse: {
+          id: 'fc-agent-tool-1',
+          name: 'sub_agent_tool',
+          response: {result: 'sub-agent answer: check status'},
+        },
+      },
+    ]);
+    expect(responseEvent?.actions?.stateDelta).toEqual({
+      subAgentRan: true,
+    });
+  });
+});
+
+describe('OAuth2 credential request and response flows', () => {
+  const oauth2AuthConfig: AuthConfig = {
+    credentialKey: 'oauth2_tool_credential',
+    authScheme: {
+      type: 'oauth2',
+      flows: {
+        authorizationCode: {
+          authorizationUrl: 'https://example.com/oauth2/authorize',
+          tokenUrl: 'https://example.com/oauth2/token',
+          scopes: {read: 'Read access'},
+        },
+      },
+    },
+    rawAuthCredential: {
+      authType: AuthCredentialTypes.OAUTH2,
+      oauth2: {
+        clientId: 'client-id-123',
+        clientSecret: 'client-secret-456',
+        redirectUri: 'https://example.com/callback',
+      },
+    },
+  };
+
+  function createProtectedTool() {
+    return new FunctionTool({
+      name: 'protectedTool',
+      description: 'tool requiring OAuth2 credentials',
+      parameters: z.object({query: z.string()}),
+      execute: async ({query}, toolContext) => {
+        const credential = toolContext?.getAuthResponse(oauth2AuthConfig);
+        if (!credential) {
+          toolContext?.requestCredential(oauth2AuthConfig);
+          return {status: 'pending_credentials'};
+        }
+        return {
+          query,
+          accessToken: credential.oauth2?.accessToken ?? null,
+          refreshToken: credential.oauth2?.refreshToken ?? null,
+        };
+      },
+    });
+  }
+
+  it('requests OAuth2 credentials via requestedAuthConfigs and emits an adk_request_credential call', async () => {
+    const protectedTool = createProtectedTool();
+    const agent = new LlmAgent({
+      name: 'auth_agent',
+      model: 'gemini-2.0-flash',
+      tools: [protectedTool],
+    });
+    const session = createSession({
+      id: 'sess-euc-1',
+      userId: 'user-euc-1',
+      appName: 'app-euc-1',
+    });
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv-euc-1',
+      agent,
+      session,
+      pluginManager: new PluginManager(),
+    });
+    const functionCallEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: 'auth_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'fc-protected-1',
+              name: 'protectedTool',
+              args: {query: 'secret-report'},
+            },
+          },
+        ],
+      },
+    });
+
+    const functionResponseEvent = await handleFunctionCallsAsync({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {protectedTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(functionResponseEvent).not.toBeNull();
+    expect(
+      functionResponseEvent?.content?.parts?.[0]?.functionResponse?.response,
+    ).toEqual({
+      status: 'pending_credentials',
+    });
+
+    const requestedConfig =
+      functionResponseEvent?.actions?.requestedAuthConfigs?.['fc-protected-1'];
+    expect(requestedConfig).toBeDefined();
+    expect(requestedConfig?.exchangedAuthCredential?.oauth2?.authUri).toContain(
+      'https://example.com/oauth2/authorize',
+    );
+    expect(
+      requestedConfig?.exchangedAuthCredential?.oauth2?.state,
+    ).toBeTruthy();
+
+    const authEvent = generateAuthEvent(
+      invocationContext,
+      functionResponseEvent!,
+    );
+    expect(authEvent).not.toBeNull();
+    const authCall = authEvent?.content?.parts?.[0]?.functionCall;
+    expect(authCall?.name).toBe(REQUEST_CREDENTIAL_FUNCTION_CALL_NAME);
+    expect(authCall?.args).toEqual({
+      function_call_id: 'fc-protected-1',
+      auth_config: requestedConfig,
+    });
+  });
+
+  it('stores exchanged OAuth2 accessToken and refreshToken and resumes the waiting tool via AUTH_PREPROCESSOR', async () => {
+    const protectedTool = createProtectedTool();
+    const agent = new LlmAgent({
+      name: 'auth_agent',
+      model: 'gemini-2.0-flash',
+      tools: [protectedTool],
+    });
+    const originalCallEvent = createEvent({
+      invocationId: 'inv-euc-2',
+      author: 'auth_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'fc-protected-2',
+              name: 'protectedTool',
+              args: {query: 'secret-report'},
+            },
+          },
+        ],
+      },
+    });
+    const authRequestEvent = createEvent({
+      invocationId: 'inv-euc-2',
+      author: 'auth_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'fc-auth-req-2',
+              name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+              args: {
+                functionCallId: 'fc-protected-2',
+                authConfig: oauth2AuthConfig,
+              },
+            },
+          },
+        ],
+      },
+    });
+    const userAuthResponseEvent = createEvent({
+      invocationId: 'inv-euc-2',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-auth-req-2',
+              name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+              response: {
+                exchangedAuthCredential: {
+                  authType: AuthCredentialTypes.OAUTH2,
+                  oauth2: {
+                    clientId: 'client-id-123',
+                    clientSecret: 'client-secret-456',
+                    accessToken: 'exchanged-access-token',
+                    refreshToken: 'exchanged-refresh-token',
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
+    const session = createSession({
+      id: 'sess-euc-2',
+      userId: 'user-euc-2',
+      appName: 'app-euc-2',
+      events: [originalCallEvent, authRequestEvent, userAuthResponseEvent],
+    });
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv-euc-2',
+      agent,
+      session,
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of AUTH_PREPROCESSOR.runAsync(invocationContext)) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(1);
+    expect(events[0].content?.parts?.[0]?.functionResponse).toEqual({
+      id: 'fc-protected-2',
+      name: 'protectedTool',
+      response: {
+        query: 'secret-report',
+        accessToken: 'exchanged-access-token',
+        refreshToken: 'exchanged-refresh-token',
+      },
+    });
+  });
+});
+
+describe('async tool callbacks on LlmAgent', () => {
+  async function invokeToolWithCallbacks({
+    beforeToolCallback,
+    afterToolCallback,
+  }: {
+    beforeToolCallback?: BeforeToolCallback;
+    afterToolCallback?: AfterToolCallback;
+  }): Promise<Event | null> {
+    const tool = new FunctionTool({
+      name: 'simple_fn',
+      description: 'simple function',
+      parameters: z.object({}),
+      execute: () => ({initial: 'response'}),
+    });
+    const agent = new LlmAgent({
+      name: 'agent',
+      model: 'gemini-flash-latest',
+      tools: [tool],
+      beforeToolCallback,
+      afterToolCallback,
+    });
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv-async-cb',
+      agent,
+      session: createSession({
+        id: 'sess-async-cb',
+        userId: 'user-async-cb',
+        appName: 'app-async-cb',
+      }),
+      pluginManager: new PluginManager(),
+    });
+    const functionCallEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: agent.name,
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'call-1', name: tool.name, args: {}}}],
+      },
+    });
+    return handleFunctionCallsAsync({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {[tool.name]: tool},
+      beforeToolCallbacks: agent.canonicalBeforeToolCallbacks,
+      afterToolCallbacks: agent.canonicalAfterToolCallbacks,
+    });
+  }
+
+  it('test_async_before_tool_callback', async () => {
+    const mockResp = {test: 'before_tool_callback'};
+    const resultEvent = await invokeToolWithCallbacks({
+      beforeToolCallback: async () => mockResp,
+    });
+
+    expect(resultEvent).not.toBeNull();
+    expect(
+      resultEvent?.content?.parts?.[0]?.functionResponse?.response,
+    ).toEqual(mockResp);
+  });
+
+  it('test_async_after_tool_callback', async () => {
+    const mockResp = {test: 'after_tool_callback'};
+    const resultEvent = await invokeToolWithCallbacks({
+      afterToolCallback: async () => mockResp,
+    });
+
+    expect(resultEvent).not.toBeNull();
+    expect(
+      resultEvent?.content?.parts?.[0]?.functionResponse?.response,
+    ).toEqual(mockResp);
+  });
+
+  const CALLBACK_PARAMS: Array<{
+    name: string;
+    callbacks: Array<{
+      response: Record<string, unknown> | undefined;
+      isAsync: boolean;
+    }>;
+    expectedResponse: Record<string, unknown>;
+    expectedCalls: number[];
+  }> = [
+    {
+      name: 'when middle async callback returns content',
+      callbacks: [
+        {response: undefined, isAsync: false},
+        {response: {test: 'callback_2_response'}, isAsync: true},
+        {response: {test: 'callback_3_response'}, isAsync: false},
+        {response: undefined, isAsync: true},
+      ],
+      expectedResponse: {test: 'callback_2_response'},
+      expectedCalls: [1, 1, 0, 0],
+    },
+    {
+      name: 'when all callbacks return undefined',
+      callbacks: [
+        {response: undefined, isAsync: false},
+        {response: undefined, isAsync: true},
+        {response: undefined, isAsync: false},
+        {response: undefined, isAsync: true},
+      ],
+      expectedResponse: {initial: 'response'},
+      expectedCalls: [1, 1, 1, 1],
+    },
+    {
+      name: 'when first sync callback returns content',
+      callbacks: [
+        {response: {test: 'callback_1_response'}, isAsync: false},
+        {response: {test: 'callback_2_response'}, isAsync: true},
+      ],
+      expectedResponse: {test: 'callback_1_response'},
+      expectedCalls: [1, 0],
+    },
+  ];
+
+  it.each(CALLBACK_PARAMS)(
+    'executes beforeToolCallback chain ($name)',
+    async ({callbacks, expectedResponse, expectedCalls}) => {
+      const mockBeforeCbs: SingleBeforeToolCallback[] = callbacks.map(
+        ({response, isAsync}) =>
+          isAsync ? vi.fn(async () => response) : vi.fn(() => response),
+      );
+
+      const resultEvent = await invokeToolWithCallbacks({
+        beforeToolCallback: mockBeforeCbs,
+      });
+
+      expect(resultEvent).not.toBeNull();
+      expect(
+        resultEvent?.content?.parts?.[0]?.functionResponse?.response,
+      ).toEqual(expectedResponse);
+
+      for (let i = 0; i < mockBeforeCbs.length; i++) {
+        expect(mockBeforeCbs[i]).toHaveBeenCalledTimes(expectedCalls[i]);
+      }
+    },
+  );
+
+  it.each(CALLBACK_PARAMS)(
+    'executes afterToolCallback chain ($name)',
+    async ({callbacks, expectedResponse, expectedCalls}) => {
+      const mockAfterCbs: SingleAfterToolCallback[] = callbacks.map(
+        ({response, isAsync}) =>
+          isAsync ? vi.fn(async () => response) : vi.fn(() => response),
+      );
+
+      const resultEvent = await invokeToolWithCallbacks({
+        afterToolCallback: mockAfterCbs,
+      });
+
+      expect(resultEvent).not.toBeNull();
+      expect(
+        resultEvent?.content?.parts?.[0]?.functionResponse?.response,
+      ).toEqual(expectedResponse);
+
+      for (let i = 0; i < mockAfterCbs.length; i++) {
+        expect(mockAfterCbs[i]).toHaveBeenCalledTimes(expectedCalls[i]);
+      }
+    },
+  );
+});
+
+describe('computer use function responses', () => {
+  function makeInvocationContext(): InvocationContext {
+    return new InvocationContext({
+      invocationId: 'inv_computer_use',
+      session: createSession({id: 's1', appName: 'app', userId: 'u1'}),
+      agent: new LlmAgent({name: 'test_agent', model: 'test_model'}),
+      pluginManager: new PluginManager(),
+    });
+  }
+
+  async function respond(tool: BaseTool): Promise<FunctionResponse> {
+    const event = await handleFunctionCallList({
+      invocationContext: makeInvocationContext(),
+      functionCalls: [callFor(tool)],
+      toolsDict: {[tool.name]: tool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    const functionResponse = event?.content?.parts?.[0].functionResponse;
+    if (!functionResponse) {
+      throw new Error('No function response in the event');
+    }
+    return functionResponse;
+  }
+
+  function computerUseTool(result: unknown): ComputerUseTool {
+    return new ComputerUseTool({
+      name: 'current_state',
+      description: 'Returns the current state.',
+      screenSize: [1920, 1080],
+      execute: () => result,
+    });
+  }
+
+  it('sends the screenshot as an inline image part', async () => {
+    const functionResponse = await respond(
+      computerUseTool({
+        screenshot: new Uint8Array([1, 2, 3]),
+        url: 'https://example.com',
+      }),
+    );
+
+    expect(functionResponse.response).toEqual({url: 'https://example.com'});
+    expect(functionResponse.parts).toEqual([
+      {inlineData: {data: 'AQID', mimeType: 'image/png'}},
+    ]);
+  });
+
+  it('leaves an image that is not base64 in the response', async () => {
+    const image = {data: 'not base64!', mimetype: 'image/png'};
+
+    const functionResponse = await respond(computerUseTool({image}));
+
+    expect(functionResponse.response).toEqual({image});
+    expect(functionResponse.parts).toBeUndefined();
+  });
+
+  it('leaves the image of a tool that is not a computer use tool', async () => {
+    const image = {data: 'AQID', mimetype: 'image/png'};
+    const tool = new FunctionTool({
+      name: 'imageTool',
+      description: 'returns an image field',
+      execute: async () => ({image}),
+    });
+
+    const functionResponse = await respond(tool);
+
+    expect(functionResponse.response).toEqual({image});
+    expect(functionResponse.parts).toBeUndefined();
   });
 });

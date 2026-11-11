@@ -5,6 +5,10 @@
  */
 
 import {randomUUID as nodeRandomUUID} from 'node:crypto';
+import {logger} from './logger.js';
+
+const ENTERPRISE_MODE_ENV_VAR = 'GOOGLE_GENAI_USE_ENTERPRISE';
+const DEPRECATED_ENTERPRISE_MODE_ENV_VAR = 'GOOGLE_GENAI_USE_VERTEXAI';
 
 /**
  * Returns true if the environment is a browser.
@@ -66,19 +70,21 @@ export function randomUUID(): string {
 /**
  * Encodes the given string or Uint8Array to base64.
  *
+ * `window.btoa` is byte-oriented and throws on any code unit above `U+00FF`,
+ * so a string is first encoded to UTF-8 bytes. Node's `Buffer` encodes a
+ * string as UTF-8 too, which keeps both environments on one contract and lets
+ * `base64Decode` round-trip its output.
+ *
  * @param data The data to encode.
  * @return The base64-encoded string.
  */
 export function base64Encode(data: string | Uint8Array): string {
   if (isBrowser()) {
+    const bytes =
+      typeof data === 'string' ? new TextEncoder().encode(data) : data;
     let strData = '';
-    if (typeof data === 'string') {
-      strData = data;
-    } else {
-      const len = data.byteLength;
-      for (let i = 0; i < len; i++) {
-        strData += String.fromCharCode(data[i]);
-      }
+    for (let i = 0; i < bytes.length; i++) {
+      strData += String.fromCharCode(bytes[i]);
     }
     // eslint-disable-next-line no-undef
     return window.btoa(strData);
@@ -88,15 +94,28 @@ export function base64Encode(data: string | Uint8Array): string {
 }
 
 /**
- * Decodes the given base64 string to a string.
+ * Decodes the given base64 string to UTF-8 text.
+ *
+ * `window.atob` is byte-oriented: it returns a latin1 "binary string" with one
+ * code unit per decoded byte, so a multi-byte UTF-8 sequence surfaces as
+ * mojibake. Node's `Buffer` decodes the same bytes as UTF-8, so the browser
+ * branch recovers the bytes from `atob` and decodes them explicitly. That keeps
+ * both environments on the single contract `File.content` and
+ * `materializeFiles` already assume.
+ *
+ * `ignoreBOM` keeps a leading byte order mark as `U+FEFF`, which is what
+ * `Buffer` does. `TextDecoder` strips it by default, so a spreadsheet CSV
+ * exported as UTF-8 with a BOM would otherwise lose a character.
  *
  * @param data The base64-encoded string.
- * @return The decoded string.
+ * @return The decoded UTF-8 string.
  */
 export function base64Decode(data: string): string {
   if (isBrowser()) {
     // eslint-disable-next-line no-undef
-    return window.atob(data);
+    const binary = window.atob(data);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return new TextDecoder('utf-8', {ignoreBOM: true}).decode(bytes);
   }
 
   return Buffer.from(data, 'base64').toString();
@@ -117,17 +136,83 @@ export function isBase64Encoded(data: string): boolean {
 }
 
 /**
+ * Gets the value of the given environment variable.
+ *
+ * Browsers have no `process` global, and there even `process?.env` throws a
+ * ReferenceError, so this checks `typeof process` first and treats every
+ * variable as unset.
+ *
+ * @param envVar The environment variable to get the value of.
+ * @return The value of the environment variable, or undefined if it is unset.
+ */
+export function getEnvVar(envVar: string): string | undefined {
+  if (typeof process === 'undefined') {
+    return undefined;
+  }
+
+  return process.env?.[envVar];
+}
+
+/**
  * Gets the boolean value of the given environment variable.
  *
  * @param envVar The environment variable to get the value of.
  * @return The boolean value of the environment variable.
  */
 export function getBooleanEnvVar(envVar: string): boolean {
-  if (!process.env) {
-    return false;
-  }
-
-  const envVarValue = (process.env[envVar] || '').toLowerCase();
+  const envVarValue = (getEnvVar(envVar) || '').toLowerCase();
 
   return ['true', '1'].includes(envVarValue);
+}
+
+let warnedDeprecatedEnterpriseModeEnvVar = false;
+
+function warnDeprecatedEnterpriseModeEnvVar(message: string): void {
+  if (warnedDeprecatedEnterpriseModeEnvVar) {
+    return;
+  }
+  warnedDeprecatedEnterpriseModeEnvVar = true;
+  logger.warn(message);
+}
+
+/**
+ * Returns whether Google GenAI enterprise mode is enabled.
+ *
+ * `GOOGLE_GENAI_USE_ENTERPRISE` takes precedence whenever it is set, even when
+ * it is set to a falsy value. `GOOGLE_GENAI_USE_VERTEXAI` is only consulted
+ * when `GOOGLE_GENAI_USE_ENTERPRISE` is absent.
+ *
+ * Setting the deprecated `GOOGLE_GENAI_USE_VERTEXAI` logs a deprecation
+ * warning, whether it is used or overridden. When both variables are set the
+ * warning also states that `GOOGLE_GENAI_USE_VERTEXAI` is ignored, so a stale
+ * value silently overridden by the new variable is still surfaced. This is
+ * read per request, so the warning is logged only once.
+ *
+ * @return True if enterprise mode is enabled, false otherwise.
+ */
+export function isEnterpriseModeEnabled(): boolean {
+  const deprecatedIsSet =
+    getEnvVar(DEPRECATED_ENTERPRISE_MODE_ENV_VAR) !== undefined;
+
+  if (getEnvVar(ENTERPRISE_MODE_ENV_VAR) !== undefined) {
+    if (deprecatedIsSet) {
+      warnDeprecatedEnterpriseModeEnvVar(
+        `${DEPRECATED_ENTERPRISE_MODE_ENV_VAR} is set but ignored because ` +
+          `${ENTERPRISE_MODE_ENV_VAR} takes precedence. ` +
+          `${DEPRECATED_ENTERPRISE_MODE_ENV_VAR} is deprecated, please use ` +
+          `${ENTERPRISE_MODE_ENV_VAR} instead.`,
+      );
+    }
+    return getBooleanEnvVar(ENTERPRISE_MODE_ENV_VAR);
+  }
+
+  if (deprecatedIsSet) {
+    warnDeprecatedEnterpriseModeEnvVar(
+      `${DEPRECATED_ENTERPRISE_MODE_ENV_VAR} is deprecated, please use ` +
+        `${ENTERPRISE_MODE_ENV_VAR} instead`,
+    );
+    return getBooleanEnvVar(DEPRECATED_ENTERPRISE_MODE_ENV_VAR);
+  }
+
+  return false;
 }

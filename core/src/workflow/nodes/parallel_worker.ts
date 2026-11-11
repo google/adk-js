@@ -5,6 +5,7 @@
  */
 
 import {BaseNode} from '../base_node.js';
+import {isNodeInterruptedError} from '../errors.js';
 import {RunnableNode} from '../graph.js';
 import {NodeContext} from '../node_context.js';
 import {buildNode} from '../utils/workflow_graph_utils.js';
@@ -16,6 +17,10 @@ import {buildNode} from '../utils/workflow_graph_utils.js';
  * remote tool). Pass `Infinity` for explicitly unbounded concurrency.
  */
 const DEFAULT_MAX_PARALLEL_WORKERS = 8;
+
+const PARALLEL_WORKER_SIGNATURE_SYMBOL = Symbol.for(
+  'google.adk.workflow.parallelWorker',
+);
 
 /** Options for a {@link ParallelWorker}. */
 export interface ParallelWorkerConfig {
@@ -50,13 +55,19 @@ export interface ParallelWorkerConfig {
  * - **All-or-nothing.** If any item throws, the first error is rethrown and the
  *   already-computed sibling outputs are discarded. Make individual items
  *   failure-tolerant if partial results matter.
+ * - **An item that interrupts pauses the whole worker.** It has no output to
+ *   contribute, so the worker stops claiming items, emits no list, and raises
+ *   the child's interrupt ids as its own. Once they are answered the worker
+ *   re-runs from the top (`rerunOnResume`), and items that already completed
+ *   are fast-forwarded by their run id rather than executed again.
  * - **Cancellation stops scheduling only.** On abort/timeout the loop stops
  *   claiming new items, but items already in flight run to completion —
  *   `ctx.runNode` has no way to forward a signal into a child run.
  */
 export class ParallelWorker extends BaseNode {
+  readonly [PARALLEL_WORKER_SIGNATURE_SYMBOL] = true;
   readonly maxParallelWorkers?: number;
-  private readonly inner: BaseNode;
+  readonly inner: BaseNode;
 
   constructor(inner: RunnableNode, config: ParallelWorkerConfig = {}) {
     const built = buildNode(inner);
@@ -93,6 +104,10 @@ export class ParallelWorker extends BaseNode {
     // silent hole in `results` and resolving successfully.
     let failed = false;
     let firstError: unknown;
+    // An item that stops to ask the user has no result to contribute, so the
+    // fan-out stops claiming work the same way a failure does.
+    let interrupted = false;
+    const interruptIds: string[] = [];
 
     // Populated only when the ParallelWorker itself declares a timeout; on a
     // plain invocation abort the invocation-level signal is the one that fires.
@@ -103,7 +118,7 @@ export class ParallelWorker extends BaseNode {
     // Keep claiming the next item until the list is exhausted, an item fails,
     // or the invocation is aborted.
     const worker = async (): Promise<void> => {
-      while (!failed && !isAborted()) {
+      while (!failed && !interrupted && !isAborted()) {
         const i = nextIndex++;
         if (i >= items.length) {
           break;
@@ -119,8 +134,24 @@ export class ParallelWorker extends BaseNode {
             runId: String(i),
             overrideNodePath: `${ctx.nodePath}.${this.inner.name}@${i}`,
           });
+          if (child.interruptIds.length > 0) {
+            interrupted = true;
+            for (const id of child.interruptIds) {
+              if (!interruptIds.includes(id)) {
+                interruptIds.push(id);
+              }
+            }
+            break;
+          }
           results[i] = child.output;
         } catch (err) {
+          // Inside a workflow the engine unwinds an interrupted caller by
+          // throwing rather than returning; that is a pause, not a failure.
+          // The ids are already on `ctx`, put there before the throw.
+          if (isNodeInterruptedError(err)) {
+            interrupted = true;
+            break;
+          }
           if (!failed) {
             failed = true;
             firstError = err;
@@ -135,6 +166,14 @@ export class ParallelWorker extends BaseNode {
     if (failed) {
       throw firstError;
     }
+    if (interrupted) {
+      for (const id of interruptIds) {
+        if (!ctx.interruptIds.includes(id)) {
+          ctx.interruptIds.push(id);
+        }
+      }
+      return;
+    }
     if (isAborted()) {
       // Aborted mid-flight: `results` may have holes for unscheduled items, so
       // don't emit a wrong partial list — the invocation is being torn down.
@@ -142,6 +181,18 @@ export class ParallelWorker extends BaseNode {
     }
     yield results;
   }
+}
+
+/**
+ * Type guard to check if an object is an instance of {@link ParallelWorker}.
+ */
+export function isParallelWorker(value: unknown): value is ParallelWorker {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    PARALLEL_WORKER_SIGNATURE_SYMBOL in value &&
+    value[PARALLEL_WORKER_SIGNATURE_SYMBOL] === true
+  );
 }
 
 // The factory the engine uses to wrap a built node in a ParallelWorker (for

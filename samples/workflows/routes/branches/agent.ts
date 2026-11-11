@@ -21,13 +21,7 @@
  * Try "tell me about graphs" (task B) or "give me 3 facts" (task C).
  */
 
-import {
-  createEvent,
-  LlmAgent,
-  node,
-  NodeContext,
-  WorkflowAgent,
-} from '@google/adk';
+import {createEvent, LlmAgent, node, NodeContext, Workflow} from '@google/adk';
 
 const taskANode = node(
   (_ctx: NodeContext, nodeInput: string) => nodeInput.trim(),
@@ -56,7 +50,7 @@ const taskBNode = new LlmAgent({
 // A FunctionNode to execute node C.
 const taskCNode = node(() => 'Task C completed', {name: 'task_C_node'});
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'routing_workflow',
   edges: [
     ['START', taskANode, router],

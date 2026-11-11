@@ -5,42 +5,53 @@
  */
 
 /**
- * Runs the real `retry` sample (offline): a node fails randomly (~70%) and is
- * retried per its RetryConfig. `Math.random` is seeded so the run is
- * reproducible (and eventually succeeds within maxAttempts).
+ * Runs the real `retry` sample (offline): a flaky node is retried per its
+ * RetryConfig until it succeeds. Turn mirrors the Python golden
+ * `contributing/samples/workflows/retry/tests/go.json`, which mocks
+ * `random.random` to force exactly three attempts; here `Math.random` is
+ * seeded to a value that produces the same three attempts.
+ *
+ * The seed cannot be chosen to reproduce Python's exact draws: the engine's
+ * event-id generator draws from `Math.random` too (8 draws per event), so the
+ * sample's own draws are interleaved with it.
  */
 
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {mulberry32} from '../_harness/rng.js';
-import {allEvents, authors, runSample} from '../_harness/sample_harness.js';
+import {allEvents, finalOutput, runSample} from '../_harness/sample_harness.js';
 import {rootAgent} from './agent.js';
 
-describe('workflow sample: retry', () => {
-  afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
-  it('retries the flaky node until it succeeds', async () => {
-    vi.spyOn(Math, 'random').mockImplementation(mulberry32(7));
+describe('workflow sample: retry', () => {
+  it('retries the failing node and reports the weather once it succeeds', async () => {
+    vi.spyOn(Math, 'random').mockImplementation(mulberry32(2));
 
     const perTurn = await runSample({
       name: 'retry',
       rootAgent,
-      turns: ['what is the weather?'],
+      turns: ['go'],
       offline: true,
     });
     const events = allEvents(perTurn);
 
-    // The node was attempted more than once (a retry happened) ...
-    const attempts = events.filter((e) =>
-      (e.content?.parts ?? []).some((p) => p.text?.includes('Getting weather')),
-    );
-    expect(attempts.length).toBeGreaterThanOrEqual(2);
-
-    // ... and ultimately succeeded, feeding the reporter node.
-    expect(authors(events).has('report_weather')).toBe(true);
-    const text = events
+    const texts = events
       .flatMap((e) => e.content?.parts ?? [])
       .map((p) => p.text ?? '')
-      .join(' ');
-    expect(text).toContain('The weather is sunny');
-  });
+      .filter(Boolean);
+
+    expect(
+      texts.filter((t) => t.startsWith('Getting weather... attempt')),
+    ).toEqual([
+      'Getting weather... attempt 1',
+      'Getting weather... attempt 2',
+      'Getting weather... attempt 3',
+    ]);
+    expect(finalOutput(events)).toBe('sunny');
+    expect(texts).toContain('The weather is sunny');
+
+    expect(events.filter((e) => e.errorCode !== undefined)).toHaveLength(0);
+  }, 30000);
 });

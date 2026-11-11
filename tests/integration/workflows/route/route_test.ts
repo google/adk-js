@@ -5,47 +5,36 @@
  */
 
 /**
- * Runs the real `samples/workflows/route` agent with recorded model responses:
- * an LlmAgent classifies the input and the workflow routes to the matching
- * branch.
+ * Runs the real `route` sample: an agent classifies the input and a routing node
+ * dispatches to the matching branch. Turn and expectations mirror the Python
+ * golden `contributing/samples/workflows/route/tests/who_are_you.json`.
  */
 
-import {Event} from '@google/adk';
 import {describe, expect, it} from 'vitest';
 import {allEvents, authors, runSample} from '../_harness/sample_harness.js';
 import {rootAgent} from './agent.js';
 
-/** The route(s) emitted by the routing node across events. */
-function routes(events: Event[]): string[] {
-  const out: string[] = [];
-  for (const event of events) {
-    if (typeof event.route === 'string') out.push(event.route);
-    else if (Array.isArray(event.route)) out.push(...event.route.map(String));
-  }
-  return out;
-}
-
 describe('workflow sample: route', () => {
-  it('classifies the input and dispatches to exactly one branch', async () => {
+  it('classifies the input and runs only the matching branch', async () => {
     const perTurn = await runSample({
       name: 'route',
       rootAgent,
-      turns: ['What is ADK?'],
+      turns: ['who are you'],
     });
     const events = allEvents(perTurn);
 
-    // The classifier ran and a single category was routed.
-    expect(authors(events).has('classify_input')).toBe(true);
-    const routed = routes(events);
-    expect(routed.length).toBe(1);
-    expect(['question', 'statement', 'other']).toContain(routed[0]);
+    const deltas = events.map((e) => e.actions?.stateDelta ?? {});
+    expect(deltas).toContainEqual({input: 'who are you'});
 
-    // The branch matching the routed category is the one that handled it.
-    const branchByRoute: Record<string, string> = {
-      question: 'answer_question',
-      statement: 'comment_on_statement',
-      other: 'handle_other',
-    };
-    expect(authors(events).has(branchByRoute[routed[0]])).toBe(true);
+    const category = deltas.find((d) => 'category' in d)?.['category'];
+    expect(category).toEqual({category: 'question'});
+
+    const routes = events.map((e) => e.route).filter((r) => r !== undefined);
+    expect(routes).toEqual(['question']);
+
+    const who = authors(events);
+    expect(who.has('answer_question')).toBe(true);
+    expect(who.has('comment_on_statement')).toBe(false);
+    expect(who.has('handle_other')).toBe(false);
   });
 });

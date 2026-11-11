@@ -105,6 +105,101 @@ describe('getContents', () => {
     expect(textPart?.text).toContain('[object Object]');
   });
 
+  it('should not render the text "undefined" when toJSON returns nothing', () => {
+    const args: Record<string, unknown> = {toJSON: () => undefined};
+
+    const event = createEvent({
+      author: 'other_agent',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {name: 'to_json_nothing_tool', args}}],
+      },
+    });
+
+    const contents = getContents([event], 'current_agent');
+
+    const textPart = contents[0].parts?.find((p) =>
+      p.text?.includes('to_json_nothing_tool'),
+    );
+    expect(textPart?.text).toBe(
+      '[other_agent] called tool `to_json_nothing_tool` with parameters: [object Object]',
+    );
+  });
+
+  it('should serialize a null-prototype argument object', () => {
+    const args: Record<string, unknown> = Object.create(null);
+    args['a'] = 1;
+
+    const event = createEvent({
+      author: 'other_agent',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {name: 'null_proto_tool', args}}],
+      },
+    });
+
+    const contents = getContents([event], 'current_agent');
+
+    const textPart = contents[0].parts?.find((p) =>
+      p.text?.includes('null_proto_tool'),
+    );
+    expect(textPart?.text).toBe(
+      '[other_agent] called tool `null_proto_tool` with parameters: {"a":1}',
+    );
+  });
+
+  it('should not throw on a circular null-prototype argument object', () => {
+    const args: Record<string, unknown> = Object.create(null);
+    args['self'] = args;
+
+    const event = createEvent({
+      author: 'other_agent',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {name: 'null_proto_circular_tool', args}}],
+      },
+    });
+
+    expect(() => getContents([event], 'current_agent')).not.toThrow();
+
+    const contents = getContents([event], 'current_agent');
+    const textPart = contents[0].parts?.find((p) =>
+      p.text?.includes('null_proto_circular_tool'),
+    );
+    expect(textPart?.text).toBe(
+      '[other_agent] called tool `null_proto_circular_tool` with parameters: <unstringifiable value>',
+    );
+  });
+
+  it('should not throw when both toJSON and toString throw', () => {
+    const response: Record<string, unknown> = {
+      toJSON: () => {
+        throw new Error('toJSON failed');
+      },
+      toString: () => {
+        throw new Error('toString failed');
+      },
+    };
+
+    const event = createEvent({
+      author: 'other_agent',
+      content: {
+        role: 'model',
+        parts: [{functionResponse: {name: 'hostile_tool', response}}],
+      },
+    });
+
+    expect(() => getContents([event], 'current_agent')).not.toThrow();
+
+    const contents = getContents([event], 'current_agent');
+    const textPart = contents[0].parts?.find((p) =>
+      p.text?.includes('hostile_tool'),
+    );
+    expect(textPart?.text).toBe(
+      '[other_agent] tool `hostile_tool` returned result: <unstringifiable value>',
+    );
+  });
+
   it('should rearrange basic function call and response events correctly', () => {
     const e0 = createEvent({
       author: 'user',
@@ -488,6 +583,38 @@ describe('getContents', () => {
     );
   });
 
+  it('should filter compacted events by isolation scope', () => {
+    const peerSummary = {
+      isCompacted: true,
+      isolationScope: 'peer',
+      author: 'system',
+      compactedContent: 'peer summary',
+      timestamp: 12345,
+      invocationId: 'peer-invocation',
+      branch: 'main',
+    } as unknown as CompactedEvent;
+    const currentSummary = {
+      isCompacted: true,
+      isolationScope: 'current',
+      author: 'system',
+      compactedContent: 'current summary',
+      timestamp: 12346,
+      invocationId: 'current-invocation',
+      branch: 'main',
+    } as unknown as CompactedEvent;
+
+    const contents = getContents(
+      [peerSummary, currentSummary],
+      'my_agent',
+      undefined,
+      'current',
+    );
+
+    expect(contents).toHaveLength(1);
+    expect(contents[0].parts?.[0].text).toContain('current summary');
+    expect(contents[0].parts?.[0].text).not.toContain('peer summary');
+  });
+
   it('should skip rearranging when the second latest event contains the corresponding function calls', () => {
     const e0 = createEvent({
       author: 'user',
@@ -799,6 +926,44 @@ describe('getContents', () => {
       const contents = getCurrentTurnContents([e0], '');
       expect(contents).toEqual([]);
     });
+
+    it('should skip trailing thought-only foreign events when finding turn start', () => {
+      const e0 = createEvent({
+        author: 'other_agent',
+        content: {
+          role: 'model',
+          parts: [{text: 'answer from other agent'}],
+        },
+      });
+      const e1 = createEvent({
+        author: 'other_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              text: 'trailing thought',
+              thought: true,
+              thoughtSignature: 'sig-1',
+            },
+            {
+              text: '',
+              thoughtSignature: 'sig-2',
+            },
+          ],
+        },
+      });
+
+      const contents = getCurrentTurnContents([e0, e1], 'current_agent');
+      expect(contents).toEqual([
+        {
+          role: 'user',
+          parts: [
+            {text: 'For context:'},
+            {text: '[other_agent] said: answer from other agent'},
+          ],
+        },
+      ]);
+    });
   });
 
   it('should handle media parts in convertForeignEvent', () => {
@@ -853,6 +1018,178 @@ describe('getContents', () => {
 
     // Check if original event was mutated
     expect(event.content?.parts?.[0]?.inlineData?.data).toBe('base64data');
+  });
+
+  it('should exclude thought parts and thoughtSignature in convertForeignEvent', () => {
+    const event = createEvent({
+      author: 'other_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            text: 'private reasoning',
+            thought: true,
+            thoughtSignature: 'c2lnLWZyb20tYWdlbnQtYQ==',
+          },
+          {
+            text: 'answer from other agent',
+          },
+        ],
+      },
+    });
+
+    const contents = getContents([event], 'current_agent');
+    expect(contents).toEqual([
+      {
+        role: 'user',
+        parts: [
+          {text: 'For context:'},
+          {text: '[other_agent] said: answer from other agent'},
+        ],
+      },
+    ]);
+  });
+
+  it('should drop foreign event completely when all parts are thought parts', () => {
+    const events = [
+      createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'first user turn'}]},
+      }),
+      createEvent({
+        author: 'other_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              text: 'deliberating about the request',
+              thought: true,
+              thoughtSignature: 'c2lnLXRoaW5raW5n',
+            },
+          ],
+        },
+      }),
+      createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'second user turn'}]},
+      }),
+    ];
+
+    const contents = getContents(events, 'current_agent');
+    expect(contents).toEqual([
+      {role: 'user', parts: [{text: 'first user turn'}]},
+      {role: 'user', parts: [{text: 'second user turn'}]},
+    ]);
+  });
+
+  it('should summarize thought-marked functionCall and functionResponse parts in convertForeignEvent without leaking thought metadata', () => {
+    const events = [
+      createEvent({
+        author: 'other_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              thought: true,
+              thoughtSignature: 'c2lnLXRvb2wtY2FsbA==',
+              functionCall: {
+                name: 'lookup_weather',
+                args: {city: 'Paris'},
+              },
+            },
+          ],
+        },
+      }),
+      createEvent({
+        author: 'other_agent',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              thought: true,
+              functionResponse: {
+                name: 'lookup_weather',
+                response: {temp: '20C'},
+              },
+            },
+          ],
+        },
+      }),
+    ];
+
+    const contents = getContents(events, 'current_agent');
+    expect(contents).toEqual([
+      {
+        role: 'user',
+        parts: [
+          {text: 'For context:'},
+          {
+            text: '[other_agent] called tool `lookup_weather` with parameters: {"city":"Paris"}',
+          },
+        ],
+      },
+      {
+        role: 'user',
+        parts: [
+          {text: 'For context:'},
+          {
+            text: '[other_agent] tool `lookup_weather` returned result: {"temp":"20C"}',
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('should skip trailing empty-text thoughtSignature parts in convertForeignEvent', () => {
+    const event = createEvent({
+      author: 'other_agent',
+      content: {
+        role: 'model',
+        parts: [{text: 'answer'}, {text: '', thoughtSignature: 'sig-a'}],
+      },
+    });
+
+    const contents = getContents([event], 'current_agent');
+    expect(contents).toEqual([
+      {
+        role: 'user',
+        parts: [{text: 'For context:'}, {text: '[other_agent] said: answer'}],
+      },
+    ]);
+  });
+
+  it('should strip thoughtSignature from non-thought media parts in convertForeignEvent', () => {
+    const event = createEvent({
+      author: 'other_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            inlineData: {
+              mimeType: 'image/png',
+              data: 'base64data',
+            },
+            thoughtSignature: 'sig-b',
+          },
+        ],
+      },
+    });
+
+    const contents = getContents([event], 'current_agent');
+    expect(contents).toEqual([
+      {
+        role: 'user',
+        parts: [
+          {text: 'For context:'},
+          {
+            inlineData: {
+              mimeType: 'image/png',
+              data: 'base64data',
+            },
+          },
+        ],
+      },
+    ]);
   });
 
   describe('mergeFunctionResponseEvents', () => {
@@ -1203,5 +1540,162 @@ describe('removeClientFunctionCallId', () => {
     expect(() => removeClientFunctionCallId(emptyContent)).not.toThrow();
     const noParts: Content = {role: 'user', parts: []};
     expect(() => removeClientFunctionCallId(noParts)).not.toThrow();
+  });
+});
+
+describe('preserveFunctionCallIds', () => {
+  it('should strip adk-* client function call and response IDs by default in getContents', () => {
+    const events = [
+      createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'Weather in Paris?'}]},
+      }),
+      createEvent({
+        author: 'my_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                name: 'get_weather',
+                id: 'adk-12345',
+                args: {city: 'Paris'},
+              },
+            },
+          ],
+        },
+      }),
+      createEvent({
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'get_weather',
+                id: 'adk-12345',
+                response: {result: 'Sunny'},
+              },
+            },
+          ],
+        },
+      }),
+    ];
+
+    const contents = getContents(events, 'my_agent');
+    expect(contents).toHaveLength(3);
+    expect(contents[1]?.parts?.[0]?.functionCall?.id).toBeUndefined();
+    expect(contents[2]?.parts?.[0]?.functionResponse?.id).toBeUndefined();
+  });
+
+  it('should preserve adk-* client function call and response IDs when preserveFunctionCallIds is true in getContents', () => {
+    const events = [
+      createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'Weather in Paris?'}]},
+      }),
+      createEvent({
+        author: 'my_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                name: 'get_weather',
+                id: 'adk-12345',
+                args: {city: 'Paris'},
+              },
+            },
+          ],
+        },
+      }),
+      createEvent({
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'get_weather',
+                id: 'adk-12345',
+                response: {result: 'Sunny'},
+              },
+            },
+          ],
+        },
+      }),
+    ];
+
+    const contents = getContents(
+      events,
+      'my_agent',
+      undefined,
+      undefined,
+      true,
+    );
+    expect(contents).toHaveLength(3);
+    expect(contents[1]?.parts?.[0]?.functionCall?.id).toBe('adk-12345');
+    expect(contents[2]?.parts?.[0]?.functionResponse?.id).toBe('adk-12345');
+  });
+
+  it('should forward preserveFunctionCallIds from getCurrentTurnContents to getContents', () => {
+    const events = [
+      createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'Check weather'}]},
+      }),
+      createEvent({
+        author: 'my_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                name: 'get_weather',
+                id: 'adk-67890',
+                args: {city: 'London'},
+              },
+            },
+          ],
+        },
+      }),
+      createEvent({
+        author: 'my_agent',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'get_weather',
+                id: 'adk-67890',
+                response: {result: 'Cloudy'},
+              },
+            },
+          ],
+        },
+      }),
+    ];
+
+    const preserved = getCurrentTurnContents(
+      events,
+      'my_agent',
+      undefined,
+      undefined,
+      true,
+    );
+    expect(preserved).toHaveLength(3);
+    expect(preserved[1]?.parts?.[0]?.functionCall?.id).toBe('adk-67890');
+    expect(preserved[2]?.parts?.[0]?.functionResponse?.id).toBe('adk-67890');
+
+    const stripped = getCurrentTurnContents(
+      events,
+      'my_agent',
+      undefined,
+      undefined,
+      false,
+    );
+    expect(stripped).toHaveLength(3);
+    expect(stripped[1]?.parts?.[0]?.functionCall?.id).toBeUndefined();
+    expect(stripped[2]?.parts?.[0]?.functionResponse?.id).toBeUndefined();
   });
 });

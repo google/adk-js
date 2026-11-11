@@ -483,6 +483,10 @@ export function convertToolsConfigToInteractionsFormat(
     if (t.urlContext) {
       interactionTools.push({type: 'url_context'} as Interactions.Tool);
     }
+
+    if (t.computerUse) {
+      interactionTools.push({type: 'computer_use'} as Interactions.Tool);
+    }
   }
 
   return interactionTools;
@@ -905,13 +909,12 @@ export async function* generateContentViaInteractions(
 
     const aggregatedParts: Part[] = [];
     for await (const event of responses) {
-      const sseEvent = event as ExtendedInteractionSSEEvent;
-      const interactionId = extractStreamInteractionId(sseEvent);
+      const interactionId = extractStreamInteractionId(event);
       if (interactionId) {
         currentInteractionId = interactionId;
       }
       const llmResponse = convertInteractionEventToLlmResponse(
-        sseEvent,
+        event,
         aggregatedParts,
         currentInteractionId,
       );

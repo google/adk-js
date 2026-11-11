@@ -38,6 +38,49 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+/** Normalizes a plugin notification without changing the caller's thrown value. */
+export function toError(error: unknown): Error {
+  return error instanceof Error
+    ? error
+    : new Error('Execution threw a non-Error value.', {cause: error});
+}
+
+/** Recognizes cancellation within 32 cause levels, only after signal abort. */
+export function isInvocationCancellation(
+  error: unknown,
+  signal?: AbortSignal,
+): boolean {
+  if (!signal?.aborted) {
+    return false;
+  }
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 32 && !seen.has(error); depth++) {
+    if (Object.is(error, signal.reason)) {
+      return true;
+    }
+    seen.add(error);
+    const record = asRecord(error);
+    if (!record) {
+      return false;
+    }
+    // Custom thrown objects can have getters that fail. Inspection must not
+    // replace the original execution failure.
+    try {
+      const name = record['name'];
+      if (name === 'AbortError' || name === 'InvocationAbortedError') {
+        return true;
+      }
+      if (!('cause' in record)) {
+        return false;
+      }
+      error = record['cause'];
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 /** Returns the first argument that is a string, or `undefined` if none are. */
 function firstString(...values: unknown[]): string | undefined {
   for (const value of values) {
@@ -55,13 +98,16 @@ function truncateBody(body: string): string {
     : body;
 }
 
-/** Returns the plain, non-recursive message for a single value. */
-function baseMessage(err: unknown): string {
-  if (err instanceof Error) {
-    return err.message;
-  }
-  if (typeof err === 'string') {
-    return err;
+/**
+ * Returns the plain, non-recursive message for a single thrown value.
+ *
+ * Reads `.message` from any object that carries a string `message` property,
+ * and falls back to `String(err)` for primitives and other values.
+ */
+export function getErrorMessage(err: unknown): string {
+  const record = asRecord(err);
+  if (record !== undefined && typeof record['message'] === 'string') {
+    return record['message'];
   }
   return String(err);
 }
@@ -70,7 +116,7 @@ function baseMessage(err: unknown): string {
  * Extracts synchronously-available HTTP details (status, status text and a
  * truncated response body) from a duck-typed error, or `undefined` when none
  * are present. Several shapes are supported: errors carrying `.status`
- * directly, axios/httpx-style errors nesting them under `.response`, and
+ * directly, axios-style errors nesting them under `.response`, and
  * errors that expose the status as a numeric `.code` (as the MCP SDK's
  * `StreamableHTTPError` does). A body is only read when it is already a
  * string, so no async `Response.text()` is ever invoked.
@@ -117,7 +163,7 @@ function formatErrorRecursive(err: unknown, seen: Set<unknown>): string {
   }
   if (typeof err === 'object') {
     if (seen.has(err)) {
-      return baseMessage(err);
+      return getErrorMessage(err);
     }
     seen.add(err);
   }
@@ -125,7 +171,7 @@ function formatErrorRecursive(err: unknown, seen: Set<unknown>): string {
     return err.errors.map((sub) => formatErrorRecursive(sub, seen)).join(' | ');
   }
   const http = extractHttpDetails(err);
-  const base = baseMessage(err);
+  const base = getErrorMessage(err);
   // Cycles (including a direct `err.cause === err`) are handled by `seen`.
   const cause = asRecord(err)?.['cause'];
   const causeMessage =

@@ -16,13 +16,7 @@
  *   npm run sample -- samples/workflows/graphs/get_started/agent.ts
  */
 
-import {
-  createEvent,
-  LlmAgent,
-  node,
-  NodeContext,
-  WorkflowAgent,
-} from '@google/adk';
+import {createEvent, LlmAgent, node, NodeContext, Workflow} from '@google/adk';
 import {z} from 'zod';
 
 const cityGeneratorAgent = new LlmAgent({
@@ -64,7 +58,7 @@ function completedMessageFunction(_ctx: NodeContext, nodeInput: string) {
   });
 }
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'root_agent',
   edges: [
     [

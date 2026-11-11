@@ -158,7 +158,7 @@ export class NodeTool extends BaseTool {
       // not the node name doubled.
       nodePath: '',
       runId,
-      resumeInputs: collectResumeInputs(toolContext),
+      resumeInputs: toolContext.resumeInputs,
     });
 
     const base = childIc.branch;
@@ -185,18 +185,4 @@ export function isNodeTool(value: unknown): value is NodeTool {
     NODE_TOOL_SIGNATURE_SYMBOL in value &&
     value[NODE_TOOL_SIGNATURE_SYMBOL] === true
   );
-}
-
-/**
- * Collects resume inputs for the node from the tool context. When the tool call
- * is being resumed after a `RequestInput`, the user's response is threaded
- * through `toolConfirmation.payload` keyed by interrupt id (see the request-input
- * resume processor).
- */
-function collectResumeInputs(toolContext: Context): Record<string, unknown> {
-  const payload = toolContext.toolConfirmation?.payload;
-  if (payload && typeof payload === 'object') {
-    return payload as Record<string, unknown>;
-  }
-  return {};
 }

@@ -18,7 +18,6 @@ import {NodeContext} from '../../src/workflow/node_context.js';
 import {FunctionNode} from '../../src/workflow/nodes/function_node.js';
 import {hasAuthRequestFunctionCall} from '../../src/workflow/utils/hitl_utils.js';
 import {Workflow} from '../../src/workflow/workflow.js';
-import {WorkflowAgent} from '../../src/workflow/workflow_agent.js';
 import {createIc, driveWorkflow} from './test_helpers.js';
 
 const CREDENTIAL_KEY = 'my_api';
@@ -60,7 +59,7 @@ describe('Phase 5b-cont — FunctionNode auth gate', () => {
     );
 
     const wf = new Workflow({name: 'auth_wf', edges: [['START', secured]]});
-    const agent = new WorkflowAgent(wf);
+    const agent = wf;
     const sessionService = new InMemorySessionService();
     const session = await sessionService.createSession({
       appName: 'test_app',

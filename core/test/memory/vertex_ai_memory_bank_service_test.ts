@@ -11,11 +11,15 @@ import {
   Event,
   getLogger,
   MemoryEntry,
+  Session,
   VertexAiMemoryBankService,
   VertexAiMemoryBankServiceOptions,
 } from '@google/adk';
-import {Content, Part} from '@google/genai';
+import {Content, Language, Outcome, Part, ToolType} from '@google/genai';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+
+const TEST_PROJECT = 'test-project';
+const TEST_LOCATION = 'us-central1';
 
 const clientConstructor = vi.hoisted(() => vi.fn());
 
@@ -34,6 +38,16 @@ afterEach(() => {
   vi.unstubAllEnvs();
   clientConstructor.mockClear();
 });
+
+function sessionWithEvents(events: Event[]): Session {
+  return createSession({
+    id: 'test-session-id',
+    appName: 'test-app',
+    userId: 'test-user',
+    events,
+    lastUpdateTime: Date.now(),
+  });
+}
 
 describe('VertexAiMemoryBankService', () => {
   let service: VertexAiMemoryBankService;
@@ -116,7 +130,7 @@ describe('VertexAiMemoryBankService', () => {
     it.each([
       ['an expressModeApiKey option', {expressModeApiKey: 'test-api-key'}],
       ['an API key from the environment', {}],
-      ['an API key and only a project', {projectId: 'test-project'}],
+      ['an API key and only a project', {projectId: TEST_PROJECT}],
     ])('throws for %s instead of dropping the key', (_, options) => {
       expect(
         () =>
@@ -131,13 +145,13 @@ describe('VertexAiMemoryBankService', () => {
     it('keeps using project and location when an API key is also in the environment', () => {
       new VertexAiMemoryBankService({
         agentEngineId: 'test-engine-id',
-        projectId: 'test-project',
-        location: 'us-central1',
+        projectId: TEST_PROJECT,
+        location: TEST_LOCATION,
       });
 
       expect(clientConstructor).toHaveBeenCalledWith({
-        project: 'test-project',
-        location: 'us-central1',
+        project: TEST_PROJECT,
+        location: TEST_LOCATION,
       });
     });
 
@@ -198,6 +212,101 @@ describe('VertexAiMemoryBankService', () => {
           timestamp: Date.now(),
         }),
       );
+
+      await service.addSessionToMemory(session);
+
+      expect(mockMemories.generateInternal).not.toHaveBeenCalled();
+    });
+
+    it.each<[string, Part]>([
+      ['functionCall', {functionCall: {name: 'test_function', args: {}}}],
+      [
+        'functionResponse',
+        {functionResponse: {name: 'test_function', response: {result: 'ok'}}},
+      ],
+      [
+        'executableCode',
+        {executableCode: {code: 'print(1)', language: Language.PYTHON}},
+      ],
+      [
+        'codeExecutionResult',
+        {codeExecutionResult: {outcome: Outcome.OUTCOME_OK, output: '1'}},
+      ],
+      [
+        'toolCall',
+        {
+          toolCall: {
+            id: 'tool-call-id',
+            toolType: ToolType.GOOGLE_SEARCH_WEB,
+            args: {query: 'adk'},
+          },
+        },
+      ],
+      [
+        'toolResponse',
+        {
+          toolResponse: {
+            id: 'tool-call-id',
+            toolType: ToolType.GOOGLE_SEARCH_WEB,
+            response: {result: 'ok'},
+          },
+        },
+      ],
+    ])('forwards an event whose only part is a %s', async (_, part) => {
+      const session = sessionWithEvents([
+        createEvent({
+          author: 'agent',
+          content: {parts: [part]},
+          timestamp: Date.now(),
+        }),
+      ]);
+
+      await service.addSessionToMemory(session);
+
+      expect(mockMemories.generateInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          directContentsSource: {events: [{content: {parts: [part]}}]},
+        }),
+      );
+    });
+
+    it('keeps a text event and a function call event, and drops the event without content', async () => {
+      const session = sessionWithEvents([
+        createEvent({
+          author: 'user',
+          content: {parts: [{text: 'test_content'}]},
+          timestamp: Date.now(),
+        }),
+        createEvent({author: 'user', timestamp: Date.now()}),
+        createEvent({
+          author: 'agent',
+          content: {parts: [{functionCall: {name: 'test_function'}}]},
+          timestamp: Date.now(),
+        }),
+      ]);
+
+      await service.addSessionToMemory(session);
+
+      expect(mockMemories.generateInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          directContentsSource: {
+            events: [
+              {content: {parts: [{text: 'test_content'}]}},
+              {content: {parts: [{functionCall: {name: 'test_function'}}]}},
+            ],
+          },
+        }),
+      );
+    });
+
+    it('still filters out an event whose only part is a thought', async () => {
+      const session = sessionWithEvents([
+        createEvent({
+          author: 'agent',
+          content: {parts: [{thought: true}]},
+          timestamp: Date.now(),
+        }),
+      ]);
 
       await service.addSessionToMemory(session);
 
@@ -275,6 +384,106 @@ describe('VertexAiMemoryBankService', () => {
       );
     });
 
+    it('forwards the entry id as memoryId', async () => {
+      const memories: MemoryEntry[] = [
+        {id: 'mem-123', content: {parts: [{text: 'fact one'}]}},
+      ];
+
+      await service.addMemory({
+        appName: 'test-app',
+        userId: 'test-user',
+        memories,
+      });
+
+      expect(mockMemories.createInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({memoryId: 'mem-123'}),
+        }),
+      );
+    });
+
+    it('prefers a request-level memoryId over the entry id', async () => {
+      const memories: MemoryEntry[] = [
+        {id: 'from-entry', content: {parts: [{text: 'fact one'}]}},
+      ];
+
+      await service.addMemory({
+        appName: 'test-app',
+        userId: 'test-user',
+        memories,
+        customMetadata: {memoryId: 'explicit'},
+      });
+
+      expect(mockMemories.createInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({memoryId: 'explicit'}),
+        }),
+      );
+    });
+
+    it('prefers an entry customMetadata memoryId over the entry id', async () => {
+      const memories: MemoryEntry[] = [
+        {
+          id: 'from-entry-id',
+          content: {parts: [{text: 'fact one'}]},
+          customMetadata: {memoryId: 'from-entry-metadata'},
+        },
+      ];
+
+      await service.addMemory({
+        appName: 'test-app',
+        userId: 'test-user',
+        memories,
+        customMetadata: {memoryId: 'from-request'},
+      });
+
+      expect(mockMemories.createInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({memoryId: 'from-entry-metadata'}),
+        }),
+      );
+    });
+
+    it('prefers entry customMetadata over the request-level value', async () => {
+      const memories: MemoryEntry[] = [
+        {
+          content: {parts: [{text: 'fact one'}]},
+          customMetadata: {sharedKey: 'from-entry'},
+        },
+      ];
+
+      await service.addMemory({
+        appName: 'test-app',
+        userId: 'test-user',
+        memories,
+        customMetadata: {sharedKey: 'from-request'},
+      });
+
+      expect(mockMemories.createInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            metadata: {sharedKey: {stringValue: 'from-entry'}},
+          }),
+        }),
+      );
+    });
+
+    it('omits memoryId when the entry sets no id', async () => {
+      const memories: MemoryEntry[] = [
+        {content: {parts: [{text: 'fact one'}]}},
+      ];
+
+      await service.addMemory({
+        appName: 'test-app',
+        userId: 'test-user',
+        memories,
+      });
+
+      const config = mockMemories.createInternal.mock.calls[0][0].config;
+      expect(config).not.toHaveProperty('memoryId');
+      expect(config).toEqual({waitForCompletion: false});
+    });
+
     it('throws error if memories list is empty', async () => {
       await expect(
         service.addMemory({
@@ -321,6 +530,51 @@ describe('VertexAiMemoryBankService', () => {
           memories: [{content: {parts: [{text: '   '}]} as Content}],
         }),
       ).rejects.toThrow('must include non-whitespace text.');
+    });
+  });
+
+  describe('response logging', () => {
+    it('logs the create memory response at debug', async () => {
+      const debugSpy = vi
+        .spyOn(getLogger(), 'debug')
+        .mockImplementation(() => {});
+      const infoSpy = vi
+        .spyOn(getLogger(), 'info')
+        .mockImplementation(() => {});
+
+      await service.addMemory({
+        appName: 'test-app',
+        userId: 'test-user',
+        memories: [{content: {parts: [{text: 'fact 1'}]} as Content}],
+      });
+
+      expect(debugSpy).toHaveBeenCalledWith('Create memory response received.');
+      expect(infoSpy).not.toHaveBeenCalled();
+      debugSpy.mockRestore();
+      infoSpy.mockRestore();
+    });
+
+    it('logs the generate direct memory response at debug', async () => {
+      const debugSpy = vi
+        .spyOn(getLogger(), 'debug')
+        .mockImplementation(() => {});
+      const infoSpy = vi
+        .spyOn(getLogger(), 'info')
+        .mockImplementation(() => {});
+
+      await service.addMemory({
+        appName: 'test-app',
+        userId: 'test-user',
+        memories: [{content: {parts: [{text: 'fact 1'}]} as Content}],
+        customMetadata: {enable_consolidation: true},
+      });
+
+      expect(debugSpy).toHaveBeenCalledWith(
+        'Generate direct memory response received.',
+      );
+      expect(infoSpy).not.toHaveBeenCalled();
+      debugSpy.mockRestore();
+      infoSpy.mockRestore();
     });
   });
 
@@ -556,7 +810,7 @@ describe('VertexAiMemoryBankService', () => {
         {
           content: {parts: [{text: 'fact 1'}]} as Content,
           customMetadata: {entryKey: 'entryValue'},
-        } as unknown as MemoryEntry, // cast to pass customMetadata
+        },
       ];
 
       await service.addMemory({

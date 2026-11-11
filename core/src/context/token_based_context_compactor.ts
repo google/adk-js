@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {InvocationContext} from '../agents/invocation_context.js';
+import {InvocationContext, requireAgent} from '../agents/invocation_context.js';
 import {getContents} from '../agents/processors/content_processor_utils.js';
 import {isCompactedEvent} from '../events/compacted_event.js';
 import {Event} from '../events/event.js';
@@ -55,7 +55,10 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
     invocationContext: InvocationContext,
   ): boolean | Promise<boolean> {
     const events = invocationContext.session.events;
-    const activeEvents = getActiveEvents(events);
+    const activeEvents = getActiveEvents(
+      events,
+      invocationContext.isolationScope,
+    );
     const rawEvents = activeEvents.filter((e) => !isCompactedEvent(e));
 
     if (rawEvents.length <= this.eventRetentionSize) {
@@ -83,7 +86,10 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
 
   async compact(invocationContext: InvocationContext): Promise<void> {
     const events = invocationContext.session.events;
-    const activeEvents = getActiveEvents(events);
+    const activeEvents = getActiveEvents(
+      events,
+      invocationContext.isolationScope,
+    );
     const rawEvents = activeEvents.filter((e) => !isCompactedEvent(e));
 
     if (rawEvents.length <= this.eventRetentionSize) {
@@ -100,7 +106,6 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
       return;
     }
 
-    // Extract raw events to compact.
     const rawEventsToCompact = rawEvents.slice(0, retainStartIndex);
     const compactedEventPresent = activeEvents.find(isCompactedEvent);
 
@@ -120,7 +125,7 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
       };
     }
 
-    // Append the new compacted event to the session history.
+    compactedEvent.isolationScope ??= invocationContext.isolationScope;
     invocationContext.session.events.push(compactedEvent);
   }
 }
@@ -128,19 +133,23 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
 /**
  * Returns the most recently observed prompt token count, if available.
  *
- * Mirrors the Python ADK (`apps/compaction.py::_latest_prompt_token_count`):
- * each model response's `usageMetadata.promptTokenCount` is the measured size
+ * Each model response's `usageMetadata.promptTokenCount` is the measured size
  * of the entire request that produced it (system instruction + tools + full
  * history), so the latest one is used directly. These values must not be
  * summed across events: each already includes all prior history, so a sum
  * grows with call count rather than context size.
+ *
+ * For a generation that @google/genai resumed after continuation pauses,
+ * promptTokenCount is summed over every resumed request, each of which resent
+ * the prompt, so `initialPromptTokenCount` is used instead when present.
  */
 function latestPromptTokenCount(
   activeEvents: Event[],
   invocationContext: InvocationContext,
 ): number | undefined {
   for (let i = activeEvents.length - 1; i >= 0; i--) {
-    const count = activeEvents[i].usageMetadata?.promptTokenCount;
+    const usage = activeEvents[i].usageMetadata;
+    const count = usage?.initialPromptTokenCount ?? usage?.promptTokenCount;
     if (count !== undefined) {
       return count;
     }
@@ -162,7 +171,7 @@ function estimatePromptTokenCount(
 ): number | undefined {
   const contents = getContents(
     activeEvents,
-    invocationContext.agent.name,
+    requireAgent(invocationContext).name,
     invocationContext.branch,
   );
 

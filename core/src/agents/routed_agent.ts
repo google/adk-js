@@ -8,7 +8,6 @@ import {Event} from '../events/event.js';
 import {BaseAgent, BaseAgentConfig} from './base_agent.js';
 import {InvocationContext} from './invocation_context.js';
 
-import {experimental} from '../utils/experimental.js';
 import {runWithRouting} from '../utils/failover_utils.js';
 
 /**
@@ -66,7 +65,6 @@ export interface RoutedAgentConfig extends BaseAgentConfig {
  * so the clone is a detached root that routes identically to the original while
  * leaving the original agent tree untouched.
  */
-@experimental
 export class RoutedAgent extends BaseAgent<RoutedAgentConfig> {
   readonly [ROUTED_AGENT_SIGNATURE_SYMBOL] = true;
 

@@ -5,6 +5,7 @@
  */
 
 import {
+  BaseRetrievalTool,
   createEvent,
   DEFAULT_ROUTE,
   Edge,
@@ -15,14 +16,15 @@ import {
   LoopAgent,
   node,
   ParallelAgent,
+  RunnableRoot,
   SequentialAgent,
   Workflow,
-  WorkflowAgent,
 } from '@google/adk';
 import {parse} from 'ts-graphviz/ast';
 import {describe, expect, it} from 'vitest';
 
 import {
+  getAgentGraph,
   getAgentGraphAsDot,
   getWorkflowHighlights,
 } from '../../src/server/agent_graph.js';
@@ -113,9 +115,7 @@ describe('AgentGraph', () => {
     expect(dotGraph).toContain(
       'subgraph "cluster_sequentialAgent (Sequential Agent)"',
     );
-    expect(dotGraph).toContain(
-      'label = "cluster_sequentialAgent (Sequential Agent)"',
-    );
+    expect(dotGraph).toContain('label = "sequentialAgent (Sequential Agent)"');
   });
 
   it('generates a DOT graph with highlighted nodes', async () => {
@@ -137,9 +137,7 @@ describe('AgentGraph', () => {
     expect(dotGraph).toContain('label = "🤖 agent2";');
     expect(dotGraph).toContain('"agent1" -> "agent2"');
     expect(dotGraph).toContain('cluster_sequentialAgent (Sequential Agent)"');
-    expect(dotGraph).toContain(
-      'label = "cluster_sequentialAgent (Sequential Agent)"',
-    );
+    expect(dotGraph).toContain('label = "sequentialAgent (Sequential Agent)"');
   });
 
   it('generates a DOT graph for a LoopAgent', async () => {
@@ -182,7 +180,7 @@ describe('AgentGraph', () => {
     expect(dotGraph).toContain('"agent1" -> "tool1"');
     expect(dotGraph).toContain('"agent2" -> "tool2"');
     expect(dotGraph).toContain('subgraph "cluster_loopAgent (Loop Agent)"');
-    expect(dotGraph).toContain('label = "cluster_loopAgent (Loop Agent)"');
+    expect(dotGraph).toContain('label = "loopAgent (Loop Agent)"');
   });
 
   it('generates a DOT graph for a ParallelAgent', async () => {
@@ -225,16 +223,94 @@ describe('AgentGraph', () => {
     expect(dotGraph).toContain(
       'subgraph "cluster_parallelAgent (Parallel Agent)"',
     );
-    expect(dotGraph).toContain(
-      'label = "cluster_parallelAgent (Parallel Agent)"',
-    );
+    expect(dotGraph).toContain('label = "parallelAgent (Parallel Agent)"');
+  });
+
+  it('labels a Sequential cluster with the agent name, not the graphviz cluster id', async () => {
+    const dot = await renderDot(sequentialPipeline());
+
+    expect(dot).toContain('subgraph "cluster_pipeline (Sequential Agent)"');
+    expect(dot).toContain('label = "pipeline (Sequential Agent)"');
+    expect(dot).not.toContain('label = "cluster_pipeline (Sequential Agent)"');
+  });
+
+  it('outlines a cluster instead of filling it', async () => {
+    const dot = await renderDot(sequentialPipeline());
+
+    const cluster = clusterBlock(dot, 'pipeline (Sequential Agent)');
+    expect(cluster).toContain('color = "#ffffff"');
+    expect(cluster).not.toContain('bgcolor');
+    expect(dot).toContain('bgcolor = "#333537"');
+  });
+
+  it('labels and outlines a highlighted Sequential cluster the same way', async () => {
+    const dot = await renderDot(sequentialPipeline(), [
+      ['pipeline (Sequential Agent)', 'caller'],
+    ]);
+
+    const cluster = clusterBlock(dot, 'pipeline (Sequential Agent)');
+    expect(cluster).toContain('label = "pipeline (Sequential Agent)"');
+    expect(cluster).toContain('color = "#ffffff"');
+    expect(cluster).not.toContain('bgcolor');
+  });
+
+  it('fills a highlighted node inside a cluster in dark green', async () => {
+    const dot = await renderDot(sequentialPipeline(), [['first', 'other']]);
+
+    expect(nodeBlock(dot, 'first')).toContain('fillcolor = "#0F5223"');
+    expect(nodeBlock(dot, 'second')).toContain('fillcolor = "#ffffff"');
+  });
+
+  it('draws an unhighlighted edge inside a Sequential cluster in gray', async () => {
+    const dot = await renderDot(sequentialPipeline());
+
+    const edge = edgeBlock(dot, 'first', 'second');
+    expect(edge).toContain('color = "#cccccc"');
+    expect(edge).not.toContain('#69CB87');
+  });
+
+  it('keeps a highlighted edge inside a Sequential cluster green', async () => {
+    const dot = await renderDot(sequentialPipeline(), [['first', 'second']]);
+
+    expect(edgeBlock(dot, 'first', 'second')).toContain('color = "#69CB87"');
+  });
+
+  it('keeps a reversed highlight pair inside a cluster green and back-facing', async () => {
+    const dot = await renderDot(sequentialPipeline(), [['second', 'first']]);
+
+    const edge = edgeBlock(dot, 'first', 'second');
+    expect(edge).toContain('color = "#69CB87"');
+    expect(edge).toContain('dir = "back"');
+  });
+
+  it('draws an unhighlighted edge inside a Loop cluster in gray', async () => {
+    const loop = new LoopAgent({
+      name: 'pipeline',
+      subAgents: [
+        new LlmAgent({name: 'first'}),
+        new LlmAgent({name: 'second'}),
+      ],
+    });
+
+    const dot = await renderDot(loop);
+
+    const wrapAround = edgeBlock(dot, 'second', 'first');
+    expect(wrapAround).toContain('color = "#cccccc"');
+    expect(wrapAround).not.toContain('#69CB87');
   });
 });
+
+function sequentialPipeline(): SequentialAgent {
+  return new SequentialAgent({
+    name: 'pipeline',
+    subAgents: [new LlmAgent({name: 'first'}), new LlmAgent({name: 'second'})],
+  });
+}
 
 const noopHandler = async () => 'ok';
 
 async function renderDot(
-  agent: WorkflowAgent | SequentialAgent,
+  agent: RunnableRoot,
   highlights: Array<[string, string]> = [],
 ): Promise<string> {
   const dot = await getAgentGraphAsDot(agent, highlights);
@@ -257,7 +333,18 @@ function edgeBlock(dot: string, from: string, to: string): string {
   return dot.slice(start, dot.indexOf('];', start));
 }
 
-describe('AgentGraph — graph WorkflowAgent', () => {
+/** Returns a cluster's own attributes, up to its first nested statement. */
+function clusterBlock(dot: string, id: string): string {
+  const start = dot.indexOf(`subgraph "cluster_${id}" {`);
+  expect(start, `no cluster subgraph for "${id}"`).toBeGreaterThanOrEqual(0);
+
+  const end = dot.indexOf('" [', start);
+  expect(end, `cluster "${id}" holds no statement`).toBeGreaterThan(start);
+
+  return dot.slice(start, end);
+}
+
+describe('AgentGraph — graph Workflow', () => {
   it('renders the workflow graph as a cluster of nodes and edges', async () => {
     const workflow = new Workflow({
       name: 'wf',
@@ -271,7 +358,7 @@ describe('AgentGraph — graph WorkflowAgent', () => {
       ],
     });
 
-    const dot = await renderDot(new WorkflowAgent(workflow));
+    const dot = await renderDot(workflow);
 
     expect(dot).toContain('subgraph "cluster_wf" {');
     expect(dot).toContain('label = "🧩 wf"');
@@ -291,7 +378,7 @@ describe('AgentGraph — graph WorkflowAgent', () => {
       edges: [['START', node(noopHandler, {name: 'one'})]],
     });
 
-    const dot = await renderDot(new WorkflowAgent(workflow));
+    const dot = await renderDot(workflow);
 
     const start = nodeBlock(dot, 'wf.__START__');
     expect(start).toContain('shape = "point"');
@@ -312,7 +399,7 @@ describe('AgentGraph — graph WorkflowAgent', () => {
       ],
     });
 
-    const dot = await renderDot(new WorkflowAgent(workflow));
+    const dot = await renderDot(workflow);
 
     expect(edgeBlock(dot, 'router.classify', 'router.approve')).toContain(
       'label = "yes"',
@@ -337,31 +424,33 @@ describe('AgentGraph — graph WorkflowAgent', () => {
       ],
     });
 
-    const dot = await renderDot(new WorkflowAgent(workflow));
+    const dot = await renderDot(workflow);
 
     expect(edgeBlock(dot, 'router.classify', 'router.handle')).toContain(
       'label = "yes, maybe"',
     );
   });
 
-  it('cannot be handed two separate edges with the same endpoints', () => {
+  it('merges two routes to the same node into one labelled edge', async () => {
     const classify = node(noopHandler, {name: 'classify'});
     const send = node(noopHandler, {name: 'send'});
 
-    // The renderer emits one DOT statement per `Edge` into a `strict` graph, so
-    // two edges sharing endpoints would be merged by graphviz and lose a label.
-    // Core forbids that shape, so a routing map with two routes to one node
-    // never reaches the renderer at all.
-    expect(
-      () =>
-        new Workflow({
-          name: 'router',
-          edges: [
-            ['START', classify],
-            [classify, {yes: send, no: send}],
-          ],
-        }),
-    ).toThrow(/Duplicate edge found: from=classify, to=send/);
+    // The renderer emits into a `strict` graph, which merges same-endpoint
+    // statements and keeps only the last label. Two route keys pointing at one
+    // node are a supported shape, so the routes are joined before emitting.
+    const workflow = new Workflow({
+      name: 'router',
+      edges: [
+        ['START', classify],
+        [classify, {yes: send, no: send}],
+      ],
+    });
+
+    const dot = await renderDot(workflow);
+
+    expect(edgeBlock(dot, 'router.classify', 'router.send')).toContain(
+      'label = "yes, no"',
+    );
   });
 
   it('renders a nested workflow as a recursive cluster', async () => {
@@ -381,7 +470,7 @@ describe('AgentGraph — graph WorkflowAgent', () => {
       ],
     });
 
-    const dot = await renderDot(new WorkflowAgent(outer));
+    const dot = await renderDot(outer);
 
     expect(dot).toContain('subgraph "cluster_outer" {');
     expect(dot).toContain('subgraph "cluster_outer.inner" {');
@@ -405,7 +494,7 @@ describe('AgentGraph — graph WorkflowAgent', () => {
       edges: [['START', middle, node(noopHandler, {name: 'post'})]],
     });
 
-    const dot = await renderDot(new WorkflowAgent(outer));
+    const dot = await renderDot(outer);
 
     // The tail is the real leaf node, not the `outer.middle.leaf` cluster id,
     // which no drawn node carries.
@@ -432,7 +521,7 @@ describe('AgentGraph — graph WorkflowAgent', () => {
       ],
     });
 
-    const dot = await renderDot(new WorkflowAgent(workflow));
+    const dot = await renderDot(workflow);
 
     expect(nodeBlock(dot, 'kinds.writer')).toContain('label = "🤖 writer"');
     expect(nodeBlock(dot, 'kinds.writer')).toContain('shape = "ellipse"');
@@ -450,7 +539,7 @@ describe('AgentGraph — graph WorkflowAgent', () => {
       dynamicEntry: async () => 'done',
     });
 
-    const dot = await renderDot(new WorkflowAgent(workflow));
+    const dot = await renderDot(workflow);
 
     expect(dot).toContain('subgraph "cluster_dyn" {');
     expect(nodeBlock(dot, 'dyn')).toContain('label = "⚡ dyn (dynamic)"');
@@ -462,28 +551,9 @@ describe('AgentGraph — graph WorkflowAgent', () => {
       dynamicEntry: async () => 'done',
     });
 
-    const dot = await renderDot(new WorkflowAgent(workflow), [
-      ['dyn.child', ''],
-    ]);
+    const dot = await renderDot(workflow, [['dyn.child', '']]);
 
     expect(nodeBlock(dot, 'dyn')).toContain('fillcolor = "#0F5223"');
-  });
-
-  it('renders a workflow agent nested under a v1 workflow agent', async () => {
-    const workflow = new Workflow({
-      name: 'wf',
-      edges: [['START', node(noopHandler, {name: 'one'})]],
-    });
-    const sequential = new SequentialAgent({
-      name: 'seq',
-      subAgents: [new LlmAgent({name: 'first'}), new WorkflowAgent(workflow)],
-    });
-
-    const dot = await renderDot(sequential);
-
-    expect(dot).toContain('subgraph "cluster_seq (Sequential Agent)"');
-    expect(dot).toContain('subgraph "cluster_wf" {');
-    expect(nodeBlock(dot, 'wf.one')).toContain('label = "⚙️ one"');
   });
 });
 
@@ -517,7 +587,7 @@ describe('AgentGraph — workflow execution highlights', () => {
     const highlights = getWorkflowHighlights(events, events[1]);
     expect(highlights).toEqual([['wf.one', 'wf.two']]);
 
-    const dot = await renderDot(new WorkflowAgent(workflow()), highlights!);
+    const dot = await renderDot(workflow(), highlights!);
     expect(nodeBlock(dot, 'wf.two')).toContain('fillcolor = "#0F5223"');
     expect(nodeBlock(dot, 'wf.one')).toContain('fillcolor = "#0F5223"');
     expect(edgeBlock(dot, 'wf.one', 'wf.two')).toContain('color = "#69CB87"');
@@ -529,7 +599,7 @@ describe('AgentGraph — workflow execution highlights', () => {
     const highlights = getWorkflowHighlights(events, events[1]);
     expect(highlights).toEqual([['wf.one', '']]);
 
-    const dot = await renderDot(new WorkflowAgent(workflow()), highlights!);
+    const dot = await renderDot(workflow(), highlights!);
     expect(nodeBlock(dot, 'wf.one')).toContain('fillcolor = "#0F5223"');
     expect(nodeBlock(dot, 'wf.two')).toContain('fillcolor = "#ffffff"');
     expect(edgeBlock(dot, 'wf.one', 'wf.two')).toContain('color = "#cccccc"');
@@ -560,7 +630,7 @@ describe('AgentGraph — workflow execution highlights', () => {
     const highlights = getWorkflowHighlights(events, events[0]);
     expect(highlights).toEqual([['wf.fanout.fanout', '']]);
 
-    const dot = await renderDot(new WorkflowAgent(parallel), highlights!);
+    const dot = await renderDot(parallel, highlights!);
     expect(nodeBlock(dot, 'wf.fanout')).toContain('fillcolor = "#0F5223"');
   });
 
@@ -568,5 +638,33 @@ describe('AgentGraph — workflow execution highlights', () => {
     const event = createEvent({invocationId: 'inv-1', author: 'agent'});
 
     expect(getWorkflowHighlights([event], event)).toBeUndefined();
+  });
+});
+
+describe('AgentGraph — retrieval tools', () => {
+  it('renders BaseRetrievalTool with a magnifying glass icon and cylinder shape', async () => {
+    class TestRetrievalTool extends BaseRetrievalTool {
+      constructor() {
+        super({name: 'doc_retriever', description: 'Retrieves docs'});
+      }
+      override async runAsync(): Promise<unknown> {
+        return 'doc';
+      }
+    }
+
+    const agent = new LlmAgent({
+      name: 'ragAgent',
+      tools: [new TestRetrievalTool()],
+    });
+
+    const dotGraph = await getAgentGraphAsDot(agent, []);
+    expect(dotGraph).toContain('label = "🔎 doc_retriever"');
+    expect(dotGraph).toContain('shape = "cylinder"');
+
+    const digraph = await getAgentGraph(agent, [], false);
+    expect(Buffer.isBuffer(digraph)).toBe(false);
+    if (!Buffer.isBuffer(digraph)) {
+      expect(digraph.id).toBe('ragAgent');
+    }
   });
 });

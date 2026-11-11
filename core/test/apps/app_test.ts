@@ -12,7 +12,6 @@ import {createResumabilityConfig} from '../../src/apps/resumability_config.js';
 import {BasePlugin} from '../../src/plugins/base_plugin.js';
 import {node} from '../../src/workflow/node.js';
 import {Workflow} from '../../src/workflow/workflow.js';
-import {WorkflowAgent} from '../../src/workflow/workflow_agent.js';
 
 class DummyAgent extends BaseAgent {
   constructor(name = 'dummy_agent') {
@@ -110,7 +109,7 @@ describe('App', () => {
 
     // Normalized at the boundary, so everything downstream of an App still
     // receives an agent.
-    expect(app.rootAgent).toBeInstanceOf(WorkflowAgent);
+    expect(app.rootAgent).toBeInstanceOf(Workflow);
     expect(app.rootAgent.name).toBe('wf');
   });
 

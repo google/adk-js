@@ -4,11 +4,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {MCPConnectionParams, MCPSessionManager} from '@google/adk';
+import {
+  getClientLabels,
+  MCPConnectionParams,
+  MCPSessionManager,
+  runWithClientLabel,
+  SseConnectionParams,
+  SseServerParams,
+} from '@google/adk';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
+import {SSEClientTransport} from '@modelcontextprotocol/sdk/client/sse.js';
 import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import {describe, expect, it, vi} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 // The logger singleton is internal (not part of the public API), so it is
 // imported via a relative path to spy on the exact instance the manager uses.
 import {logger} from '../../../src/utils/logger.js';
@@ -19,10 +27,12 @@ vi.hoisted(() => {
 
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
   return {
-    Client: vi.fn().mockImplementation(() => ({
-      connect: vi.fn().mockResolvedValue(undefined),
-      close: vi.fn().mockResolvedValue(undefined),
-    })),
+    Client: vi.fn().mockImplementation(function () {
+      return {
+        connect: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+      };
+    }),
   };
 });
 
@@ -38,7 +48,27 @@ vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => {
   };
 });
 
+vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => {
+  return {
+    SSEClientTransport: vi.fn(),
+  };
+});
+
+function trackingHeaders(): Record<string, string> {
+  const value = getClientLabels().join(' ');
+  return {'x-goog-api-client': value, 'user-agent': value};
+}
+
 describe('MCPSessionManager', () => {
+  beforeEach(() => {
+    vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY', undefined);
+    vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', undefined);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('creates an stdio client', async () => {
     const manager = new MCPSessionManager({
       type: 'StdioConnectionParams',
@@ -84,7 +114,7 @@ describe('MCPSessionManager', () => {
       new URL('http://test-url'),
       {
         requestInit: {
-          headers: {'x-test-header': 'test-value'},
+          headers: {'x-test-header': 'test-value', ...trackingHeaders()},
         },
       },
     );
@@ -102,11 +132,11 @@ describe('MCPSessionManager', () => {
 
     await manager.createSession();
 
-    expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(
+    expect(StreamableHTTPClientTransport).toHaveBeenLastCalledWith(
       new URL('http://test-url'),
       {
         requestInit: {
-          headers: {'x-test-header': 'test-value'},
+          headers: {'x-test-header': 'test-value', ...trackingHeaders()},
         },
       },
     );
@@ -134,7 +164,7 @@ describe('MCPSessionManager', () => {
       expect.any(URL),
       {
         requestInit: {
-          headers: {'x-priority': 'headers'},
+          headers: {'x-priority': 'headers', ...trackingHeaders()},
         },
       },
     );
@@ -157,9 +187,178 @@ describe('MCPSessionManager', () => {
     expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(
       expect.any(URL),
       {
-        requestInit: {},
+        requestInit: {headers: trackingHeaders()},
       },
     );
+    const options = vi
+      .mocked(StreamableHTTPClientTransport)
+      .mock.calls.at(-1)?.[1];
+    expect(options?.requestInit?.headers).not.toHaveProperty('x-priority');
+  });
+
+  describe('tracking headers', () => {
+    function lastTransportOptions() {
+      return vi.mocked(StreamableHTTPClientTransport).mock.calls.at(-1)?.[1];
+    }
+
+    it('sends the tracking headers when no headers are given', async () => {
+      const manager = new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: 'http://test-url',
+      });
+
+      await manager.createSession();
+
+      expect(StreamableHTTPClientTransport).toHaveBeenLastCalledWith(
+        new URL('http://test-url'),
+        {requestInit: {headers: trackingHeaders()}},
+      );
+    });
+
+    it('merges a caller User-Agent from transportOptions', async () => {
+      const manager = new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: 'http://test-url',
+        transportOptions: {
+          requestInit: {
+            headers: {'User-Agent': 'my-app/1.0', 'x-test-header': 'value'},
+          },
+        },
+      });
+
+      await manager.createSession();
+
+      const adk = getClientLabels().join(' ');
+      expect(lastTransportOptions()?.requestInit?.headers).toEqual({
+        'x-test-header': 'value',
+        'x-goog-api-client': adk,
+        'user-agent': `${adk} my-app/1.0`,
+      });
+    });
+
+    it('merges a caller User-Agent from the deprecated header', async () => {
+      const manager = new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: 'http://test-url',
+        header: {'User-Agent': 'my-app/1.0'},
+      });
+
+      await manager.createSession();
+
+      const adk = getClientLabels().join(' ');
+      expect(lastTransportOptions()).toEqual({
+        requestInit: {
+          headers: {
+            'x-goog-api-client': adk,
+            'user-agent': `${adk} my-app/1.0`,
+          },
+        },
+      });
+    });
+
+    it('keeps other transportOptions fields when requestInit is absent', async () => {
+      const customFetch = vi.fn();
+      const manager = new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: 'http://test-url',
+        transportOptions: {
+          fetch: customFetch,
+          sessionId: 'session-1',
+        },
+      });
+
+      await manager.createSession();
+
+      expect(lastTransportOptions()).toEqual({
+        fetch: customFetch,
+        sessionId: 'session-1',
+        requestInit: {headers: trackingHeaders()},
+      });
+    });
+
+    it('keeps other requestInit fields', async () => {
+      const manager = new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: 'http://test-url',
+        transportOptions: {
+          requestInit: {
+            credentials: 'include',
+            headers: {'x-test-header': 'value'},
+          },
+        },
+      });
+
+      await manager.createSession();
+
+      expect(lastTransportOptions()).toEqual({
+        requestInit: {
+          credentials: 'include',
+          headers: {'x-test-header': 'value', ...trackingHeaders()},
+        },
+      });
+    });
+
+    it('does not mutate the caller transportOptions', async () => {
+      const withHeaders = {
+        requestInit: {
+          credentials: 'include' as const,
+          headers: {'User-Agent': 'my-app/1.0'},
+        },
+      };
+      const withoutRequestInit = {sessionId: 'session-1'};
+      const withHeadersClone = structuredClone(withHeaders);
+      const withoutRequestInitClone = structuredClone(withoutRequestInit);
+
+      await new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: 'http://test-url',
+        transportOptions: withHeaders,
+      }).createSession();
+      await new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: 'http://test-url',
+        transportOptions: withoutRequestInit,
+        header: {'x-test-header': 'value'},
+      }).createSession();
+
+      expect(withHeaders).toEqual(withHeadersClone);
+      expect(withoutRequestInit).toEqual(withoutRequestInitClone);
+      expect(withoutRequestInit).not.toHaveProperty('requestInit');
+    });
+
+    it('includes a runWithClientLabel label', async () => {
+      const manager = new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: 'http://test-url',
+      });
+
+      await runWithClientLabel('my-label', () => manager.createSession());
+
+      const headers = lastTransportOptions()?.requestInit?.headers;
+      expect(headers).toHaveProperty(
+        'user-agent',
+        expect.stringContaining('my-label'),
+      );
+      expect(headers).toHaveProperty(
+        'x-goog-api-client',
+        expect.stringContaining('my-label'),
+      );
+    });
+
+    it('passes only serverParams to the stdio transport', async () => {
+      const serverParams = {command: 'test-command', args: ['arg1']};
+      const manager = new MCPSessionManager({
+        type: 'StdioConnectionParams',
+        serverParams,
+      });
+
+      await manager.createSession();
+
+      expect(StdioClientTransport).toHaveBeenLastCalledWith(serverParams);
+      expect(vi.mocked(StdioClientTransport).mock.lastCall).toEqual([
+        {command: 'test-command', args: ['arg1']},
+      ]);
+    });
   });
 
   it('tracks active sessions and cleans them up', async () => {
@@ -198,22 +397,21 @@ describe('MCPSessionManager', () => {
 
   describe('connection error handling', () => {
     it('wraps a connect failure with a formatted message', async () => {
-      vi.mocked(Client).mockImplementationOnce(
-        () =>
-          ({
-            connect: vi
-              .fn()
-              .mockRejectedValue(
-                Object.assign(
-                  new Error(
-                    'Streamable HTTP error: Error POSTing to endpoint: Forbidden',
-                  ),
-                  {code: 403},
+      vi.mocked(Client).mockImplementationOnce(function () {
+        return {
+          connect: vi
+            .fn()
+            .mockRejectedValue(
+              Object.assign(
+                new Error(
+                  'Streamable HTTP error: Error POSTing to endpoint: Forbidden',
                 ),
+                {code: 403},
               ),
-            close: vi.fn().mockResolvedValue(undefined),
-          }) as unknown as Client,
-      );
+            ),
+          close: vi.fn().mockResolvedValue(undefined),
+        } as unknown as Client;
+      });
 
       const manager = new MCPSessionManager({
         type: 'StreamableHTTPConnectionParams',
@@ -231,13 +429,12 @@ describe('MCPSessionManager', () => {
 
     it('preserves the original error as the cause', async () => {
       const original = Object.assign(new Error('boom'), {code: 401});
-      vi.mocked(Client).mockImplementationOnce(
-        () =>
-          ({
-            connect: vi.fn().mockRejectedValue(original),
-            close: vi.fn().mockResolvedValue(undefined),
-          }) as unknown as Client,
-      );
+      vi.mocked(Client).mockImplementationOnce(function () {
+        return {
+          connect: vi.fn().mockRejectedValue(original),
+          close: vi.fn().mockResolvedValue(undefined),
+        } as unknown as Client;
+      });
 
       const manager = new MCPSessionManager({
         type: 'StreamableHTTPConnectionParams',
@@ -249,17 +446,16 @@ describe('MCPSessionManager', () => {
     });
 
     it('wraps an AggregateError connect failure with joined leaves', async () => {
-      vi.mocked(Client).mockImplementationOnce(
-        () =>
-          ({
-            connect: vi
-              .fn()
-              .mockRejectedValue(
-                new AggregateError([new Error('err A'), new Error('err B')]),
-              ),
-            close: vi.fn().mockResolvedValue(undefined),
-          }) as unknown as Client,
-      );
+      vi.mocked(Client).mockImplementationOnce(function () {
+        return {
+          connect: vi
+            .fn()
+            .mockRejectedValue(
+              new AggregateError([new Error('err A'), new Error('err B')]),
+            ),
+          close: vi.fn().mockResolvedValue(undefined),
+        } as unknown as Client;
+      });
 
       const manager = new MCPSessionManager({
         type: 'StdioConnectionParams',
@@ -296,6 +492,217 @@ describe('MCPSessionManager', () => {
       );
 
       errorSpy.mockRestore();
+    });
+  });
+
+  describe('SseConnectionParams', () => {
+    it('creates an SSE client with headers merged into requestInit', async () => {
+      const params: SseServerParams = {
+        type: 'SseConnectionParams',
+        url: 'http://test-sse-url/sse',
+        headers: {
+          'x-sse-header': 'sse-value',
+        },
+        timeout: 10,
+        sseReadTimeout: 60,
+      };
+      const manager = new MCPSessionManager(params);
+
+      const client = await manager.createSession();
+
+      expect(SSEClientTransport).toHaveBeenLastCalledWith(
+        new URL('http://test-sse-url/sse'),
+        {
+          requestInit: {
+            headers: {'x-sse-header': 'sse-value', ...trackingHeaders()},
+          },
+        },
+      );
+      expect(client.connect).toHaveBeenCalled();
+    });
+
+    it('creates an SSE client with deprecated header param', async () => {
+      const params: SseConnectionParams = {
+        type: 'SseConnectionParams',
+        url: 'http://test-sse-url/sse',
+        header: {
+          'x-legacy-header': 'legacy-value',
+        },
+      };
+      const manager = new MCPSessionManager(params);
+
+      await manager.createSession();
+
+      expect(SSEClientTransport).toHaveBeenLastCalledWith(
+        new URL('http://test-sse-url/sse'),
+        {
+          requestInit: {
+            headers: {'x-legacy-header': 'legacy-value', ...trackingHeaders()},
+          },
+        },
+      );
+    });
+
+    it('prioritizes transportOptions.requestInit.headers over header and headers', async () => {
+      const manager = new MCPSessionManager({
+        type: 'SseConnectionParams',
+        url: 'http://test-sse-url/sse',
+        transportOptions: {
+          requestInit: {
+            headers: {
+              'x-priority': 'transport-options',
+            },
+          },
+        },
+        header: {
+          'x-priority': 'header',
+        },
+        headers: {
+          'x-priority': 'headers',
+        },
+      });
+
+      await manager.createSession();
+
+      expect(SSEClientTransport).toHaveBeenLastCalledWith(
+        new URL('http://test-sse-url/sse'),
+        {
+          requestInit: {
+            headers: {'x-priority': 'transport-options', ...trackingHeaders()},
+          },
+        },
+      );
+    });
+
+    it('logs a formatted message for a background SSE transport error', async () => {
+      const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+      const manager = new MCPSessionManager({
+        type: 'SseConnectionParams',
+        url: 'http://test-sse-url/sse',
+      });
+      await manager.createSession();
+
+      const transport = vi.mocked(SSEClientTransport).mock.instances.at(-1);
+      expect(transport?.onerror).toBeTypeOf('function');
+      transport?.onerror?.(new Error('sse stream dropped'));
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('MCP transport error'),
+      );
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('sse stream dropped'),
+      );
+
+      errorSpy.mockRestore();
+    });
+
+    it('wraps an SSE connect failure with the original error as cause', async () => {
+      const cause = new Error('SSE endpoint unreachable');
+      vi.mocked(Client).mockImplementationOnce(function () {
+        return {
+          connect: vi.fn().mockRejectedValue(cause),
+          close: vi.fn().mockResolvedValue(undefined),
+        } as unknown as Client;
+      });
+
+      const manager = new MCPSessionManager({
+        type: 'SseConnectionParams',
+        url: 'http://test-sse-url/sse',
+      });
+
+      const error = await manager.createSession().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain(
+        'Failed to create MCP session',
+      );
+      expect((error as Error).message).toContain('SSE endpoint unreachable');
+      expect((error as Error).cause).toBe(cause);
+    });
+  });
+
+  describe('with MCP telemetry enabled', () => {
+    const URL_STRING = 'http://test-url/mcp';
+
+    beforeEach(() => {
+      vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY', 'true');
+    });
+
+    function transportFetch(
+      transport:
+        typeof StreamableHTTPClientTransport | typeof SSEClientTransport,
+    ): (
+      url: string | URL,
+      init?: Parameters<typeof fetch>[1],
+    ) => Promise<Response> {
+      const options = vi.mocked(transport).mock.lastCall?.[1];
+      if (options?.fetch === undefined) {
+        return expect.fail('the transport received no fetch');
+      }
+      return options.fetch;
+    }
+
+    async function expectDelegatingFetch(
+      transport:
+        typeof StreamableHTTPClientTransport | typeof SSEClientTransport,
+      customFetch: ReturnType<typeof vi.fn>,
+      response: Response,
+    ): Promise<void> {
+      const fetch = transportFetch(transport);
+      const init: NonNullable<Parameters<typeof fetch>[1]> = {
+        method: 'POST',
+        body: '{}',
+      };
+      const received = await fetch(URL_STRING, init);
+
+      expect(fetch).not.toBe(customFetch);
+      expect(customFetch).toHaveBeenCalledWith(URL_STRING, init);
+      expect(received).toBe(response);
+    }
+
+    it('gives the streamable HTTP transport a fetch that delegates to the caller fetch', async () => {
+      const response = new Response('{}', {status: 200});
+      const customFetch = vi.fn().mockResolvedValue(response);
+      const manager = new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: URL_STRING,
+        transportOptions: {fetch: customFetch},
+      });
+
+      await manager.createSession();
+
+      await expectDelegatingFetch(
+        StreamableHTTPClientTransport,
+        customFetch,
+        response,
+      );
+    });
+
+    it('gives the SSE transport a fetch that delegates to the caller fetch', async () => {
+      const response = new Response('{}', {status: 200});
+      const customFetch = vi.fn().mockResolvedValue(response);
+      const manager = new MCPSessionManager({
+        type: 'SseConnectionParams',
+        url: URL_STRING,
+        transportOptions: {fetch: customFetch},
+      });
+
+      await manager.createSession();
+
+      await expectDelegatingFetch(SSEClientTransport, customFetch, response);
+    });
+
+    it('gives the transport a fetch when the caller gives none', async () => {
+      const manager = new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: URL_STRING,
+      });
+
+      await manager.createSession();
+
+      expect(transportFetch(StreamableHTTPClientTransport)).toBeTypeOf(
+        'function',
+      );
     });
   });
 });

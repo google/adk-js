@@ -13,7 +13,7 @@ import {FunctionNode} from '../../src/workflow/nodes/function_node.js';
 import {RequestInput} from '../../src/workflow/request_input.js';
 import {hasRequestInputFunctionCall} from '../../src/workflow/utils/hitl_utils.js';
 import {eventsForCurrentRun} from '../../src/workflow/utils/rehydration_utils.js';
-import {WorkflowAgent} from '../../src/workflow/workflow_agent.js';
+import {Workflow} from '../../src/workflow/workflow.js';
 
 async function drain(gen: AsyncGenerator<Event>): Promise<Event[]> {
   const out: Event[] = [];
@@ -179,7 +179,7 @@ describe('workflow re-invocation after completion', () => {
       return `n2:${input}`;
     });
 
-    const agent = new WorkflowAgent({name: 'wf', edges: [['START', n1, n2]]});
+    const agent = new Workflow({name: 'wf', edges: [['START', n1, n2]]});
     const sessionService = new InMemorySessionService();
     const session = await sessionService.createSession({
       appName: 'app',
@@ -228,7 +228,7 @@ describe('workflow re-invocation after completion', () => {
       },
     );
 
-    const agent = new WorkflowAgent({
+    const agent = new Workflow({
       name: 'wf_hitl',
       edges: [['START', ask, after]],
     });

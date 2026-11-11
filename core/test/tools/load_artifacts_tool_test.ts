@@ -445,4 +445,211 @@ describe('LoadArtifactsTool', () => {
       '[Binary artifact: test.dat, type: application/octet-stream',
     );
   });
+
+  it('loads artifacts when called in parallel alongside other tools (issue #632)', async () => {
+    const artifactName = 'test.txt';
+    const textContent = 'Hello World';
+    const artifact: Part = {
+      text: textContent,
+    };
+
+    const toolContext = new StubToolContext({
+      [artifactName]: artifact,
+    }) as unknown as Context;
+
+    const llmRequest: LlmRequest = {
+      contents: [
+        {
+          role: 'user',
+          parts: [{text: 'Run tasks'}],
+        },
+        {
+          role: 'model',
+          parts: [
+            {functionCall: {name: 'other_tool', args: {}}},
+            {
+              functionCall: {
+                name: 'load_artifacts',
+                args: {artifact_names: [artifactName]},
+              },
+            },
+          ],
+        },
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'other_tool',
+                response: {status: 'ok'},
+              },
+            },
+            {
+              functionResponse: {
+                name: 'load_artifacts',
+                response: {artifact_names: [artifactName]},
+              },
+            },
+          ],
+        },
+      ],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    const tool = new LoadArtifactsTool();
+    await tool.processLlmRequest({toolContext, llmRequest});
+
+    const addedContent = llmRequest.contents.find((c) =>
+      c.parts?.some((p) => p.text === `Artifact ${artifactName} is:`),
+    );
+    expect(addedContent).toBeDefined();
+    expect(addedContent?.parts?.[1]?.text).toEqual(textContent);
+  });
+
+  it('loads artifacts when called sequentially before other tools in the same turn (issue #632)', async () => {
+    const artifactName = 'data.txt';
+    const textContent = 'Sequential Data';
+    const artifact: Part = {
+      text: textContent,
+    };
+
+    const toolContext = new StubToolContext({
+      [artifactName]: artifact,
+    }) as unknown as Context;
+
+    const llmRequest: LlmRequest = {
+      contents: [
+        {
+          role: 'user',
+          parts: [{text: 'Run tasks'}],
+        },
+        {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                name: 'load_artifacts',
+                args: {artifact_names: [artifactName]},
+              },
+            },
+          ],
+        },
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'load_artifacts',
+                response: {artifact_names: [artifactName]},
+              },
+            },
+          ],
+        },
+        {
+          role: 'model',
+          parts: [{functionCall: {name: 'next_tool', args: {}}}],
+        },
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'next_tool',
+                response: {status: 'done'},
+              },
+            },
+          ],
+        },
+      ],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    const tool = new LoadArtifactsTool();
+    await tool.processLlmRequest({toolContext, llmRequest});
+
+    const addedContent = llmRequest.contents.find((c) =>
+      c.parts?.some((p) => p.text === `Artifact ${artifactName} is:`),
+    );
+    expect(addedContent).toBeDefined();
+    expect(addedContent?.parts?.[1]?.text).toEqual(textContent);
+  });
+
+  it('does not reload artifacts from previous turns if not called in current turn', async () => {
+    const artifactName = 'old.txt';
+    const artifact: Part = {
+      text: 'Old Content',
+    };
+
+    const toolContext = new StubToolContext({
+      [artifactName]: artifact,
+    }) as unknown as Context;
+
+    const llmRequest: LlmRequest = {
+      contents: [
+        // Turn 1
+        {
+          role: 'user',
+          parts: [{text: 'Load old artifact'}],
+        },
+        {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                name: 'load_artifacts',
+                args: {artifact_names: [artifactName]},
+              },
+            },
+          ],
+        },
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'load_artifacts',
+                response: {artifact_names: [artifactName]},
+              },
+            },
+          ],
+        },
+        {
+          role: 'model',
+          parts: [{text: 'Old artifact was processed.'}],
+        },
+        // Turn 2
+        {
+          role: 'user',
+          parts: [{text: 'New question without loading artifact'}],
+        },
+        {
+          role: 'model',
+          parts: [{functionCall: {name: 'other_tool', args: {}}}],
+        },
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'other_tool',
+                response: {status: 'ok'},
+              },
+            },
+          ],
+        },
+      ],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    const tool = new LoadArtifactsTool();
+    await tool.processLlmRequest({toolContext, llmRequest});
+
+    const addedContent = llmRequest.contents.find((c) =>
+      c.parts?.some((p) => p.text === `Artifact ${artifactName} is:`),
+    );
+    expect(addedContent).toBeUndefined();
+  });
 });

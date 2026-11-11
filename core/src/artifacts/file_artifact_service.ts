@@ -505,7 +505,11 @@ function getArtifactDir(
 
   const artifactDir = path.resolve(scopeRoot, cleanFilename);
   const relative = path.relative(scopeRoot, artifactDir);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+  if (
+    relative === '..' ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
     throw new Error(`Artifact filename ${filename} escapes storage directory.`);
   }
   if (relative === '' || relative === '.') {
@@ -645,11 +649,13 @@ async function* iterateArtifactDirs(dir: string): AsyncGenerator<string> {
 
     if (hasVersions) {
       yield dir;
-      return;
     }
 
     for (const entry of entries) {
-      if (entry.isDirectory()) {
+      // An artifact directory doubles as the parent of anything nested under
+      // it ('doc' and 'doc/nested'), so keep walking, skipping only the stored
+      // versions of this artifact.
+      if (entry.isDirectory() && entry.name !== 'versions') {
         const subdir = path.join(dir, entry.name);
         for await (const foundDir of iterateArtifactDirs(subdir)) {
           yield foundDir;

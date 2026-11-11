@@ -21,6 +21,7 @@ import {
 } from '@google/genai';
 import {Event as AdkEvent, createEvent} from '../events/event.js';
 import {createEventActions} from '../events/event_actions.js';
+import {withoutInternalMetadata} from '../events/internal_metadata.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
 import {
   A2AEvent,
@@ -125,7 +126,12 @@ function messageToAdkEvent(
   return {
     ...createAdkEventFromMetadata(msg),
     invocationId,
-    author: msg.role === MessageRole.USER ? MessageRole.USER : agentName,
+    // The role on a peer's message is the peer's own claim and must not decide
+    // authorship: letting `user` through here lets a remote agent post events
+    // that read as the local user's, which is a trust anchor elsewhere (tool
+    // confirmations are approved only from user-authored events). Attribute the
+    // event to the peer, the same way the task and status converters below do.
+    author: agentName,
     branch,
     content,
     turnComplete: true,
@@ -283,8 +289,10 @@ function createAdkEventFromMetadata(a2aEvent: A2AEvent): AdkEvent {
     // (set it to a shared ancestor branch, or omit it) to leak its content
     // into an unrelated sibling agent's LLM context. Every caller of the
     // `*ToAdkEvent` functions in this file force-sets `branch` from its own
-    // local `InvocationContext` instead, the same way `author` is handled.
-    author: metadata[A2AMetadataKeys.AUTHOR] as string,
+    // local `InvocationContext` instead, the same way `author` is handled:
+    // `author` is likewise never restored from peer metadata here, since every
+    // converter sets it from the local context after the spread, so reading it
+    // from metadata would be dead and read as if a peer could set the author.
     partial: metadata[A2AMetadataKeys.PARTIAL] as boolean,
     errorCode: metadata[A2AMetadataKeys.ERROR_CODE] as string,
     errorMessage: metadata[A2AMetadataKeys.ERROR_MESSAGE] as string,
@@ -295,10 +303,10 @@ function createAdkEventFromMetadata(a2aEvent: A2AEvent): AdkEvent {
       A2AMetadataKeys.GROUNDING_METADATA
     ] as GroundingMetadata,
     usageMetadata: metadata[A2AMetadataKeys.USAGE_METADATA] as UsageMetadata,
-    customMetadata: metadata[A2AMetadataKeys.CUSTOM_METADATA] as Record<
-      string,
-      unknown
-    >,
+    // A remote peer cannot set ADK-internal keys on the events we emit for it.
+    customMetadata: withoutInternalMetadata(
+      metadata[A2AMetadataKeys.CUSTOM_METADATA] as Record<string, unknown>,
+    ),
     // Only fields in PEER_SETTABLE_ACTION_FIELDS may be restored from
     // metadata a remote A2A peer controls. Every other action field either
     // mutates the caller's own session or drives the caller's own control

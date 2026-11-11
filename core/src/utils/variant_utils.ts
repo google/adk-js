@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {getBooleanEnvVar} from './env_aware_utils.js';
+import {isEnterpriseModeEnabled} from './env_aware_utils.js';
 
 /**
  * The Google LLM variant to use.
@@ -27,7 +27,7 @@ export enum GoogleLLMVariant {
  * Gets the Google LLM variant to use.
  */
 export function getGoogleLlmVariant() {
-  return getBooleanEnvVar('GOOGLE_GENAI_USE_VERTEXAI')
+  return isEnterpriseModeEnabled()
     ? GoogleLLMVariant.VERTEX_AI
     : GoogleLLMVariant.GEMINI_API;
 }

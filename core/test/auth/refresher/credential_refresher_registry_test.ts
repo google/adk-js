@@ -12,7 +12,6 @@ import {
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
 
-// Mock credential refresher for testing
 class MockRefresher implements BaseCredentialRefresher {
   async isRefreshNeeded(_authCredential: AuthCredential): Promise<boolean> {
     return false;

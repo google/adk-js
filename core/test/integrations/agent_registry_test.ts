@@ -17,6 +17,7 @@ import {
   ProtocolType,
   ReadonlyContext,
   RemoteA2AAgent,
+  RemoteA2AAgentConfig,
   StreamableHTTPConnectionParams,
 } from '../../src/index.js';
 
@@ -27,7 +28,7 @@ let mockClientQuotaProjectId: string | undefined = 'quota-project-123';
 
 vi.mock('google-auth-library', () => {
   return {
-    GoogleAuth: vi.fn().mockImplementation(() => {
+    GoogleAuth: vi.fn().mockImplementation(function () {
       return {
         getClient: vi.fn().mockImplementation(() => {
           if (shouldAuthThrow) {
@@ -62,9 +63,17 @@ const mockMcpClient = {
 // Mock MCP Client
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
   return {
-    Client: vi.fn().mockImplementation(() => mockMcpClient),
+    Client: vi.fn().mockImplementation(function () {
+      return mockMcpClient;
+    }),
   };
 });
+
+vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
+  StreamableHTTPClientTransport: vi.fn().mockImplementation(function () {
+    return {};
+  }),
+}));
 
 describe('AgentRegistry Helpers', () => {
   describe('isGoogleApi', () => {
@@ -76,6 +85,11 @@ describe('AgentRegistry Helpers', () => {
     it('should return false for non-Google APIs', () => {
       expect(isGoogleApi('https://example.com')).toBe(false);
       expect(isGoogleApi('invalid-url')).toBe(false);
+    });
+
+    it('should return false for Google API hosts over unencrypted HTTP', () => {
+      expect(isGoogleApi('http://googleapis.com')).toBe(false);
+      expect(isGoogleApi('http://bigquery-mcp.googleapis.com/v1')).toBe(false);
     });
   });
 
@@ -722,6 +736,64 @@ describe('AgentRegistry', () => {
       expect((agent as any).a2aConfig.client).toBe(dummyClient);
       expect((agent as any).a2aConfig.clientFactory).toBe(dummyClientFactory);
     });
+
+    it("declares the synthesised card's default modes as media types", async () => {
+      const agentInfo = {
+        displayName: 'MediaTypeAgent',
+        description: 'Declares media types',
+        protocols: [
+          {
+            type: ProtocolType.A2A_AGENT,
+            interfaces: [
+              {
+                url: 'https://my-dynamic-agent.com',
+                protocolBinding: 'HTTP_JSON',
+              },
+            ],
+          },
+        ],
+        skills: [{id: 's-1', name: 'Translate'}],
+      };
+
+      vi.spyOn(registry, 'getAgentInfo').mockResolvedValue(agentInfo);
+      const agent = await registry.getRemoteA2AAgent('agents/agent-1');
+      const {agentCard} = (
+        agent as unknown as {a2aConfig: RemoteA2AAgentConfig}
+      ).a2aConfig;
+      expect(agentCard).toMatchObject({
+        defaultInputModes: ['text/plain'],
+        defaultOutputModes: ['text/plain'],
+      });
+    });
+
+    it('declares media-type default modes even when the registry reports no skills', async () => {
+      const agentInfo = {
+        displayName: 'MediaTypeAgentNoSkills',
+        description: 'Declares media types without skills',
+        protocols: [
+          {
+            type: ProtocolType.A2A_AGENT,
+            interfaces: [
+              {
+                url: 'https://my-dynamic-agent.com',
+                protocolBinding: 'HTTP_JSON',
+              },
+            ],
+          },
+        ],
+      };
+
+      vi.spyOn(registry, 'getAgentInfo').mockResolvedValue(agentInfo);
+      const agent = await registry.getRemoteA2AAgent('agents/agent-1');
+      const {agentCard} = (
+        agent as unknown as {a2aConfig: RemoteA2AAgentConfig}
+      ).a2aConfig;
+      expect(agentCard).toMatchObject({
+        skills: [],
+        defaultInputModes: ['text/plain'],
+        defaultOutputModes: ['text/plain'],
+      });
+    });
   });
 
   describe('AgentRegistrySingleMCPToolset Lifecycle', () => {
@@ -761,14 +833,13 @@ describe('AgentRegistry', () => {
       expect(tools.length).toBe(2);
     });
 
-    it('should support getMcpToolset with empty options and verify auth headers added for Google API', async () => {
+    it('should add ADC auth headers to Google API endpoints over HTTPS', async () => {
       const customHeaderRegistry = new AgentRegistry({
         projectId: 'test-project',
         location: 'global',
       });
 
       const serverDetails = {
-        mcpServerId: 'urn:mcp:1234:bigquery',
         interfaces: [
           {
             url: 'https://bigquery-mcp.googleapis.com/v1',
@@ -786,6 +857,48 @@ describe('AgentRegistry', () => {
       );
       const tools = await toolset.getTools({} as ReadonlyContext);
       expect(tools.length).toBe(2);
+
+      const Transport = (
+        await import('@modelcontextprotocol/sdk/client/streamableHttp.js')
+      ).StreamableHTTPClientTransport as unknown as ReturnType<typeof vi.fn>;
+      const [url, options] = Transport.mock.calls.at(-1) ?? [];
+      expect(url.href).toBe('https://bigquery-mcp.googleapis.com/v1');
+      expect(options.requestInit.headers).toMatchObject({
+        'Authorization': 'Bearer fake-token',
+        'x-goog-user-project': 'quota-project-123',
+      });
+    });
+
+    it('should not add ADC auth headers to Google API endpoints over HTTP', async () => {
+      const customHeaderRegistry = new AgentRegistry({
+        projectId: 'test-project',
+        location: 'global',
+      });
+
+      vi.spyOn(customHeaderRegistry, 'getMcpServer').mockResolvedValue({
+        interfaces: [
+          {
+            url: 'http://bigquery-mcp.googleapis.com/v1',
+            protocolBinding: 'JSONRPC',
+          },
+        ],
+      });
+
+      const toolset = await customHeaderRegistry.getMcpToolset(
+        'mcpServers/bq',
+        {},
+      );
+      await toolset.getTools({} as ReadonlyContext);
+
+      const Transport = (
+        await import('@modelcontextprotocol/sdk/client/streamableHttp.js')
+      ).StreamableHTTPClientTransport as unknown as ReturnType<typeof vi.fn>;
+      const [url, options] = Transport.mock.calls.at(-1) ?? [];
+      expect(url.href).toBe('http://bigquery-mcp.googleapis.com/v1');
+      expect(options.requestInit.headers).not.toHaveProperty('Authorization');
+      expect(options.requestInit.headers).not.toHaveProperty(
+        'x-goog-user-project',
+      );
     });
 
     it('should filter tools if toolFilter option is provided', async () => {

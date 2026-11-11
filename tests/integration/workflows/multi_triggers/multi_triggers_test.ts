@@ -5,8 +5,10 @@
  */
 
 /**
- * Runs the real `multi_triggers` sample (offline): a node with several
- * predecessors runs once per incoming trigger.
+ * Runs the real `multi_triggers` sample (offline): one successor node is
+ * triggered once per upstream branch, each with that branch's payload. Turn and
+ * expectations mirror the Python golden
+ * `contributing/samples/workflows/multi_triggers/tests/go.json`.
  */
 
 import {describe, expect, it} from 'vitest';
@@ -14,22 +16,27 @@ import {allEvents, runSample} from '../_harness/sample_harness.js';
 import {rootAgent} from './agent.js';
 
 describe('workflow sample: multi_triggers', () => {
-  it('runs the downstream node once per predecessor trigger', async () => {
+  it('fires the successor once per triggering branch', async () => {
     const perTurn = await runSample({
       name: 'multi_triggers',
       rootAgent,
-      turns: ['abc'],
+      turns: ['go'],
       offline: true,
     });
     const events = allEvents(perTurn);
 
-    // send_message has three predecessors, so it fires three times.
-    const triggered = events.filter((e) => e.author === 'send_message');
-    expect(triggered.length).toBe(3);
-    expect(
-      triggered.every((e) =>
-        (e.content?.parts ?? []).some((p) => p.text?.includes('Triggered for')),
-      ),
-    ).toBe(true);
+    const texts = events
+      .filter((e) => e.author === 'send_message')
+      .flatMap((e) => e.content?.parts ?? [])
+      .map((p) => p.text ?? '');
+
+    expect(texts).toHaveLength(3);
+    expect(texts.sort()).toEqual(
+      [
+        'Triggered for input: GO',
+        'Triggered for input: 2',
+        'Triggered for input: og',
+      ].sort(),
+    );
   });
 });

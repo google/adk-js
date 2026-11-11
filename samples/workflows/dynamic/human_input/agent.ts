@@ -24,7 +24,7 @@
  * Turn 1: describe a request. Turn 2: type "yes" or "no".
  */
 
-import {node, NodeContext, RequestInput, WorkflowAgent} from '@google/adk';
+import {node, NodeContext, RequestInput, Workflow} from '@google/adk';
 
 /**
  * Pauses the workflow and waits for user input.
@@ -61,7 +61,7 @@ const handleProcess = node(
   {name: 'handle_process', rerunOnResume: true},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'root_agent',
   edges: [['START', handleProcess]],
 });

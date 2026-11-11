@@ -5,10 +5,10 @@
  */
 
 /**
- * Runs the real `samples/workflows/dynamic_nodes` agent with recorded model
- * responses. Its LlmAgents are captured inside a `dynamicEntry` closure and are
- * unreachable by static traversal — so this proves the registry-level model
- * injection reaches every agent, however it is wired.
+ * Runs the real `dynamic_nodes` sample: one `orchestrate` node drives two agents
+ * with `ctx.runNode` until the headline grades tech-related. Turn mirrors the
+ * Python golden `contributing/samples/workflows/dynamic_nodes/tests/flower.json`,
+ * which deliberately uses a non-tech topic so the loop iterates.
  */
 
 import {describe, expect, it} from 'vitest';
@@ -21,22 +21,34 @@ import {
 import {rootAgent} from './agent.js';
 
 describe('workflow sample: dynamic_nodes', () => {
-  it('drives closure-captured agents via dynamicEntry to a final headline', async () => {
+  it('loops until the generated headline is graded tech-related', async () => {
     const perTurn = await runSample({
       name: 'dynamic_nodes',
       rootAgent,
-      turns: ['the ocean'],
+      turns: ['flower'],
     });
     const events = allEvents(perTurn);
 
-    // Both closure-captured agents ran (reached only via ctx.runNode).
-    expect(authors(events).has('generate_headline')).toBe(true);
-    expect(authors(events).has('evaluate_headline')).toBe(true);
+    expect(events.map((e) => e.actions?.stateDelta ?? {})).toContainEqual({
+      topic: 'flower',
+    });
 
-    // The bounded loop terminates with a string output (a headline, or the
-    // "gave up" message).
-    const output = finalOutput(events);
-    expect(typeof output).toBe('string');
-    expect((output as string).length).toBeGreaterThan(0);
-  });
+    const who = authors(events);
+    expect(who.has('generate_headline')).toBe(true);
+    expect(who.has('evaluate_headline')).toBe(true);
+
+    const headlines = events.filter((e) => e.author === 'generate_headline');
+    expect(headlines.length).toBeGreaterThanOrEqual(2);
+    const grades = events
+      .filter((e) => e.author === 'evaluate_headline' && e.output !== undefined)
+      .map((e) => (e.output as {grade: string}).grade);
+    expect(grades.length).toBe(headlines.length);
+    expect(grades[grades.length - 1]).toBe('tech-related');
+    expect(grades.slice(0, -1).every((g) => g === 'unrelated')).toBe(true);
+
+    const lastHeadline = (headlines[headlines.length - 1].content?.parts ?? [])
+      .map((p) => p.text ?? '')
+      .join('');
+    expect(finalOutput(events)).toBe(lastHeadline);
+  }, 120000);
 });

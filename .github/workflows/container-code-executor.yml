@@ -1,0 +1,45 @@
+name: Container Code Executor
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_OPTIONS: '--max-old-space-size=8192'
+
+jobs:
+  run-tests:
+    # Docker is only available on the GitHub-hosted Linux runners, so the real
+    # container tests run here instead of the cross-OS validation matrix.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Use Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+
+      # `--ignore-scripts` mirrors the validation workflow and skips native
+      # rebuilds that are neither needed nor wanted here. `npm ci` still installs
+      # the optional `dockerode` dependency the executor loads at run time.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build packages
+        run: npm run build
+
+      - name: Build code executor image
+        run: docker build -t adk-code-executor-it:latest tests/integration/code_executors/docker
+
+      - name: Run container code executor tests
+        env:
+          ADK_RUN_DOCKER_IT: '1'
+          ADK_DOCKER_IT_IMAGE: adk-code-executor-it:latest
+        run: npx vitest run --project integration tests/integration/code_executors/container_code_executor_integration_test.ts

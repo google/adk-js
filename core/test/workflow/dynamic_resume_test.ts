@@ -16,7 +16,6 @@ import {
   hasRequestInputFunctionCall,
 } from '../../src/workflow/utils/hitl_utils.js';
 import {Workflow} from '../../src/workflow/workflow.js';
-import {WorkflowAgent} from '../../src/workflow/workflow_agent.js';
 
 async function collect(gen: AsyncGenerator<Event>): Promise<Event[]> {
   const out: Event[] = [];
@@ -66,7 +65,7 @@ describe('Phase 5b-cont — dynamic (ctx.runNode) resume via the Runner', () => 
       },
     });
 
-    const agent = new WorkflowAgent(wf);
+    const agent = wf;
     const sessionService = new InMemorySessionService();
     const session = await sessionService.createSession({
       appName: 'test_app',
@@ -113,6 +112,85 @@ describe('Phase 5b-cont — dynamic (ctx.runNode) resume via the Runner', () => 
     expect(turn2.some((e) => e.output === 'confirmed:yes')).toBe(true);
   });
 
+  it('replays a completed rerun-on-resume child instead of running it again', async () => {
+    // `rerunOnResume` says what to do with an interrupt the child is still
+    // waiting on, not that a run which already produced its output should
+    // happen again. The static graph replays such a node (`resume_loopback_
+    // test.ts`); a child reached through `ctx.runNode()` must agree.
+    let stepRuns = 0;
+    let askRuns = 0;
+
+    const step = new FunctionNode(
+      'step',
+      (_c, input) => {
+        stepRuns++;
+        return `step(${input})`;
+      },
+      {rerunOnResume: true},
+    );
+    const ask = new FunctionNode(
+      'ask',
+      (ctx: NodeContext) => {
+        askRuns++;
+        const answer = ctx.resumeInputs['confirm'];
+        return answer === undefined
+          ? new RequestInput({interruptId: 'confirm', message: 'confirm?'})
+          : `confirmed:${answer}`;
+      },
+      {rerunOnResume: true},
+    );
+
+    const wf = new Workflow({
+      name: 'dyn_replay_wf',
+      dynamicEntry: async (ctx, input) => {
+        const s = await ctx.runNode(step, input);
+        const a = await ctx.runNode(ask);
+        return {step: s.output, ask: a.output};
+      },
+    });
+
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'test_app',
+      userId: 'u1',
+    });
+    const runner = new Runner({appName: 'test_app', agent: wf, sessionService});
+
+    await collect(
+      runner.runAsync({
+        userId: 'u1',
+        sessionId: session.id,
+        newMessage: {role: 'user', parts: [{text: 'x'}]},
+      }),
+    );
+    expect(stepRuns).toBe(1);
+
+    const turn2 = await collect(
+      runner.runAsync({
+        userId: 'u1',
+        sessionId: session.id,
+        newMessage: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'confirm',
+                name: 'adk_request_input',
+                response: {result: 'yes'},
+              },
+            },
+          ],
+        },
+      }),
+    );
+
+    // Completed last turn, so it is replayed from its cached output even
+    // though it asked to rerun on resume.
+    expect(stepRuns).toBe(1);
+    expect(askRuns).toBe(2);
+    expect(turn2.some((e) => e.output === 'confirmed:yes')).toBe(true);
+  });
+
   it('hands the resume value to a rerunOnResume=false child without re-running it', async () => {
     let askRuns = 0;
 
@@ -142,7 +220,7 @@ describe('Phase 5b-cont — dynamic (ctx.runNode) resume via the Runner', () => 
       },
     });
 
-    const agent = new WorkflowAgent(wf);
+    const agent = wf;
     const sessionService = new InMemorySessionService();
     const session = await sessionService.createSession({
       appName: 'test_app',
@@ -209,7 +287,7 @@ describe('Phase 5b-cont — dynamic (ctx.runNode) resume via the Runner', () => 
       {rerunOnResume: true},
     );
 
-    const agent = new WorkflowAgent({
+    const agent = new Workflow({
       name: 'root_agent',
       edges: [['START', handle]],
     });
@@ -253,5 +331,78 @@ describe('Phase 5b-cont — dynamic (ctx.runNode) resume via the Runner', () => 
     expect(askRuns).toBe(1);
     expect(turn2.some(hasRequestInputFunctionCall)).toBe(false);
     expect(turn2.some((e) => e.output === 'Approved')).toBe(true);
+  });
+
+  it('hands back a fast-forwarded run when the same run id is asked for twice', async () => {
+    let stepRuns = 0;
+    const outputs: unknown[] = [];
+
+    const step = new FunctionNode('step', (_c, input) => {
+      stepRuns++;
+      return `step(${input})`;
+    });
+    const ask = new FunctionNode(
+      'ask',
+      (ctx: NodeContext) => {
+        const answer = ctx.resumeInputs['confirm'];
+        return answer === undefined
+          ? new RequestInput({interruptId: 'confirm', message: 'confirm?'})
+          : `confirmed:${answer}`;
+      },
+      {rerunOnResume: true},
+    );
+
+    const wf = new Workflow({
+      name: 'dyn_same_run_id_wf',
+      dynamicEntry: async (ctx, input) => {
+        const first = await ctx.runNode(step, input, {runId: 'once'});
+        const second = await ctx.runNode(step, input, {runId: 'once'});
+        outputs.push(first.output, second.output);
+        const a = await ctx.runNode(ask);
+        return {step: first.output, ask: a.output};
+      },
+    });
+
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'test_app',
+      userId: 'u1',
+    });
+    const runner = new Runner({appName: 'test_app', agent: wf, sessionService});
+
+    await collect(
+      runner.runAsync({
+        userId: 'u1',
+        sessionId: session.id,
+        newMessage: {role: 'user', parts: [{text: 'x'}]},
+      }),
+    );
+    // Turn 1: the in-flight task dedups the second call.
+    expect(stepRuns).toBe(1);
+
+    const turn2 = await collect(
+      runner.runAsync({
+        userId: 'u1',
+        sessionId: session.id,
+        newMessage: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'confirm',
+                name: 'adk_request_input',
+                response: {result: 'yes'},
+              },
+            },
+          ],
+        },
+      }),
+    );
+
+    // Turn 2: the first call fast-forwards from the recorded run; the second
+    // must hand back that same result rather than executing the body again.
+    expect(stepRuns).toBe(1);
+    expect(outputs).toEqual(['step(x)', 'step(x)', 'step(x)', 'step(x)']);
+    expect(turn2.some((e) => e.output === 'confirmed:yes')).toBe(true);
   });
 });

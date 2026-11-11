@@ -12,7 +12,7 @@ import {AsyncQueue} from '../../src/utils/async_queue.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
 import {FunctionNode} from '../../src/workflow/nodes/function_node.js';
 import {REQUEST_CREDENTIAL_FUNCTION_CALL_NAME} from '../../src/workflow/utils/hitl_utils.js';
-import {createIc, driveNode} from './test_helpers.js';
+import {createIc, drainInBackground, driveNode} from './test_helpers.js';
 
 describe('FunctionNode result handling', () => {
   it('yields one event per item from a generator handler', async () => {
@@ -103,6 +103,7 @@ describe('FunctionNode auth gate', () => {
       runId: 'root',
       resumeInputs: {k: 'my-key'},
     });
+    drainInBackground(channel);
     const child = await root.runNode(node, 'x', {useAsOutput: true});
     expect(child.output).toBe('ran');
   });

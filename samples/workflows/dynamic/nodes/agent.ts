@@ -22,7 +22,7 @@
  *   npm run sample -- samples/workflows/dynamic/nodes/agent.ts
  */
 
-import {FunctionNode, node, NodeContext, WorkflowAgent} from '@google/adk';
+import {FunctionNode, node, NodeContext, Workflow} from '@google/adk';
 
 /** The plain function both node forms wrap. */
 function myFunctionNode(_ctx: NodeContext, nodeInput: unknown): string {
@@ -53,7 +53,7 @@ const myWorkflow = node(
   {name: 'my_workflow', rerunOnResume: true},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'root_agent',
   edges: [['START', myWorkflow]],
 });

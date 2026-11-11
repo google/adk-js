@@ -5,6 +5,7 @@
  */
 
 import {State} from '../sessions/state.js';
+import {asSafePartForLlm} from '../tools/load_artifacts_tool.js';
 import type {WorkflowInstructionScope} from './invocation_context.js';
 import {ReadonlyContext} from './readonly_context.js';
 
@@ -18,21 +19,22 @@ const SOURCE_NODE_PLACEHOLDER =
   /<\s*[A-Za-z_]\w*\.([A-Za-z_]\w*)\s+from\s+([A-Za-z_]\w*)\s*>/g;
 
 /**
- * Resolves `<Class.field from source_node>` placeholders against a workflow
- * scope (predecessor outputs by node name). Synchronous; unresolved placeholders
- * are left untouched. Mirrors Python's source-node-qualified data selection.
+ * Resolves one `<Class.field from source_node>` placeholder against a workflow
+ * scope (predecessor outputs by node name). Synchronous; an unresolved
+ * placeholder is returned untouched. Mirrors Python's source-node-qualified
+ * data selection.
  */
-function resolveSourceNodePlaceholders(
-  template: string,
+function resolveSourceNode(
+  raw: string,
+  field: string,
+  nodeName: string,
   scope: WorkflowInstructionScope,
 ): string {
-  return template.replace(SOURCE_NODE_PLACEHOLDER, (raw, field, nodeName) => {
-    const out = scope.outputsByNode?.[nodeName];
-    if (out && typeof out === 'object' && field in (out as object)) {
-      return formatValue((out as Record<string, unknown>)[field], false);
-    }
-    return raw;
-  });
+  const out = scope.outputsByNode?.[nodeName];
+  if (out && typeof out === 'object' && field in (out as object)) {
+    return formatValue((out as Record<string, unknown>)[field], false);
+  }
+  return raw;
 }
 
 /**
@@ -61,12 +63,14 @@ async function resolveKey(
       }
       throw new Error(`Artifact ${fileName} not found.`);
     }
-    return formatValue(artifact, true);
+    // Same conversion as the load_artifacts tool, so text-like inline data is
+    // injected as text instead of base64 JSON.
+    return formatValue(asSafePartForLlm(artifact, fileName), true);
   }
 
   // Step 3: Handle state variable injection.
   if (isValidStateName(key)) {
-    if (key in invocationContext.session.state) {
+    if (Object.hasOwn(invocationContext.session.state, key)) {
       return formatValue(invocationContext.session.state[key], false);
     }
     if (isOptional) {
@@ -152,18 +156,28 @@ export async function injectSessionState(
   template: string,
   readonlyContext: ReadonlyContext,
 ): Promise<string> {
-  // Workflow: first resolve `<Class.field from source_node>` placeholders, and
-  // enable `{Class.field}` resolution below. Both are no-ops (placeholders left
+  // Workflow: `<Class.field from source_node>` placeholders, plus
+  // `{Class.field}` resolution below. Both are no-ops (placeholders left
   // untouched) for ordinary agents, which have no workflow scope.
   const scope = readonlyContext.invocationContext.workflowInstructionScope;
-  if (scope) {
-    template = resolveSourceNodePlaceholders(template, scope);
-  }
+  const sourceMatches = scope
+    ? Array.from(template.matchAll(SOURCE_NODE_PLACEHOLDER)).map((match) => ({
+        raw: match[0],
+        index: match.index!,
+        resolved: resolveSourceNode(match[0], match[1], match[2], scope),
+      }))
+    : [];
 
   const pattern = /\{+[^{}]*}+/g;
-  const matches = Array.from(template.matchAll(pattern));
+  // Braces right after `$` or `\` are literal text such as `${expr}`,
+  // `${{expr}}` or `\{expr}`, not a placeholder (as in adk-python). Checked
+  // here rather than with a lookbehind, which the web build targets lack.
+  const matches = Array.from(template.matchAll(pattern)).filter((match) => {
+    const previous = template[match.index! - 1];
+    return previous !== '$' && previous !== '\\';
+  });
 
-  if (matches.length === 0) {
+  if (matches.length === 0 && sourceMatches.length === 0) {
     return template;
   }
 
@@ -225,11 +239,16 @@ export async function injectSessionState(
   await Promise.all(resolutions.values());
 
   // Reconstruct template using pre-parsed matches
+  const allMatches = [...parsedMatches, ...sourceMatches].sort(
+    (a, b) => a.index - b.index,
+  );
   const result: string[] = [];
   let lastEnd = 0;
-  for (const pm of parsedMatches) {
+  for (const pm of allMatches) {
     result.push(template.slice(lastEnd, pm.index));
-    if (pm.isValid) {
+    if ('resolved' in pm) {
+      result.push(pm.resolved);
+    } else if (pm.isValid) {
       const replacement = await resolutions.get(pm.key)!;
       result.push(replacement);
     } else {
@@ -269,7 +288,7 @@ const VALID_PREFIXES = [State.APP_PREFIX, State.USER_PREFIX, State.TEMP_PREFIX];
  *   - <prefix>:<identifier>
  *
  * @param variableName The variable name to check.
- * @returns True if the variable name is valid, False otherwise.
+ * @returns True if the variable name is valid, false otherwise.
  */
 function isValidStateName(variableName: string): boolean {
   const parts = variableName.split(':');

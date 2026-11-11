@@ -8,9 +8,30 @@ import path from 'path';
 import {defineConfig} from 'vitest/config';
 
 /**
- * Hook budget (ms) for the `integration` project: install-heavy `beforeAll`
- * hooks run `npm install` (and sometimes `npm run build`) per fixture, which
- * exceeds Vitest's 10s default on a slow or loaded machine.
+ * Per-worker V8 old-space ceiling (MB) for the `forks` pool. The heaviest test
+ * file in the repository, `tests/integration/app_loader/app_loader_test.ts`,
+ * peaks at ~1 GB under `--coverage`; every other file stays under 105 MB. The
+ * ceiling also has to fit the smallest runner in the `run-tests` matrix:
+ * `macos-latest` is a 3 vCPU / 7 GB machine, and Vitest sizes the pool at
+ * `cores - 1`, so two workers plus the main process share 7 GB there.
+ */
+const WORKER_MAX_OLD_SPACE_MB = 2048;
+
+/**
+ * Test budget (ms) for the `unit:core`, `unit:dev`, `unit:integrations` and
+ * `e2e` projects: Vitest's 5s default has been observed to expire when these
+ * share a worker pool with the install-heavy `integration` fixtures under
+ * `npm run test:coverage`. A project entry does not inherit the root `test`
+ * timeout, so it is set per project.
+ */
+const UNIT_TEST_TIMEOUT_MS = 30000;
+
+/**
+ * Hook budget (ms) for the `integration` project. The `beforeAll` hooks run
+ * `npm install` (and sometimes `npm run build`) per fixture, and the `afterAll`
+ * hooks remove `node_modules` recursively, which exceeds Vitest's 10s default.
+ * A cold, network-bound install has been measured at ~70s, so 120s covers the
+ * worst case. Trade-off: a stuck hook takes this long to surface.
  */
 const INTEGRATION_HOOK_TIMEOUT_MS = 120000;
 
@@ -20,25 +41,53 @@ const INTEGRATION_HOOK_TIMEOUT_MS = 120000;
  */
 const INTEGRATION_TEST_TIMEOUT_MS = 60000;
 
+/**
+ * Per-worker setup. `setupFiles` is a project-scoped option, so it has to be
+ * repeated on every project: a root-level one is not inherited.
+ */
+const SETUP_FILES = ['./tests/setup.ts'];
+
+/**
+ * CI logs are non-interactive, so the `default` reporter cannot rewrite lines
+ * in place and appends a permanent one per test file. Use `dot` there instead.
+ * Setting `reporters` at all opts out of the `github-actions` reporter Vitest
+ * would otherwise add on its own, so re-add it to keep inline PR annotations.
+ */
+const reporters = process.env.CI
+  ? process.env.GITHUB_ACTIONS
+    ? ['dot', 'github-actions']
+    : ['dot']
+  : ['default'];
+
+/**
+ * Compiled-agent bundles to keep out of Vite's SSR transform. `AgentLoader`
+ * (`dev/src/utils/agent_loader.ts`) esbuilds each agent into a
+ * `<tmpdir>/adk_agent_loader-<random>/` bundle, outside the root with no
+ * `node_modules` segment, so Vitest inlines and transforms ~6 MB per agent.
+ * Rename that `createTempDir` prefix and the suite silently goes slow again.
+ */
+const AGENT_LOADER_BUNDLE_PATTERN = /[\\/]adk_agent_loader/;
+
+const EXEC_ARGV = [`--max-old-space-size=${WORKER_MAX_OLD_SPACE_MB}`];
+
 export default defineConfig({
   test: {
-    poolOptions: {
-      forks: {
-        execArgv: ['--max-old-space-size=8192'],
-      },
-      threads: {
-        execArgv: ['--max-old-space-size=8192'],
-      },
-    },
+    reporters,
+    // Keep test stdout for failures only; a passing run has nothing to say.
+    silent: process.env.CI ? 'passed-only' : false,
+    execArgv: EXEC_ARGV,
     projects: [
       {
         test: {
           name: 'unit:core',
           environment: 'node',
+          execArgv: EXEC_ARGV,
+          setupFiles: SETUP_FILES,
+          testTimeout: UNIT_TEST_TIMEOUT_MS,
           alias: {
-            '@google/adk': path.resolve(__dirname, './core/src'),
+            '@google/adk': path.resolve(import.meta.dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
-              __dirname,
+              import.meta.dirname,
               './integrations/src',
             ),
           },
@@ -49,10 +98,21 @@ export default defineConfig({
         test: {
           name: 'unit:dev',
           environment: 'node',
+          execArgv: EXEC_ARGV,
+          setupFiles: SETUP_FILES,
+          testTimeout: UNIT_TEST_TIMEOUT_MS,
+          // `@google/adk-devtools` is aliased to source in this project only.
+          // The `integration` project must keep resolving it to `dev/dist`:
+          // AdkApiServer serves the debug UI from `__dirname/../../browser`,
+          // which only ever exists as the downloaded `dev/dist/browser`.
           alias: {
-            '@google/adk': path.resolve(__dirname, './core/src'),
+            '@google/adk': path.resolve(import.meta.dirname, './core/src'),
+            '@google/adk-devtools': path.resolve(
+              import.meta.dirname,
+              './dev/src',
+            ),
             '@google/adk-integrations': path.resolve(
-              __dirname,
+              import.meta.dirname,
               './integrations/src',
             ),
           },
@@ -63,10 +123,13 @@ export default defineConfig({
         test: {
           name: 'unit:integrations',
           environment: 'node',
+          execArgv: EXEC_ARGV,
+          setupFiles: SETUP_FILES,
+          testTimeout: UNIT_TEST_TIMEOUT_MS,
           alias: {
-            '@google/adk': path.resolve(__dirname, './core/src'),
+            '@google/adk': path.resolve(import.meta.dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
-              __dirname,
+              import.meta.dirname,
               './integrations/src',
             ),
           },
@@ -77,12 +140,15 @@ export default defineConfig({
         test: {
           name: 'integration',
           environment: 'node',
+          execArgv: EXEC_ARGV,
+          setupFiles: SETUP_FILES,
           hookTimeout: INTEGRATION_HOOK_TIMEOUT_MS,
           testTimeout: INTEGRATION_TEST_TIMEOUT_MS,
+          server: {deps: {external: [AGENT_LOADER_BUNDLE_PATTERN]}},
           alias: {
-            '@google/adk': path.resolve(__dirname, './core/src'),
+            '@google/adk': path.resolve(import.meta.dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
-              __dirname,
+              import.meta.dirname,
               './integrations/src',
             ),
           },
@@ -93,10 +159,13 @@ export default defineConfig({
         test: {
           name: 'e2e',
           environment: 'node',
+          execArgv: EXEC_ARGV,
+          setupFiles: SETUP_FILES,
+          testTimeout: UNIT_TEST_TIMEOUT_MS,
           alias: {
-            '@google/adk': path.resolve(__dirname, './core/src'),
+            '@google/adk': path.resolve(import.meta.dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
-              __dirname,
+              import.meta.dirname,
               './integrations/src',
             ),
           },
@@ -107,10 +176,12 @@ export default defineConfig({
         test: {
           name: 'cross-language',
           environment: 'node',
+          execArgv: EXEC_ARGV,
+          setupFiles: SETUP_FILES,
           alias: {
-            '@google/adk': path.resolve(__dirname, './core/src'),
+            '@google/adk': path.resolve(import.meta.dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
-              __dirname,
+              import.meta.dirname,
               './integrations/src',
             ),
           },
@@ -126,16 +197,15 @@ export default defineConfig({
         'dev/src/**/*.ts',
         'integrations/src/**/*.ts',
       ],
-      // Those values are from the npm run test:coverage command run on 2026-02-06
+      // Those values are from the npm run test:coverage command run on 2026-10-13
       // and are used to ensure that the test coverage does not decrease.
       // Once the test coverage increases, these values should be updated (manually).
       thresholds: {
-        statements: 86,
-        branches: 87,
-        functions: 88,
-        lines: 86,
+        statements: 92,
+        branches: 85,
+        functions: 94,
+        lines: 92,
       },
     },
-    globalSetup: ['./tests/global_setup.ts'],
   },
 });

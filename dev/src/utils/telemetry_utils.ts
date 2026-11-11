@@ -6,6 +6,7 @@
 
 import {
   getGcpExporters,
+  getGcpProjectId,
   getGcpResource,
   maybeSetOtelProviders,
   OTelHooks,
@@ -47,6 +48,7 @@ export class ApiServerSpanExporter implements SpanExporter {
     for (const span of spans) {
       if (
         span.name === 'call_llm' ||
+        span.name.startsWith('generate_content') ||
         span.name === 'send_data' ||
         span.name.startsWith('execute_tool')
       ) {
@@ -86,15 +88,14 @@ export class InMemoryExporter implements SpanExporter {
   ): void {
     for (const span of spans) {
       const traceId = span.spanContext().traceId;
-      if (span.name === 'call_llm') {
-        const attributes = {...span.attributes};
-        const sessionId = attributes['gcp.vertex.agent.session_id'] as string;
-        if (sessionId) {
-          if (!this.traceDict[sessionId]) {
-            this.traceDict[sessionId] = [traceId];
-          } else {
-            this.traceDict[sessionId].push(traceId);
-          }
+      const attributes = span.attributes;
+      const sessionId = (attributes['gcp.vertex.agent.session_id'] ??
+        attributes['gen_ai.conversation.id']) as string | undefined;
+      if (sessionId) {
+        if (!this.traceDict[sessionId]) {
+          this.traceDict[sessionId] = [traceId];
+        } else {
+          this.traceDict[sessionId].push(traceId);
         }
       }
     }
@@ -163,14 +164,17 @@ async function setupGcpTelemetryExperimental(
     });
   }
 
+  const projectId = await getGcpProjectId();
+
   const gcpExporters = await getGcpExporters({
     enableTracing: true,
-    enableLogging: false,
+    enableLogging: true,
     enableMetrics: true,
+    projectId,
   });
   otelHooksToAdd.push(gcpExporters);
 
-  const otelResource = getGcpResource();
+  const otelResource = await getGcpResource(projectId);
 
   maybeSetOtelProviders(otelHooksToAdd, otelResource);
 }

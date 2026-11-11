@@ -20,11 +20,15 @@
 
 import {
   createEvent,
+  DEFAULT_ROUTE,
   LlmAgent,
   node,
   NodeContext,
-  WorkflowAgent,
+  Workflow,
 } from '@google/adk';
+
+/** The routes this graph has edges for. */
+const ROUTES = ['BUG', 'CUSTOMER_SUPPORT', 'LOGISTICS'] as const;
 
 const processMessage = new LlmAgent({
   name: 'process_message',
@@ -38,13 +42,13 @@ const processMessage = new LlmAgent({
 // A route ARRAY fires every branch whose route key matches one of the listed
 // values (multi-route dispatch), rather than just the first match.
 const router = node(
-  (_ctx: NodeContext, nodeInput: string) =>
-    createEvent({
-      route: nodeInput
-        .split(',')
-        .map((route) => route.trim().toUpperCase())
-        .filter(Boolean),
-    }),
+  (_ctx: NodeContext, nodeInput: string) => {
+    const text = String(nodeInput).toUpperCase();
+    const matched = ROUTES.filter((route) =>
+      new RegExp(`\\b${route}\\b`).test(text),
+    );
+    return createEvent({route: matched.length > 0 ? matched : DEFAULT_ROUTE});
+  },
   {name: 'router'},
 );
 
@@ -61,8 +65,13 @@ const response2Support = node(() => message('Handling customer support...'), {
 const response3Logistics = node(() => message('Handling logistics...'), {
   name: 'response_3_logistics',
 });
+const responseUnknown = node(
+  (_ctx: NodeContext, nodeInput: string) =>
+    message(`Could not classify that (classifier said: ${nodeInput}).`),
+  {name: 'response_unknown'},
+);
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'routing_workflow',
   edges: [
     ['START', processMessage, router],
@@ -72,6 +81,7 @@ export const rootAgent = new WorkflowAgent({
         BUG: response1Bug,
         CUSTOMER_SUPPORT: response2Support,
         LOGISTICS: response3Logistics,
+        [DEFAULT_ROUTE]: responseUnknown,
       },
     ],
   ],

@@ -11,14 +11,16 @@ import {
   GoogleGenAI,
   HttpOptions,
   LiveServerMessage,
+  Tool,
 } from '@google/genai';
 
-import {getBooleanEnvVar, isBrowser} from '../utils/env_aware_utils.js';
+import {adaptComputerUseTool} from '../tools/computer_use/computer_use_toolset.js';
+import {isBrowser, isEnterpriseModeEnabled} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
 
 import {AsyncQueue} from '../utils/async_queue.js';
-import {StreamingResponseAggregator} from '../utils/streaming_utils.js';
+import {GeminiStreamingResponseAggregator} from '../utils/streaming_utils.js';
 import {BaseLlm} from './base_llm.js';
 import {BaseLlmConnection} from './base_llm_connection.js';
 import {GeminiLlmConnection} from './gemini_llm_connection.js';
@@ -36,7 +38,8 @@ export interface GeminiParams {
   model?: string;
   /**
    * The API key to use for the Gemini API. If not provided, it will look for
-   * the GOOGLE_GENAI_API_KEY or GEMINI_API_KEY environment variable.
+   * the GOOGLE_GENAI_API_KEY, GOOGLE_API_KEY or GEMINI_API_KEY environment
+   * variable, in that order.
    */
   apiKey?: string;
   /**
@@ -117,7 +120,7 @@ export class Gemini extends BaseLlm {
     });
     if (!params.vertexai && !params.apiKey) {
       throw new Error(
-        'API key must be provided via constructor or GOOGLE_GENAI_API_KEY or GEMINI_API_KEY environment variable.',
+        'API key must be provided via constructor or the GOOGLE_GENAI_API_KEY, GOOGLE_API_KEY or GEMINI_API_KEY environment variable.',
       );
     }
     this.project = params.project;
@@ -150,15 +153,21 @@ export class Gemini extends BaseLlm {
   /**
    * Sends a request to the Gemini model.
    *
-   * @param llmRequest LlmRequest, the request to send to the Gemini model.
-   * @param stream bool = false, whether to do streaming call.
-   * @yields LlmResponse: The model response.
+   * @param llmRequest The request to send to the Gemini model.
+   * @param stream Whether to make a streaming call. Defaults to `false`.
+   * @yields Each {@link LlmResponse} produced by the model. A non-streaming
+   *     call yields exactly one; a streaming call yields the partial responses
+   *     as they arrive, then a final aggregated response whenever the stream
+   *     carried either content or usage/grounding/citation metadata. A
+   *     metadata-only stream therefore still ends with one, holding the
+   *     metadata and no `content`; only a stream with neither ends silently.
    */
   override async *generateContentAsync(
     llmRequest: LlmRequest,
     stream = false,
     abortSignal?: AbortSignal,
   ): AsyncGenerator<LlmResponse, void> {
+    await adaptComputerUseRequest(llmRequest);
     if (this.useInteractionsApi) {
       yield* generateContentViaInteractions(this.apiClient, llmRequest, stream);
       return;
@@ -184,29 +193,27 @@ export class Gemini extends BaseLlm {
       llmRequest.config.abortSignal = abortSignal;
     }
 
-    if (stream) {
-      const streamResult = await this.apiClient.models.generateContentStream({
-        model: llmRequest.model ?? this.model,
-        contents: llmRequest.contents,
-        config: llmRequest.config,
-      });
+    // The SDK resumes generations that the model pauses with a continuation
+    // token, so a paused generation still arrives as one response or stream.
+    const params = {
+      model: llmRequest.model ?? this.model,
+      contents: llmRequest.contents,
+      config: llmRequest.config,
+    };
 
-      const aggregator = new StreamingResponseAggregator();
+    if (stream) {
+      const streamResult =
+        await this.apiClient.models.generateContentStream(params);
+      const aggregator = new GeminiStreamingResponseAggregator();
       for await (const response of streamResult) {
-        for await (const llmResponse of aggregator.processResponse(response)) {
-          yield llmResponse;
-        }
+        yield* aggregator.processResponse(response);
       }
       const finalResponse = aggregator.close();
       if (finalResponse) {
         yield finalResponse;
       }
     } else {
-      const response = await this.apiClient.models.generateContent({
-        model: llmRequest.model ?? this.model,
-        contents: llmRequest.contents,
-        config: llmRequest.config,
-      });
+      const response = await this.apiClient.models.generateContent(params);
       yield createLlmResponse(response);
     }
   }
@@ -229,6 +236,7 @@ export class Gemini extends BaseLlm {
       });
     } else {
       this._apiClient = new GoogleGenAI({
+        vertexai: false,
         apiKey: this.apiKey,
         httpOptions: this.getHttpOptions(),
       });
@@ -247,6 +255,7 @@ export class Gemini extends BaseLlm {
 
   get liveApiVersion(): string {
     if (!this._liveApiVersion) {
+      // Vertex uses the beta API; the AI Studio backend uses v1alpha.
       this._liveApiVersion =
         this.apiBackend === GoogleLLMVariant.VERTEX_AI ? 'v1beta1' : 'v1alpha';
     }
@@ -271,6 +280,7 @@ export class Gemini extends BaseLlm {
         });
       } else {
         this._liveApiClient = new GoogleGenAI({
+          vertexai: false,
           apiKey: this.apiKey,
           httpOptions: this.getLiveHttpOptions(),
         });
@@ -311,6 +321,17 @@ export class Gemini extends BaseLlm {
     }
 
     llmRequest.liveConnectConfig.tools = llmRequest.config?.tools;
+
+    // Gemini API (AI Studio) rejects `sessionResumption.transparent`; it is a
+    // Vertex-only flag. Strip it so callers can set a uniform resumption config
+    // regardless of backend.
+    if (this.apiBackend === GoogleLLMVariant.GEMINI_API) {
+      const resumption = llmRequest.liveConnectConfig.sessionResumption as
+        {transparent?: boolean} | undefined;
+      if (resumption) {
+        delete resumption.transparent;
+      }
+    }
 
     const modelVersion = llmRequest.model ?? this.model;
     const messageQueue = new AsyncQueue<LiveServerMessage>();
@@ -353,6 +374,41 @@ export class Gemini extends BaseLlm {
   }
 }
 
+/**
+ * Adapts a request that carries a computer use configuration to the computer
+ * use model.
+ *
+ * The model does not accept a system instruction alongside computer use, so it
+ * is dropped. The model can call `wait_5_seconds`, so a `wait_5_seconds` tool
+ * that waits 5 seconds is registered next to `wait`, which Gemini 3.x calls.
+ */
+async function adaptComputerUseRequest(llmRequest: LlmRequest): Promise<void> {
+  if (
+    !llmRequest.config?.tools?.some(
+      (tool) => 'computerUse' in tool && (tool as Tool).computerUse,
+    )
+  ) {
+    return;
+  }
+  llmRequest.config.systemInstruction = undefined;
+
+  const waitTool = Object.hasOwn(llmRequest.toolsDict, 'wait')
+    ? llmRequest.toolsDict['wait']
+    : undefined;
+  await adaptComputerUseTool({
+    methodName: 'wait',
+    adapter: (waitFunc) => ({
+      name: 'wait_5_seconds',
+      description: 'Waits for 5 seconds.',
+      execute: (_args, toolContext) => waitFunc({seconds: 5}, toolContext),
+    }),
+    llmRequest,
+  });
+  if (waitTool && Object.hasOwn(llmRequest.toolsDict, 'wait_5_seconds')) {
+    llmRequest.toolsDict['wait'] = waitTool;
+  }
+}
+
 function removeDisplayNameIfPresent(
   dataObj: Blob | FileData | undefined,
 ): void {
@@ -372,8 +428,8 @@ export function geminiInitParams({
   const params: GeminiParams = {model, vertexai, project, location, apiKey};
 
   params.vertexai = !!vertexai;
-  if (!params.vertexai && !isBrowser()) {
-    params.vertexai = getBooleanEnvVar('GOOGLE_GENAI_USE_VERTEXAI');
+  if (vertexai === undefined && !isBrowser()) {
+    params.vertexai = isEnterpriseModeEnabled();
   }
 
   if (params.vertexai) {
@@ -395,8 +451,19 @@ export function geminiInitParams({
     }
   } else {
     if (!params.apiKey && !isBrowser()) {
+      // `GOOGLE_API_KEY` before `GEMINI_API_KEY`, matching @google/genai's own
+      // `getApiKeyFromEnv()` and adk-python, which leaves the choice to the SDK
+      // entirely. Resolving the key here shadows the SDK, so an order that
+      // disagrees with it makes its "Both GOOGLE_API_KEY and GEMINI_API_KEY are
+      // set. Using GOOGLE_API_KEY." warning describe a key adk-js did not use.
+      //
+      // `GOOGLE_GENAI_API_KEY` stays first: no SDK understands that name, and
+      // `adk create` writes it into every scaffolded .env, so it is the
+      // adk-js-specific override.
       params.apiKey =
-        process.env['GOOGLE_GENAI_API_KEY'] || process.env['GEMINI_API_KEY'];
+        process.env['GOOGLE_GENAI_API_KEY'] ||
+        process.env['GOOGLE_API_KEY'] ||
+        process.env['GEMINI_API_KEY'];
     }
   }
   return params;

@@ -241,28 +241,6 @@ describe('LlmAgent Auth Integration', () => {
     // 1. Function response event (from retried tool, now success)
     // 2. Model response event (final response from LLM)
 
-    // Wait, let's trace what happens in turn 2:
-    // User sends credential response.
-    // Runner appends it to session.
-    // Runner calls agent.runAsync.
-    // LlmAgent runs request processors.
-    // AuthPreprocessor runs:
-    //   - finds last event (user credential response)
-    //   - extracts credential
-    //   - stores it in state
-    //   - retries 'mock_api_tool' (since it was pending)
-    //   - 'mock_api_tool' runs, now has credentials, calls fetch, succeeds.
-    //   - AuthPreprocessor yields the successful function response event.
-    //   - AuthPreprocessor returns (short-circuits).
-    // Step 1 of agent.runAsync finished.
-    // LlmAgent loop continues because last event yielded (function response) is not final.
-    // Step 2:
-    //   - AuthPreprocessor runs, returns early (no new user credential response).
-    //   - CONTENT_REQUEST_PROCESSOR runs, includes the successful function response in history.
-    //   - LLM is called. MockLlm returns `finalResponse`.
-    //   - LlmAgent yields model response event.
-    //   - LlmAgent loop finishes (finalResponse is final).
-
     expect(eventsTurn2.length).toBe(2);
     const retryToolResponseEvent = eventsTurn2[0];
     const finalModelResponseEvent = eventsTurn2[1];

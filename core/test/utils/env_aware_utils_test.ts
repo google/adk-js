@@ -4,11 +4,78 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {afterEach, describe, expect, it} from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type MockInstance,
+} from 'vitest';
 import {randomUUID as shimRandomUUID} from '../../src/utils/crypto_shim.js';
-import {getBooleanEnvVar, randomUUID} from '../../src/utils/env_aware_utils.js';
+import {
+  base64Decode,
+  base64Encode,
+  getBooleanEnvVar,
+  getEnvVar,
+  isBase64Encoded,
+  randomUUID,
+} from '../../src/utils/env_aware_utils.js';
+import type {Logger} from '../../src/utils/logger.js';
 
 describe('env_aware_utils', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // isBrowser() only checks for a `window` global, and atob and btoa are the
+  // only members the browser branches touch. The spies are returned so a test
+  // can prove the browser branch ran, rather than the stub silently missing
+  // and the Node branch answering instead.
+  const stubBrowser = () => {
+    const atob = vi.fn(globalThis.atob.bind(globalThis));
+    const btoa = vi.fn(globalThis.btoa.bind(globalThis));
+    vi.stubGlobal('window', {atob, btoa});
+    return {atob, btoa};
+  };
+
+  // Browsers have no `process` global at all, so even `process?.env` throws a
+  // ReferenceError there. Stubbing it to undefined would not reproduce that,
+  // so the global is deleted, and restored before the caller asserts because
+  // vitest itself needs it.
+  const withoutProcess = <T>(fn: () => T): T => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'process')!;
+    delete (globalThis as {process?: unknown}).process;
+    try {
+      return fn();
+    } finally {
+      Object.defineProperty(globalThis, 'process', descriptor);
+    }
+  };
+
+  describe('getEnvVar', () => {
+    const originalEnv = process.env;
+
+    afterEach(() => {
+      process.env = originalEnv;
+    });
+
+    it('returns the value of a set variable', () => {
+      process.env = {...originalEnv, 'TEST_VAR': 'value'};
+      expect(getEnvVar('TEST_VAR')).toBe('value');
+    });
+
+    it('returns undefined for a variable that is not set', () => {
+      expect(getEnvVar('NON_EXISTENT_VAR')).toBeUndefined();
+    });
+
+    it('returns undefined without a process global', () => {
+      process.env = {...originalEnv, 'TEST_VAR': 'value'};
+      expect(withoutProcess(() => getEnvVar('TEST_VAR'))).toBeUndefined();
+    });
+  });
+
   describe('getBooleanEnvVar', () => {
     const originalEnv = process.env;
 
@@ -49,6 +116,11 @@ describe('env_aware_utils', () => {
 
     it('should return false for undefined', () => {
       expect(getBooleanEnvVar('NON_EXISTENT_VAR')).toBe(false);
+    });
+
+    it('should return false without a process global', () => {
+      process.env = {...originalEnv, 'TEST_VAR': 'true'};
+      expect(withoutProcess(() => getBooleanEnvVar('TEST_VAR'))).toBe(false);
     });
   });
 
@@ -133,6 +205,229 @@ describe('env_aware_utils', () => {
       expect(() => shimRandomUUID()).toThrow(
         /no cryptographically secure source of randomness/,
       );
+    });
+  });
+
+  describe('isEnterpriseModeEnabled', () => {
+    const originalEnv = process.env;
+    let isEnterpriseModeEnabled: () => boolean;
+    let warnSpy: MockInstance<Logger['warn']>;
+
+    beforeEach(async () => {
+      process.env = {...originalEnv};
+      delete process.env['GOOGLE_GENAI_USE_ENTERPRISE'];
+      delete process.env['GOOGLE_GENAI_USE_VERTEXAI'];
+      // The deprecation warning is emitted once per module instance, so each
+      // test needs its own copy of the module and of the logger it warns to.
+      vi.resetModules();
+      const {logger} = await import('../../src/utils/logger.js');
+      warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      ({isEnterpriseModeEnabled} =
+        await import('../../src/utils/env_aware_utils.js'));
+    });
+
+    afterEach(() => {
+      process.env = originalEnv;
+      vi.restoreAllMocks();
+    });
+
+    it('should return false and not warn when neither variable is set', () => {
+      expect(isEnterpriseModeEnabled()).toBe(false);
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('should return true when GOOGLE_GENAI_USE_ENTERPRISE is enabled', () => {
+      process.env['GOOGLE_GENAI_USE_ENTERPRISE'] = 'true';
+      expect(isEnterpriseModeEnabled()).toBe(true);
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('should prefer an enabled GOOGLE_GENAI_USE_ENTERPRISE over GOOGLE_GENAI_USE_VERTEXAI', () => {
+      process.env['GOOGLE_GENAI_USE_ENTERPRISE'] = 'true';
+      process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'false';
+      expect(isEnterpriseModeEnabled()).toBe(true);
+    });
+
+    it('should not fall back to GOOGLE_GENAI_USE_VERTEXAI when GOOGLE_GENAI_USE_ENTERPRISE is set but disabled', () => {
+      process.env['GOOGLE_GENAI_USE_ENTERPRISE'] = '';
+      process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'true';
+      expect(isEnterpriseModeEnabled()).toBe(false);
+    });
+
+    it('should warn that GOOGLE_GENAI_USE_VERTEXAI is ignored when both variables are set', () => {
+      process.env['GOOGLE_GENAI_USE_ENTERPRISE'] = 'true';
+      process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'true';
+      expect(isEnterpriseModeEnabled()).toBe(true);
+      expect(warnSpy).toHaveBeenCalledOnce();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'GOOGLE_GENAI_USE_VERTEXAI is set but ignored because ' +
+            'GOOGLE_GENAI_USE_ENTERPRISE takes precedence',
+        ),
+      );
+    });
+
+    it('should fall back to an enabled GOOGLE_GENAI_USE_VERTEXAI and warn', () => {
+      process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'true';
+      expect(isEnterpriseModeEnabled()).toBe(true);
+      expect(warnSpy).toHaveBeenCalledOnce();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'GOOGLE_GENAI_USE_VERTEXAI is deprecated, please use ' +
+            'GOOGLE_GENAI_USE_ENTERPRISE',
+        ),
+      );
+    });
+
+    it('should warn when GOOGLE_GENAI_USE_VERTEXAI is present but disabled', () => {
+      process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'false';
+      expect(isEnterpriseModeEnabled()).toBe(false);
+      expect(warnSpy).toHaveBeenCalledOnce();
+    });
+
+    it('should warn only once even when read repeatedly', () => {
+      process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'true';
+      expect(isEnterpriseModeEnabled()).toBe(true);
+      expect(isEnterpriseModeEnabled()).toBe(true);
+      expect(warnSpy).toHaveBeenCalledOnce();
+    });
+
+    it('should return false and not warn without a process global', () => {
+      process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'true';
+      expect(withoutProcess(() => isEnterpriseModeEnabled())).toBe(false);
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('base64Encode', () => {
+    it('encodes an ASCII string', () => {
+      expect(base64Encode('hello world')).toBe('aGVsbG8gd29ybGQ=');
+    });
+
+    it('encodes a Uint8Array', () => {
+      expect(base64Encode(new Uint8Array([0xde, 0xad, 0xbe, 0xef]))).toBe(
+        '3q2+7w==',
+      );
+    });
+
+    // 'café' is five UTF-8 bytes, not four: the trailing 'é' contributes
+    // 0xc3 0xa9.
+    it('encodes a non-ASCII string as UTF-8', () => {
+      expect(base64Encode('café')).toBe('Y2Fmw6k=');
+    });
+
+    it('round-trips through base64Decode', () => {
+      expect(base64Decode(base64Encode('hello world'))).toBe('hello world');
+    });
+  });
+
+  describe('base64Decode', () => {
+    it('decodes UTF-8 text in Node', () => {
+      const decoded = base64Decode('Y2Fmw6kg4pyT');
+
+      expect(decoded).toBe('café ✓');
+      expect(decoded.length).toBe(6);
+    });
+
+    // window.atob yields one code unit per byte, so this input decoded to
+    // 'cafÃ© â' (9 code units) before the browser branch decoded UTF-8.
+    it('decodes UTF-8 text in the browser', () => {
+      const {atob} = stubBrowser();
+
+      const decoded = base64Decode('Y2Fmw6kg4pyT');
+
+      expect(atob).toHaveBeenCalledOnce();
+      expect(decoded).toBe('café ✓');
+      expect(decoded.length).toBe(6);
+    });
+
+    it('returns the same text in both environments', () => {
+      const nodeResult = base64Decode('5pel5pys6KqeIOKCrDEwMA==');
+      stubBrowser();
+      const browserResult = base64Decode('5pel5pys6KqeIOKCrDEwMA==');
+
+      expect(browserResult).toBe(nodeResult);
+      expect(browserResult).toBe('日本語 €100');
+    });
+
+    it('leaves ASCII text unchanged in the browser', () => {
+      stubBrowser();
+
+      expect(base64Decode('aGVsbG8gd29ybGQ=')).toBe('hello world');
+    });
+
+    it('decodes the empty string in both environments', () => {
+      expect(base64Decode('')).toBe('');
+
+      stubBrowser();
+
+      expect(base64Decode('')).toBe('');
+    });
+
+    // Buffer.toString() substitutes U+FFFD instead of throwing, so the browser
+    // branch must decode in TextDecoder's default non-fatal mode to match.
+    it('substitutes U+FFFD for invalid UTF-8 in both environments', () => {
+      expect(base64Decode('//4=')).toBe('\uFFFD\uFFFD');
+
+      stubBrowser();
+
+      expect(base64Decode('//4=')).toBe('\uFFFD\uFFFD');
+    });
+
+    // Buffer keeps a leading byte order mark, and TextDecoder drops it unless
+    // ignoreBOM is set. Spreadsheets export UTF-8 CSV with a BOM, so this is
+    // the common shape of the one mime type that reaches this function.
+    it('keeps a leading byte order mark in both environments', () => {
+      const nodeResult = base64Decode('77u/Y2Fmw6k=');
+      stubBrowser();
+      const browserResult = base64Decode('77u/Y2Fmw6k=');
+
+      expect(browserResult).toBe(nodeResult);
+      expect(browserResult).toBe('\uFEFFcafé');
+      expect(browserResult.length).toBe(5);
+    });
+  });
+
+  describe('base64Encode', () => {
+    // window.btoa throws on any code unit above U+00FF, so a string has to
+    // reach it as UTF-8 bytes for the browser to agree with Buffer.
+    it('encodes UTF-8 text in the browser', () => {
+      const nodeResult = base64Encode('café ✓');
+      const {btoa} = stubBrowser();
+      const browserResult = base64Encode('café ✓');
+
+      expect(btoa).toHaveBeenCalledOnce();
+      expect(browserResult).toBe(nodeResult);
+      expect(browserResult).toBe('Y2Fmw6kg4pyT');
+    });
+
+    it('encodes a Uint8Array in the browser', () => {
+      const bytes = new Uint8Array([104, 105]);
+      const nodeResult = base64Encode(bytes);
+      stubBrowser();
+
+      expect(base64Encode(bytes)).toBe(nodeResult);
+      expect(nodeResult).toBe('aGk=');
+    });
+
+    it('encodes the empty string in both environments', () => {
+      expect(base64Encode('')).toBe('');
+
+      stubBrowser();
+
+      expect(base64Encode('')).toBe('');
+    });
+  });
+
+  describe('isBase64Encoded', () => {
+    // The round trip only holds while base64Encode and base64Decode share one
+    // contract; a byte-oriented btoa would throw here and report false.
+    it('recognises a non-ASCII payload in both environments', () => {
+      expect(isBase64Encoded('Y2Fmw6kg4pyT')).toBe(true);
+
+      stubBrowser();
+
+      expect(isBase64Encoded('Y2Fmw6kg4pyT')).toBe(true);
     });
   });
 });

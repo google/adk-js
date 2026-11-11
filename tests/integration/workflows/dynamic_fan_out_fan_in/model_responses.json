@@ -1,33 +1,14 @@
 [
   {
-    "key": "893fe50fb5617951",
-    "instructionAgnosticKey": "b07208311518b7db",
+    "key": "1f76f78b9db7f74c",
+    "instructionAgnosticKey": "26b93cacce995f87",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "space, oceans, volcanoes"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "volcanoes"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "For context:"
-            },
-            {
-              "text": "[orchestrator] said: Processing 3 topics in parallel."
+              "text": "AI"
             }
           ]
         }
@@ -46,7 +27,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Deep, Fiery, Infinite: Oceans, Volcanoes, Space."
+                "text": "AI: Intelligence Unleashed."
               }
             ]
           },
@@ -54,55 +35,36 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 54,
-        "candidatesTokenCount": 14,
-        "totalTokenCount": 958,
+        "promptTokenCount": 30,
+        "candidatesTokenCount": 6,
+        "totalTokenCount": 228,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 54
+            "tokenCount": 30
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 14
+            "tokenCount": 6
           }
         ],
-        "thoughtsTokenCount": 890
+        "thoughtsTokenCount": 192
       }
     }
   },
   {
-    "key": "4a0fb6899c30134c",
-    "instructionAgnosticKey": "7da08d4d351e7485",
+    "key": "d47ed3ca07fb7c99",
+    "instructionAgnosticKey": "5a5dc8bc4f4c2dc4",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "space, oceans, volcanoes"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "space"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "For context:"
-            },
-            {
-              "text": "[orchestrator] said: Processing 3 topics in parallel."
+              "text": "Quantum Computing"
             }
           ]
         }
@@ -121,7 +83,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Space, Oceans, Volcanoes: Unearthing the Universe's Wildest Wonders."
+                "text": "Quantum Computing: The Impossible, Now Computable."
               }
             ]
           },
@@ -129,55 +91,36 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 52,
-        "candidatesTokenCount": 18,
-        "totalTokenCount": 939,
+        "promptTokenCount": 31,
+        "candidatesTokenCount": 10,
+        "totalTokenCount": 647,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 52
+            "tokenCount": 31
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 18
+            "tokenCount": 10
           }
         ],
-        "thoughtsTokenCount": 869
+        "thoughtsTokenCount": 606
       }
     }
   },
   {
-    "key": "e22d71fa47fcc401",
-    "instructionAgnosticKey": "5569d5644985d09c",
+    "key": "e865115f2ea17ce7",
+    "instructionAgnosticKey": "a79e113cbf6130ec",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "space, oceans, volcanoes"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "oceans"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "For context:"
-            },
-            {
-              "text": "[orchestrator] said: Processing 3 topics in parallel."
+              "text": "Cloud Computing"
             }
           ]
         }
@@ -196,7 +139,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "From Earth's fiery heart to the cosmic expanse: Space, Oceans, Volcanoes."
+                "text": "Cloud Computing: Unleash Your Potential, Anywhere."
               }
             ]
           },
@@ -204,23 +147,23 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 53,
-        "candidatesTokenCount": 18,
-        "totalTokenCount": 1096,
+        "promptTokenCount": 31,
+        "candidatesTokenCount": 10,
+        "totalTokenCount": 766,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 53
+            "tokenCount": 31
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 18
+            "tokenCount": 10
           }
         ],
-        "thoughtsTokenCount": 1025
+        "thoughtsTokenCount": 725
       }
     }
   }

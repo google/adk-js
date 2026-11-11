@@ -4,9 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {context, trace} from '@opentelemetry/api';
 import {Event} from '../events/event.js';
-import {tracer, traceWorkflowInvocation} from '../telemetry/tracing.js';
+import {recordWorkflowInvocation} from '../telemetry/api/instrumentation.js';
 import {experimental} from '../utils/experimental.js';
 import {BaseNode, BaseNodeConfig} from './base_node.js';
 import {commonPrefixOf} from './branch_path.js';
@@ -32,7 +31,7 @@ import {
   eventsForCurrentRun,
   isFastForwardable,
   makeFastForwardResult,
-  reconstructNodeStates,
+  reconstructNodeRuns,
   RehydratedNode,
   resolvedInterruptResponses,
 } from './utils/rehydration_utils.js';
@@ -101,7 +100,10 @@ class LoopState {
   readonly pending = new Map<string, Promise<CompletedTask>>();
   readonly interruptIds = new Set<string>();
   /** Per-node state reconstructed from prior session events (resume). */
-  rehydrated: Map<string, RehydratedNode> = new Map();
+  rehydrated: Map<string, RehydratedNode[]> = new Map();
+
+  /** Nodes already activated in this turn, so a repeat activation is visible. */
+  activated: Set<string> = new Set();
   errorShutDown = false;
   /**
    * Workflow-scoped abort signal handed to each scheduled node so a failure can
@@ -188,21 +190,23 @@ export class Workflow extends BaseNode {
       abort.controller.signal,
     );
 
-    const span = tracer.startSpan(`invoke_workflow ${this.name}`);
+    const telemetryScope = recordWorkflowInvocation({
+      workflow: this,
+      sessionId: ctx.invocationContext.session.id,
+    });
     try {
       // Sync callback returning the promise, not `async () => await …`: the
       // wrapper must not insert microtask hops around the orchestration loop
       // (see the note in `executeChildNode`).
-      await context.with(trace.setSpan(context.active(), span), () => {
-        traceWorkflowInvocation({
-          workflowName: this.name,
-          nodePath: ctx.nodePath,
-        });
-        return this.orchestrate(ctx, nodeInput, dynamicState, abort.controller);
-      });
+      await telemetryScope.run(() =>
+        this.orchestrate(ctx, nodeInput, dynamicState, abort.controller),
+      );
+    } catch (error: unknown) {
+      telemetryScope.end(error);
+      throw error;
     } finally {
       abort.dispose();
-      span.end();
+      telemetryScope.end();
     }
   }
 
@@ -226,7 +230,7 @@ export class Workflow extends BaseNode {
       ctx.session?.events ?? [],
       ctx.invocationId,
     );
-    const rehydrated = reconstructNodeStates(
+    const rehydrated = reconstructNodeRuns(
       runEvents,
       ctx.nodePath || undefined,
     );
@@ -241,10 +245,8 @@ export class Workflow extends BaseNode {
     loop.rehydrated = rehydrated;
     loop.abortSignal = abortController.signal;
 
-    // --- SETUP ---
     this.seedStartTriggers(loop, nodeInput);
 
-    // --- LOOP ---
     await this.runLoop(loop, ctx, abortController);
 
     if (loop.errorShutDown) {
@@ -257,7 +259,6 @@ export class Workflow extends BaseNode {
       loop.interruptIds.add(id);
     }
 
-    // --- FINALIZE ---
     this.finalize(loop, ctx);
   }
 
@@ -434,11 +435,16 @@ export class Workflow extends BaseNode {
   ): void {
     const node = this.getStaticNode(nodeName);
     const nodeState = loop.nodes.get(nodeName)!;
+    const repeatActivation = loop.activated.has(nodeName);
+    loop.activated.add(nodeName);
 
     // Resume: fast-forward a node that already completed in a prior run
-    // (cached output, all interrupts resolved), unless it must rerun on resume.
-    const prior = loop.rehydrated.get(nodeName);
-    if (prior && !node.rerunOnResume && isFastForwardable(prior)) {
+    // (cached output, all interrupts resolved). `rerunOnResume` governs an
+    // interrupt the node is still waiting on, not a run that already produced
+    // its result, and `isFastForwardable` excludes a waiting node — so the flag
+    // is not consulted here. Python reaches its cached-result case first too.
+    const prior = loop.rehydrated.get(nodeName)?.shift();
+    if (prior && isFastForwardable(prior)) {
       loop.pending.set(
         nodeName,
         Promise.resolve({
@@ -501,6 +507,7 @@ export class Workflow extends BaseNode {
       input: nodeInput,
       abortSignal: loop.abortSignal,
       nodeState,
+      resumeInputs: repeatActivation ? {} : undefined,
       options: {
         runId,
         useSubBranch: trigger.useSubBranch,

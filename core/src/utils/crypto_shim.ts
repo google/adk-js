@@ -21,3 +21,31 @@ export function randomUUID(): string {
       'present in this environment.',
   );
 }
+
+/**
+ * Stand-in for `createHash`, reached from the PKCE helpers in
+ * `auth/oauth2/oauth2_utils.ts`.
+ *
+ * A PKCE code challenge needs a synchronous SHA-256, and the Web Crypto API
+ * offers none: `crypto.subtle.digest` is asynchronous, while `generateAuthUri`
+ * is called from synchronous public API. PKCE is therefore unavailable in the
+ * bundled web build, and this throws rather than emit an authorization request
+ * with a missing or forged challenge.
+ */
+export function createHash(_algorithm: string): never {
+  throw new Error(
+    'createHash: PKCE code challenges require a synchronous SHA-256, which ' +
+      'the Web Crypto API does not provide (crypto.subtle.digest is async).',
+  );
+}
+
+/**
+ * Stand-in for `randomBytes`, reached when the PKCE helpers in
+ * `auth/oauth2/oauth2_utils.ts` generate a code verifier.
+ */
+export function randomBytes(_size: number): never {
+  throw new Error(
+    'randomBytes: no cryptographically secure source of randomness is ' +
+      'available in this environment.',
+  );
+}

@@ -4,14 +4,29 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/** Runs the real `message` sample (offline): the many ways a node emits messages. */
+/**
+ * Runs the real `message` sample (offline): the ways a node can emit display
+ * messages. Turn and expectations mirror the Python golden
+ * `contributing/samples/workflows/message/tests/go.json`, which pins the eight
+ * non-partial events (partial chunks are deliberately not persisted).
+ */
 
 import {describe, expect, it} from 'vitest';
 import {allEvents, runSample} from '../_harness/sample_harness.js';
 import {rootAgent} from './agent.js';
 
+const STREAMED_SENTENCE =
+  'This is a streaming message sent in chunks.\n' +
+  '\n' +
+  'You can stream in markdown as well. For example, the table below:\n' +
+  '\n' +
+  '| Header 1 | Header 2 |\n' +
+  '|----------|----------|\n' +
+  '| Cell 1   | Cell 2   |\n' +
+  '| Cell 3   | Cell 4   |\n';
+
 describe('workflow sample: message', () => {
-  it('emits string, multimodal, multiple, and streamed messages', async () => {
+  it('emits string, multimodal, multiple and streamed messages', async () => {
     const perTurn = await runSample({
       name: 'message',
       rootAgent,
@@ -19,17 +34,36 @@ describe('workflow sample: message', () => {
       offline: true,
     });
     const events = allEvents(perTurn);
-    const parts = events.flatMap((e) => e.content?.parts ?? []);
 
-    // Plain string message.
-    expect(parts.some((p) => p.text?.includes('simple string message'))).toBe(
-      true,
-    );
-    // Multi-modal message with an inline image.
-    expect(parts.some((p) => p.inlineData?.mimeType === 'image/png')).toBe(
-      true,
-    );
-    // Streamed partial chunks were emitted.
-    expect(events.some((e) => e.partial === true)).toBe(true);
+    const texts = events
+      .filter((e) => !e.partial)
+      .flatMap((e) => e.content?.parts ?? [])
+      .map((p) => p.text)
+      .filter((t): t is string => !!t);
+
+    expect(texts).toEqual([
+      '#1 This is a simple string message.',
+      '#2 Here is a multi-modal message with an inline image (red circle):',
+      '#3 Multiple messages',
+      'Processing step 1...',
+      'Processing step 2...',
+      'Done processing.',
+      '#4 Starting to stream...',
+      STREAMED_SENTENCE,
+    ]);
+
+    const inline = events
+      .flatMap((e) => e.content?.parts ?? [])
+      .find((p) => p.inlineData);
+    expect(inline?.inlineData?.mimeType).toBe('image/png');
+
+    const partials = events.filter((e) => e.partial);
+    expect(partials.length).toBe(Math.ceil(STREAMED_SENTENCE.length / 5));
+    expect(
+      partials
+        .flatMap((e) => e.content?.parts ?? [])
+        .map((p) => p.text ?? '')
+        .join(''),
+    ).toBe(STREAMED_SENTENCE);
   });
 });

@@ -14,10 +14,11 @@ import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {Session} from '../sessions/session.js';
 import {AsyncQueue} from '../utils/async_queue.js';
-import {randomUUID} from '../utils/env_aware_utils.js';
+import {newId} from '../utils/id_provider.js';
 
 import {ActiveStreamingTool} from './active_streaming_tool.js';
 import {BaseAgent} from './base_agent.js';
+import {LiveRequestQueue} from './live_request_queue.js';
 import {RunConfig} from './run_config.js';
 import {TranscriptionEntry} from './transcription_entry.js';
 
@@ -44,7 +45,7 @@ export interface InvocationContextParams {
   credentialService?: BaseCredentialService;
   invocationId: string;
   branch?: string;
-  agent: BaseAgent;
+  agent?: BaseAgent;
   userContent?: Content;
   session: Session;
   endInvocation?: boolean;
@@ -57,6 +58,49 @@ export interface InvocationContextParams {
   isolationScope?: string;
   /** Nesting depth of node-as-tool executions; used to bound recursion. */
   nodeToolDepth?: number;
+  liveRequestQueue?: LiveRequestQueue;
+  liveSessionResumptionHandle?: string;
+  /**
+   * Request-level metadata passed from an incoming A2A request or caller.
+   */
+  a2aMetadata?: Record<string, unknown>;
+}
+
+/**
+ * A unique symbol to identify {@link LlmCallsLimitExceededError} instances.
+ */
+const LLM_CALLS_LIMIT_EXCEEDED_ERROR_SIGNATURE_SYMBOL = Symbol.for(
+  'google.adk.llmCallsLimitExceededError',
+);
+
+/**
+ * Error thrown when the number of LLM calls in an invocation exceeds {@link RunConfig.maxLlmCalls}.
+ */
+export class LlmCallsLimitExceededError extends Error {
+  readonly [LLM_CALLS_LIMIT_EXCEEDED_ERROR_SIGNATURE_SYMBOL] = true;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'LlmCallsLimitExceededError';
+    Object.setPrototypeOf(this, LlmCallsLimitExceededError.prototype);
+  }
+}
+
+/**
+ * Type guard to check if an object is an instance of {@link LlmCallsLimitExceededError}.
+ *
+ * @param obj The object to check.
+ * @returns True if the object is an instance of {@link LlmCallsLimitExceededError}.
+ */
+export function isLlmCallsLimitExceededError(
+  obj: unknown,
+): obj is LlmCallsLimitExceededError {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    LLM_CALLS_LIMIT_EXCEEDED_ERROR_SIGNATURE_SYMBOL in obj &&
+    obj[LLM_CALLS_LIMIT_EXCEEDED_ERROR_SIGNATURE_SYMBOL] === true
+  );
 }
 
 /**
@@ -83,7 +127,7 @@ class InvocationCostManager {
       runConfig.maxLlmCalls! > 0 &&
       this.numberOfLlmCalls > runConfig.maxLlmCalls!
     ) {
-      throw new Error(
+      throw new LlmCallsLimitExceededError(
         `Max number of llm calls limit of ${runConfig.maxLlmCalls!} exceeded`,
       );
     }
@@ -111,7 +155,7 @@ class InvocationCostManager {
  *  An LLM agent runs steps in a loop until:
  *    1. A final response is generated.
  *    2. The agent transfers to another agent.
- *    3. The end_invocation is set to true by any callbacks or tools.
+ *    3. `endInvocation` is set to true by any callbacks or tools.
  *
  *  A step:
  *    1. Calls the LLM only once and yields its response.
@@ -119,7 +163,7 @@ class InvocationCostManager {
  *
  *  The summarization of the function response is considered another step, since
  *  it is another llm call.
- *  A step ends when it's done calling llm and tools, or if the end_invocation
+ *  A step ends when it's done calling llm and tools, or if `endInvocation`
  *  is set to true at any time.
  *
  *  ```
@@ -152,9 +196,19 @@ export class InvocationContext {
   branch?: string;
 
   /**
-   * The current agent of this invocation context.
+   * The agent driving this invocation.
+   *
+   * Unset when the root being run is a bare {@link BaseNode} — a `Workflow`
+   * handed straight to the `Runner` — because there is no agent in play at
+   * that level. Nodes deeper in the graph that *are* agents get their own
+   * contexts with this set. Mirrors adk-python, whose field is
+   * `BaseAgent | BaseNode | None` and which passes `None` on the node path.
+   *
+   * Most code reaches this from inside an agent's own execution, where it is
+   * always set; prefer {@link requireAgent} there, so a broken invariant
+   * fails by name rather than as a property access on `undefined`.
    */
-  agent: BaseAgent;
+  agent?: BaseAgent;
 
   /**
    * The user content that started this invocation.
@@ -168,7 +222,7 @@ export class InvocationContext {
 
   /**
    * Whether to end this invocation.
-   * Set to True in callbacks or tools to terminate this invocation.
+   * Set to `true` in callbacks or tools to terminate this invocation.
    */
   endInvocation: boolean;
 
@@ -233,6 +287,24 @@ export class InvocationContext {
   readonly nodeToolDepth: number;
 
   /**
+   * The live request queue feeding the model on the bidirectional (live) path.
+   * Set only for invocations started via `runner.runLive`.
+   */
+  liveRequestQueue?: LiveRequestQueue;
+
+  /**
+   * The most recent session resumption handle observed on the live path.
+   * Updated as the server emits resumption updates so a reconnect can restore
+   * server-side state instead of replaying history. Mutable by design.
+   */
+  liveSessionResumptionHandle?: string;
+
+  /**
+   * Request-level metadata passed from an incoming A2A request or caller.
+   */
+  readonly a2aMetadata?: Record<string, unknown>;
+
+  /**
    * @param params The parameters for creating an invocation context.
    */
   constructor(params: InvocationContextParams) {
@@ -253,6 +325,7 @@ export class InvocationContext {
     this.workflowInstructionScope = params.workflowInstructionScope;
     this.isolationScope = params.isolationScope;
     this.nodeToolDepth = params.nodeToolDepth ?? 0;
+    this.a2aMetadata = params.a2aMetadata;
     // Inherit the parent invocation's cost manager when one is available.
 
     // Child contexts created for sub-agents, agent transfers and loop
@@ -263,6 +336,8 @@ export class InvocationContext {
     this.invocationCostManager =
       (params as {invocationCostManager?: InvocationCostManager})
         .invocationCostManager ?? new InvocationCostManager();
+    this.liveRequestQueue = params.liveRequestQueue;
+    this.liveSessionResumptionHandle = params.liveSessionResumptionHandle;
   }
 
   /**
@@ -303,5 +378,30 @@ export class InvocationContext {
 }
 
 export function newInvocationContextId(): string {
-  return `e-${randomUUID()}`;
+  return `e-${newId()}`;
+}
+
+/**
+ * The agent driving `ctx`, for code that only runs because one is.
+ *
+ * An LLM flow, an agent transfer, a tool call: each is reached from inside an
+ * agent's own execution, so {@link InvocationContext.agent} is set by
+ * construction. Going through here says that out loud, and turns a violated
+ * assumption into a named error rather than a property access on `undefined`
+ * several frames away.
+ *
+ * A free function rather than an accessor on the class, because a good deal of
+ * code (and most tests) passes a duck-typed context object; a getter would be
+ * simply absent on those, which fails less clearly than not having the agent.
+ *
+ * @throws if the invocation is driving a bare node rather than an agent.
+ */
+export function requireAgent(ctx: InvocationContext): BaseAgent {
+  if (!ctx.agent) {
+    throw new Error(
+      'InvocationContext.agent is not set: this invocation is running a node ' +
+        'directly, so there is no agent at this level.',
+    );
+  }
+  return ctx.agent;
 }

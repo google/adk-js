@@ -8,19 +8,30 @@ import {
   App,
   BaseAgent,
   BasePlugin,
+  BaseTool,
+  BaseToolset,
   createEvent,
   createResumabilityConfig,
   determineAgentForResumption,
   Event,
   InMemoryArtifactService,
+  InMemoryRunner,
   InMemorySessionService,
+  INTERNAL_METADATA_PREFIX,
   InvocationContext,
+  isParallelWorker,
   isRoutableLlmAgent,
   LlmAgent,
+  ParallelWorker,
+  RESTORED_EVENT_KEY,
   Runner,
+  ScopedArtifactService,
+  SessionArtifactService,
+  Workflow,
 } from '@google/adk';
 import {Content, FunctionCall, FunctionResponse} from '@google/genai';
-import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {buildAbortEvents} from '../../src/events/abort_events.js';
 import {logger} from '../../src/utils/logger.js';
 
 const TEST_APP_ID = 'test_app_id';
@@ -102,7 +113,7 @@ class MockPlugin extends BasePlugin {
             text: MockPlugin.ON_EVENT_CALLBACK_MSG,
           },
         ],
-        role: event.content!.role,
+        role: event.content?.role,
       },
     });
   }
@@ -352,7 +363,41 @@ describe('Runner.determineAgentForResumption', () => {
       artifactService,
     });
 
+    expect(appRunner.appName).toBe(TEST_APP_ID);
     expect(appRunner.resumabilityConfig?.isResumable).toBe(true);
+  });
+
+  it('should prefer explicit appName over app.name when both are provided', async () => {
+    const app = new App({
+      name: 'real_name',
+      rootAgent,
+    });
+    const appRunner = new Runner({
+      app,
+      appName: 'my_file',
+      sessionService,
+      artifactService,
+    });
+
+    expect(appRunner.appName).toBe('my_file');
+
+    await sessionService.createSession({
+      appName: 'my_file',
+      userId: TEST_USER_ID,
+      sessionId: 'session_explicit_app_name',
+    });
+
+    const events: Event[] = [];
+    for await (const event of appRunner.runAsync({
+      userId: TEST_USER_ID,
+      sessionId: 'session_explicit_app_name',
+      newMessage: {role: 'user', parts: [{text: TEST_MESSAGE}]},
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(1);
+    expect(events[0].author).toBe('root_agent');
   });
 
   it('should skip function response resumption routing when resumabilityConfig.isResumable is false or undefined', async () => {
@@ -503,6 +548,230 @@ describe('Runner.determineAgentForResumption', () => {
       createResumabilityConfig({isResumable: true}),
     );
     expect(result.name).toBe('sub_agent1');
+  });
+
+  it('does not route to a non-transferable agent through a synthetic abort response', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_abort_response',
+    });
+    const callEvent = createEvent({
+      invocationId: 'inv1',
+      author: 'non_transferable',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'func_456', name: 'test_func', args: {}}}],
+      },
+    });
+    const abortEvents = buildAbortEvents({
+      events: [callEvent],
+      invocationId: 'inv1',
+      rootAgentName: 'root_agent',
+    });
+    for (const event of [callEvent, ...abortEvents]) {
+      await sessionService.appendEvent({session, event});
+    }
+
+    const result = determineAgentForResumption(
+      session,
+      rootAgent,
+      createResumabilityConfig({isResumable: true}),
+    );
+    expect(result).toBe(rootAgent);
+  });
+
+  it('does not route back to the root through a root-authored abort event', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_abort_event',
+    });
+    const replyEvent = createEvent({
+      invocationId: 'inv1',
+      author: 'sub_agent1',
+      content: {role: 'model', parts: [{text: 'Sub response'}]},
+    });
+    const abortEvents = buildAbortEvents({
+      events: [replyEvent],
+      invocationId: 'inv1',
+      rootAgentName: 'root_agent',
+    });
+    expect(abortEvents[0].author).toBe('root_agent');
+    for (const event of [replyEvent, ...abortEvents]) {
+      await sessionService.appendEvent({session, event});
+    }
+
+    expect(determineAgentForResumption(session, rootAgent)).toBe(subAgent1);
+  });
+
+  it('does not write an inline attachment payload to the debug log', async () => {
+    const payload = 'QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNk';
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_inline_data',
+    });
+    await sessionService.appendEvent({
+      session,
+      event: createEvent({
+        invocationId: 'inv1',
+        author: 'sub_agent1',
+        content: {
+          role: 'model',
+          parts: [{inlineData: {mimeType: 'image/png', data: payload}}],
+        },
+      }),
+    });
+
+    const result = determineAgentForResumption(
+      session,
+      rootAgent,
+      createResumabilityConfig({isResumable: true}),
+    );
+
+    const logged = debugSpy.mock.calls.flat().join('\n');
+    expect(logged).not.toContain(payload);
+    expect(logged).toContain('image/png');
+    expect(logged).toContain(`<redacted ${payload.length} chars>`);
+    expect(result.name).toBe('sub_agent1');
+    debugSpy.mockRestore();
+  });
+
+  it('does not throw on a conflicting-author event when resumability is disabled', async () => {
+    // Pins the fix for the review's blocking point: the conflict check
+    // used to run unconditionally, before isResumable was even read, so
+    // it could abort a run that never asked to resume anything. This
+    // session's last event answers calls from two different agents at
+    // once -- exactly the shape that conflict check exists to catch --
+    // with isResumable left unset. determineAgentForResumption must fall
+    // through Case 1 without throwing and resolve via a later case
+    // instead (here, Case 2: subAgent2's own message is the most recent
+    // event from an author in the tree).
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_conflict_not_resumable',
+    });
+    const callFromAgent1 = createEvent({
+      invocationId: 'inv1',
+      author: 'sub_agent1',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-1', name: 'tool_a', args: {}}}],
+      },
+    });
+    const messageFromAgent2 = createEvent({
+      invocationId: 'inv2',
+      author: 'sub_agent2',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-2', name: 'tool_b', args: {}}}],
+      },
+    });
+    const conflictingResponses = createEvent({
+      invocationId: 'inv3',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-1',
+              name: 'tool_a',
+              response: {result: 'a done'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'fc-2',
+              name: 'tool_b',
+              response: {result: 'b done'},
+            },
+          },
+        ],
+      },
+    });
+    await sessionService.appendEvent({session, event: callFromAgent1});
+    await sessionService.appendEvent({session, event: messageFromAgent2});
+    await sessionService.appendEvent({session, event: conflictingResponses});
+
+    expect(() =>
+      determineAgentForResumption(
+        session,
+        rootAgent,
+        createResumabilityConfig({isResumable: false}),
+      ),
+    ).not.toThrow();
+    const result = determineAgentForResumption(
+      session,
+      rootAgent,
+      createResumabilityConfig({isResumable: false}),
+    );
+    expect(result.name).toBe('sub_agent2');
+  });
+
+  it('throws on a conflicting-author event when resumability is enabled', async () => {
+    // Same conflicting session as above, but with isResumable: true --
+    // now Case 1 does apply, and the conflict is genuinely unresolvable,
+    // so this is the one case that should throw.
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_conflict_resumable',
+    });
+    const callFromAgent1 = createEvent({
+      invocationId: 'inv1',
+      author: 'sub_agent1',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-1', name: 'tool_a', args: {}}}],
+      },
+    });
+    const callFromAgent2 = createEvent({
+      invocationId: 'inv2',
+      author: 'sub_agent2',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-2', name: 'tool_b', args: {}}}],
+      },
+    });
+    const conflictingResponses = createEvent({
+      invocationId: 'inv3',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-1',
+              name: 'tool_a',
+              response: {result: 'a done'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'fc-2',
+              name: 'tool_b',
+              response: {result: 'b done'},
+            },
+          },
+        ],
+      },
+    });
+    await sessionService.appendEvent({session, event: callFromAgent1});
+    await sessionService.appendEvent({session, event: callFromAgent2});
+    await sessionService.appendEvent({session, event: conflictingResponses});
+
+    expect(() =>
+      determineAgentForResumption(
+        session,
+        rootAgent,
+        createResumabilityConfig({isResumable: true}),
+      ),
+    ).toThrow(/more than one agent/);
   });
 
   describe('graph-workflow node events', () => {
@@ -881,15 +1150,19 @@ describe('Runner with plugins', () => {
       events.push(event);
     }
 
-    expect(events.length).toBe(0);
+    // The agent event is persisted but not streamed; only the abort event that
+    // seals the invocation is.
+    expect(events.length).toBe(1);
+    expect(events[0].errorCode).toBe('INVOCATION_ABORTED');
 
     const session = await sessionService.getSession({
       appName: TEST_APP_ID,
       userId: TEST_USER_ID,
       sessionId: TEST_SESSION_ID,
     });
-    expect(session!.events.length).toBe(2);
+    expect(session!.events.length).toBe(3);
     expect(session!.events[1].author).toBe('test_agent');
+    expect(session!.events[2].errorCode).toBe('INVOCATION_ABORTED');
   });
 });
 
@@ -973,6 +1246,31 @@ describe('Runner error handling', () => {
       `Session not found: ${nonExistentSessionId}`,
     );
   });
+
+  it('should name the searched app and user in the session not found error', async () => {
+    const agent = new MockLlmAgent('test_agent');
+
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: agent,
+      sessionService,
+      artifactService,
+    });
+
+    // The session exists, but under a different app namespace.
+    const session = await sessionService.createSession({
+      appName: 'other_app_id',
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    const error = await runTestExpectingError(runner, session.id, TEST_USER_ID);
+
+    expect(error).not.toBeNull();
+    expect(error?.message).toContain(`Session not found: ${session.id}`);
+    expect(error?.message).toContain(`appName=${TEST_APP_ID}`);
+    expect(error?.message).toContain(`userId=${TEST_USER_ID}`);
+  });
 });
 
 describe('Runner customMetadata support', () => {
@@ -1049,6 +1347,106 @@ describe('Runner customMetadata support', () => {
     appendEventSpy.mockRestore();
   });
 
+  it('drops ADK-internal keys from caller-supplied customMetadata', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    for await (const _ of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+      customMetadata: {
+        requestId: 'req-1',
+        [`${INTERNAL_METADATA_PREFIX}planted`]: 'x',
+        [RESTORED_EVENT_KEY]: true,
+      },
+    })) {
+      // iterate
+    }
+
+    const updatedSession = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    const userEvent = updatedSession!.events[0];
+    expect(userEvent.author).toBe('user');
+    expect(userEvent.customMetadata).toEqual({requestId: 'req-1'});
+  });
+
+  it.each([
+    [undefined, {pluginKey: 1}],
+    [{own: 2}, {own: 2, pluginKey: 1}],
+  ])(
+    'keeps ADK-internal keys when a plugin replaces an event (replacement metadata %o)',
+    async (replacementExtra, expectedPublic) => {
+      const internalKey = `${INTERNAL_METADATA_PREFIX}agent`;
+      const agent = new (class extends BaseAgent {
+        protected override async *runAsyncImpl(
+          context: InvocationContext,
+        ): AsyncGenerator<Event, void, void> {
+          yield createEvent({
+            invocationId: context.invocationId,
+            author: this.name,
+            content: {role: 'model', parts: [{text: 'hi'}]},
+            customMetadata: {eventKey: 'v', [internalKey]: 'kept'},
+          });
+        }
+        protected override async *runLiveImpl(): AsyncGenerator<
+          Event,
+          void,
+          void
+        > {}
+      })({name: 'metadata_agent'});
+      const plugin = new (class extends BasePlugin {
+        override async onEventCallback({event}: {event: Event}) {
+          return createEvent({
+            author: event.author,
+            content: event.content,
+            customMetadata: {...replacementExtra, pluginKey: 1},
+          });
+        }
+      })('replacing');
+      const runner = new Runner({
+        appName: TEST_APP_ID,
+        agent,
+        sessionService,
+        plugins: [plugin],
+      });
+      await sessionService.createSession({
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+      });
+
+      const events: Event[] = [];
+      for await (const event of runner.runAsync({
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+        newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+      })) {
+        events.push(event);
+      }
+
+      expect(events[0].customMetadata).toEqual({
+        ...expectedPublic,
+        [internalKey]: 'kept',
+      });
+      const stored = await sessionService.getSession({
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+      });
+      const agentEvent = stored!.events.find(
+        (e) => e.author === 'metadata_agent',
+      );
+      expect(agentEvent!.customMetadata).toEqual(events[0].customMetadata);
+    },
+  );
+
   it('should default newMessage role to "user" when role is omitted (issue #475)', async () => {
     const session = await sessionService.createSession({
       appName: TEST_APP_ID,
@@ -1077,6 +1475,109 @@ describe('Runner customMetadata support', () => {
     const userEvent = updatedSession!.events[0];
     expect(userEvent.author).toBe('user');
     expect(userEvent.content?.role).toBe('user');
+  });
+});
+
+describe('Runner artifactService handling', () => {
+  const SESSION_ARTIFACT_SERVICE_SIGNATURE_SYMBOL = Symbol.for(
+    'google.adk.sessionArtifactService',
+  );
+
+  it('should wrap BaseArtifactService in ScopedArtifactService when constructing InvocationContext', async () => {
+    const baseArtifactService = new InMemoryArtifactService();
+    const agent = new MockLlmAgent('agent_base_artifact');
+    const sessionService = new InMemorySessionService();
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService: baseArtifactService,
+    });
+
+    let capturedInvocationContext: InvocationContext | undefined;
+    const plugin = new (class extends BasePlugin {
+      constructor() {
+        super('capture_context_plugin');
+      }
+      override async onUserMessageCallback({
+        invocationContext,
+      }: {
+        invocationContext: InvocationContext;
+        userMessage: Content;
+      }) {
+        capturedInvocationContext = invocationContext;
+        return undefined;
+      }
+    })();
+    runner.pluginManager.registerPlugin(plugin);
+
+    for await (const _ of runner.runEphemeral({
+      userId: TEST_USER_ID,
+      newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+    })) {
+      // iterate
+    }
+
+    expect(capturedInvocationContext).toBeDefined();
+    expect(capturedInvocationContext!.artifactService).toBeInstanceOf(
+      ScopedArtifactService,
+    );
+  });
+
+  it('should pass SessionArtifactService directly to InvocationContext without wrapping in ScopedArtifactService', async () => {
+    const sessionArtifactService: SessionArtifactService &
+      Record<symbol, unknown> = {
+      // Brands the stub the same way ScopedArtifactService and
+      // ForwardingArtifactService brand themselves.
+      [SESSION_ARTIFACT_SERVICE_SIGNATURE_SYMBOL]: true,
+      saveArtifact: vi.fn().mockResolvedValue(1),
+      loadArtifact: vi.fn().mockResolvedValue(undefined),
+      listArtifactKeys: vi.fn().mockResolvedValue([]),
+      deleteArtifact: vi.fn().mockResolvedValue(undefined),
+      listVersions: vi.fn().mockResolvedValue([]),
+      listArtifactVersions: vi.fn().mockResolvedValue([]),
+      getArtifactVersion: vi.fn().mockResolvedValue(undefined),
+    };
+    const agent = new MockLlmAgent('agent_session_artifact');
+    const sessionService = new InMemorySessionService();
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService: sessionArtifactService,
+    });
+
+    let capturedInvocationContext: InvocationContext | undefined;
+    const plugin = new (class extends BasePlugin {
+      constructor() {
+        super('capture_context_plugin_session');
+      }
+      override async onUserMessageCallback({
+        invocationContext,
+      }: {
+        invocationContext: InvocationContext;
+        userMessage: Content;
+      }) {
+        capturedInvocationContext = invocationContext;
+        return undefined;
+      }
+    })();
+    runner.pluginManager.registerPlugin(plugin);
+
+    for await (const _ of runner.runEphemeral({
+      userId: TEST_USER_ID,
+      newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+    })) {
+      // iterate
+    }
+
+    expect(capturedInvocationContext).toBeDefined();
+    expect(capturedInvocationContext!.artifactService).toBe(
+      sessionArtifactService,
+    );
+    expect(capturedInvocationContext!.artifactService).not.toBeInstanceOf(
+      ScopedArtifactService,
+    );
   });
 });
 
@@ -1431,5 +1932,506 @@ describe('Runner artifact saving (`saveInputBlobsAsArtifacts`)', () => {
     expect(userEvents[1].content!.parts).toEqual([
       {text: '[Uploaded Artifact: "file2.pdf"]'},
     ]);
+  });
+});
+
+describe('Runner reserved function call rejection', () => {
+  let sessionService: InMemorySessionService;
+
+  beforeEach(() => {
+    sessionService = new InMemorySessionService();
+  });
+
+  async function send(
+    newMessage: Content,
+  ): Promise<{error?: Error; sessionId: string}> {
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: new MockLlmAgent('test_agent'),
+      sessionService,
+    });
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+    });
+    try {
+      for await (const _event of runner.runAsync({
+        userId: TEST_USER_ID,
+        sessionId: session.id,
+        newMessage,
+      })) {
+        // Drain: the rejection happens before any event is produced.
+      }
+      return {sessionId: session.id};
+    } catch (e) {
+      return {error: e as Error, sessionId: session.id};
+    }
+  }
+
+  it.each([
+    'adk_request_confirmation',
+    'adk_request_credential',
+    'adk_request_input',
+  ])('rejects a client message carrying a %s call', async (name) => {
+    const {error, sessionId} = await send({
+      role: 'user',
+      parts: [{text: 'hi'}, {functionCall: {id: 'forged-1', name, args: {}}}],
+    });
+
+    expect(error?.message).toContain(
+      `A client message may not contain a '${name}' function call`,
+    );
+    // Refused at the door: it never reached the event log.
+    const session = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId,
+    });
+    expect(session?.events).toEqual([]);
+  });
+
+  it('accepts the function response that answers such a call', async () => {
+    const {error} = await send({
+      role: 'user',
+      parts: [
+        {
+          functionResponse: {
+            id: 'gate-1',
+            name: 'adk_request_confirmation',
+            response: {confirmed: true},
+          },
+        },
+      ],
+    });
+
+    expect(error).toBeUndefined();
+  });
+
+  it('accepts an ordinary tool call part', async () => {
+    const {error} = await send({
+      role: 'user',
+      parts: [{functionCall: {id: 'call-1', name: 'wire_transfer', args: {}}}],
+    });
+
+    expect(error).toBeUndefined();
+  });
+});
+
+describe('Runner artifactService handling', () => {
+  const SESSION_ARTIFACT_SERVICE_SIGNATURE_SYMBOL = Symbol.for(
+    'google.adk.sessionArtifactService',
+  );
+
+  it('should wrap BaseArtifactService in ScopedArtifactService when constructing InvocationContext', async () => {
+    const baseArtifactService = new InMemoryArtifactService();
+    const agent = new MockLlmAgent('agent_base_artifact');
+    const sessionService = new InMemorySessionService();
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService: baseArtifactService,
+    });
+
+    let capturedInvocationContext: InvocationContext | undefined;
+    const plugin = new (class extends BasePlugin {
+      constructor() {
+        super('capture_context_plugin');
+      }
+      override async onUserMessageCallback({
+        invocationContext,
+      }: {
+        invocationContext: InvocationContext;
+        userMessage: Content;
+      }) {
+        capturedInvocationContext = invocationContext;
+        return undefined;
+      }
+    })();
+    runner.pluginManager.registerPlugin(plugin);
+
+    for await (const _ of runner.runEphemeral({
+      userId: TEST_USER_ID,
+      newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+    })) {
+      // iterate
+    }
+
+    expect(capturedInvocationContext).toBeDefined();
+    expect(capturedInvocationContext!.artifactService).toBeInstanceOf(
+      ScopedArtifactService,
+    );
+  });
+
+  it('should pass SessionArtifactService directly to InvocationContext without wrapping in ScopedArtifactService', async () => {
+    const sessionArtifactService: SessionArtifactService &
+      Record<symbol, unknown> = {
+      // Brands the stub the same way ScopedArtifactService and
+      // ForwardingArtifactService brand themselves.
+      [SESSION_ARTIFACT_SERVICE_SIGNATURE_SYMBOL]: true,
+      saveArtifact: vi.fn().mockResolvedValue(1),
+      loadArtifact: vi.fn().mockResolvedValue(undefined),
+      listArtifactKeys: vi.fn().mockResolvedValue([]),
+      deleteArtifact: vi.fn().mockResolvedValue(undefined),
+      listVersions: vi.fn().mockResolvedValue([]),
+      listArtifactVersions: vi.fn().mockResolvedValue([]),
+      getArtifactVersion: vi.fn().mockResolvedValue(undefined),
+    };
+    const agent = new MockLlmAgent('agent_session_artifact');
+    const sessionService = new InMemorySessionService();
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService: sessionArtifactService,
+    });
+
+    let capturedInvocationContext: InvocationContext | undefined;
+    const plugin = new (class extends BasePlugin {
+      constructor() {
+        super('capture_context_plugin_session');
+      }
+      override async onUserMessageCallback({
+        invocationContext,
+      }: {
+        invocationContext: InvocationContext;
+        userMessage: Content;
+      }) {
+        capturedInvocationContext = invocationContext;
+        return undefined;
+      }
+    })();
+    runner.pluginManager.registerPlugin(plugin);
+
+    for await (const _ of runner.runEphemeral({
+      userId: TEST_USER_ID,
+      newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+    })) {
+      // iterate
+    }
+
+    expect(capturedInvocationContext).toBeDefined();
+    expect(capturedInvocationContext!.artifactService).toBe(
+      sessionArtifactService,
+    );
+    expect(capturedInvocationContext!.artifactService).not.toBeInstanceOf(
+      ScopedArtifactService,
+    );
+  });
+});
+
+describe('Runner autoCreateSession', () => {
+  const MISSING_SESSION_ID = 'non_existent_session_id';
+
+  let sessionService: InMemorySessionService;
+  let artifactService: InMemoryArtifactService;
+  let agent: MockLlmAgent;
+
+  beforeEach(() => {
+    sessionService = new InMemorySessionService();
+    artifactService = new InMemoryArtifactService();
+    agent = new MockLlmAgent('test_agent');
+  });
+
+  function createRunner(autoCreateSession: boolean): Runner {
+    return new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+      autoCreateSession,
+    });
+  }
+
+  async function collectEvents(
+    runner: Runner,
+    sessionId: string,
+  ): Promise<Event[]> {
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: TEST_USER_ID,
+      sessionId,
+      newMessage: {role: 'user', parts: [{text: TEST_MESSAGE}]},
+    })) {
+      events.push(event);
+    }
+    return events;
+  }
+
+  it('creates the missing session and runs in it when enabled', async () => {
+    const events = await collectEvents(createRunner(true), MISSING_SESSION_ID);
+
+    const agentEvent = events.find((e) => e.author === 'test_agent');
+    expect(agentEvent?.content?.parts).toEqual([{text: 'Test LLM response'}]);
+
+    const created = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: MISSING_SESSION_ID,
+    });
+    expect(created).toBeDefined();
+    expect(created!.id).toBe(MISSING_SESSION_ID);
+    expect(created!.appName).toBe(TEST_APP_ID);
+    expect(created!.userId).toBe(TEST_USER_ID);
+    expect(created!.events.map((e) => e.author)).toEqual([
+      'user',
+      'test_agent',
+    ]);
+  });
+
+  it('throws and creates nothing when disabled', async () => {
+    let error: Error | null = null;
+    try {
+      await collectEvents(createRunner(false), MISSING_SESSION_ID);
+    } catch (e) {
+      error = e as Error;
+    }
+
+    expect(error).not.toBeNull();
+    expect(error?.message).toContain(
+      `Session not found: ${MISSING_SESSION_ID}`,
+    );
+    expect(
+      await sessionService.getSession({
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: MISSING_SESSION_ID,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('reuses an existing session instead of clobbering it when enabled', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    await sessionService.appendEvent({
+      session,
+      event: createEvent({
+        invocationId: 'earlier_invocation',
+        author: 'test_agent',
+        content: {role: 'model', parts: [{text: 'Earlier turn'}]},
+      }),
+    });
+
+    await collectEvents(createRunner(true), TEST_SESSION_ID);
+
+    const updated = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    expect(updated!.events[0].content?.parts).toEqual([{text: 'Earlier turn'}]);
+    expect(updated!.events.map((e) => e.author)).toEqual([
+      'test_agent',
+      'user',
+      'test_agent',
+    ]);
+  });
+
+  it('reports the missing appName instead of creating a session', async () => {
+    // `appName` is optional on RunnerConfig, so an unconfigured runner cannot
+    // address a session and must not create one under an undefined app name.
+    const runner = new Runner({
+      agent,
+      sessionService,
+      artifactService,
+      autoCreateSession: true,
+    });
+    const createSession = vi.spyOn(sessionService, 'createSession');
+
+    let error: Error | null = null;
+    try {
+      await collectEvents(runner, MISSING_SESSION_ID);
+    } catch (e) {
+      error = e as Error;
+    }
+
+    expect(error).not.toBeNull();
+    expect(error?.message).toContain(
+      'appName must be provided in runner constructor',
+    );
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it('creates the session once, with the requested identifiers', async () => {
+    const createSession = vi.spyOn(sessionService, 'createSession');
+
+    await collectEvents(createRunner(true), MISSING_SESSION_ID);
+
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(createSession).toHaveBeenCalledWith({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: MISSING_SESSION_ID,
+    });
+  });
+});
+
+class MockCleanupToolset extends BaseToolset {
+  closeSpy = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+
+  constructor() {
+    super();
+  }
+
+  override async getTools(): Promise<BaseTool[]> {
+    return [];
+  }
+
+  override async close(): Promise<void> {
+    return this.closeSpy();
+  }
+}
+
+describe('Runner.close', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('closes toolsets across root agent, subAgents, and deduplicates shared toolsets', async () => {
+    const sharedToolset = new MockCleanupToolset();
+    const subToolset = new MockCleanupToolset();
+
+    const subAgent = new LlmAgent({
+      name: 'sub_agent',
+      model: 'gemini-flash-latest',
+      tools: [sharedToolset, subToolset],
+    });
+    const rootAgent = new LlmAgent({
+      name: 'root_agent',
+      model: 'gemini-flash-latest',
+      tools: [sharedToolset],
+      subAgents: [subAgent],
+    });
+
+    const runner = new InMemoryRunner({
+      agent: rootAgent,
+      appName: TEST_APP_ID,
+    });
+
+    await runner.close();
+
+    expect(sharedToolset.closeSpy).toHaveBeenCalledTimes(1);
+    expect(subToolset.closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes toolsets on agents inside a Workflow and ParallelWorker', async () => {
+    const workflowToolset = new MockCleanupToolset();
+    const parallelToolset = new MockCleanupToolset();
+
+    const workflowAgent = new LlmAgent({
+      name: 'workflow_agent',
+      model: 'gemini-flash-latest',
+      tools: [workflowToolset],
+    });
+    const parallelAgent = new LlmAgent({
+      name: 'parallel_agent',
+      model: 'gemini-flash-latest',
+      tools: [parallelToolset],
+    });
+    const workerNode = new ParallelWorker(parallelAgent);
+    expect(isParallelWorker(workerNode)).toBe(true);
+    expect(isParallelWorker(workflowAgent)).toBe(false);
+    expect(isParallelWorker(null)).toBe(false);
+    const workflow = new Workflow({
+      name: 'test_workflow',
+      edges: [
+        ['START', workflowAgent],
+        [workflowAgent, workerNode],
+      ],
+    });
+
+    const runner = new InMemoryRunner({
+      agent: workflow,
+      appName: TEST_APP_ID,
+    });
+
+    await runner.close();
+
+    expect(workflowToolset.closeSpy).toHaveBeenCalledTimes(1);
+    expect(parallelToolset.closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs an error and continues closing remaining toolsets when a toolset throws', async () => {
+    const failingToolset = new MockCleanupToolset();
+    failingToolset.closeSpy.mockRejectedValueOnce(new Error('close boom'));
+    const objectFailingToolset = new MockCleanupToolset();
+    objectFailingToolset.closeSpy.mockRejectedValueOnce({code: 'ERR_CLOSE'});
+    const healthyToolset = new MockCleanupToolset();
+    const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+
+    const rootAgent = new LlmAgent({
+      name: 'root_agent',
+      model: 'gemini-flash-latest',
+      tools: [failingToolset, objectFailingToolset, healthyToolset],
+    });
+
+    const runner = new InMemoryRunner({
+      agent: rootAgent,
+      appName: TEST_APP_ID,
+    });
+
+    await expect(runner.close()).resolves.toBeUndefined();
+
+    expect(failingToolset.closeSpy).toHaveBeenCalledTimes(1);
+    expect(objectFailingToolset.closeSpy).toHaveBeenCalledTimes(1);
+    expect(healthyToolset.closeSpy).toHaveBeenCalledTimes(1);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Error closing toolset MockCleanupToolset: close boom',
+      ),
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Error closing toolset MockCleanupToolset: {"code":"ERR_CLOSE"}',
+      ),
+    );
+    expect(debugSpy).toHaveBeenCalledWith(
+      'Closing toolset: MockCleanupToolset',
+    );
+    expect(debugSpy).toHaveBeenCalledWith(
+      'Successfully closed toolset: MockCleanupToolset',
+    );
+  });
+
+  it('times out multiple hanging toolsets concurrently within one 10-second window', async () => {
+    vi.useFakeTimers();
+    const firstHangingToolset = new MockCleanupToolset();
+    firstHangingToolset.closeSpy.mockImplementation(
+      () => new Promise<void>(() => {}),
+    );
+    const secondHangingToolset = new MockCleanupToolset();
+    secondHangingToolset.closeSpy.mockImplementation(
+      () => new Promise<void>(() => {}),
+    );
+    const healthyToolset = new MockCleanupToolset();
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    const rootAgent = new LlmAgent({
+      name: 'root_agent',
+      model: 'gemini-flash-latest',
+      tools: [firstHangingToolset, secondHangingToolset, healthyToolset],
+    });
+
+    const runner = new InMemoryRunner({
+      agent: rootAgent,
+      appName: TEST_APP_ID,
+    });
+
+    const closePromise = runner.close();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await closePromise;
+
+    expect(firstHangingToolset.closeSpy).toHaveBeenCalledTimes(1);
+    expect(secondHangingToolset.closeSpy).toHaveBeenCalledTimes(1);
+    expect(healthyToolset.closeSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledTimes(2);
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Toolset MockCleanupToolset cleanup timed out',
+    );
   });
 });

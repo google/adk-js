@@ -3,25 +3,16 @@
  * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-// Vendored copy of samples/workflows/node_output/agent.ts so this integration test
-// is self-contained; keep it in sync with the sample.
-
 /**
  * Node output styles: a raw string, an explicit `Event({output})`, a
- * schema-typed LlmAgent output, and a downstream node consuming it. Faithful
- * port of Python `contributing/samples/workflows/node_output`.
+ * schema-typed LlmAgent output, and a downstream node consuming it. One-to-one
+ * port of Python `contributing/samples/workflows/node_output/agent.py`.
  *
  * Requires an API key. Set GEMINI_API_KEY, then:
- *   npm run sample -- samples/workflows/node_output/agent.ts
+ *   npm run sample -- tests/integration/workflows/node_output/agent.ts
  */
 
-import {
-  createEvent,
-  LlmAgent,
-  node,
-  NodeContext,
-  WorkflowAgent,
-} from '@google/adk';
+import {createEvent, LlmAgent, node, NodeContext, Workflow} from '@google/adk';
 import {z} from 'zod';
 
 const topicDetails = z.object({
@@ -56,10 +47,10 @@ const consumePydanticOutput = node(
     `Title: ${nodeInput.title}\n` +
     `Description: ${nodeInput.description}\n` +
     `Category: ${nodeInput.category}`,
-  {name: 'consume_pydantic_output'},
+  {name: 'consume_pydantic_output', inputSchema: topicDetails},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'root_agent',
   edges: [
     [

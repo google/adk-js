@@ -4,7 +4,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {BaseAgent, BaseSessionService, Runner} from '@google/adk';
+import {
+  BaseAgent,
+  BaseSessionService,
+  InMemorySessionService,
+  INTERNAL_METADATA_PREFIX,
+  isApp,
+  RESTORED_EVENT_KEY,
+  Runner,
+  setLogger,
+} from '@google/adk';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
@@ -12,7 +23,6 @@ import {runAgent} from '../../src/cli/cli_run.js';
 import {AgentFile} from '../../src/utils/agent_loader.js';
 import {loadFileData, saveToFile} from '../../src/utils/file_utils.js';
 
-// Mock dependencies
 vi.mock('../../src/utils/agent_loader.js', () => ({
   AgentFile: vi.fn(),
 }));
@@ -37,29 +47,33 @@ vi.mock('@google/adk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@google/adk')>();
   return {
     ...actual,
-    Runner: vi.fn().mockImplementation(() => ({
-      runAsync: vi.fn().mockImplementation(async function* () {
-        for (const event of runnerState.events) {
-          yield event;
-        }
-      }),
-    })),
+    Runner: vi.fn().mockImplementation(function () {
+      return {
+        runAsync: vi.fn().mockImplementation(async function* () {
+          for (const event of runnerState.events) {
+            yield event;
+          }
+        }),
+      };
+    }),
     InMemoryArtifactService: vi.fn(),
-    InMemorySessionService: vi.fn().mockImplementation(() => ({
-      createSession: vi.fn().mockResolvedValue({
-        id: 'session-123',
-        appName: 'test-agent',
-        userId: 'test_user',
-        events: [],
-      }),
-      appendEvent: vi.fn(),
-      getSession: vi.fn().mockResolvedValue({
-        id: 'session-123',
-        appName: 'test-agent',
-        userId: 'test_user',
-        events: [],
-      }),
-    })),
+    InMemorySessionService: vi.fn().mockImplementation(function () {
+      return {
+        createSession: vi.fn().mockResolvedValue({
+          id: 'session-123',
+          appName: 'test-agent',
+          userId: 'test_user',
+          events: [],
+        }),
+        appendEvent: vi.fn(),
+        getSession: vi.fn().mockResolvedValue({
+          id: 'session-123',
+          appName: 'test-agent',
+          userId: 'test_user',
+          events: [],
+        }),
+      };
+    }),
     InMemoryMemoryService: vi.fn(),
     isApp: vi.fn().mockReturnValue(false),
   };
@@ -69,28 +83,62 @@ vi.mock('node:readline', () => ({
   createInterface: vi.fn(),
 }));
 
+/** The two-argument `readline.question` overload the REPL calls. */
+type AskUser = (query: string, cb: (answer: string) => void) => void;
+
+function createMockSessionService() {
+  return {
+    createSession: vi.fn().mockResolvedValue({
+      id: 'session-123',
+      appName: 'test-agent',
+      userId: 'test_user',
+      events: [],
+    }),
+    appendEvent: vi.fn(),
+    getSession: vi.fn().mockResolvedValue({
+      id: 'session-123',
+      appName: 'test-agent',
+      userId: 'test_user',
+      events: [],
+    }),
+  } as unknown as BaseSessionService;
+}
+
 describe('cli_run', () => {
   let mockAgentFile: AgentFile;
   let mockRootAgent: BaseAgent;
   let mockRl: readline.Interface;
+  let errorSpy: Mock;
+  let originalExitCode: typeof process.exitCode;
 
   beforeEach(() => {
     vi.clearAllMocks();
     vi.spyOn(console, 'log').mockImplementation(() => {});
+    errorSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => {}) as unknown as Mock;
+    originalExitCode = process.exitCode;
 
     runnerState.events = [
       {author: 'model', content: {parts: [{text: 'Response from model'}]}},
     ];
 
-    // `restoreAllMocks` in afterEach strips the implementation set in the
-    // module factory, so re-establish it for every test.
-    (Runner as unknown as Mock).mockImplementation(() => ({
-      runAsync: async function* () {
-        for (const event of runnerState.events) {
-          yield event;
-        }
-      },
-    }));
+    // Re-established every test: `restoreAllMocks` drops the implementations
+    // set in the module factory, which would otherwise leave the runner and
+    // the session service inert from the second test onwards.
+    (Runner as unknown as Mock).mockImplementation(function () {
+      return {
+        runAsync: async function* () {
+          for (const event of runnerState.events) {
+            yield event;
+          }
+        },
+      };
+    });
+    (InMemorySessionService as unknown as Mock).mockImplementation(
+      createMockSessionService,
+    );
+    (isApp as unknown as Mock).mockReturnValue(false);
 
     mockRootAgent = {
       name: 'test-agent',
@@ -101,7 +149,9 @@ describe('cli_run', () => {
       [Symbol.asyncDispose]: vi.fn(),
     } as unknown as AgentFile;
 
-    (AgentFile as unknown as Mock).mockImplementation(() => mockAgentFile);
+    (AgentFile as unknown as Mock).mockImplementation(function () {
+      return mockAgentFile;
+    });
 
     mockRl = {
       question: vi.fn((query: string, cb: (answer: string) => void) => {
@@ -114,6 +164,7 @@ describe('cli_run', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    process.exitCode = originalExitCode;
   });
 
   it('should run interactively by default', async () => {
@@ -128,22 +179,196 @@ describe('cli_run', () => {
     expect(mockRl.question).toHaveBeenCalled();
   });
 
-  const createMockSessionService = () =>
-    ({
-      createSession: vi.fn().mockResolvedValue({
-        id: 'session-123',
-        appName: 'test-agent',
-        userId: 'test_user',
-        events: [],
+  it('keeps the REPL alive when a turn fails', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let turn = 0;
+    (Runner as unknown as Mock).mockImplementation(function () {
+      return {
+        runAsync: async function* () {
+          turn++;
+          if (turn === 1) {
+            throw new Error('Context variable not found: `my_city`.');
+          }
+          yield {author: 'model', content: {parts: [{text: 'recovered'}]}};
+        },
+      };
+    });
+    (mockRl.question as Mock)
+      .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+        cb('boom'),
+      )
+      .mockImplementationOnce((_p: string, cb: (a: string) => void) => cb('go'))
+      .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+        cb('exit'),
+      );
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      sessionService: createMockSessionService(),
+    });
+
+    expect(
+      errors.mock.calls.map((call) => call.join(' ')).join('\n'),
+    ).toContain('Context variable not found');
+    expect(turn).toBe(2);
+    expect(
+      (console.log as Mock).mock.calls.map((call) => call.join(' ')).join('\n'),
+    ).toContain('recovered');
+    // Surviving the turn must not cost the cleanup: stdin is still released
+    // when the loop finally ends.
+    expect(mockRl.close as Mock).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuses one readline interface across prompts', async () => {
+    (mockRl.question as Mock)
+      .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+        cb('hello'),
+      )
+      .mockImplementationOnce((_p: string, cb: (a: string) => void) => cb('21'))
+      .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+        cb('exit'),
+      );
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      sessionService: createMockSessionService(),
+    });
+
+    expect(readline.createInterface as Mock).toHaveBeenCalledTimes(1);
+    expect(mockRl.question as Mock).toHaveBeenCalledTimes(3);
+    expect(mockRl.close as Mock).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes the readline interface when a failure escapes the loop', async () => {
+    (mockRl.question as Mock).mockImplementation(
+      (_p: string, cb: (a: string) => void) => cb('exit'),
+    );
+    // A failing turn no longer escapes — the REPL reports it and prompts again
+    // — so the throw that still has to release stdin comes from the save step.
+    (saveToFile as Mock).mockRejectedValue(new Error('save exploded'));
+
+    // runAgent now reports a thrown error and exits non-zero rather than
+    // propagating it, but the shared readline interface must still be released.
+    await runAgent({
+      agentPath: 'agent.ts',
+      saveSession: true,
+      sessionId: 'session-123',
+      sessionService: createMockSessionService(),
+    });
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.objectContaining({message: 'save exploded'}),
+    );
+    expect(process.exitCode).toBe(1);
+    expect(mockRl.close as Mock).toHaveBeenCalledTimes(1);
+  });
+
+  it('echoes the answer when stdin is not a terminal', async () => {
+    const isTTY = process.stdin.isTTY;
+    Object.defineProperty(process.stdin, 'isTTY', {
+      value: false,
+      configurable: true,
+    });
+    try {
+      (mockRl.question as Mock)
+        .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+          cb('hi'),
+        )
+        .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+          cb('exit'),
+        );
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        sessionService: createMockSessionService(),
+      });
+
+      expect(
+        (console.log as Mock).mock.calls.map((c) => c.join(' ')),
+      ).toContain('hi');
+    } finally {
+      Object.defineProperty(process.stdin, 'isTTY', {
+        value: isTTY,
+        configurable: true,
+      });
+    }
+  });
+
+  /** Replaces the mocked Runner with one whose runAsync the test can watch. */
+  const watchRunner = () => {
+    const runAsync = vi.fn(async function* () {});
+    vi.mocked(Runner).mockImplementation(function () {
+      return {runAsync} as unknown as Runner;
+    });
+    return runAsync;
+  };
+
+  /** Scripts one readline answer per interactive turn the test drives. */
+  const answerWith = (...answers: string[]): void => {
+    for (const answer of answers) {
+      vi.mocked<AskUser>(mockRl.question).mockImplementationOnce((_p, cb) =>
+        cb(answer),
+      );
+    }
+  };
+
+  /**
+   * The REPL prints "type exit to exit", so the quit word must survive the
+   * stray space a terminal user adds to it. The default `mockRl.question`
+   * answers `'exit'` on every later prompt, so an unfixed loop still ends on
+   * the next turn and the assertion fails instead of hanging.
+   */
+  it('treats a whitespace-padded exit as the quit command', async () => {
+    const runAsync = watchRunner();
+    answerWith('  exit  ');
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      sessionService: createMockSessionService(),
+    });
+
+    expect(runAsync).not.toHaveBeenCalled();
+  });
+
+  it('sends the user text to the model untrimmed', async () => {
+    const runAsync = watchRunner();
+    answerWith('  hello  ');
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      sessionService: createMockSessionService(),
+    });
+
+    expect(runAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        newMessage: {role: 'user', parts: [{text: '  hello  '}]},
       }),
-      appendEvent: vi.fn(),
-      getSession: vi.fn().mockResolvedValue({
-        id: 'session-123',
-        appName: 'test-agent',
-        userId: 'test_user',
-        events: [],
-      }),
-    }) as unknown as BaseSessionService;
+    );
+  });
+
+  it('keeps quit matching exact and case-sensitive', async () => {
+    const runAsync = watchRunner();
+    answerWith('EXIT', 'exit now');
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      sessionService: createMockSessionService(),
+    });
+
+    expect(runAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it('skips a whitespace-only line without ending the loop', async () => {
+    const runAsync = watchRunner();
+    answerWith('   ', 'hello');
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      sessionService: createMockSessionService(),
+    });
+
+    expect(runAsync).toHaveBeenCalledTimes(1);
+  });
 
   it('should run from input file', async () => {
     const inputFileContent = {
@@ -164,6 +389,49 @@ describe('cli_run', () => {
     );
     expect(mockSessionService.createSession).toHaveBeenCalled();
   });
+
+  it('should handle missing input file', async () => {
+    (loadFileData as Mock).mockResolvedValue(undefined);
+    const mockSessionService = createMockSessionService();
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      inputFile: 'input.json',
+      sessionService: mockSessionService,
+    });
+    expect(loadFileData).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a missing state object', {queries: ['go']}],
+    ['a missing queries array', {state: {}}],
+    ['queries provided as a string', {state: {}, queries: 'hi'}],
+    ['a non-string query', {state: {}, queries: ['go', 1]}],
+    ['a non-object state', {state: [], queries: ['go']}],
+    ['a null JSON document', null],
+  ])(
+    'rejects replay input with %s before creating a session or running the agent',
+    async (_description, content) => {
+      (loadFileData as Mock).mockResolvedValue(content);
+      const mockSessionService = createMockSessionService();
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        inputFile: 'input.json',
+        sessionService: mockSessionService,
+      });
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining('Invalid replay file'),
+        }),
+      );
+      expect(process.exitCode).toBe(1);
+      expect(mockSessionService.createSession).not.toHaveBeenCalled();
+      expect(AgentFile).not.toHaveBeenCalled();
+      expect(Runner).not.toHaveBeenCalled();
+    },
+  );
 
   it('honours an absolute --replay path instead of rebasing it on cwd', async () => {
     // `path.join(cwd, '/abs/input.json')` silently strips the leading
@@ -205,18 +473,27 @@ describe('cli_run', () => {
     );
   });
 
-  it('propagates an unreadable --replay file instead of swallowing it', async () => {
+  it('surfaces an unreadable --replay file instead of swallowing it', async () => {
     (loadFileData as Mock).mockRejectedValue(
       new Error('Failed to read or parse file input.json: ENOENT'),
     );
 
-    await expect(
-      runAgent({
-        agentPath: 'agent.ts',
-        inputFile: 'input.json',
-        sessionService: createMockSessionService(),
+    // runAgent now reports the failure on stderr and marks the process failed
+    // instead of rejecting; the error must still not be swallowed silently.
+    await runAgent({
+      agentPath: 'agent.ts',
+      inputFile: 'input.json',
+      sessionService: createMockSessionService(),
+    });
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining(
+          'Failed to read or parse file input.json',
+        ),
       }),
-    ).rejects.toThrow(/Failed to read or parse file input\.json/);
+    );
+    expect(process.exitCode).toBe(1);
     expect(loadFileData).toHaveBeenCalled();
   });
 
@@ -351,6 +628,61 @@ describe('cli_run', () => {
       path.join(process.cwd(), 'agents', 'my-session.session.json'),
       expect.anything(),
     );
+  });
+
+  it('strips ADK-internal metadata from resumed events and marks them restored', async () => {
+    (loadFileData as Mock).mockResolvedValue({
+      id: 'old-session',
+      appName: 'test-agent',
+      userId: 'test_user',
+      events: [
+        {
+          author: 'user',
+          content: {parts: [{text: 'Hi'}]},
+          customMetadata: {
+            keep: 1,
+            [`${INTERNAL_METADATA_PREFIX}planted`]: 'x',
+            [RESTORED_EVENT_KEY]: false,
+          },
+        },
+      ],
+    });
+    const mockSessionService = createMockSessionService();
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      savedSessionFile: 'session.json',
+      sessionService: mockSessionService,
+    });
+
+    const appended = (mockSessionService.appendEvent as Mock).mock.calls.map(
+      (call) => call[0].event.customMetadata,
+    );
+    expect(appended).toEqual([{keep: 1, [RESTORED_EVENT_KEY]: true}]);
+  });
+
+  it('saves the session without ADK-internal metadata', async () => {
+    const mockSessionService = createMockSessionService();
+    (mockSessionService.getSession as Mock).mockResolvedValue({
+      id: 'session-123',
+      appName: 'test-agent',
+      userId: 'test_user',
+      events: [
+        {author: 'user', customMetadata: {keep: 1, [RESTORED_EVENT_KEY]: true}},
+      ],
+    });
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      saveSession: true,
+      sessionId: 'my-session',
+      sessionService: mockSessionService,
+    });
+
+    const saved = (saveToFile as Mock).mock.calls[0][1];
+    expect(
+      saved.events.map((e: {customMetadata?: unknown}) => e.customMetadata),
+    ).toEqual([{keep: 1}]);
   });
 
   it('should prompt for session id if not provided when saving', async () => {
@@ -505,8 +837,6 @@ describe('cli_run', () => {
     });
 
     it('reports an error carried on the event', async () => {
-      vi.spyOn(console, 'error').mockImplementation(() => {});
-
       await runOneTurn({
         author: 'draft_email',
         errorCode: 'SAFETY',
@@ -522,7 +852,6 @@ describe('cli_run', () => {
     });
 
     it('warns when a scripted run ends still waiting on the user', async () => {
-      vi.spyOn(console, 'error').mockImplementation(() => {});
       (loadFileData as Mock).mockResolvedValue({state: {}, queries: ['start']});
       runnerState.events = [savedInterrupt('interrupt-1')];
 
@@ -547,6 +876,191 @@ describe('cli_run', () => {
       });
 
       expect(output).not.toContain('is waiting');
+    });
+
+    it('attributes a node whose response was empty', async () => {
+      const output = await runOneTurn({
+        author: 'city_generator_agent',
+        content: {role: 'model', parts: [{text: ''}]},
+        output: '',
+      });
+
+      expect(output).toContain('[city_generator_agent]: (empty response)');
+    });
+
+    it('stays quiet for an event that carries no output at all', async () => {
+      const output = await runOneTurn({
+        author: 'bookkeeping',
+        content: {role: 'model', parts: []},
+      });
+
+      expect(output).not.toContain('[bookkeeping]');
+    });
+
+    it("prints an output-only event, the run's actual answer", async () => {
+      const output = await runOneTurn({
+        author: 'final_answer',
+        output: '<<HELLO!>>',
+      });
+
+      expect(output).toContain('[final_answer]: <<HELLO!>>');
+    });
+
+    it('renders a structured output-only event as JSON', async () => {
+      const output = await runOneTurn({
+        author: 'lookup',
+        output: {timeInfo: '10:10 AM', city: 'Paris'},
+      });
+
+      expect(output).toContain(
+        '[lookup]: {"timeInfo":"10:10 AM","city":"Paris"}',
+      );
+    });
+
+    it('does not print a node result twice when it fills content and output', async () => {
+      const output = await runOneTurn({
+        author: 'echo',
+        content: {role: 'model', parts: [{text: 'HELLO'}]},
+        output: 'HELLO',
+      });
+
+      expect(output.match(/\[echo\]: HELLO/g)).toHaveLength(1);
+    });
+
+    it('stays quiet for a partial (streaming) event', async () => {
+      const output = await runOneTurn({
+        author: 'streamer',
+        output: 'partial value',
+        partial: true,
+      });
+
+      expect(output).not.toContain('[streamer]');
+    });
+  });
+
+  describe('error reporting', () => {
+    // A failing model call (invalid API key, quota, safety block) is delivered
+    // as an event with no `content`, so it used to be dropped silently.
+    const errorEvent = {
+      author: 'test-agent',
+      errorCode: '400',
+      errorMessage: 'API key not valid. Please pass a valid API key.',
+    };
+
+    const answerOnce = (query: string) => {
+      (mockRl.question as Mock)
+        .mockImplementationOnce((_prompt: string, cb: (a: string) => void) =>
+          cb(query),
+        )
+        .mockImplementation((_prompt: string, cb: (a: string) => void) =>
+          cb('exit'),
+        );
+    };
+
+    it('reports an error event to stderr and exits non-zero interactively', async () => {
+      runnerState.events = [errorEvent];
+      answerOnce('hello');
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        sessionService: createMockSessionService(),
+      });
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('API key not valid'),
+      );
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('400'));
+      expect(process.exitCode).toBe(1);
+    });
+
+    it('reports an error event to stderr and exits non-zero when replaying', async () => {
+      runnerState.events = [errorEvent];
+      (loadFileData as Mock).mockResolvedValue({state: {}, queries: ['Hello']});
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        inputFile: 'input.json',
+        sessionService: createMockSessionService(),
+      });
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('API key not valid'),
+      );
+      expect(process.exitCode).toBe(1);
+    });
+
+    it('still prints text that accompanies an error event', async () => {
+      runnerState.events = [
+        {...errorEvent, content: {parts: [{text: 'partial'}]}},
+      ];
+      answerOnce('hello');
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        sessionService: createMockSessionService(),
+      });
+
+      expect(console.log).toHaveBeenCalledWith('[test-agent]: partial');
+      expect(process.exitCode).toBe(1);
+    });
+
+    it('leaves the exit code alone on a successful run', async () => {
+      answerOnce('hello');
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        sessionService: createMockSessionService(),
+      });
+
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(originalExitCode);
+    });
+
+    it('reports a thrown error to stderr and exits non-zero', async () => {
+      (mockAgentFile.load as Mock).mockRejectedValue(
+        new Error('Agent file agent.ts does not exists'),
+      );
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        sessionService: createMockSessionService(),
+      });
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Agent file agent.ts does not exists',
+        }),
+      );
+      expect(console.log).not.toHaveBeenCalledWith(expect.any(Error));
+      expect(process.exitCode).toBe(1);
+    });
+  });
+
+  describe('environment and logging setup', () => {
+    it('loads .env from the agent directory', async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-cli-run-env-'),
+      );
+      const agentFile = path.join(tempDir, 'agent.ts');
+      fs.writeFileSync(agentFile, '');
+      fs.writeFileSync(
+        path.join(tempDir, '.env'),
+        'ADK_CLI_RUN_DOTENV_TEST=loaded_from_env\n',
+      );
+
+      try {
+        await runAgent({
+          agentPath: agentFile,
+          sessionService: createMockSessionService(),
+        });
+
+        expect(process.env['ADK_CLI_RUN_DOTENV_TEST']).toBe('loaded_from_env');
+        expect(AgentFile).toHaveBeenCalledWith(agentFile, undefined);
+      } finally {
+        setLogger(null);
+        delete process.env['ADK_CLI_RUN_DOTENV_TEST'];
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
     });
   });
 });

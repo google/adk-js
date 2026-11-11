@@ -29,7 +29,7 @@
  *   npm run sample -- samples/workflows/data_handling/session_state/agent.ts
  */
 
-import {node, NodeContext, WorkflowAgent} from '@google/adk';
+import {node, NodeContext, Workflow} from '@google/adk';
 
 const initStateNode = node(
   (ctx: NodeContext, nodeInput: string) => {
@@ -58,7 +58,7 @@ const readStateNode = node(
   {name: 'read_state_node'},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'session_state_workflow',
   edges: [['START', initStateNode, taskAttemptNode, readStateNode]],
 });

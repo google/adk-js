@@ -18,7 +18,7 @@
  *   npm run sample -- samples/workflows/routes/sequence/agent.ts
  */
 
-import {node, NodeContext, WorkflowAgent} from '@google/adk';
+import {node, NodeContext, Workflow} from '@google/adk';
 
 const taskANode = node(
   (_ctx: NodeContext, nodeInput: string) => `Summary: ${nodeInput.trim()}`,
@@ -37,7 +37,7 @@ const taskCNode = node(
 
 // A single-node graph would simply be:
 //   edges: [['START', taskANode]]
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'sequential_workflow',
   edges: [['START', taskANode, taskBNode, taskCNode]],
 });

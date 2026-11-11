@@ -12,6 +12,7 @@ import {
   File,
 } from '../../code_executors/code_execution_utils.js';
 import {Script, Skill} from '../../skills/skill.js';
+import {recordSkillActivity} from '../../telemetry/api/instrumentation.js';
 import {experimental} from '../../utils/experimental.js';
 import {
   getMimeTypeAndEncoding,
@@ -79,6 +80,11 @@ export class RunSkillScriptTool extends BaseTool {
       };
     }
 
+    const skillActivity = recordSkillActivity({
+      kind: 'script',
+      skillName,
+      scriptPath,
+    });
     let skill;
     try {
       skill = await this.toolset.getOrFetchSkill(
@@ -98,12 +104,14 @@ export class RunSkillScriptTool extends BaseTool {
         errorCode: 'SKILL_NOT_FOUND',
       };
     }
+    skillActivity.recordSkill(skill);
 
-    const relScriptPath = scriptPath.startsWith('scripts/')
+    let relScriptPath = scriptPath.startsWith('scripts/')
       ? scriptPath.substring('scripts/'.length)
       : scriptPath;
     let script = skill.resources?.scripts?.[relScriptPath];
     if (!script) {
+      relScriptPath = scriptPath;
       script = skill.resources?.scripts?.[scriptPath];
     }
 
@@ -134,17 +142,26 @@ export class RunSkillScriptTool extends BaseTool {
       const result = await codeExecutor.executeCode({
         invocationContext: toolContext.invocationContext,
         codeExecutionInput: {
-          code: buildWrapperCode(scriptPath, language),
+          // Scripts are always written under scripts/ (see
+          // getSkillResourceFiles), with or without the prefix in script_path.
+          code: buildWrapperCode(`scripts/${relScriptPath}`, language),
           inputFiles: getSkillResourceFiles(skill),
           language,
           args: scriptArgs,
         },
       });
 
+      // Output file names are chosen by the executed script, so they are
+      // materialized into a dedicated output directory rather than being
+      // resolved against the host application's working directory.
+      const outputDir = await this.toolset.getScriptOutputDir();
       // Final filename could be different if there was a collision, so update the result.
-      result.outputFiles = await materializeFiles(result.outputFiles);
+      result.outputFiles = await materializeFiles(
+        result.outputFiles,
+        outputDir,
+      );
 
-      return result;
+      return {...result, outputDirectory: outputDir};
     } catch (e: unknown) {
       return {
         error: `Failed to execute script '${scriptPath}': ${(e as Error).message}`,

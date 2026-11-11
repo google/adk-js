@@ -7,7 +7,6 @@
 import {AuthProviderRegistry, AuthScheme, BaseAuthProvider} from '@google/adk';
 import {describe, expect, it} from 'vitest';
 
-// Mock auth provider for testing
 class MockAuthProvider implements BaseAuthProvider {
   async getAuthCredential() {
     return undefined;

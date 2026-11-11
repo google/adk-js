@@ -32,7 +32,11 @@ function timingSafeEqualStrings(a: string, b: string): boolean {
  * text on every call.
  *
  * ```ts
- * toA2a(agent, {authentication: bearerTokenUserBuilder(process.env.MY_TOKEN)});
+ * const token = process.env.MY_TOKEN;
+ * if (!token) {
+ *   throw new Error('MY_TOKEN is not set');
+ * }
+ * toA2a(agent, {authentication: bearerTokenUserBuilder(token)});
  * ```
  *
  * A rejected request surfaces as whatever the `@a2a-js/sdk` handler produces

@@ -18,10 +18,6 @@ setLogLevel(LogLevel.DEBUG);
 class MockLll extends BaseLlm {
   static supportedModels = ['test-llm-model'];
 
-  async generateContentAsync(prompt) {
-    return `Mock response to: ${prompt}`;
-  }
-
   async *generateContentAsync() {
     const generateContentResponse = new GenerateContentResponse();
 

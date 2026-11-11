@@ -40,10 +40,10 @@ export interface ApigeeLlmParams extends GeminiParams {
    */
   proxyUrl?: string;
   /**
-   * API key to use. If not provided, it will look for
-   * the GOOGLE_GENAI_API_KEY or GEMINI_API_KEY environment variable. If gemini
-   * provider is selected and no key is provided, the fake key "-" will be
-   * used for the "x-goog-api-key" header.
+   * API key to use. If not provided, it will look for the GOOGLE_GENAI_API_KEY,
+   * GOOGLE_API_KEY or GEMINI_API_KEY environment variable, in that order. If
+   * gemini provider is selected and no key is provided, the fake key "-" will
+   * be used for the "x-goog-api-key" header.
    */
   apiKey?: string;
 }
@@ -211,7 +211,7 @@ function validateModel(model: string): boolean {
   if (modelPart.length === 0) {
     return false;
   }
-  const components = modelPart.split('/', -1);
+  const components = modelPart.split('/');
   if (components[components.length - 1].length === 0) {
     return false;
   }

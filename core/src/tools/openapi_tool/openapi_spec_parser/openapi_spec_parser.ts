@@ -5,6 +5,8 @@
  */
 
 import {OpenAPIV3} from 'openapi-types';
+import {AuthCredential} from '../../../auth/auth_credential.js';
+import {toSnakeCaseName} from '../../../utils/case_utils.js';
 import {experimental} from '../../../utils/experimental.js';
 import {ApiParameter, OperationParser} from './operation_parser.js';
 
@@ -32,14 +34,38 @@ export interface ParsedOperation {
   parameters: ApiParameter[];
   returnValue?: ApiParameter;
   authScheme?: OpenAPIV3.SecuritySchemeObject;
+  /**
+   * Credential for the operation. The parser leaves this undefined; a caller
+   * that builds a `ParsedOperation` by hand can set it, and `OpenAPIToolset`
+   * passes it to the tool it creates.
+   */
+  authCredential?: AuthCredential;
 }
 
 @experimental
 export class OpenApiSpecParser {
   private preservePropertyNames: boolean;
+  private unconstrainedObjectBodyAsParameter: boolean;
 
-  constructor(options: {preservePropertyNames?: boolean} = {}) {
+  /**
+   * @param options.preservePropertyNames Keeps the original parameter and
+   *     function names instead of converting them to snake_case.
+   * @param options.unconstrainedObjectBodyAsParameter Emits a whole-body
+   *     parameter named `body` when an object request body schema has no
+   *     properties. Defaults to `false`.
+   *     @deprecated Retained for backwards compatibility; empty object schemas
+   *     produce no parameters by default. This option will be removed in a
+   *     future release.
+   */
+  constructor(
+    options: {
+      preservePropertyNames?: boolean;
+      unconstrainedObjectBodyAsParameter?: boolean;
+    } = {},
+  ) {
     this.preservePropertyNames = options.preservePropertyNames ?? false;
+    this.unconstrainedObjectBodyAsParameter =
+      options.unconstrainedObjectBodyAsParameter ?? false;
   }
 
   /**
@@ -54,16 +80,29 @@ export class OpenApiSpecParser {
     const sanitizedSpec = sanitizeSchemaTypes(resolvedSpec);
     return collectOperations(sanitizedSpec, {
       preservePropertyNames: this.preservePropertyNames,
+      unconstrainedObjectBodyAsParameter:
+        this.unconstrainedObjectBodyAsParameter,
     });
   }
 }
 
 /**
+ * Copies a JSON-serializable value.
+ */
+function deepCopy<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+/**
  * Resolves all internal $ref references in the OpenAPI spec document.
+ *
+ * Every resolved reference is copied out of the cache, so two operations that
+ * reference the same schema receive independent object graphs. The returned
+ * document shares nothing with `spec`.
  */
 function resolveReferences(spec: OpenAPIV3.Document): OpenAPIV3.Document {
   const resolvedCache = new Map<string, unknown>();
-  const specCopy = JSON.parse(JSON.stringify(spec)); // Deep copy
+  const specCopy = deepCopy(spec);
 
   const recursiveResolve = (
     obj: unknown,
@@ -92,14 +131,14 @@ function resolveReferences(spec: OpenAPIV3.Document): OpenAPIV3.Document {
       seenRefs.add(refString);
 
       if (resolvedCache.has(refString)) {
-        return resolvedCache.get(refString);
+        return deepCopy(resolvedCache.get(refString));
       }
 
       let resolvedValue = resolveRef(refString, currentDoc);
       if (resolvedValue !== undefined) {
         resolvedValue = recursiveResolve(resolvedValue, currentDoc, seenRefs);
         resolvedCache.set(refString, resolvedValue);
-        return resolvedValue;
+        return deepCopy(resolvedValue);
       } else {
         return obj;
       }
@@ -139,13 +178,15 @@ function resolveRef(
 }
 
 /**
- * Sanitizes schema types in the spec to ensure compatibility with Gemini function calling.
+ * Sanitizes schema types in the spec to ensure compatibility with Gemini
+ * function calling.
+ *
+ * Rewrites `openapiSpec` in place. Its only caller passes the output of
+ * `resolveReferences`, which shares nothing with the caller's document.
  */
 function sanitizeSchemaTypes(
   openapiSpec: OpenAPIV3.Document,
 ): OpenAPIV3.Document {
-  const specCopy = JSON.parse(JSON.stringify(openapiSpec));
-
   const sanitizeTypeField = (schemaDict: Record<string, unknown>) => {
     if (!('type' in schemaDict)) return;
 
@@ -201,7 +242,7 @@ function sanitizeSchemaTypes(
     return objRecord;
   };
 
-  return sanitizeRecursive(specCopy, false) as OpenAPIV3.Document;
+  return sanitizeRecursive(openapiSpec, false) as OpenAPIV3.Document;
 }
 
 /**
@@ -232,9 +273,14 @@ function resolveServerUrl(server: OpenAPIV3.ServerObject): string {
  */
 function collectOperations(
   spec: OpenAPIV3.Document,
-  options: {preservePropertyNames?: boolean} = {},
+  options: {
+    preservePropertyNames?: boolean;
+    unconstrainedObjectBodyAsParameter?: boolean;
+  } = {},
 ): ParsedOperation[] {
   const preservePropertyNames = options.preservePropertyNames ?? false;
+  const unconstrainedObjectBodyAsParameter =
+    options.unconstrainedObjectBodyAsParameter ?? false;
   const operations: ParsedOperation[] = [];
   const server = spec.servers?.[0];
   const baseUrl = server ? resolveServerUrl(server) : '';
@@ -276,11 +322,12 @@ function collectOperations(
 
       if (!operation.operationId) {
         // Generate operation ID if missing
-        operation.operationId = `${method}_${path.replace(/[^a-zA-Z0-9]/g, '_')}`;
+        operation.operationId = toSnakeCaseName(`${path}_${method}`);
       }
 
       const parser = new OperationParser(operation, {
         preservePropertyNames,
+        unconstrainedObjectBodyAsParameter,
       });
 
       let authSchemeName: string | undefined;
@@ -299,6 +346,7 @@ function collectOperations(
         endpoint: {baseUrl, path, method},
         operation: operation,
         parameters: parser.getParameters(),
+        returnValue: parser.getReturnValue(),
         authScheme: authScheme,
       });
     }

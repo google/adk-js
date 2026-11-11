@@ -6,20 +6,32 @@
 
 import {
   AudioTranscriptionConfig,
+  ContextWindowCompressionConfig,
   Modality,
   ProactivityConfig,
   RealtimeInputConfig,
   SpeechConfig,
 } from '@google/genai';
 
+import type {TelemetryConfig} from '../telemetry/api/instrumentation.js';
 import {logger} from '../utils/logger.js';
 
 /**
  * The streaming mode for the run config.
  */
 export enum StreamingMode {
+  /** Deliver the response as a single event once the turn completes. */
   NONE = 'none',
+  /**
+   * Deliver the response incrementally, as a series of partial events
+   * followed by a final event carrying the complete text.
+   */
   SSE = 'sse',
+  /**
+   * Reserved. Bidirectional streaming is reached through `Runner.runLive()`,
+   * not through this value: `runLive` itself calls `createRunConfig`, which
+   * rejects `BIDI`. Use {@link StreamingMode.SSE} for incremental responses.
+   */
   BIDI = 'bidi',
 }
 
@@ -53,7 +65,11 @@ export interface RunConfig {
   supportCfc?: boolean;
 
   /**
-   * Streaming mode, None or StreamingMode.SSE or StreamingMode.BIDI.
+   * How the response is delivered. Defaults to {@link StreamingMode.NONE},
+   * which emits one event when the turn completes; set
+   * {@link StreamingMode.SSE} to receive partial events as the response is
+   * produced. {@link StreamingMode.BIDI} is rejected by `createRunConfig`;
+   * bidirectional streaming is reached through `Runner.runLive()` instead.
    */
   streamingMode?: StreamingMode;
 
@@ -85,11 +101,18 @@ export interface RunConfig {
   realtimeInputConfig?: RealtimeInputConfig;
 
   /**
+   * Context window compression config. When the running context exceeds
+   * `triggerTokens`, the server compresses older history to `targetTokens`.
+   */
+  contextWindowCompression?: ContextWindowCompressionConfig;
+
+  /**
    * A limit on the total number of llm calls for a given run.
    *
    * Valid Values:
-   *   - More than 0 and less than sys.maxsize: The bound on the number of llm
-   *     calls is enforced, if the value is set in this range.
+   *   - More than 0 and at most `Number.MAX_SAFE_INTEGER`: The bound on the
+   *     number of llm calls is enforced. `createRunConfig()` throws for
+   *     anything larger.
    *   - Less than or equal to 0: This allows for unbounded number of llm calls.
    */
   maxLlmCalls?: number;
@@ -107,6 +130,57 @@ export interface RunConfig {
    * decision; interactive front-ends (e.g. `adk run`) opt in explicitly.
    */
   plainTextToolConfirmation?: boolean;
+
+  /**
+   * Request-level metadata passed from an incoming A2A request or caller.
+   */
+  a2aMetadata?: Record<string, unknown>;
+
+  /**
+   * If true, a `requireConfirmation` gate may be answered by a message that
+   * arrived over A2A.
+   *
+   * Off by default: a remote peer is not the human operator, and a peer that
+   * can post to the task would otherwise be able to approve a dangerous tool
+   * call on the operator's behalf — the thing the gate exists to prevent. Turn
+   * it on only where the peer is a trusted relay for a real person: a front-end
+   * that renders the prompt and sends back what they chose.
+   *
+   * A deliberate divergence from adk-python, which refuses a remote-delivered
+   * confirmation outright and offers no way back. The default matches; the
+   * option does not exist there.
+   */
+  allowRemoteToolConfirmation?: boolean;
+
+  /**
+   * Telemetry overrides for this run.
+   *
+   * Each field set here replaces its environment variable for the spans, log
+   * records and metrics of this run only; a field left unset falls back to the
+   * environment. An operator can make the environment win over every run by
+   * setting `ADK_TELEMETRY_IGNORE_RUN_CONFIG` to `true` or `1`.
+   *
+   * WARNING: This feature is **experimental** and its API or behavior may
+   * change in future releases.
+   */
+  telemetry?: TelemetryConfig;
+
+  /**
+   * Set by the A2A executor to record that this run's message came from a
+   * remote peer. Not part of the configuration surface: an application setting
+   * it by hand is asserting something about the message's provenance that only
+   * the transport can know.
+   *
+   * Read by the tool-confirmation resume path only. The other two interrupts a
+   * peer can answer — `adk_request_credential` and `adk_request_input` — are
+   * answerable by a client by design: a credential is something a client holds,
+   * and an input request asks for data, not for judgement. Confirmation is the
+   * one that asks a specific human to take responsibility for an action, which
+   * is why it is the one a peer cannot stand in for.
+   *
+   * @internal
+   */
+  remoteDelivered?: boolean;
 }
 
 /**
@@ -123,8 +197,10 @@ export interface RunConfig {
  * @param params - Optional partial {@link RunConfig} overriding defaults.
  * @returns A merged {@link RunConfig} object.
  * @throws {Error} When `params.maxLlmCalls` exceeds `Number.MAX_SAFE_INTEGER`.
+ * @throws {Error} When `params.streamingMode` is {@link StreamingMode.BIDI}.
  */
 export function createRunConfig(params: Partial<RunConfig> = {}) {
+  validateStreamingMode(params.streamingMode);
   return {
     saveInputBlobsAsArtifacts: false,
     supportCfc: false,
@@ -134,6 +210,14 @@ export function createRunConfig(params: Partial<RunConfig> = {}) {
     ...params,
     maxLlmCalls: validateMaxLlmCalls(params.maxLlmCalls ?? 500),
   };
+}
+
+function validateStreamingMode(streamingMode?: StreamingMode): void {
+  if (streamingMode === StreamingMode.BIDI) {
+    throw new Error(
+      'StreamingMode.BIDI is not supported; use StreamingMode.SSE.',
+    );
+  }
 }
 
 function validateMaxLlmCalls(value: number): number {

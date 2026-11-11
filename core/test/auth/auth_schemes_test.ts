@@ -4,7 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {OAuthGrantType} from '@google/adk';
+import {
+  AuthSchemeType,
+  getOAuthGrantTypeFromFlow as getOAuthGrantTypeFromFlowFromPackage,
+  OAuthGrantType,
+} from '@google/adk';
 import {describe, expect, it} from 'vitest';
 import {getOAuthGrantTypeFromFlow} from '../../src/auth/auth_schemes.js';
 
@@ -59,5 +63,39 @@ describe('auth_schemes', () => {
       const flow = {};
       expect(getOAuthGrantTypeFromFlow(flow)).toBeUndefined();
     });
+  });
+});
+
+describe('AuthSchemeType', () => {
+  it('uses the OpenAPI security scheme type strings as values', () => {
+    expect(AuthSchemeType.API_KEY).toBe('apiKey');
+    expect(AuthSchemeType.HTTP).toBe('http');
+    expect(AuthSchemeType.OAUTH2).toBe('oauth2');
+    expect(AuthSchemeType.OPEN_ID_CONNECT).toBe('openIdConnect');
+  });
+
+  it('enumerates exactly the four scheme types', () => {
+    expect(Object.values(AuthSchemeType)).toEqual([
+      'apiKey',
+      'http',
+      'oauth2',
+      'openIdConnect',
+    ]);
+  });
+});
+
+describe('getOAuthGrantTypeFromFlow package export', () => {
+  it('is the same function the module defines', () => {
+    expect(getOAuthGrantTypeFromFlowFromPackage).toBe(
+      getOAuthGrantTypeFromFlow,
+    );
+  });
+
+  it('reads the grant type of an OAuth2 scheme', () => {
+    expect(
+      getOAuthGrantTypeFromFlowFromPackage({
+        password: {tokenUrl: 'https://example.com/token', scopes: {}},
+      }),
+    ).toBe(OAuthGrantType.PASSWORD);
   });
 });

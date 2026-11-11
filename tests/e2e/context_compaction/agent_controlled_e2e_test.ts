@@ -98,7 +98,6 @@ describe('E2e Context Compaction Agent-Controlled', () => {
         sessionId: session.id,
       });
 
-      // Find if there is a CompactedEvent
       const compactedEvents = updatedSession!.events.filter(isCompactedEvent);
       expect(compactedEvents.length).toBeGreaterThan(0);
 

@@ -3,21 +3,20 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import AdmZip from 'adm-zip';
 import esbuild from 'esbuild';
+import {shimPlugin} from 'esbuild-shim-plugin';
+import fg from 'fast-glob';
 import {createWriteStream, existsSync, unlink} from 'node:fs';
 import {mkdir, readFile, rename, rm, writeFile} from 'node:fs/promises';
 import * as https from 'node:https';
 import * as path from 'node:path';
 import {fileURLToPath} from 'node:url';
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import AdmZip from 'adm-zip';
-import {shimPlugin} from 'esbuild-shim-plugin';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const ADK_WEB_VERSION = 'v1.0.0';
+const ADK_WEB_VERSION = 'v1.0.5';
 const cacheDir = path.join(__dirname, '.cache');
 const zipCachePath = path.join(cacheDir, `adk-web-${ADK_WEB_VERSION}.zip`);
 
@@ -163,6 +162,13 @@ async function ensureBrowserAssets() {
  * Builds the ADK devtools library.
  */
 async function main() {
+  // The CLI entrypoint ships as ESM only (`bin` in package.json), so a CJS copy
+  // is unreachable - and having it in the cjs pass makes esbuild reject
+  // top-level await for the whole build.
+  const cjsEntryPoints = await fg('./src/**/*.ts', {
+    ignore: ['./src/cli_entrypoint.ts'],
+  });
+
   // Run builds in parallel
   await Promise.all([
     esbuild.build({
@@ -175,7 +181,7 @@ async function main() {
     }),
     esbuild.build({
       ...commonOptions,
-      entryPoints: ['./src/**/*.ts'],
+      entryPoints: cjsEntryPoints,
       outdir: 'dist/cjs',
       format: 'cjs',
       bundle: false,

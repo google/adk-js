@@ -5,6 +5,7 @@
  */
 
 import {Content, FunctionDeclaration, Type} from '@google/genai';
+import {isEqual} from 'lodash-es';
 
 import {BaseAgent} from '../agents/base_agent.js';
 import {isLlmAgent} from '../agents/llm_agent.js';
@@ -18,6 +19,62 @@ import {State} from '../sessions/state.js';
 
 import {BaseTool, RunAsyncToolRequest} from './base_tool.js';
 import {ForwardingArtifactService} from './forwarding_artifact_service.js';
+
+import {parseWithSchema} from '../utils/schema.js';
+import {isZodSchema} from '../utils/simple_zod_to_json.js';
+
+type LlmAgentInstance = typeof isLlmAgent extends (
+  obj: unknown,
+) => obj is infer T
+  ? T
+  : never;
+
+function excludeNone<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => excludeNone(item)) as unknown as T;
+  }
+  if (value !== null && typeof value === 'object') {
+    const result: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+      if (val !== null && val !== undefined) {
+        result[key] = excludeNone(val);
+      }
+    }
+    return result as T;
+  }
+  return value;
+}
+
+function validateAndStripAgentInput(
+  agent: LlmAgentInstance,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  if (typeof args !== 'object' || args === null || Array.isArray(args)) {
+    throw new Error('AgentTool input args must be a plain object.');
+  }
+  const schema = isZodSchema(agent.inputSchema)
+    ? agent.inputSchema
+    : (agent.inputSchemaSource ?? agent.inputSchema);
+  const validated = parseWithSchema(schema, args);
+  return excludeNone(validated);
+}
+
+function validateAndStripAgentOutput(
+  agent: LlmAgentInstance,
+  mergedText: string,
+): unknown {
+  const parsed: unknown = JSON.parse(mergedText);
+  const validated =
+    typeof agent.validateOutput === 'function'
+      ? agent.validateOutput(parsed)
+      : parseWithSchema(
+          isZodSchema(agent.outputSchema)
+            ? agent.outputSchema
+            : (agent.outputSchemaSource ?? agent.outputSchema),
+          parsed,
+        );
+  return excludeNone(validated);
+}
 
 /**
  * The configuration of the agent tool.
@@ -88,8 +145,7 @@ export class AgentTool extends BaseTool {
         name: this.name,
         description: this.description,
         // TODO(b/425992518): We should not use the agent's input schema as is.
-        // It should be validated and possibly transformed. Consider similar
-        // logic to one we have in Python ADK.
+        // It should be validated and possibly transformed first.
         parameters: this.agent.inputSchema,
       };
     } else {
@@ -131,12 +187,15 @@ export class AgentTool extends BaseTool {
     // skipSummarization.
 
     const hasInputSchema = isLlmAgent(this.agent) && this.agent.inputSchema;
+    if (hasInputSchema && isLlmAgent(this.agent)) {
+      args = validateAndStripAgentInput(this.agent, args);
+    }
     const content: Content = {
       role: 'user',
       parts: [
         {
-          // TODO(b/425992518): Should be validated. Consider similar
-          // logic to one we have in Python ADK.
+          // TODO(b/425992518): Args should be validated against the agent's
+          // input schema before being forwarded.
           text: hasInputSchema
             ? JSON.stringify(args)
             : (args['request'] as string),
@@ -157,12 +216,23 @@ export class AgentTool extends BaseTool {
       credentialService: toolContext.invocationContext.credentialService,
     });
 
+    const parentState = toolContext.state.toRecord();
     const session = await runner.sessionService.getOrCreateSession({
       appName: this.agent.name,
       userId: toolContext.invocationContext.userId,
       sessionId: toolContext.invocationContext.session.id,
-      state: toolContext.state.toRecord(),
+      state: parentState,
     });
+
+    // A reused session still holds the state from the previous call, so carry
+    // over whatever the parent changed since then.
+    const stateDelta = Object.fromEntries(
+      Object.entries(parentState).filter(
+        ([key, value]) =>
+          !key.startsWith(State.TEMP_PREFIX) &&
+          !isEqual(session.state[key], value),
+      ),
+    );
 
     if (toolContext.abortSignal?.aborted) {
       return '';
@@ -173,6 +243,7 @@ export class AgentTool extends BaseTool {
       userId: session.userId,
       sessionId: session.id,
       newMessage: content,
+      stateDelta: Object.keys(stateDelta).length > 0 ? stateDelta : undefined,
       abortSignal: toolContext.abortSignal,
     })) {
       if (toolContext.abortSignal?.aborted) {
@@ -205,8 +276,12 @@ export class AgentTool extends BaseTool {
       .filter((text) => text)
       .join('\n');
 
+    if (hasOutputSchema && isLlmAgent(this.agent)) {
+      return validateAndStripAgentOutput(this.agent, mergedText);
+    }
+
     // TODO - b/425992518: In case of output schema, the output should be
-    // validated. Consider similar logic to one we have in Python ADK.
+    // validated against that schema before being returned.
     return hasOutputSchema ? JSON.parse(mergedText) : mergedText;
   }
 }

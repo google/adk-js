@@ -9,9 +9,12 @@ import {
   OpenApiSpecParser,
   OpenAPIToolset,
   ReadonlyContext,
+  RestApiTool,
 } from '@google/adk';
+import * as yaml from 'js-yaml';
 import {OpenAPIV3} from 'openapi-types';
-import {describe, expect, it} from 'vitest';
+import {describe, expect, it, vi} from 'vitest';
+import {logger} from '../../../src/utils/logger.js';
 
 describe('OpenAPIToolset', () => {
   const mockSpec: OpenAPIV3.Document = {
@@ -161,6 +164,17 @@ describe('OpenAPIToolset', () => {
     expect(tools[0].name).toBe('get_users');
   });
 
+  it('should apply a predicate toolFilter when no context is provided', async () => {
+    const toolset = new OpenAPIToolset({
+      specDict: mockSpec,
+      toolFilter: (tool) => tool.name === 'get_users',
+    });
+    const tools = await toolset.getTools();
+
+    expect(tools.length).toBe(1);
+    expect(tools[0].name).toBe('get_users');
+  });
+
   it('should handle context in getTools', async () => {
     const toolset = new OpenAPIToolset({specDict: mockSpec});
     const mockContext = {};
@@ -178,6 +192,98 @@ describe('OpenAPIToolset', () => {
   it('should call close', async () => {
     const toolset = new OpenAPIToolset({specDict: mockSpec});
     await expect(toolset.close()).resolves.toBeUndefined();
+  });
+
+  it('should return a parsed tool by name from getTool', () => {
+    const toolset = new OpenAPIToolset({specDict: mockSpec});
+
+    expect(toolset.getTool('get_users')?.name).toBe('get_users');
+    expect(toolset.getTool('create_user')?.name).toBe('create_user');
+  });
+
+  it('should return undefined from getTool for an unknown name', () => {
+    const toolset = new OpenAPIToolset({specDict: mockSpec});
+
+    expect(toolset.getTool('no_such_tool')).toBeUndefined();
+  });
+
+  it('should look up the prefixed name in getTool when a prefix is set', () => {
+    const toolset = new OpenAPIToolset({specDict: mockSpec, prefix: 'test'});
+
+    expect(toolset.getTool('test_get_users')?.name).toBe('test_get_users');
+    expect(toolset.getTool('get_users')).toBeUndefined();
+  });
+
+  it('should not apply toolFilter in getTool', async () => {
+    const toolset = new OpenAPIToolset({
+      specDict: mockSpec,
+      toolFilter: ['get_users'],
+    });
+
+    expect((await toolset.getTools()).length).toBe(1);
+    expect(toolset.getTool('create_user')?.name).toBe('create_user');
+  });
+
+  it('should log one line naming each parsed tool', () => {
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+
+    new OpenAPIToolset({specDict: mockSpec});
+
+    expect(infoSpy.mock.calls).toEqual([
+      ['Parsed tool: get_users'],
+      ['Parsed tool: create_user'],
+    ]);
+    infoSpy.mockRestore();
+  });
+
+  it('should auto-detect YAML from a spec string with no specType', async () => {
+    const toolset = new OpenAPIToolset({
+      specStr: `---\n${yaml.dump(mockSpec)}`,
+    });
+    const tools = await toolset.getTools();
+
+    expect(tools.map((tool) => tool.name)).toEqual([
+      'get_users',
+      'create_user',
+    ]);
+  });
+
+  it('should accept a supported specType on the spec string path', async () => {
+    const toolset = new OpenAPIToolset({
+      specStr: JSON.stringify(mockSpec),
+      specType: 'json',
+    });
+
+    expect((await toolset.getTools()).length).toBe(2);
+  });
+});
+
+describe('OpenAPIToolset spec type', () => {
+  const minimalSpec: OpenAPIV3.Document = {
+    openapi: '3.0.0',
+    info: {title: 'Test', version: '1.0'},
+    paths: {},
+  };
+
+  it('should throw naming the unsupported spec type', () => {
+    expect(() => {
+      // The compiler rejects 'xml' outright, so the only caller that reaches
+      // this branch is untyped JavaScript or configuration read at run time.
+      // The cast is how a typed test stands in for that caller.
+      new OpenAPIToolset({specStr: '{}', specType: 'xml' as 'json'});
+    }).toThrow('Unsupported spec type: xml');
+  });
+
+  it('should accept json and yaml', () => {
+    expect(() => {
+      new OpenAPIToolset({
+        specStr: JSON.stringify(minimalSpec),
+        specType: 'json',
+      });
+    }).not.toThrow();
+    expect(() => {
+      new OpenAPIToolset({specStr: yaml.dump(minimalSpec), specType: 'yaml'});
+    }).not.toThrow();
   });
 });
 
@@ -255,7 +361,7 @@ describe('OpenApiSpecParser', () => {
     const operations = parser.parse(specMissingId);
 
     expect(operations.length).toBe(1);
-    expect(operations[0].operation.operationId).toBe('get__test');
+    expect(operations[0].operation.operationId).toBe('test_get');
   });
 
   it('should extract specific security scheme', () => {
@@ -387,8 +493,7 @@ describe('OpenApiSpecParser', () => {
 
     expect(operations.length).toBe(1);
     const response = operations[0].operation.responses?.['200'] as
-      | OpenAPIV3.ResponseObject
-      | undefined;
+      OpenAPIV3.ResponseObject | undefined;
     const schema = response?.content?.['application/json']
       ?.schema as OpenAPIV3.SchemaObject;
     const invalidPropSchema = schema.properties?.[
@@ -434,13 +539,73 @@ describe('OpenApiSpecParser', () => {
 
     expect(operations.length).toBe(1);
     const response = operations[0].operation.responses?.['200'] as
-      | OpenAPIV3.ResponseObject
-      | undefined;
+      OpenAPIV3.ResponseObject | undefined;
     const schema = response?.content?.['application/json']
       ?.schema as OpenAPIV3.SchemaObject;
     const multiPropSchema = schema.properties?.[
       'multiProp'
     ] as OpenAPIV3.SchemaObject;
     expect(multiPropSchema.type).toEqual(['string', 'integer']);
+  });
+
+  it('should omit whole-body parameter for empty object request body by default', async () => {
+    const specWithEmptyObjectBody: OpenAPIV3.Document = {
+      openapi: '3.0.0',
+      info: {title: 'Test', version: '1.0.0'},
+      servers: [{url: 'https://api.example.com'}],
+      paths: {
+        '/items': {
+          post: {
+            operationId: 'createItem',
+            requestBody: {
+              content: {
+                'application/json': {
+                  schema: {type: 'object'},
+                },
+              },
+            },
+            responses: {'200': {description: 'OK'}},
+          },
+        },
+      },
+    };
+
+    const toolset = new OpenAPIToolset({specDict: specWithEmptyObjectBody});
+    const tools = await toolset.getTools();
+    expect(tools.length).toBe(1);
+    const decl = (tools[0] as RestApiTool)._getDeclaration();
+    expect(decl.parameters?.properties).toEqual({});
+  });
+
+  it('should emit whole-body parameter for empty object request body when unconstrainedObjectBodyAsParameter is true', async () => {
+    const specWithEmptyObjectBody: OpenAPIV3.Document = {
+      openapi: '3.0.0',
+      info: {title: 'Test', version: '1.0.0'},
+      servers: [{url: 'https://api.example.com'}],
+      paths: {
+        '/items': {
+          post: {
+            operationId: 'createItem',
+            requestBody: {
+              content: {
+                'application/json': {
+                  schema: {type: 'object'},
+                },
+              },
+            },
+            responses: {'200': {description: 'OK'}},
+          },
+        },
+      },
+    };
+
+    const toolset = new OpenAPIToolset({
+      specDict: specWithEmptyObjectBody,
+      unconstrainedObjectBodyAsParameter: true,
+    });
+    const tools = await toolset.getTools();
+    expect(tools.length).toBe(1);
+    const decl = (tools[0] as RestApiTool)._getDeclaration();
+    expect(decl.parameters?.properties).toHaveProperty('body');
   });
 });

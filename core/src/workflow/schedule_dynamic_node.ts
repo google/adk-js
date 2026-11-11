@@ -51,6 +51,12 @@ export interface DynamicNodeRun {
   output?: unknown;
   task?: Promise<NodeContext>;
   transferToAgent?: string;
+  /**
+   * The result of a run that completed without executing its body, kept so a
+   * repeat call for the same path hands back the same result. Runs that did
+   * execute are deduplicated by `task` instead.
+   */
+  result?: NodeResult;
 }
 
 /**

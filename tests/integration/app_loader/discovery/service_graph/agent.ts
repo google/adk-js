@@ -16,8 +16,8 @@ const answer = node(
 );
 
 /**
- * A directory entrypoint whose root is a bare `Workflow` — no `WorkflowAgent`
- * and no `App` around it. Function nodes rather than an `LlmAgent`, so it can
+ * A directory entrypoint whose root is a bare `Workflow`, with no `App` around
+ * it. Function nodes rather than an `LlmAgent`, so it can
  * be run for real without a model.
  */
 export const rootAgent = new Workflow({

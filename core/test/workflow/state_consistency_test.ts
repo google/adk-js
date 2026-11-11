@@ -18,7 +18,7 @@ import {InMemorySessionService} from '../../src/sessions/in_memory_session_servi
 import {AsyncQueue} from '../../src/utils/async_queue.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
 import {FunctionNode} from '../../src/workflow/nodes/function_node.js';
-import {WorkflowAgent} from '../../src/workflow/workflow_agent.js';
+import {Workflow} from '../../src/workflow/workflow.js';
 import {createIc} from './test_helpers.js';
 
 /** A model that replays canned responses, one per call. */
@@ -79,7 +79,7 @@ async function drain(gen: AsyncGenerator<Event>): Promise<Event[]> {
   return out;
 }
 
-async function runOnce(agent: WorkflowAgent, text = 'x') {
+async function runOnce(agent: Workflow, text = 'x') {
   const sessionService = new InMemorySessionService();
   const session = await sessionService.createSession({
     appName: 'test_app',
@@ -123,7 +123,7 @@ describe('workflow state consistency across nodes', () => {
     });
 
     const {state} = await runOnce(
-      new WorkflowAgent({name: 'state_wf', edges: [['START', a, b, c]]}),
+      new Workflow({name: 'state_wf', edges: [['START', a, b, c]]}),
     );
 
     expect(reads).toEqual([1]);
@@ -160,7 +160,7 @@ describe('workflow state consistency across nodes', () => {
     });
 
     const {state} = await runOnce(
-      new WorkflowAgent({name: 'no_rollback_wf', edges: [['START', a, b, c]]}),
+      new Workflow({name: 'no_rollback_wf', edges: [['START', a, b, c]]}),
     );
 
     expect(seen).toEqual([1, 1, 1]);
@@ -179,7 +179,7 @@ describe('workflow state consistency across nodes', () => {
 
     const nodes = ['n1', 'n2', 'n3', 'n4', 'n5'].map(bump);
     const {state} = await runOnce(
-      new WorkflowAgent({name: 'chain_wf', edges: [['START', ...nodes]]}),
+      new Workflow({name: 'chain_wf', edges: [['START', ...nodes]]}),
     );
 
     expect(reads).toEqual([1, 2, 3, 4, 5]);
@@ -199,7 +199,7 @@ describe('workflow state consistency across nodes', () => {
       userId: 'u1',
       state: {seeded: 'from-before'},
     });
-    const agent = new WorkflowAgent({
+    const agent = new Workflow({
       name: 'seeded_wf',
       edges: [['START', read]],
     });
@@ -230,7 +230,7 @@ describe('workflow state consistency across nodes', () => {
     });
 
     await runOnce(
-      new WorkflowAgent({name: 'tmpl_wf', edges: [['START', write, peek]]}),
+      new Workflow({name: 'tmpl_wf', edges: [['START', write, peek]]}),
     );
 
     expect(observed).toBe('oceans');
@@ -253,7 +253,7 @@ describe('workflow state consistency across nodes', () => {
     });
 
     const {state} = await runOnce(
-      new WorkflowAgent({name: 'update_wf', edges: [['START', write, peek]]}),
+      new Workflow({name: 'update_wf', edges: [['START', write, peek]]}),
     );
 
     expect(readBack).toBe('oceans');
@@ -295,7 +295,7 @@ describe('workflow state consistency across nodes', () => {
     });
 
     const {state} = await runOnce(
-      new WorkflowAgent({
+      new Workflow({
         name: 'output_key_wf',
         edges: [['START', writer, peek]],
       }),
@@ -323,7 +323,7 @@ describe('workflow state consistency across nodes', () => {
     const reader = new StateReaderAgent({name: 'reader'}, reads);
 
     const {state} = await runOnce(
-      new WorkflowAgent({
+      new Workflow({
         name: 'agent_reads_wf',
         edges: [['START', a, b, reader]],
       }),
@@ -350,7 +350,7 @@ describe('workflow state consistency across nodes', () => {
     const reader = new StateReaderAgent({name: 'reader'}, reads);
 
     const {state} = await runOnce(
-      new WorkflowAgent({
+      new Workflow({
         name: 'parallel_writers_wf',
         edges: [
           ['START', slow, join],
@@ -397,7 +397,7 @@ describe('workflow state consistency across nodes', () => {
       seen.push(next);
       return next;
     });
-    const agent = new WorkflowAgent({
+    const agent = new Workflow({
       name: 'isolated_wf',
       edges: [['START', bump]],
     });

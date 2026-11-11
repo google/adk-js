@@ -13,6 +13,7 @@ import {
   saveToFile,
   tryToFindFileRecursively,
 } from '../../utils/file_utils.js';
+import {version} from '../../version.js';
 
 export const execAsync = promisify(exec);
 export const spawnAsync = (
@@ -21,7 +22,10 @@ export const spawnAsync = (
   options: SpawnOptions,
 ) => {
   return new Promise<void>((resolve, reject) => {
-    const child = spawn(command, args, options);
+    const child = spawn(command, args, {
+      ...options,
+      shell: process.platform === 'win32',
+    });
     child.on('close', (code: number) => {
       if (code === 0) {
         resolve();
@@ -35,6 +39,17 @@ export const spawnAsync = (
 
 export const REQUIRED_NPM_PACKAGES = ['@google/adk'];
 
+/**
+ * Base image for the generated Dockerfile.
+ *
+ * Pinned to an explicit Node major instead of the floating `node:lts-alpine`
+ * tag. `lts` re-points to the next Node LTS line when it is promoted, so an
+ * unchanged agent rebuilt later would move to a Node major that this SDK was
+ * never exercised against, with no diff to show for it. Bump this deliberately
+ * when the SDK adopts a newer LTS.
+ */
+const NODE_BASE_IMAGE = 'node:24-alpine';
+
 export interface CreateDockerFileContentOptions {
   appName?: string;
   project: string;
@@ -47,6 +62,13 @@ export interface CreateDockerFileContentOptions {
   artifactServiceUri?: string;
   otelToCloud?: boolean;
   a2a?: boolean;
+  agentFileLoadOptions?: AgentFileOptions;
+  /**
+   * Version (or dist-tag) of `@google/adk-devtools` installed in the image.
+   * Defaults to the version of the CLI generating the Dockerfile, so the
+   * deployed server matches the tooling that staged and bundled the agent.
+   */
+  adkVersion?: string;
 }
 
 export interface BaseDeployOptions extends CreateDockerFileContentOptions {
@@ -57,8 +79,6 @@ export interface BaseDeployOptions extends CreateDockerFileContentOptions {
    * removes it when the deployment finishes.
    */
   tempFolder?: string;
-  adkVersion: string;
-  agentFileLoadOptions?: AgentFileOptions;
 }
 
 // Dockerfile instructions and the generated CMD's shell form have no
@@ -85,13 +105,24 @@ function assertSafeDockerfileToken(value: string, label: string): void {
 // any of them still breaks out of that instruction the same way appName
 // does, and once inside the CMD line they're read by /bin/sh at container
 // start, so shell metacharacters must be neutralized too.
+//
+// The rejected value is never echoed: these URIs routinely carry a password
+// in their userinfo and this message is logged by the deploy commands. The
+// index of the offending character is reported instead, which keeps a stray
+// trailing newline diagnosable.
 function assertNoDockerfileNewline(value: string, label: string): void {
-  if (/[\r\n]/.test(value)) {
+  const index = value.search(/[\r\n]/);
+  if (index !== -1) {
     throw new Error(
-      `Invalid ${label} ${JSON.stringify(value)}: must not contain newline characters to be safely embedded in the generated Dockerfile.`,
+      `Invalid ${label}: must not contain newline characters to be safely embedded in the generated Dockerfile (first one at index ${index}).`,
     );
   }
 }
+
+// An npm version, range or dist-tag ("2.4.0", "^2.4.0", "2.5.0-rc.1", "next").
+// It lands unquoted in a RUN line executed by /bin/sh, so whitespace and shell
+// metacharacters (including the `<`/`>` of comparator ranges) are rejected.
+const SAFE_NPM_VERSION_RE = /^[A-Za-z0-9_.+~^-]{1,128}$/;
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -107,9 +138,25 @@ export function createDockerFileContent(
   if (options.appName) {
     assertSafeDockerfileToken(options.appName, 'appName');
   }
+  const adkVersion = options.adkVersion || version;
+  if (!SAFE_NPM_VERSION_RE.test(adkVersion)) {
+    throw new Error(
+      `Invalid adkVersion ${JSON.stringify(adkVersion)}: must match ${SAFE_NPM_VERSION_RE} to be safely embedded in the generated Dockerfile.`,
+    );
+  }
 
   const adkCommand = options.withUi ? 'web' : 'api_server';
   const adkServerOptions = [`--port=${options.port}`, '--host=0.0.0.0'];
+
+  // Only skip the container's own compile/bundle when the agent file was
+  // already compiled/bundled before being copied into the image.
+  const stagedFileIsBundleOutput = options.agentFileLoadOptions
+    ? Boolean(options.agentFileLoadOptions.compile) ||
+      Boolean(options.agentFileLoadOptions.bundle)
+    : true;
+  if (stagedFileIsBundleOutput) {
+    adkServerOptions.push('--compile=false', '--bundle=false');
+  }
 
   if (options.logLevel) {
     assertNoDockerfileNewline(options.logLevel, 'logLevel');
@@ -146,18 +193,19 @@ export function createDockerFileContent(
   }
 
   return `
-FROM node:lts-alpine
+FROM ${NODE_BASE_IMAGE}
 WORKDIR /app
 
-# Create a non-root user
-RUN adduser --disabled-password --gecos "" myuser
+# Create a non-root user. WORKDIR creates /app as root, so hand it to myuser:
+# the npm installs below write node_modules and package-lock.json into it.
+RUN adduser --disabled-password --gecos "" myuser && chown myuser:myuser /app
 
 # Switch to the non-root user
 USER myuser
 
 # Set up environment variables - Start
 ENV PATH="/home/myuser/.local/bin:$PATH"
-ENV GOOGLE_GENAI_USE_VERTEXAI=1
+ENV GOOGLE_GENAI_USE_ENTERPRISE=1
 ENV GOOGLE_CLOUD_PROJECT=${options.project}
 ENV GOOGLE_CLOUD_LOCATION=${options.region}
 # Set up environment variables - End
@@ -167,12 +215,10 @@ COPY --chown=myuser:myuser "agents/${options.appName}/" "/app/agents/${
     options.appName
   }/"
 COPY --chown=myuser:myuser "package.json" "/app/package.json"
-COPY --chown=myuser:myuser "package-lock.json" "/app/package-lock.json"
-COPY --chown=myuser:myuser "node_modules" "/app/node_modules"
 # Copy application files
 
 # Install Agent Deps - Start
-RUN npm install @google/adk-devtools@latest
+RUN npm install @google/adk-devtools@${adkVersion}
 RUN npm install --production
 # Install Agent Deps - End
 
@@ -236,13 +282,9 @@ export async function createPackageJson(
 
   const targetPackageJsonPath = path.join(targetFolder, 'package.json');
 
-  await Promise.all([
-    fs.mkdir(path.join(targetFolder, 'node_modules')),
-    saveToFile(path.join(targetFolder, 'package-lock.json'), ''),
-    saveToFile(targetPackageJsonPath, {
-      dependencies: packageJson.dependencies,
-    }),
-  ]);
+  await saveToFile(targetPackageJsonPath, {
+    dependencies: packageJson.dependencies,
+  });
 }
 
 export async function resolveDefaultFromGcloudConfig(

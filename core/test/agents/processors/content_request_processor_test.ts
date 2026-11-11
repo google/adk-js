@@ -6,13 +6,17 @@
 
 import {
   BaseAgent,
+  BaseLlm,
+  BaseLlmConnection,
   CompactedEvent,
   CONTENT_REQUEST_PROCESSOR,
+  createEvent,
   Event,
   EventActions,
   InvocationContext,
   LlmAgent,
   LlmRequest,
+  LlmResponse,
   PluginManager,
   Session,
 } from '@google/adk';
@@ -182,5 +186,289 @@ describe('ContentRequestProcessor', () => {
     expect(llmRequest.contents[0].parts?.[0]?.text).toContain('Summary 1-3');
     // Followed by message 4
     expect(llmRequest.contents[1].parts?.[0]?.text).toContain('New message 4');
+  });
+
+  it('should strip adk-* function call IDs for non-Claude models', async () => {
+    const events: Event[] = [
+      createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'Weather in Paris?'}]},
+      }),
+      createEvent({
+        author: 'test_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                name: 'get_weather',
+                id: 'adk-call-1',
+                args: {city: 'Paris'},
+              },
+            },
+          ],
+        },
+      }),
+      createEvent({
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'get_weather',
+                id: 'adk-call-1',
+                response: {result: 'Sunny'},
+              },
+            },
+          ],
+        },
+      }),
+    ];
+
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      model: 'gemini-flash-latest',
+    });
+    const session: Session = {
+      id: 'test-session',
+      events,
+      appName: 'test-app',
+      userId: 'test-user',
+      state: {},
+      lastUpdateTime: 0,
+    };
+    const invocationContext = new InvocationContext({
+      invocationId: 'test-invocation',
+      agent,
+      session,
+      pluginManager: new PluginManager([]),
+    });
+    const llmRequest: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    for await (const _ of CONTENT_REQUEST_PROCESSOR.runAsync(
+      invocationContext,
+      llmRequest,
+    )) {
+      // consume generator
+    }
+
+    expect(llmRequest.contents).toHaveLength(3);
+    expect(
+      llmRequest.contents[1]?.parts?.[0]?.functionCall?.id,
+    ).toBeUndefined();
+    expect(
+      llmRequest.contents[2]?.parts?.[0]?.functionResponse?.id,
+    ).toBeUndefined();
+  });
+
+  it.each(['default', 'none'] as const)(
+    'test_anthropic_model_preserves_function_call_ids (%s)',
+    async (includeContents) => {
+      const events: Event[] = [
+        createEvent({
+          author: 'user',
+          content: {
+            role: 'user',
+            parts: [{text: 'Weather and time in Paris?'}],
+          },
+        }),
+        createEvent({
+          author: 'test_agent',
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  name: 'get_weather',
+                  id: 'adk-call-1',
+                  args: {city: 'Paris'},
+                },
+              },
+              {
+                functionCall: {
+                  name: 'get_time',
+                  id: 'toolu_server_1',
+                  args: {city: 'Paris'},
+                },
+              },
+            ],
+          },
+        }),
+        createEvent({
+          author: 'test_agent',
+          content: {
+            role: 'user',
+            parts: [
+              {
+                functionResponse: {
+                  name: 'get_weather',
+                  id: 'adk-call-1',
+                  response: {result: 'Sunny'},
+                },
+              },
+              {
+                functionResponse: {
+                  name: 'get_time',
+                  id: 'toolu_server_1',
+                  response: {result: '14:00'},
+                },
+              },
+            ],
+          },
+        }),
+      ];
+
+      const agent = new LlmAgent({
+        name: 'test_agent',
+        model: 'claude-sonnet-4-6@default',
+        includeContents,
+      });
+      const session: Session = {
+        id: 'test-session',
+        events,
+        appName: 'test-app',
+        userId: 'test-user',
+        state: {},
+        lastUpdateTime: 0,
+      };
+      const invocationContext = new InvocationContext({
+        invocationId: 'test-invocation',
+        agent,
+        session,
+        pluginManager: new PluginManager([]),
+      });
+      const llmRequest: LlmRequest = {
+        contents: [],
+        toolsDict: {},
+        liveConnectConfig: {},
+      };
+
+      for await (const _ of CONTENT_REQUEST_PROCESSOR.runAsync(
+        invocationContext,
+        llmRequest,
+      )) {
+        // consume generator
+      }
+
+      expect(llmRequest.contents).toHaveLength(3);
+      expect(llmRequest.contents[1]?.parts?.[0]?.functionCall?.id).toBe(
+        'adk-call-1',
+      );
+      expect(llmRequest.contents[1]?.parts?.[1]?.functionCall?.id).toBe(
+        'toolu_server_1',
+      );
+      expect(llmRequest.contents[2]?.parts?.[0]?.functionResponse?.id).toBe(
+        'adk-call-1',
+      );
+      expect(llmRequest.contents[2]?.parts?.[1]?.functionResponse?.id).toBe(
+        'toolu_server_1',
+      );
+    },
+  );
+
+  it('should preserve adk-* function call IDs when agent or ancestor uses a Claude BaseLlm instance', async () => {
+    const claudeSymbol = Symbol.for('google.adk.claudeModel');
+    class FakeClaudeLlm extends BaseLlm {
+      readonly [claudeSymbol] = true;
+
+      constructor() {
+        super({model: 'custom-vertex-endpoint'});
+      }
+
+      override async *generateContentAsync(): AsyncGenerator<
+        LlmResponse,
+        void
+      > {}
+
+      override async connect(): Promise<BaseLlmConnection> {
+        throw new Error('not supported');
+      }
+    }
+
+    const events: Event[] = [
+      createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'Weather in Paris?'}]},
+      }),
+      createEvent({
+        author: 'child_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                name: 'get_weather',
+                id: 'adk-call-2',
+                args: {city: 'Paris'},
+              },
+            },
+          ],
+        },
+      }),
+      createEvent({
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'get_weather',
+                id: 'adk-call-2',
+                response: {result: 'Sunny'},
+              },
+            },
+          ],
+        },
+      }),
+    ];
+
+    const childAgent = new LlmAgent({
+      name: 'child_agent',
+    });
+    new LlmAgent({
+      name: 'parent_agent',
+      model: new FakeClaudeLlm(),
+      subAgents: [childAgent],
+    });
+
+    const session: Session = {
+      id: 'test-session',
+      events,
+      appName: 'test-app',
+      userId: 'test-user',
+      state: {},
+      lastUpdateTime: 0,
+    };
+    const invocationContext = new InvocationContext({
+      invocationId: 'test-invocation',
+      agent: childAgent,
+      session,
+      pluginManager: new PluginManager([]),
+    });
+    const llmRequest: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    for await (const _ of CONTENT_REQUEST_PROCESSOR.runAsync(
+      invocationContext,
+      llmRequest,
+    )) {
+      // consume generator
+    }
+
+    expect(llmRequest.contents).toHaveLength(3);
+    expect(llmRequest.contents[1]?.parts?.[0]?.functionCall?.id).toBe(
+      'adk-call-2',
+    );
+    expect(llmRequest.contents[2]?.parts?.[0]?.functionResponse?.id).toBe(
+      'adk-call-2',
+    );
   });
 });

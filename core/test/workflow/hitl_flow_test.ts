@@ -102,6 +102,76 @@ describe('Phase 5 — HITL (pause / resume)', () => {
     expect(resumed.output).toBe('c:a:x|gate:ok');
   });
 
+  describe('an interrupt raised by a ctx.runNode child', () => {
+    /**
+     * `supervisor -> summarize`, where the supervisor delegates to a child that
+     * asks the user and then bails out exactly as the `dynamic/human_input`
+     * sample documents: "still waiting on the human", so return nothing.
+     */
+    function buildWorkflow(ran: string[]) {
+      const worker = new FunctionNode('worker', (ctx, item) => {
+        const answer = ctx.resumeInputs['approve-beta'];
+        if (answer === undefined) {
+          return new RequestInput({
+            interruptId: 'approve-beta',
+            message: `approve ${item}?`,
+          });
+        }
+        return `${item}:${answer}`;
+      });
+      const supervisor = new FunctionNode(
+        'supervisor',
+        async (ctx, input) => {
+          ran.push('supervisor');
+          const result = await ctx.runNode(worker, input);
+          if (result.interruptIds.length > 0) {
+            return undefined;
+          }
+          return [result.output];
+        },
+        {rerunOnResume: true},
+      );
+      const summarize = new FunctionNode('summarize', (_c, input) => {
+        ran.push('summarize');
+        return (input as string[]).map((item) => `<${item}>`).join(',');
+      });
+      return new Workflow({
+        name: 'swallowed_interrupt',
+        edges: [
+          ['START', supervisor],
+          [supervisor, summarize],
+        ],
+      });
+    }
+
+    it('holds the parent, so the successor does not run on undefined', async () => {
+      // The interrupt id is on the `ctx.runNode` result, not on the
+      // supervisor's own context, so the engine used to mark the supervisor
+      // COMPLETED and schedule `summarize` with the `undefined` the supervisor
+      // returned — which threw before the human could answer, making the
+      // documented resume cycle unreachable.
+      const ran: string[] = [];
+
+      const paused = await drive(buildWorkflow(ran), 'beta');
+
+      expect(paused.interruptIds).toEqual(['approve-beta']);
+      expect(ran).toEqual(['supervisor']);
+      expect(paused.output).toBeUndefined();
+    });
+
+    it('runs the successor once the reply arrives', async () => {
+      const ran: string[] = [];
+
+      const resumed = await drive(buildWorkflow(ran), 'beta', {
+        'approve-beta': 'yes',
+      });
+
+      expect(resumed.interruptIds).toEqual([]);
+      expect(resumed.output).toBe('<beta:yes>');
+      expect(ran).toEqual(['supervisor', 'summarize']);
+    });
+  });
+
   it('supports HITL in an imperative dynamicEntry workflow', async () => {
     // Re-entry HITL node: it re-runs on resume and reads the reply itself, so
     // it declares `rerunOnResume: true`. Under the default the dynamic

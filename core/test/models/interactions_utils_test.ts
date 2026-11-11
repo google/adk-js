@@ -8,6 +8,7 @@
 
 import {
   Content,
+  Environment,
   FinishReason,
   FunctionCall,
   FunctionResponse,
@@ -708,6 +709,15 @@ describe('interactions_utils', () => {
       expect(convertToolsConfigToInteractionsFormat(config as any)).toEqual(
         expected,
       );
+    });
+    it('converts a computer use tool', () => {
+      const config: GenerateContentConfig = {
+        tools: [{computerUse: {environment: Environment.ENVIRONMENT_BROWSER}}],
+      };
+
+      expect(convertToolsConfigToInteractionsFormat(config)).toEqual([
+        {type: 'computer_use'},
+      ]);
     });
   });
 

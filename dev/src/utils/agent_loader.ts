@@ -4,10 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {App, asRootAgent, BaseAgent, isApp, isRootAgentLike} from '@google/adk';
+import {App, isApp, isRunnableRoot, RunnableRoot} from '@google/adk';
 import esbuild from 'esbuild';
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
 import {shimPlugin} from 'esbuild-shim-plugin';
 import * as fs from 'node:fs';
 import * as fsPromises from 'node:fs/promises';
@@ -50,6 +48,18 @@ const FILE_MODULE_TYPE_EXTENSION_MAP = {
 };
 
 /**
+ * README file names served to the web UI, in preference order. Matched
+ * case-insensitively against the files beside the agent source, so `README.md`,
+ * `readme.txt`, or a bare `README` all resolve. The first name present wins.
+ */
+const README_BASENAMES = [
+  'readme.md',
+  'readme.markdown',
+  'readme.txt',
+  'readme',
+];
+
+/**
  * Metadata for a file.
  */
 interface FileMetadata {
@@ -86,6 +96,25 @@ export interface AgentFileOptions {
   compile?: boolean;
   bundle?: boolean;
   moduleType?: FileModuleType;
+  /**
+   * Minify the generated bundle.
+   *
+   * Passing `false` explicitly asks for a *debug build*: esbuild keeps the
+   * original identifiers and emits an inline source map, so a stack trace
+   * thrown by an agent names the developer's own function, file and line
+   * instead of `at new H_ (/tmp/.../agent.cjs:537:1742)`.
+   *
+   * A debug build is ~3.5x larger than a minified one (23.6 MB -> 83.1 MB
+   * across the four agents in the app_loader fixture) and costs roughly a
+   * second of extra load time per agent, so it is opt-in per call site. The
+   * interactive commands — `adk run`, `adk web`, `adk api_server` — ask for
+   * it because a human reads their output. Deployment bundles and
+   * programmatic callers leave it unset and keep the small artifact.
+   *
+   * When unset, a bundled file is minified, which is the historical
+   * behaviour.
+   */
+  minify?: boolean;
 }
 
 /**
@@ -106,9 +135,15 @@ const DEFAULT_AGENT_FILE_OPTIONS: AgentFileOptions = {
  *
  * @param filePath - The path to the agent file.
  * @param originalDir - The original directory path of the agent file.
+ * @param sourcemap - Whether this is a debug build, in which case the entry
+ *   file is handed back to the outer build with a chained inline map.
  * @returns An esbuild plugin that replaces path and URL references in the agent file.
  */
-export function replaceDirnamePlugin(filePath: string, originalDir: string) {
+export function replaceDirnamePlugin(
+  filePath: string,
+  originalDir: string,
+  sourcemap = false,
+) {
   return {
     name: 'replace-dirname',
     setup(build: esbuild.PluginBuild) {
@@ -128,6 +163,13 @@ export function replaceDirnamePlugin(filePath: string, originalDir: string) {
               '__filename': JSON.stringify(filePath),
               'import.meta.url': JSON.stringify(fileUrl),
             },
+            // On a debug build, hand the outer build an inline map back to
+            // the original file. Without it the outer build can only map as
+            // far as this pre-transformed text, and stack traces land on the
+            // wrong line of the agent file.
+            ...(sourcemap
+              ? {sourcemap: 'inline' as const, sourcefile: filePath}
+              : {}),
           });
 
           return {
@@ -150,7 +192,15 @@ export class AgentFile {
   private cleanupFilePath: string | undefined;
   private cleanupDirPath: string | undefined;
   private disposed = false;
-  private agent?: BaseAgent;
+  private retired = false;
+  private activeUsers = 0;
+  private disposePromise?: Promise<void>;
+  private retirePromise?: Promise<void>;
+  private retireCallbacks?: {
+    resolve: () => void;
+    reject: (error: unknown) => void;
+  };
+  private agent?: RunnableRoot;
   private app?: App;
 
   constructor(
@@ -158,7 +208,7 @@ export class AgentFile {
     private readonly options = DEFAULT_AGENT_FILE_OPTIONS,
   ) {}
 
-  async load(): Promise<BaseAgent | App> {
+  async load(): Promise<RunnableRoot | App> {
     if (this.app) {
       return this.app;
     }
@@ -191,36 +241,73 @@ export class AgentFile {
       const originalDir = path.dirname(filePath);
       await linkProjectNodeModules(outputDir, parsedPath.dir);
 
+      // An explicit `minify: false` is a request for a debug build: readable
+      // identifiers plus a source map. Callers that say nothing keep the
+      // small minified bundle, so nobody pays 3.5x the bundle size for a
+      // stack trace they will never read.
+      const debugBuild = this.options.minify === false;
+      const minify = this.options.minify ?? !!this.options.bundle;
+
+      if (debugBuild) {
+        // The bundle lives in a temp dir that is deleted when the run ends, so
+        // an external .map file would be gone by the time anyone read a stack
+        // trace. Inline the map instead and tell Node to apply it, so traces
+        // point at the developer's own source file and line.
+        process.setSourceMapsEnabled(true);
+      }
+
       await esbuild.build({
         entryPoints: [filePath],
         outfile: compiledFilePath,
         target: 'node16',
         platform: 'node',
         format: moduleType,
-        packages: 'bundle',
         bundle: this.options.bundle,
-        minify: this.options.bundle,
-        plugins: [replaceDirnamePlugin(filePath, originalDir), shimPlugin()],
-        // See http://mikro-orm.io/docs/deployment#deploy-a-bundle-of-entities-and-dependencies-with-esbuild for more details
-        external: [
-          'sqlite3',
-          'better-sqlite3',
-          'mysql',
-          'mysql2',
-          // Native addons must remain external so Node can resolve their
-          // platform-specific assets at runtime.
-          'onnxruntime-node',
-          'oracledb',
-          'pg-native',
-          'pg-query-stream',
-          'tedious',
-          'libsql',
-          // Optional peer dependencies of vite and eslint that are not
-          // installed and MUST NOT be bundled.
-          'lightningcss',
-          'jiti',
-          'jiti/package.json',
+        minify,
+        // Workflow nodes use Function.prototype.name when no name is supplied.
+        // Keep those names stable even in the smaller deployment bundles.
+        keepNames: true,
+        sourcemap: debugBuild ? 'inline' : false,
+        // The original sources are still on disk, so leaving them out of the
+        // map halves the size of a debug bundle.
+        sourcesContent: false,
+        plugins: [
+          replaceDirnamePlugin(filePath, originalDir, debugBuild),
+          shimPlugin(),
         ],
+        // esbuild rejects `packages` and `external` unless it is bundling, so
+        // both have to be withheld when `--bundle false` asks it only to
+        // transpile. Nothing is being inlined in that mode, so there is
+        // nothing to hold out of the bundle either.
+        ...(this.options.bundle
+          ? {
+              packages: 'bundle' as const,
+              // See http://mikro-orm.io/docs/deployment#deploy-a-bundle-of-entities-and-dependencies-with-esbuild for more details
+              external: [
+                'sqlite3',
+                'better-sqlite3',
+                'mysql',
+                'mysql2',
+                // Native addons must remain external so Node can resolve their
+                // platform-specific assets at runtime.
+                'onnxruntime-node',
+                'oracledb',
+                'pg-native',
+                'pg-query-stream',
+                'tedious',
+                'libsql',
+                // dockerode (used by ContainerCodeExecutor) pulls in ssh2, which
+                // bundles native `.node` addons esbuild cannot process.
+                'ssh2',
+                'cpu-features',
+                // Optional peer dependencies of vite and eslint that are not
+                // installed and MUST NOT be bundled.
+                'lightningcss',
+                'jiti',
+                'jiti/package.json',
+              ],
+            }
+          : {}),
       });
 
       this.cleanupDirPath = outputDir;
@@ -263,7 +350,7 @@ export class AgentFile {
       const rootApps = Object.values(jsModule).filter(isApp) as App[];
 
       if (rootApps.length > 1) {
-        console.warn(
+        logger.warn(
           `Multiple apps found in ${filePath}. Using the ${rootApps[0].name} as a root app.`,
         );
       }
@@ -274,25 +361,24 @@ export class AgentFile {
         return this.app!;
       }
 
-      // A bare `Workflow` counts as a root: it is adapted by `asRootAgent`,
-      // so a sample can export a graph directly instead of wrapping it.
-      if (isRootAgentLike(jsModule.rootAgent)) {
-        return (this.agent = asRootAgent(jsModule.rootAgent));
+      // A bare `Workflow` counts as a root: the runner drives it as a node, so
+      // a sample can export a graph directly rather than dressing it as an
+      // agent.
+      if (isRunnableRoot(jsModule.rootAgent)) {
+        return (this.agent = jsModule.rootAgent);
       }
 
       const defaultAgent = [jsModule.default, jsModule.default?.default].find(
-        isRootAgentLike,
+        isRunnableRoot,
       );
       if (defaultAgent) {
-        return (this.agent = asRootAgent(defaultAgent));
+        return (this.agent = defaultAgent);
       }
 
-      const rootAgents = Object.values(jsModule)
-        .filter(isRootAgentLike)
-        .map(asRootAgent);
+      const rootAgents = Object.values(jsModule).filter(isRunnableRoot);
 
       if (rootAgents.length > 1) {
-        console.warn(
+        logger.warn(
           `Multiple agents found in ${filePath}. Using the ${rootAgents[0].name} as a root agent.`,
         );
       }
@@ -310,7 +396,7 @@ export class AgentFile {
     );
   }
 
-  async loadAgent(): Promise<BaseAgent> {
+  async loadAgent(): Promise<RunnableRoot> {
     await this.load();
     return this.agent!;
   }
@@ -341,22 +427,132 @@ export class AgentFile {
     return this.cleanupFilePath || this.filePath;
   }
 
+  /**
+   * The agent's README, if one sits beside its source file.
+   *
+   * Any common README name resolves: `README.md`, `README.markdown`,
+   * `README.txt`, or a bare `README`, in any letter case (see
+   * {@link README_BASENAMES}). The name is matched against the directory
+   * listing — never built from a caller-supplied value — so there is no path to
+   * traverse out of. This deliberately uses the original source path, not
+   * {@link getFilePath}, which returns the temporary bundle when one exists; the
+   * README sits beside the source.
+   *
+   * A missing README is the normal case and returns undefined. Any other read
+   * error is logged and also returns undefined, so a documentation file never
+   * fails the caller.
+   */
+  async readReadme(): Promise<string | undefined> {
+    const dir = path.dirname(this.filePath);
+    let entries: string[];
+    try {
+      entries = await fsPromises.readdir(dir);
+    } catch (e) {
+      if ((e as {code?: string}).code !== 'ENOENT') {
+        logger.warn(`Could not read directory ${dir}: ${e}`);
+      }
+      return undefined;
+    }
+
+    const byLowerName = new Map(
+      entries.map((name) => [name.toLowerCase(), name]),
+    );
+    const match = README_BASENAMES.map((name) => byLowerName.get(name)).find(
+      (name): name is string => name !== undefined,
+    );
+    if (match === undefined) {
+      return undefined;
+    }
+
+    const readmePath = path.join(dir, match);
+    try {
+      return await fsPromises.readFile(readmePath, 'utf-8');
+    } catch (e) {
+      if ((e as {code?: string}).code !== 'ENOENT') {
+        logger.warn(`Could not read ${readmePath}: ${e}`);
+      }
+      return undefined;
+    }
+  }
+
+  /**
+   * Acquires a lease that keeps the compiled bundle on disk until the
+   * returned disposable is released.
+   */
+  retain(): AsyncDisposable {
+    if (this.disposed) {
+      throw new Error('Agent is disposed and can not be used');
+    }
+
+    this.activeUsers++;
+    let released = false;
+    return {
+      [Symbol.asyncDispose]: async () => {
+        if (released) {
+          return;
+        }
+        released = true;
+        this.activeUsers--;
+        if (this.activeUsers === 0 && this.retired) {
+          await this.dispose();
+        }
+      },
+    };
+  }
+
+  /**
+   * Marks this file as retired so it is disposed immediately if idle, or
+   * as soon as its last active lease from {@link retain} is released.
+   */
+  retire(): Promise<void> {
+    this.retired = true;
+    if (this.activeUsers === 0) {
+      return this.dispose();
+    }
+
+    this.retirePromise ??= new Promise<void>((resolve, reject) => {
+      this.retireCallbacks = {resolve, reject};
+    });
+    return this.retirePromise;
+  }
+
   async [Symbol.asyncDispose](): Promise<void> {
     return this.dispose();
   }
 
   async dispose(): Promise<void> {
-    if (this.disposed) {
+    if (this.disposePromise) {
+      return this.disposePromise;
+    }
+
+    this.disposed = true;
+    if (!this.cleanupFilePath) {
+      this.retireCallbacks?.resolve();
       return;
     }
 
-    if (this.cleanupFilePath) {
-      this.disposed = true;
-      await fsPromises.unlink(this.cleanupFilePath);
-      if (this.cleanupDirPath) {
-        await removeFolder(this.cleanupDirPath);
+    const cleanupFilePath = this.cleanupFilePath;
+    const cleanupDirPath = this.cleanupDirPath;
+    this.disposePromise = (async () => {
+      await fsPromises.unlink(cleanupFilePath).catch((e: {code?: string}) => {
+        if (e?.code !== 'ENOENT') {
+          throw e;
+        }
+      });
+      if (cleanupDirPath) {
+        await removeFolder(cleanupDirPath);
       }
-    }
+    })().then(
+      () => {
+        this.retireCallbacks?.resolve();
+      },
+      (err) => {
+        this.retireCallbacks?.reject(err);
+        throw err;
+      },
+    );
+
+    return this.disposePromise;
   }
 }
 
@@ -373,7 +569,10 @@ export class AgentFile {
  */
 export class AgentLoader {
   private agentsAlreadyPreloaded = false;
+  private preloadInFlight?: Promise<void>;
+  private invalidationGeneration = 0;
   private readonly preloadedAgents: Record<string, AgentFile> = {};
+  private readonly retiredAgents = new Set<AgentFile>();
   private readonly loadFailures: Record<string, AgentLoadFailure> = {};
   private watcher?: fs.FSWatcher;
 
@@ -437,11 +636,20 @@ export class AgentLoader {
   }
 
   /**
-   * Disposes all cached agents and marks them for reload on the next request.
+   * Retires all cached agents and marks them for reload on the next request.
+   * Bundles still in use by active requests remain on disk until their last
+   * lease is released.
    */
   private invalidateAll(): void {
+    this.invalidationGeneration++;
     for (const agentFile of Object.values(this.preloadedAgents)) {
-      agentFile.dispose().catch(() => {});
+      this.retiredAgents.add(agentFile);
+      agentFile
+        .retire()
+        .catch(() => {})
+        .finally(() => {
+          this.retiredAgents.delete(agentFile);
+        });
     }
 
     for (const key of Object.keys(this.preloadedAgents)) {
@@ -453,6 +661,9 @@ export class AgentLoader {
     }
 
     this.agentsAlreadyPreloaded = false;
+    // Drop any pass still in flight so the next caller starts a fresh one
+    // rather than awaiting a result gathered before the file changed.
+    this.preloadInFlight = undefined;
   }
 
   /**
@@ -491,6 +702,11 @@ export class AgentLoader {
     return appNames.sort();
   }
 
+  /**
+   * Returns a shared file owned by this loader. Callers must not dispose it
+   * directly; use {@link AgentFile.retain} while a request is using the bundle
+   * so invalidation defers cleanup until active users finish.
+   */
   async getAgentFile(agentName: string): Promise<AgentFile> {
     await this.preloadAgents();
 
@@ -522,16 +738,35 @@ export class AgentLoader {
   async disposeAll(): Promise<void> {
     this.watcher?.close();
     this.watcher = undefined;
-    await Promise.all(
-      Object.values(this.preloadedAgents).map((f) => f.dispose()),
-    );
+    const filesToDispose = [
+      ...Object.values(this.preloadedAgents),
+      ...this.retiredAgents,
+    ];
+    this.retiredAgents.clear();
+    await Promise.all(filesToDispose.map((f) => f.dispose()));
   }
 
-  async preloadAgents() {
-    if (this.agentsAlreadyPreloaded) {
-      return;
-    }
+  async preloadAgents(): Promise<void> {
+    while (!this.agentsAlreadyPreloaded) {
+      // Callers overlap in practice: `adk web` serves concurrent requests and
+      // lists agents from several routes. Without sharing the in-flight pass,
+      // every caller that arrives before the first one finishes bundles all
+      // agents again — three overlapping callers turned 4 esbuild builds into
+      // 12 and 5.1s into 13.6s on the app_loader fixture.
+      const generation = this.invalidationGeneration;
+      const pass = (this.preloadInFlight ??= this.runPreload(
+        generation,
+      ).finally(() => {
+        if (this.preloadInFlight === pass) {
+          this.preloadInFlight = undefined;
+        }
+      }));
 
+      await pass;
+    }
+  }
+
+  private async runPreload(generation: number): Promise<void> {
     const files = (await isFile(this.agentsDirPath))
       ? [await getFileMetadata(this.agentsDirPath)]
       : await getDirFiles(this.agentsDirPath);
@@ -539,14 +774,24 @@ export class AgentLoader {
     await Promise.all(
       files.map(async (fileOrDir: FileMetadata) => {
         if (fileOrDir.isFile && isJsFile(fileOrDir.ext)) {
-          return this.loadAgentFromFile(fileOrDir);
+          return this.loadAgentFromFile(fileOrDir, generation);
         }
 
         if (fileOrDir.isDirectory) {
-          return this.loadAgentFromDirectory(fileOrDir);
+          if (
+            fileOrDir.name === 'node_modules' ||
+            fileOrDir.name.startsWith('.')
+          ) {
+            return;
+          }
+          return this.loadAgentFromDirectory(fileOrDir, generation);
         }
       }),
     );
+
+    if (this.invalidationGeneration !== generation) {
+      return;
+    }
 
     this.agentsAlreadyPreloaded = true;
 
@@ -557,17 +802,29 @@ export class AgentLoader {
     return;
   }
 
-  private async loadAgentFromFile(file: FileMetadata): Promise<void> {
+  private async loadAgentFromFile(
+    file: FileMetadata,
+    generation: number,
+  ): Promise<void> {
     try {
       const agentFile = new AgentFile(file.path, this.options);
       await agentFile.load();
+      if (this.invalidationGeneration !== generation) {
+        await agentFile.dispose();
+        return;
+      }
       this.preloadedAgents[file.name] = agentFile;
     } catch (e) {
-      this.recordLoadFailure(file.name, file.path, e);
+      if (this.invalidationGeneration === generation) {
+        this.recordLoadFailure(file.name, file.path, e);
+      }
     }
   }
 
-  private async loadAgentFromDirectory(dir: FileMetadata): Promise<void> {
+  private async loadAgentFromDirectory(
+    dir: FileMetadata,
+    generation: number,
+  ): Promise<void> {
     const subFiles = await getDirFiles(dir.path);
     const possibleEntryFile =
       subFiles.find((f) => f.isFile && f.name === 'app' && isJsFile(f.ext)) ??
@@ -580,9 +837,15 @@ export class AgentLoader {
     try {
       const agentFile = new AgentFile(possibleEntryFile.path, this.options);
       await agentFile.load();
+      if (this.invalidationGeneration !== generation) {
+        await agentFile.dispose();
+        return;
+      }
       this.preloadedAgents[dir.name] = agentFile;
     } catch (e) {
-      this.recordLoadFailure(dir.name, possibleEntryFile.path, e);
+      if (this.invalidationGeneration === generation) {
+        this.recordLoadFailure(dir.name, possibleEntryFile.path, e);
+      }
     }
   }
 

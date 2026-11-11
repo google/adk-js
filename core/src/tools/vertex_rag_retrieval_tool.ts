@@ -6,7 +6,8 @@
 
 import {GenerateContentConfig, VertexRagStore} from '@google/genai';
 
-import {BaseTool, ToolProcessLlmRequest} from './base_tool.js';
+import {ToolProcessLlmRequest} from './base_tool.js';
+import {BuiltInTool} from './built_in_tool.js';
 
 /**
  * A tool that retrieves relevant content from a Vertex AI RAG corpus to ground
@@ -22,18 +23,23 @@ import {BaseTool, ToolProcessLlmRequest} from './base_tool.js';
  *
  * @example
  * ```ts
- * import { VertexRagRetrievalTool } from '@google/adk';
- * import { VertexRagStore } from '@google/genai';
+ * import {LlmAgent, VertexRagRetrievalTool} from '@google/adk';
  *
  * const ragTool = new VertexRagRetrievalTool({
- *   ragResources: [{ragCorpus: 'projects/my-project/locations/us-central1/ragCorpora/my-corpus'}],
+ *   ragResources: [
+ *     {ragCorpus: 'projects/my-project/locations/us-central1/ragCorpora/my-corpus'},
+ *   ],
  *   similarityTopK: 5,
  * });
  *
- * const agent = new LlmAgent({ tools: [ragTool], ... });
+ * const agent = new LlmAgent({
+ *   name: 'rag_agent',
+ *   model: 'gemini-2.5-flash',
+ *   tools: [ragTool],
+ * });
  * ```
  */
-export class VertexRagRetrievalTool extends BaseTool {
+export class VertexRagRetrievalTool extends BuiltInTool {
   private readonly vertexRagStore: VertexRagStore;
 
   constructor(config: VertexRagStore) {
@@ -44,15 +50,7 @@ export class VertexRagRetrievalTool extends BaseTool {
     this.vertexRagStore = config;
   }
 
-  /**
-   * This tool is executed server-side by the Vertex AI RAG Engine.
-   * Local execution is not required.
-   */
-  runAsync(): Promise<unknown> {
-    return Promise.resolve();
-  }
-
-  override async processLlmRequest({
+  protected override async applyBuiltInConfig({
     llmRequest,
   }: ToolProcessLlmRequest): Promise<void> {
     llmRequest.config = llmRequest.config || ({} as GenerateContentConfig);

@@ -22,6 +22,10 @@ export interface TestApiServerParams {
   serveDebugUI?: boolean;
 }
 
+/**
+ * Start watchdog for the spawned CLI server. Keep it below the `integration`
+ * project's `hookTimeout` so a failed start is reported here, not by vitest.
+ */
 const DEFAULT_TIMEOUT = 60000;
 
 /**
@@ -32,7 +36,7 @@ export class AdkTsApiServer extends BaseTestServer {
   private params: TestApiServerParams;
 
   constructor(params: TestApiServerParams) {
-    super('localhost', params.port || 0);
+    super('localhost', params.port);
     this.params = params;
   }
 
@@ -40,10 +44,7 @@ export class AdkTsApiServer extends BaseTestServer {
     await this.startProcess({
       spawnProcess: () => {
         return spawn('node', this.getAdkCliArgs(this.params), {
-          env: {
-            ...process.env,
-            TEST_API_SERVER_PORT: this.port.toString(),
-          },
+          env: process.env,
         });
       },
       startMessage: 'ADK API Server started',
