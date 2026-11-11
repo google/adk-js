@@ -203,6 +203,24 @@ describe('RunSkillScriptTool', () => {
     );
   });
 
+  it('runs a script named without the scripts/ prefix from scripts/', async () => {
+    const mockExecutor = new MockCodeExecutor();
+    const toolset = new SkillToolset([mockSkill], {
+      codeExecutor: mockExecutor,
+      scriptOutputDir: outputDir,
+    });
+    const tool = new RunSkillScriptTool(toolset);
+
+    await tool.runAsync({
+      args: {skill_name: 'test-skill', script_path: 'setup.js'},
+      toolContext: createMockContext(),
+    });
+
+    expect(mockExecutor.executeCodeParams?.codeExecutionInput.code).toBe(
+      "require('./scripts/setup.js');",
+    );
+  });
+
   it('extracts skill resource files correctly', async () => {
     const mockExecutor = new MockCodeExecutor();
     const toolset = new SkillToolset([mockSkill], {

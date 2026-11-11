@@ -9,14 +9,9 @@ import {DefaultAgentCardResolver} from '@a2a-js/sdk/client';
 import * as fs from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {BaseAgent} from '../agents/base_agent.js';
-import {
-  InvocationContext,
-  InvocationContextParams,
-} from '../agents/invocation_context.js';
 import {isLlmAgent, LlmAgent} from '../agents/llm_agent.js';
 import {isLoopAgent, LoopAgent} from '../agents/loop_agent.js';
 import {isParallelAgent} from '../agents/parallel_agent.js';
-import {ReadonlyContext} from '../agents/readonly_context.js';
 import {isSequentialAgent} from '../agents/sequential_agent.js';
 import {BaseTool, isBaseTool} from '../tools/base_tool.js';
 import {isBaseToolset} from '../tools/base_toolset.js';
@@ -449,11 +444,15 @@ async function buildSubAgentSkills(agent: RunnableRoot): Promise<AgentSkill[]> {
 }
 
 async function buildLLMAgentSkills(agent: LlmAgent): Promise<AgentSkill[]> {
+  // The card is a discovery document served without authentication (even when
+  // the A2A RPC endpoints require authentication), so the skill description
+  // comes from the agent's own public description and never from its
+  // instructions.
   const skills: AgentSkill[] = [
     {
       id: agent.name,
       name: 'model',
-      description: await buildDescriptionFromInstructions(agent),
+      description: buildAgentDescription(agent),
       tags: ['llm'],
     },
   ];
@@ -531,7 +530,7 @@ function buildAgentDescription(agent: BaseAgent): string {
     descriptionParts.push(agent.description);
   }
 
-  if (agent.subAgents.length > 0) {
+  if (!isLlmAgent(agent) && agent.subAgents.length > 0) {
     if (isLoopAgent(agent)) {
       descriptionParts.push(buildLoopAgentDescription(agent));
     } else if (isParallelAgent(agent)) {
@@ -621,93 +620,6 @@ function buildLoopAgentDescription(agent: LoopAgent): string {
   });
 
   return `${descriptions.join(' ')} in a loop (max ${maxIterations} iterations).`;
-}
-
-async function buildDescriptionFromInstructions(
-  agent: LlmAgent,
-): Promise<string> {
-  const descriptionParts: string[] = [];
-  if (agent.description) {
-    descriptionParts.push(agent.description);
-  }
-
-  if (agent.instruction) {
-    let instructionStr: string;
-    if (typeof agent.instruction === 'function') {
-      const dummyContext = new ReadonlyContext(
-        new InvocationContext({
-          agent: agent,
-        } as unknown as InvocationContextParams),
-      );
-      try {
-        instructionStr = await agent.instruction(dummyContext);
-      } catch (e) {
-        logger.warn('Failed to resolve dynamic instruction for AgentCard', e);
-        instructionStr = '';
-      }
-    } else {
-      instructionStr = agent.instruction;
-    }
-
-    if (instructionStr) {
-      descriptionParts.push(replacePronouns(instructionStr));
-    }
-  }
-
-  const root = agent.rootAgent;
-  if (isLlmAgent(root) && root.globalInstruction) {
-    let globalInstructionStr: string;
-    if (typeof root.globalInstruction === 'function') {
-      const dummyContext = new ReadonlyContext(
-        new InvocationContext({
-          agent: agent,
-        } as unknown as InvocationContextParams),
-      );
-      try {
-        globalInstructionStr = await root.globalInstruction(dummyContext);
-      } catch (e) {
-        logger.warn(
-          'Failed to resolve dynamic global instruction for AgentCard',
-          e,
-        );
-        globalInstructionStr = '';
-      }
-    } else {
-      globalInstructionStr = root.globalInstruction;
-    }
-
-    if (globalInstructionStr) {
-      descriptionParts.push(replacePronouns(globalInstructionStr));
-    }
-  }
-
-  if (descriptionParts.length > 0) {
-    return descriptionParts.join(' ');
-  } else {
-    return getDefaultAgentDescription(agent);
-  }
-}
-
-// Replaces pronouns and conjugate common verbs for agent description.
-// Examples: "You are" -> "I am", "your" -> "my"
-function replacePronouns(instruction: string): string {
-  const substitutions = [
-    {original: 'you were', target: 'I was'},
-    {original: 'you are', target: 'I am'},
-    {original: "you're", target: 'I am'},
-    {original: "you've", target: 'I have'},
-    {original: 'yours', target: 'mine'},
-    {original: 'your', target: 'my'},
-    {original: 'you', target: 'I'},
-  ];
-
-  let result = instruction;
-  for (const sub of substitutions) {
-    // Only replace whole words, case insensitive
-    const pattern = new RegExp(`\\b${sub.original}\\b`, 'gi');
-    result = result.replace(pattern, sub.target);
-  }
-  return result;
 }
 
 function getDefaultAgentDescription(agent: BaseAgent): string {
