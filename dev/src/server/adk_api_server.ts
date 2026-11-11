@@ -11,9 +11,11 @@ import {
   BaseMemoryService,
   BaseSessionService,
   bearerTokenUserBuilder,
+  closeRunners,
   convertSessionToEvalFormat,
   createEmptyState,
   EVAL_SESSION_ID_PREFIX,
+  EvalCaseResult,
   EvalEntry,
   EvalMetric,
   Event,
@@ -22,12 +24,15 @@ import {
   InMemoryArtifactService,
   InMemoryMemoryService,
   InMemorySessionService,
+  InputValidationError,
   isApp,
   LiveRequest,
   LiveRequestQueue,
   loadDotenvForAgent,
+  LocalEvalSetResultsManager,
   Logger,
   LogLevel,
+  NotFoundError,
   publicEvent,
   publicSession,
   RunConfig,
@@ -129,6 +134,42 @@ interface ServerOptions {
   registerProcessors?: (tracerProvider: TracerProvider) => void;
 }
 
+/**
+ * Returns a readable message for a thrown value. Reads a string `message`
+ * property when present, so plain error objects do not print as
+ * "[object Object]".
+ */
+function getErrorMessage(e: unknown): string {
+  if (
+    typeof e === 'object' &&
+    e !== null &&
+    'message' in e &&
+    typeof e.message === 'string'
+  ) {
+    return e.message;
+  }
+  if (typeof e === 'string') {
+    return e;
+  }
+  try {
+    return JSON.stringify(e) ?? String(e);
+  } catch {
+    return String(e);
+  }
+}
+
+function getBrowserDir(): string {
+  const primary = path.join(__dirname, '../../browser');
+  if (fs.existsSync(primary)) {
+    return primary;
+  }
+  const fallback = path.join(__dirname, '../../dist/browser');
+  if (fs.existsSync(fallback)) {
+    return fallback;
+  }
+  return primary;
+}
+
 export class AdkApiServer {
   private readonly host: string;
   private readonly port: number;
@@ -162,6 +203,7 @@ export class AdkApiServer {
   private readonly sessionService: BaseSessionService;
   private readonly memoryService: BaseMemoryService;
   private readonly artifactService: BaseArtifactService;
+  private readonly evalSetResultsManager: LocalEvalSetResultsManager;
   private readonly serveDebugUI: boolean;
   private readonly allowedOrigins: string[];
   private readonly allowedHosts?: string[];
@@ -188,6 +230,9 @@ export class AdkApiServer {
     this.memoryService = options.memoryService ?? new InMemoryMemoryService();
     this.artifactService =
       options.artifactService ?? new InMemoryArtifactService();
+    this.evalSetResultsManager = new LocalEvalSetResultsManager(
+      options.agentsDir ?? process.cwd(),
+    );
     this.agentLoader =
       options.agentLoader ??
       new AgentLoader(
@@ -333,11 +378,11 @@ export class AdkApiServer {
 
     if (this.serveDebugUI) {
       app.get('/', (req: Request, res: Response) => {
-        res.redirect('/dev-ui');
+        res.redirect('/dev-ui/');
       });
       app.use(
         '/dev-ui',
-        express.static(path.join(__dirname, '../../browser'), {
+        express.static(getBrowserDir(), {
           setHeaders: (res: Response, path: string) => {
             if (path.endsWith('.js')) {
               res.setHeader('Content-Type', 'text/javascript');
@@ -474,7 +519,8 @@ export class AdkApiServer {
 
           const functionCalls = getFunctionCalls(event);
           const functionResponses = getFunctionResponses(event);
-          await using agentFile = await this.agentLoader.getAgentFile(appName);
+          const agentFile = await this.agentLoader.getAgentFile(appName);
+          await using _bundleLease = agentFile.retain();
           const loaded = await agentFile.load();
           const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
 
@@ -1042,7 +1088,8 @@ export class AdkApiServer {
           }
 
           const testData = convertSessionToEvalFormat(session);
-          await using agentFile = await this.agentLoader.getAgentFile(appName);
+          const agentFile = await this.agentLoader.getAgentFile(appName);
+          await using _bundleLease = agentFile.retain();
           const loaded = await agentFile.load();
           const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
           const initialSessionState = isApp(rootAgent)
@@ -1158,7 +1205,8 @@ export class AdkApiServer {
               ? evalSetData.filter((e) => evalIds.includes(e.name))
               : evalSetData;
 
-          await using agentFile = await this.agentLoader.getAgentFile(appName);
+          const agentFile = await this.agentLoader.getAgentFile(appName);
+          await using _bundleLease = agentFile.retain();
           const loaded = await agentFile.load();
           const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
           if (!('subAgents' in rootAgent)) {
@@ -1172,6 +1220,7 @@ export class AdkApiServer {
             : undefined;
 
           const runEvalResults: RunEvalResult[] = [];
+          const evalCaseResults: EvalCaseResult[] = [];
           for await (const evalResult of runEvals(
             {[evalSetId]: evalCases},
             rootAgent,
@@ -1181,20 +1230,36 @@ export class AdkApiServer {
             this.sessionService,
             this.artifactService,
           )) {
+            const sessionDetails =
+              evalResult.session_details &&
+              publicSession(evalResult.session_details);
             runEvalResults.push({
-              ...evalResult,
-              evalSetFile: evalResult.eval_set_file,
+              ...(evalResult.eval_set_file !== undefined
+                ? {evalSetFile: evalResult.eval_set_file}
+                : {}),
               evalSetId,
               evalId: evalResult.eval_id,
               finalEvalStatus: evalResult.final_eval_status,
-              evalMetricResults: evalResult.eval_metric_results,
+              ...(evalResult.eval_metric_results !== undefined
+                ? {evalMetricResults: evalResult.eval_metric_results}
+                : {}),
               overallEvalMetricResults: evalResult.overall_eval_metric_results,
               evalMetricResultPerInvocation:
                 evalResult.eval_metric_result_per_invocation,
-              userId: evalResult.user_id,
+              ...(evalResult.user_id !== undefined
+                ? {userId: evalResult.user_id}
+                : {}),
               sessionId: evalResult.session_id,
+              ...(sessionDetails !== undefined ? {sessionDetails} : {}),
             });
+            evalCaseResults.push(evalResult);
           }
+
+          this.evalSetResultsManager.saveEvalSetResult({
+            appName,
+            evalSetId,
+            evalCaseResults,
+          });
 
           return res.json(runEvalResults);
         } catch (e: unknown) {
@@ -1206,17 +1271,49 @@ export class AdkApiServer {
     );
 
     // ----------------------- Eval Results related endpoints ------------------
-    // TODO: Implement eval results related endpoints.
     app.get(
-      '/apps/:appName/eval_results/:evalResultId',
+      [
+        '/apps/:appName/eval_results/:evalResultId',
+        '/dev/apps/:appName/eval_results/:evalResultId',
+      ],
       (req: Request, res: Response) => {
-        return res.status(501).json({error: 'Not implemented'});
+        try {
+          const appName = req.params['appName'];
+          const evalResultId = req.params['evalResultId'];
+          const evalSetResult = this.evalSetResultsManager.getEvalSetResult(
+            appName,
+            evalResultId,
+          );
+          return res.json(evalSetResult);
+        } catch (e: unknown) {
+          if (e instanceof NotFoundError || e instanceof InputValidationError) {
+            return res.status(404).json({error: e.message});
+          }
+          const error = `Failed to get eval result: ${getErrorMessage(e)}`;
+          this.logger.error(error);
+          return res.status(500).json({error});
+        }
       },
     );
 
-    app.get('/apps/:appName/eval_results', (req: Request, res: Response) => {
-      return res.status(501).json({error: 'Not implemented'});
-    });
+    app.get(
+      ['/apps/:appName/eval_results', '/dev/apps/:appName/eval_results'],
+      (req: Request, res: Response) => {
+        try {
+          const appName = req.params['appName'];
+          return res.json(
+            this.evalSetResultsManager.listEvalSetResults(appName),
+          );
+        } catch (e: unknown) {
+          if (e instanceof InputValidationError) {
+            return res.status(404).json({error: e.message});
+          }
+          const error = `Failed to list eval results: ${getErrorMessage(e)}`;
+          this.logger.error(error);
+          return res.status(500).json({error});
+        }
+      },
+    );
 
     app.get('/apps/:appName/eval_metrics', (req: Request, res: Response) => {
       return res.status(501).json({error: 'Not implemented'});
@@ -1655,7 +1752,8 @@ export class AdkApiServer {
     }
 
     try {
-      await using agentFile = await this.agentLoader.getAgentFile(appName);
+      const agentFile = await this.agentLoader.getAgentFile(appName);
+      await using _bundleLease = agentFile.retain();
       const loaded = await agentFile.load();
       const runner = await this.getRunner(loaded, appName);
       const runConfig: RunConfig =
@@ -1686,13 +1784,19 @@ export class AdkApiServer {
     }
   }
 
-  stop(): Promise<void> {
+  async stop(): Promise<void> {
+    const runners = Object.values(this.runnerCache);
+    for (const key of Object.keys(this.runnerCache)) {
+      delete this.runnerCache[key];
+    }
+    await closeRunners(runners);
+
     const server = this.server;
     // A failed `start()` (EADDRINUSE) and an already-closed server both leave
     // `this.server` assigned, and `close()` on either rejects with
     // ERR_SERVER_NOT_RUNNING. Neither has a listener left, so both are stopped.
     if (!server?.listening) {
-      return Promise.resolve();
+      return;
     }
 
     return new Promise((resolve, reject) => {
@@ -1727,7 +1831,8 @@ export class AdkApiServer {
       return undefined;
     }
 
-    await using agentFile = await this.agentLoader.getAgentFile(appName);
+    const agentFile = await this.agentLoader.getAgentFile(appName);
+    await using _bundleLease = agentFile.retain();
     const loaded = await agentFile.load();
 
     return isApp(loaded) ? loaded.rootAgent : loaded;
@@ -1737,9 +1842,12 @@ export class AdkApiServer {
     agentOrApp: RunnableRoot | App,
     appName: string,
   ): Promise<Runner> {
-    if (!(appName in this.runnerCache)) {
-      const isAppInstance = isApp(agentOrApp);
-      const agent = isAppInstance ? agentOrApp.rootAgent : agentOrApp;
+    const isAppInstance = isApp(agentOrApp);
+    const agent = isAppInstance ? agentOrApp.rootAgent : agentOrApp;
+    if (
+      !(appName in this.runnerCache) ||
+      this.runnerCache[appName].agent !== agent
+    ) {
       this.runnerCache[appName] = new Runner({
         app: isAppInstance ? agentOrApp : undefined,
         appName,
@@ -1767,9 +1875,8 @@ export class AdkApiServer {
       loadDotenvForAgent(options.appName, this.agentsDir);
     }
 
-    await using agentFile = await this.agentLoader.getAgentFile(
-      options.appName,
-    );
+    const agentFile = await this.agentLoader.getAgentFile(options.appName);
+    await using _bundleLease = agentFile.retain();
     const loaded = await agentFile.load();
     const runner = await this.getRunner(loaded, options.appName);
 

@@ -1005,8 +1005,7 @@ describe('InMemorySessionService', () => {
         state: parseBody('{"__proto__": {"isAdmin": true}}'),
       });
 
-      // `State` looks keys up with `in`, so a re-parented state object hands
-      // back every key of the attacker's object as if it were session state.
+      // The `__proto__` entry stays an own key instead of re-parenting state.
       expect(new State(session.state).get('isAdmin')).toBeUndefined();
       expect(session.state['__proto__']).toEqual({isAdmin: true});
     });

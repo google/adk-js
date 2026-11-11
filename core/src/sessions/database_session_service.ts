@@ -347,7 +347,7 @@ export class DatabaseSessionService extends BaseSessionService {
     const em = this.orm!.em.fork();
 
     const where: FilterQuery<StorageSessionEntity> = {appName};
-    if (userId) {
+    if (userId !== undefined) {
       where.userId = userId;
     }
 
@@ -412,7 +412,7 @@ export class DatabaseSessionService extends BaseSessionService {
     const appState = appStateModel?.state || {};
     const userStateMap: Record<string, Record<string, unknown>> = {};
 
-    if (userId) {
+    if (userId !== undefined) {
       const u = await em.findOne(StorageUserState, {appName, userId});
       if (u) userStateMap[userId] = u.state;
     } else {

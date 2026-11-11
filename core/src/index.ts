@@ -200,6 +200,7 @@ export {
   EvalStatus,
   getEvaluationCriteriaOrDefault,
   getRootAgent,
+  LocalEvalSetResultsManager,
   MISSING_EVAL_DEPENDENCIES_MESSAGE,
   parseAndGetEvalsToRun,
   RESPONSE_EVALUATION_SCORE_KEY,
@@ -210,16 +211,19 @@ export {
 } from './cli/cli_eval.js';
 export type {
   AddSessionToEvalSetRequest,
+  EvalCaseResult,
   EvalEntry,
   EvalInitialSession,
   EvalMetric,
   EvalMetricResult,
   EvalResult,
   EvalSetItem,
+  EvalSetResult,
   InvocationEvalMetricResult,
   RunEvalRequest,
   RunEvalResult,
   RunEvalsOptions,
+  SaveEvalSetResultParams,
 } from './cli/cli_eval.js';
 export {loadDotenvForAgent, walkToRootUntilFound} from './cli/utils/envs.js';
 export {

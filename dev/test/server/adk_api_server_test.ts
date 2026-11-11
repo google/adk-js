@@ -22,6 +22,7 @@ import {
   INTERNAL_METADATA_PREFIX,
   InvocationContext,
   LlmAgent,
+  LocalEvalSetResultsManager,
   node,
   RESTORED_EVENT_KEY,
   Runner,
@@ -240,6 +241,11 @@ describe('AdkWebServer', () => {
       listAgents: () => Promise.resolve(['testApp']),
       getAgentFile: () =>
         Promise.resolve({
+          retain: () => ({
+            async [Symbol.asyncDispose](): Promise<void> {
+              return;
+            },
+          }),
           load() {
             return Promise.resolve(TEST_AGENT);
           },
@@ -656,6 +662,11 @@ describe('AdkWebServer', () => {
     it('should find session in /run when exported App.name differs from route appName', async () => {
       agentLoader.getAgentFile = (() =>
         Promise.resolve({
+          retain: () => ({
+            async [Symbol.asyncDispose](): Promise<void> {
+              return;
+            },
+          }),
           load() {
             return Promise.resolve(
               new App({name: 'real_name', rootAgent: TEST_AGENT}),
@@ -764,6 +775,11 @@ describe('AdkWebServer', () => {
       const originalGetAgentFile = agentLoader.getAgentFile;
       agentLoader.getAgentFile = (() =>
         Promise.resolve({
+          retain: () => ({
+            async [Symbol.asyncDispose](): Promise<void> {
+              return;
+            },
+          }),
           load: () =>
             Promise.resolve(
               new Workflow({
@@ -1216,7 +1232,18 @@ describe('AdkWebServer', () => {
   });
 
   describe('Debug UI', () => {
-    it('should redirect to dev-ui when enabled', async () => {
+    it('should redirect / and /dev-ui to /dev-ui/ when enabled', async () => {
+      const browserDir = path.resolve(__dirname, '../../browser');
+      const createdBrowserDir = !fs.existsSync(browserDir);
+      const indexFile = path.join(browserDir, 'index.html');
+      const createdIndexFile = !fs.existsSync(indexFile);
+      if (createdBrowserDir) {
+        fs.mkdirSync(browserDir, {recursive: true});
+      }
+      if (createdIndexFile) {
+        fs.writeFileSync(indexFile, '<app-root></app-root>', 'utf-8');
+      }
+
       const debugServer = new AdkApiServer({
         agentLoader,
         sessionService,
@@ -1225,11 +1252,32 @@ describe('AdkWebServer', () => {
         serveDebugUI: true,
       });
       await debugServer.start();
-      const debugClient = new HttpClient(debugServer.url);
 
-      const response = await debugClient.get('/');
-      expect(response.status).toBe(302);
-      await debugServer.stop();
+      try {
+        const rootRes = await fetch(`${debugServer.url}/`, {
+          redirect: 'manual',
+        });
+        expect(rootRes.status).toBe(302);
+        expect(rootRes.headers.get('location')).toBe('/dev-ui/');
+
+        const devUiRes = await fetch(`${debugServer.url}/dev-ui`, {
+          redirect: 'manual',
+        });
+        expect([301, 302]).toContain(devUiRes.status);
+        expect(devUiRes.headers.get('location')).toBe('/dev-ui/');
+
+        const devUiSlashRes = await fetch(`${debugServer.url}/dev-ui/`, {
+          redirect: 'manual',
+        });
+        expect(devUiSlashRes.status).toBe(200);
+      } finally {
+        await debugServer.stop();
+        if (createdBrowserDir) {
+          fs.rmSync(browserDir, {recursive: true, force: true});
+        } else if (createdIndexFile) {
+          fs.rmSync(indexFile, {force: true});
+        }
+      }
     });
   });
 
@@ -1399,6 +1447,11 @@ describe('AdkWebServer', () => {
       const originalGetSession = sessionService.getSession;
       agentLoader.getAgentFile = (() =>
         Promise.resolve({
+          retain: () => ({
+            async [Symbol.asyncDispose](): Promise<void> {
+              return;
+            },
+          }),
           load: () =>
             Promise.resolve(
               new Workflow({
@@ -1483,6 +1536,11 @@ describe('AdkWebServer', () => {
     function loadInstead(agent: unknown, readme?: string) {
       agentLoader.getAgentFile = (() =>
         Promise.resolve({
+          retain: () => ({
+            async [Symbol.asyncDispose](): Promise<void> {
+              return;
+            },
+          }),
           load: () => Promise.resolve(agent),
           readReadme: () => Promise.resolve(readme),
           async [Symbol.asyncDispose](): Promise<void> {
@@ -2212,6 +2270,41 @@ describe('AdkWebServer', () => {
 
       await expect(failingServer.stop()).rejects.toThrow('close failed');
     });
+
+    it('closes cached runners when stop() is called', async () => {
+      const closeServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+      });
+      await closeServer.start();
+
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'cleanupSession',
+      });
+
+      const closeClient = new HttpClient(closeServer.url);
+      await closeClient.post<Event[]>('/run', {
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'cleanupSession',
+        newMessage: {
+          parts: [{text: 'Hello'}],
+          role: 'user',
+        },
+      });
+
+      const closeSpy = vi.spyOn(Runner.prototype, 'close');
+      try {
+        await closeServer.stop();
+        expect(closeSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        closeSpy.mockRestore();
+      }
+    });
   });
 
   describe('Internal caches keyed by request input', () => {
@@ -2239,6 +2332,101 @@ describe('AdkWebServer', () => {
       for (const eventId of INHERITED_KEYS) {
         const response = await fetch(`${server.url}/debug/trace/${eventId}`);
         expect(response.status).toBe(404);
+      }
+    });
+
+    it('replaces the cached Runner when an app reloads with a new agent instance', async () => {
+      const getRunner = (
+        server as unknown as {
+          getRunner: (agent: unknown, appName: string) => Promise<Runner>;
+        }
+      ).getRunner.bind(server);
+
+      const firstRunner = await getRunner(TEST_AGENT, 'testApp');
+      const sameRunner = await getRunner(TEST_AGENT, 'testApp');
+      expect(sameRunner).toBe(firstRunner);
+
+      const reloadedAgent = new LlmAgent({
+        name: 'testAgentReloaded',
+        description: 'reloaded agent',
+      });
+      const reloadedRunner = await getRunner(reloadedAgent, 'testApp');
+      expect(reloadedRunner).not.toBe(firstRunner);
+      expect(reloadedRunner.agent).toBe(reloadedAgent);
+    });
+
+    it('acquires and releases agentFile.retain() lease across /run requests, including failed runs', async () => {
+      const originalGetAgentFile = agentLoader.getAgentFile;
+      let activeLeases = 0;
+      let maxConcurrentLeases = 0;
+      let releaseCount = 0;
+      let shouldThrow = false;
+
+      agentLoader.getAgentFile = (() =>
+        Promise.resolve({
+          retain() {
+            activeLeases++;
+            maxConcurrentLeases = Math.max(maxConcurrentLeases, activeLeases);
+            return {
+              async [Symbol.asyncDispose]() {
+                activeLeases--;
+                releaseCount++;
+              },
+            };
+          },
+          load: () =>
+            Promise.resolve(
+              new Workflow({
+                name: 'lease_wf',
+                edges: [
+                  [
+                    'START',
+                    node(
+                      async () => {
+                        if (shouldThrow) {
+                          throw new Error('run failed');
+                        }
+                        return 'ok';
+                      },
+                      {name: 'step'},
+                    ),
+                  ],
+                ],
+              }),
+            ),
+        })) as unknown as AgentLoader['getAgentFile'];
+
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'leaseSession',
+      });
+
+      try {
+        const okRes = await client.post('/run', {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'leaseSession',
+          newMessage: {role: 'user', parts: [{text: 'hi'}]},
+        });
+        expect(okRes.status).toBe(200);
+        expect(maxConcurrentLeases).toBe(1);
+        expect(activeLeases).toBe(0);
+        expect(releaseCount).toBe(1);
+
+        shouldThrow = true;
+        await expect(
+          client.post('/run', {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'leaseSession',
+            newMessage: {role: 'user', parts: [{text: 'fail'}]},
+          }),
+        ).rejects.toThrow();
+        expect(activeLeases).toBe(0);
+        expect(releaseCount).toBe(2);
+      } finally {
+        agentLoader.getAgentFile = originalGetAgentFile;
       }
     });
   });
@@ -2461,7 +2649,7 @@ describe('AdkWebServer', () => {
 
         // 7. Run the eval set
         const runEvalRes = await evalClient.post<
-          Array<{evalId: string; finalEvalStatus: EvalStatus}>
+          Array<Record<string, unknown>>
         >('/apps/testApp/eval_sets/set_one/run_eval', {
           evalIds: ['case_1'],
           evalMetrics: [
@@ -2472,10 +2660,116 @@ describe('AdkWebServer', () => {
         expect(runEvalRes.status).toBe(200);
         expect(runEvalRes.data).toHaveLength(1);
         expect(runEvalRes.data?.[0].evalId).toBe('case_1');
+        expect(runEvalRes.data?.[0].evalSetId).toBe('set_one');
         expect(runEvalRes.data?.[0].finalEvalStatus).toBe(EvalStatus.PASSED);
+        expect(runEvalRes.data?.[0].sessionDetails).toBeDefined();
+        expect(runEvalRes.data?.[0]).not.toHaveProperty('eval_id');
+        expect(runEvalRes.data?.[0]).not.toHaveProperty('final_eval_status');
+        expect(runEvalRes.data?.[0]).not.toHaveProperty('session_details');
+
+        // 8. List persisted eval results
+        const listResultsRes = await evalClient.get<string[]>(
+          '/apps/testApp/eval_results',
+        );
+        expect(listResultsRes.status).toBe(200);
+        expect(listResultsRes.data).toHaveLength(1);
+
+        // 9. Get persisted eval result by ID
+        const resultId = listResultsRes.data![0];
+        const getResultRes = await evalClient.get<{
+          evalSetResultId: string;
+          evalSetId: string;
+          evalCaseResults: Array<Record<string, unknown>>;
+        }>(`/apps/testApp/eval_results/${resultId}`);
+        expect(getResultRes.status).toBe(200);
+        expect(getResultRes.data?.evalSetId).toBe('set_one');
+        expect(getResultRes.data?.evalCaseResults).toHaveLength(1);
+        expect(getResultRes.data?.evalCaseResults[0].evalId).toBe('case_1');
+        expect(getResultRes.data?.evalCaseResults[0].evalSetId).toBe('set_one');
+        expect(getResultRes.data?.evalCaseResults[0].finalEvalStatus).toBe(
+          EvalStatus.PASSED,
+        );
+        expect(
+          getResultRes.data?.evalCaseResults[0].overallEvalMetricResults,
+        ).toHaveLength(2);
+        expect(
+          getResultRes.data?.evalCaseResults[0].evalMetricResultPerInvocation,
+        ).toHaveLength(1);
+        expect(
+          getResultRes.data?.evalCaseResults[0].sessionDetails,
+        ).toBeDefined();
+        expect(getResultRes.data?.evalCaseResults[0]).not.toHaveProperty(
+          'eval_id',
+        );
+        expect(getResultRes.data?.evalCaseResults[0]).not.toHaveProperty(
+          'final_eval_status',
+        );
+        expect(getResultRes.data?.evalCaseResults[0]).not.toHaveProperty(
+          'session_details',
+        );
+
+        // 10. Return 404 for missing or traversal eval result ID
+        await expect(
+          evalClient.get('/apps/testApp/eval_results/non_existent_result'),
+        ).rejects.toMatchObject({response: {status: 404}});
+        await expect(
+          evalClient.get('/apps/testApp/eval_results/..%2Fsecret'),
+        ).rejects.toMatchObject({
+          response: {
+            status: 404,
+            data: {error: expect.stringMatching(/path separators/)},
+          },
+        });
+
+        // 11. Return 500 when stored eval result JSON is corrupt
+        const historyDir = path.join(
+          tempAgentsDir,
+          'testApp',
+          '.adk',
+          'eval_history',
+        );
+        fs.writeFileSync(
+          path.join(historyDir, 'corrupt_result.evalset_result.json'),
+          '{not valid json',
+          'utf-8',
+        );
+        await expect(
+          evalClient.get('/apps/testApp/eval_results/corrupt_result'),
+        ).rejects.toMatchObject({response: {status: 500}});
       } finally {
         await evalServer.stop();
         fs.rmSync(tempAgentsDir, {recursive: true, force: true});
+      }
+    });
+
+    it('reports a thrown non-Error value as readable text when listing eval results fails', async () => {
+      const listSpy = vi
+        .spyOn(LocalEvalSetResultsManager.prototype, 'listEvalSetResults')
+        .mockImplementation(() => {
+          throw {code: 'EIO'};
+        });
+      const evalServer = new AdkApiServer({
+        agentsDir: os.tmpdir(),
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+      });
+      await evalServer.start();
+      const evalClient = new HttpClient(evalServer.url);
+
+      try {
+        await expect(
+          evalClient.get('/apps/testApp/eval_results'),
+        ).rejects.toMatchObject({
+          response: {
+            status: 500,
+            data: {error: 'Failed to list eval results: {"code":"EIO"}'},
+          },
+        });
+      } finally {
+        listSpy.mockRestore();
+        await evalServer.stop();
       }
     });
   });

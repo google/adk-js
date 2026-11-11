@@ -9,7 +9,7 @@ This sample demonstrates how the CLI evaluation utilities prepare state placehol
 - A query containing `'order'` emits a `lookup_order` `functionCall` event, its `functionResponse` event, and the final text `'Order ORD-100 has shipped.'`.
 - Any other query replies with the active `locale` from `ctx.session.state`.
 
-The `main()` driver calls `createEmptyState(rootAgent, {locale: 'en-GB'})` to populate `{department: '', locale: 'en-GB'}`, runs two turns through `InMemoryRunner`, converts the stored session into `EvaluationItem` records with `convertSessionToEvalFormat`, parses an evalset selector with `parseAndGetEvalsToRun`, and scores the agent with `runEvals`.
+The `main()` driver calls `createEmptyState(rootAgent, {locale: 'en-GB'})` to populate `{department: '', locale: 'en-GB'}`, runs two turns through `InMemoryRunner`, converts the stored session into `EvaluationItem` records with `convertSessionToEvalFormat`, parses an evalset selector with `parseAndGetEvalsToRun`, scores the agent with `runEvals`, persists and reloads the `EvalSetResult` with `LocalEvalSetResultsManager`, and cleans up the runner with `closeRunners`.
 
 ## Sample Inputs
 
@@ -52,4 +52,4 @@ npm run ts:check:samples
 
 ## Related Guides
 
-- [CLI and Evaluation Utilities](../../docs/guides/cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalFormat`, `setupAdkLogger`, `logToTmpFolder`, and `runEvals`.
+- [CLI and Evaluation Utilities](../../docs/guides/cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalFormat`, `setupAdkLogger`, `logToTmpFolder`, `closeRunners`, `LocalEvalSetResultsManager`, and `runEvals`.

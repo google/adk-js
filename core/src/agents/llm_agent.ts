@@ -29,7 +29,10 @@ import {
   isFinalResponse,
   populateClientFunctionCallId,
 } from '../events/event.js';
-import {isDefaultEventActions} from '../events/event_actions.js';
+import {
+  createEventActions,
+  isDefaultEventActions,
+} from '../events/event_actions.js';
 
 import {BaseExampleProvider} from '../examples/base_example_provider.js';
 import {Example} from '../examples/example.js';
@@ -140,6 +143,17 @@ function isRecoverableLiveError(err: unknown): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Whether a function response event answers a call that is not waiting for
+ * confirmation, i.e. a parallel call that already ran.
+ */
+function hasSettledResponses(functionResponseEvent: Event): boolean {
+  const awaiting = functionResponseEvent.actions.requestedToolConfirmations;
+  return getFunctionResponses(functionResponseEvent).some(
+    (response) => !response.id || !Object.hasOwn(awaiting, response.id),
+  );
 }
 
 /**
@@ -848,6 +862,19 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     if (!event.content?.parts?.length) {
       logger.debug(
         `Skipping output save for agent ${this.name}: event content is empty`,
+      );
+      return;
+    }
+    // A final event with no answer text, such as a function response ending
+    // the turn through skipSummarization, has no output to save. Writing ''
+    // would overwrite whatever a tool already put under `outputKey`.
+    if (
+      !event.content.parts.some(
+        (part) => part.text !== undefined && !part.thought,
+      )
+    ) {
+      logger.debug(
+        `Skipping output save for agent ${this.name}: event has no text`,
       );
       return;
     }
@@ -1783,6 +1810,12 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       return;
     }
 
+    // Partial events are not saved to the session, and the final event repeats
+    // their function calls, so only the final event runs them.
+    if (mergedEvent.partial) {
+      return;
+    }
+
     if (invocationContext.runConfig?.pauseOnToolCalls) {
       invocationContext.endInvocation = true;
       return;
@@ -1847,6 +1880,25 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       functionResponseEvent: functionResponseEvent,
     });
     if (toolConfirmationEvent) {
+      // Parallel calls that needed no confirmation have already run. Their
+      // responses are stored before the pause, or the resumed request carries
+      // those calls without responses, which the model rejects. Each action is
+      // stored once: the responses keep the state and artifact changes, and
+      // the gate keeps the confirmation request and stays the final event.
+      if (hasSettledResponses(functionResponseEvent)) {
+        // Only requestedToolConfirmations and skipSummarization move to the
+        // gate. Every other field (stateDelta, artifactDelta,
+        // requestedAuthConfigs, transferToAgent, escalate, agentState, ...)
+        // intentionally stays on functionResponseEvent.
+        const {requestedToolConfirmations, skipSummarization, ...settled} =
+          functionResponseEvent.actions;
+        functionResponseEvent.actions = createEventActions(settled);
+        toolConfirmationEvent.actions = createEventActions({
+          requestedToolConfirmations,
+          skipSummarization,
+        });
+        yield functionResponseEvent;
+      }
       yield toolConfirmationEvent;
       invocationContext.endInvocation = true;
       return;
