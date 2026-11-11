@@ -7,9 +7,11 @@
 import {
   Context,
   InvocationContext,
+  isBaseTool,
   MCPSessionManager,
   MCPTool,
 } from '@google/adk';
+import {Type} from '@google/genai';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {Tool} from '@modelcontextprotocol/sdk/types.js';
 import {describe, expect, it, vi} from 'vitest';
@@ -161,5 +163,104 @@ describe('MCPTool', () => {
 
     // Assert that closeSession was still called despite the error
     expect(mockSessionManager.closeSession).toHaveBeenCalledWith(mockClient);
+  });
+
+  describe('initialization and declaration', () => {
+    const sessionManager = new MCPSessionManager({
+      type: 'StdioConnectionParams',
+      serverParams: {command: 'test'},
+    });
+
+    it('initializes BaseTool properties and satisfies isBaseTool', () => {
+      const mcpTool: Tool = {
+        name: 'test-tool',
+        description: 'A test tool',
+        inputSchema: {type: 'object', properties: {}},
+      };
+
+      const tool = new MCPTool(mcpTool, sessionManager);
+
+      expect(isBaseTool(tool)).toBe(true);
+      expect(tool.name).toBe('test-tool');
+      expect(tool.description).toBe('A test tool');
+      expect(tool.isLongRunning).toBe(false);
+    });
+
+    it('defaults description to an empty string when mcpTool.description is undefined', () => {
+      const mcpTool: Tool = {
+        name: 'undescribed-tool',
+        inputSchema: {type: 'object', properties: {}},
+      };
+
+      const tool = new MCPTool(mcpTool, sessionManager);
+
+      expect(isBaseTool(tool)).toBe(true);
+      expect(tool.name).toBe('undescribed-tool');
+      expect(tool.description).toBe('');
+    });
+
+    it('builds a FunctionDeclaration with converted inputSchema and outputSchema', () => {
+      const mcpTool: Tool = {
+        name: 'weather-tool',
+        description: 'Gets weather for a city',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            city: {type: 'string', description: 'City name'},
+          },
+          required: ['city'],
+        },
+        outputSchema: {
+          type: 'object',
+          properties: {
+            temperature: {type: 'number'},
+          },
+          required: ['temperature'],
+        },
+      };
+
+      const tool = new MCPTool(mcpTool, sessionManager);
+
+      expect(tool._getDeclaration()).toEqual({
+        name: 'weather-tool',
+        description: 'Gets weather for a city',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            city: {type: Type.STRING, description: 'City name'},
+          },
+          required: ['city'],
+        },
+        response: {
+          type: Type.OBJECT,
+          properties: {
+            temperature: {type: Type.NUMBER},
+          },
+          required: ['temperature'],
+        },
+      });
+    });
+
+    it('leaves response undefined in FunctionDeclaration when outputSchema is omitted', () => {
+      const mcpTool: Tool = {
+        name: 'simple-tool',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+      };
+
+      const tool = new MCPTool(mcpTool, sessionManager);
+
+      expect(tool._getDeclaration()).toEqual({
+        name: 'simple-tool',
+        description: undefined,
+        parameters: {
+          type: Type.OBJECT,
+          properties: {},
+        },
+        response: undefined,
+      });
+    });
   });
 });

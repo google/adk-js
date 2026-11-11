@@ -68,9 +68,7 @@ function loadSamplesEnv(): void {
  * HITL sample answers an interrupt whose id the framework generated.
  */
 export type SampleTurn =
-  | string
-  | Content
-  | ((previousTurns: Event[][]) => string | Content);
+  string | Content | ((previousTurns: Event[][]) => string | Content);
 
 /** Specification of a sample run. */
 export interface SampleSpec {

@@ -16,8 +16,9 @@ import {
   PluginManager,
 } from '@google/adk';
 import {Content} from '@google/genai';
-import {beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {ContextCompactionTrigger} from '../../src/plugins/base_plugin.js';
+import {logger} from '../../src/utils/logger.js';
 
 type PluginCallbackName = keyof BasePlugin;
 
@@ -45,16 +46,14 @@ class TestPlugin extends BasePlugin {
     userMessage: Content;
   }): Promise<Content | undefined> {
     return (await this.handleCallback('onUserMessageCallback')) as
-      | Content
-      | undefined;
+      Content | undefined;
   }
 
   override async beforeRunCallback(_params: {
     invocationContext: InvocationContext;
   }): Promise<Content | undefined> {
     return (await this.handleCallback('beforeRunCallback')) as
-      | Content
-      | undefined;
+      Content | undefined;
   }
 
   override async afterRunCallback(_params: {
@@ -75,8 +74,7 @@ class TestPlugin extends BasePlugin {
     callbackContext: Context;
   }): Promise<Content | undefined> {
     return (await this.handleCallback('beforeAgentCallback')) as
-      | Content
-      | undefined;
+      Content | undefined;
   }
 
   override async afterAgentCallback(_params: {
@@ -84,8 +82,7 @@ class TestPlugin extends BasePlugin {
     callbackContext: Context;
   }): Promise<Content | undefined> {
     return (await this.handleCallback('afterAgentCallback')) as
-      | Content
-      | undefined;
+      Content | undefined;
   }
 
   override async beforeToolCallback(_params: {
@@ -94,8 +91,7 @@ class TestPlugin extends BasePlugin {
     toolContext: Context;
   }): Promise<Record<string, unknown> | undefined> {
     return (await this.handleCallback('beforeToolCallback')) as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
   }
 
   override async afterToolCallback(_params: {
@@ -105,8 +101,7 @@ class TestPlugin extends BasePlugin {
     result: Record<string, unknown>;
   }): Promise<Record<string, unknown> | undefined> {
     return (await this.handleCallback('afterToolCallback')) as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
   }
 
   override async onToolErrorCallback(_params: {
@@ -116,8 +111,7 @@ class TestPlugin extends BasePlugin {
     error: Error;
   }): Promise<Record<string, unknown> | undefined> {
     return (await this.handleCallback('onToolErrorCallback')) as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
   }
 
   override async beforeModelCallback(_params: {
@@ -125,8 +119,7 @@ class TestPlugin extends BasePlugin {
     llmRequest: LlmRequest;
   }): Promise<LlmResponse | undefined> {
     return (await this.handleCallback('beforeModelCallback')) as
-      | LlmResponse
-      | undefined;
+      LlmResponse | undefined;
   }
 
   override async afterModelCallback(_params: {
@@ -134,8 +127,7 @@ class TestPlugin extends BasePlugin {
     llmResponse: LlmResponse;
   }): Promise<LlmResponse | undefined> {
     return (await this.handleCallback('afterModelCallback')) as
-      | LlmResponse
-      | undefined;
+      LlmResponse | undefined;
   }
 
   override async onModelErrorCallback(_params: {
@@ -144,8 +136,7 @@ class TestPlugin extends BasePlugin {
     error: Error;
   }): Promise<LlmResponse | undefined> {
     return (await this.handleCallback('onModelErrorCallback')) as
-      | LlmResponse
-      | undefined;
+      LlmResponse | undefined;
   }
 
   override async beforeContextCompaction(_params: {
@@ -183,6 +174,8 @@ describe('PluginManager', () => {
     plugin1 = new TestPlugin('plugin1');
     plugin2 = new TestPlugin('plugin2');
   });
+
+  afterEach(() => vi.restoreAllMocks());
 
   it('should register and get a plugin', () => {
     service.registerPlugin(plugin1);
@@ -249,6 +242,58 @@ describe('PluginManager', () => {
       );
     }
   });
+
+  it('keeps the plugin exception as the cause of the wrapping error', async () => {
+    const originalException = new Error('original');
+    plugin1.exceptionsToRaise['beforeRunCallback'] = originalException;
+    service.registerPlugin(plugin1);
+
+    const error = await service
+      .runBeforeRunCallback({invocationContext: mockInvocationContext})
+      .then(
+        () => undefined,
+        (e: unknown) => e as Error,
+      );
+
+    expect(error?.cause).toBe(originalException);
+  });
+
+  it.each([
+    ['onAgentErrorCallback', 'runOnAgentErrorCallback'],
+    ['onRunErrorCallback', 'runOnRunErrorCallback'],
+  ] as const)(
+    '%s notifies every plugin in order despite exceptions or return values',
+    async (callback, dispatch) => {
+      const log = vi.spyOn(logger, 'error').mockImplementation(() => {});
+      const order: string[] = [];
+      const plugin3 = new TestPlugin('plugin3');
+      for (const plugin of [plugin1, plugin2, plugin3]) {
+        service.registerPlugin(plugin);
+      }
+      // Deliberately return a runtime value despite the notification-only API.
+      vi.spyOn(plugin1, callback).mockImplementation(async () => {
+        order.push('first');
+        return 'ignored' as never;
+      });
+      vi.spyOn(plugin2, callback).mockImplementation(async () => {
+        order.push('second');
+        throw undefined;
+      });
+      const last = vi.spyOn(plugin3, callback).mockImplementation(async () => {
+        order.push('third');
+      });
+      const params = {
+        agent: mockAgent,
+        callbackContext: mockCallbackContext,
+        invocationContext: mockInvocationContext,
+        error: mockError,
+      };
+      await expect(service[dispatch](params)).resolves.toBeUndefined();
+      expect(order).toEqual(['first', 'second', 'third']);
+      expect(last).toHaveBeenCalledExactlyOnceWith(params);
+      expect(log).toHaveBeenCalledOnce();
+    },
+  );
 
   it('should support all callbacks', async () => {
     service.registerPlugin(plugin1);

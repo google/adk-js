@@ -239,7 +239,7 @@ describe('AuthHandler', () => {
 
       const request = handler.generateAuthRequest();
 
-      expect(request).toBe(authConfig);
+      expect(request).toEqual(authConfig);
     });
 
     it('returns original config if exchangedAuthCredential.oauth2.authUri is present', () => {
@@ -264,7 +264,7 @@ describe('AuthHandler', () => {
 
       const request = handler.generateAuthRequest();
 
-      expect(request).toBe(authConfig);
+      expect(request).toEqual(authConfig);
     });
 
     it('throws if rawAuthCredential is missing for oauth2', () => {
@@ -335,7 +335,7 @@ describe('AuthHandler', () => {
 
       const request = handler.generateAuthRequest();
 
-      expect(request.exchangedAuthCredential).toBe(
+      expect(request.exchangedAuthCredential).toEqual(
         authConfig.rawAuthCredential,
       );
     });
@@ -677,5 +677,146 @@ describe('AuthHandler', () => {
       ).toBeUndefined();
       expect(authConfig.rawAuthCredential?.oauth2?.authUri).toBeUndefined();
     });
+  });
+});
+
+/** Reads the oauth2 block of a request's exchanged credential. */
+function exchangedOAuth2(request: AuthConfig): OAuth2Auth {
+  const oauth2 = request.exchangedAuthCredential?.oauth2;
+  if (!oauth2) {
+    expect.fail('expected the request to carry an exchanged oauth2 credential');
+  }
+
+  return oauth2;
+}
+
+describe('AuthHandler authConfig property', () => {
+  it('reads back the config passed to the constructor', () => {
+    const authConfig = authConfigWithOAuth2({});
+    const handler = new AuthHandler(authConfig);
+
+    expect(handler.authConfig).toBe(authConfig);
+  });
+
+  it('uses a config assigned after construction', () => {
+    const handler = new AuthHandler(authConfigWithOAuth2({}));
+    const replacement: AuthConfig = {
+      credentialKey: 'replacementKey',
+      authScheme: {type: 'apiKey', name: 'X-API-Key', in: 'header'},
+    };
+
+    handler.authConfig = replacement;
+
+    expect(handler.authConfig).toBe(replacement);
+    expect(handler.generateAuthRequest()).toEqual(replacement);
+  });
+});
+
+describe('AuthHandler generateAuthRequest copies', () => {
+  it('returns a copy of a config whose scheme is not interactive', () => {
+    const authConfig: AuthConfig = {
+      credentialKey: 'testKey',
+      authScheme: {type: 'apiKey', name: 'testKey', in: 'header'},
+      exchangedAuthCredential: {
+        authType: AuthCredentialTypes.API_KEY,
+        apiKey: 'testToken',
+      },
+    };
+    const handler = new AuthHandler(authConfig);
+
+    const request = handler.generateAuthRequest();
+
+    expect(request).not.toBe(authConfig);
+    expect(request).toEqual(authConfig);
+    expect(request.exchangedAuthCredential).not.toBe(
+      authConfig.exchangedAuthCredential,
+    );
+  });
+
+  it('returns a copy of a config whose exchanged credential has an auth URI', () => {
+    const authConfig: AuthConfig = {
+      ...authConfigWithOAuth2({}),
+      exchangedAuthCredential: {
+        authType: AuthCredentialTypes.OAUTH2,
+        oauth2: {authUri: 'https://auth.com/existing'},
+      },
+    };
+    const handler = new AuthHandler(authConfig);
+
+    const request = handler.generateAuthRequest();
+
+    expect(request).not.toBe(authConfig);
+    expect(request).toEqual(authConfig);
+
+    exchangedOAuth2(request).authResponseUri = 'https://redirect.com/?code=abc';
+    expect(
+      authConfig.exchangedAuthCredential?.oauth2?.authResponseUri,
+    ).toBeUndefined();
+  });
+
+  it('returns a copy of the raw credential when it already has an auth URI', () => {
+    const authConfig = authConfigWithOAuth2({
+      authUri: 'https://auth.com/prebuilt',
+    });
+    const handler = new AuthHandler(authConfig);
+
+    const request = handler.generateAuthRequest();
+
+    expect(request.exchangedAuthCredential).not.toBe(
+      authConfig.rawAuthCredential,
+    );
+    expect(request.exchangedAuthCredential).toEqual(
+      authConfig.rawAuthCredential,
+    );
+    expect(request.credentialKey).toBe('testKey');
+  });
+
+  it('leaves the raw credential unchanged when the request is filled in', () => {
+    const authConfig = authConfigWithOAuth2({
+      authUri: 'https://auth.com/prebuilt',
+    });
+    const handler = new AuthHandler(authConfig);
+
+    const request = handler.generateAuthRequest();
+    exchangedOAuth2(request).authResponseUri = 'https://redirect.com/?code=abc';
+
+    expect(
+      authConfig.rawAuthCredential?.oauth2?.authResponseUri,
+    ).toBeUndefined();
+  });
+});
+
+describe('AuthHandler generateAuthUri optional parameters', () => {
+  it('omits redirect_uri when the credential has no redirectUri', () => {
+    const authConfig = authConfigWithOAuth2({redirectUri: undefined});
+    const handler = new AuthHandler(authConfig);
+
+    const params = authUriParams(handler.generateAuthUri());
+
+    expect(params.has('redirect_uri')).toBe(false);
+    expect(params.get('client_id')).toBe('id');
+    expect(params.get('scope')).toBe('scope1');
+  });
+
+  it('omits scope when the scheme lists no scopes', () => {
+    const authConfig: AuthConfig = {
+      ...authConfigWithOAuth2({}),
+      authScheme: {
+        type: 'oauth2',
+        flows: {
+          authorizationCode: {
+            authorizationUrl: 'https://auth.com',
+            tokenUrl: 'https://token.com',
+            scopes: {},
+          },
+        },
+      },
+    };
+    const handler = new AuthHandler(authConfig);
+
+    const params = authUriParams(handler.generateAuthUri());
+
+    expect(params.has('scope')).toBe(false);
+    expect(params.get('redirect_uri')).toBe('https://redirect.com');
   });
 });

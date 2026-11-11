@@ -6,14 +6,30 @@
 
 import {
   Context,
-  FeatureName,
+  createSession,
+  InvocationContext,
   LlmRequest,
+  PluginManager,
   ProfileMemoryService,
   VertexAiLoadProfilesTool,
-  withTemporaryFeatureOverride,
 } from '@google/adk';
 import {Type} from '@google/genai';
 import {describe, expect, it, vi} from 'vitest';
+
+function createTestToolContext(): Context {
+  const session = createSession({
+    id: 'session-1',
+    appName: 'test-app',
+    userId: 'test-user',
+  });
+  return new Context({
+    invocationContext: new InvocationContext({
+      invocationId: 'inv-1',
+      session,
+      pluginManager: new PluginManager(),
+    }),
+  });
+}
 
 describe('VertexAiLoadProfilesTool', () => {
   it('returns non-empty profile payloads and filters out empty or undefined profiles', async () => {
@@ -38,11 +54,7 @@ describe('VertexAiLoadProfilesTool', () => {
       ]),
     };
 
-    const toolContext = {
-      session: {appName: 'test-app'},
-      userId: 'test-user',
-    } as unknown as Context;
-
+    const toolContext = createTestToolContext();
     const tool = new VertexAiLoadProfilesTool(mockMemoryService);
     const result = await tool.runAsync({
       args: {},
@@ -58,43 +70,39 @@ describe('VertexAiLoadProfilesTool', () => {
     });
   });
 
-  it('builds function declaration matching JSON_SCHEMA_FOR_FUNC_DECL feature flag', async () => {
+  it('propagates rejection when retrieveProfiles fails', async () => {
+    const mockMemoryService: ProfileMemoryService = {
+      retrieveProfiles: vi
+        .fn()
+        .mockRejectedValue(new Error('Memory Bank unavailable')),
+    };
+
+    const toolContext = createTestToolContext();
+    const tool = new VertexAiLoadProfilesTool(mockMemoryService);
+
+    await expect(
+      tool.runAsync({
+        args: {},
+        toolContext,
+      }),
+    ).rejects.toThrow('Memory Bank unavailable');
+  });
+
+  it('builds function declaration with empty object parameters', () => {
     const mockMemoryService: ProfileMemoryService = {
       retrieveProfiles: vi.fn().mockResolvedValue([]),
     };
     const tool = new VertexAiLoadProfilesTool(mockMemoryService);
 
-    await withTemporaryFeatureOverride(
-      FeatureName.JSON_SCHEMA_FOR_FUNC_DECL,
-      false,
-      () => {
-        expect(tool._getDeclaration()).toEqual({
-          name: 'load_profiles',
-          description:
-            'Loads all user profiles for the current user from Vertex AI Memory Bank.',
-          parameters: {
-            type: Type.OBJECT,
-            properties: {},
-          },
-        });
+    expect(tool._getDeclaration()).toEqual({
+      name: 'load_profiles',
+      description:
+        'Loads all user profiles for the current user from Vertex AI Memory Bank.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {},
       },
-    );
-
-    await withTemporaryFeatureOverride(
-      FeatureName.JSON_SCHEMA_FOR_FUNC_DECL,
-      true,
-      () => {
-        expect(tool._getDeclaration()).toEqual({
-          name: 'load_profiles',
-          description:
-            'Loads all user profiles for the current user from Vertex AI Memory Bank.',
-          parametersJsonSchema: {
-            type: 'object',
-            properties: {},
-          },
-        });
-      },
-    );
+    });
   });
 
   it('registers the tool declaration on LlmRequest without adding system instructions', async () => {
@@ -107,10 +115,7 @@ describe('VertexAiLoadProfilesTool', () => {
       toolsDict: {},
       liveConnectConfig: {},
     };
-    const toolContext = {
-      session: {appName: 'test-app'},
-      userId: 'test-user',
-    } as unknown as Context;
+    const toolContext = createTestToolContext();
 
     await tool.processLlmRequest({
       toolContext,

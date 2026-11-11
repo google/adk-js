@@ -54,6 +54,20 @@ export function collectFunctionDeclarations(
  *
  * A single-value `enum` is used rather than `const`, because it is semantically
  * identical and more widely supported across constraint engines.
+ *
+ * Every branch sets `additionalProperties: false`, and that is load-bearing
+ * rather than tidy. Omitted, JSON Schema permits extra keys, so a decoder may
+ * emit `,"` after the last required key instead of `}`. The object then never
+ * has to close: the model keeps writing until the output runs out, and the
+ * reply arrives as truncated JSON. Whether it closes in time is left to
+ * sampling, which is why one session can answer a question cleanly and mangle
+ * the next. Closing the branch makes `}` the only legal token once `text` is
+ * written.
+ *
+ * It is set on the envelope only, never pushed into a tool's own argument
+ * schema. Those belong to the caller; some describe objects that legitimately
+ * accept keys they do not list, and forbidding those here would make a valid
+ * call impossible to express.
  */
 export function buildToolChoiceSchema(
   declarations: FunctionDeclaration[],
@@ -66,6 +80,7 @@ export function buildToolChoiceSchema(
         text: {type: 'string'},
       },
       required: ['kind', 'text'],
+      additionalProperties: false,
     },
   ];
 
@@ -79,6 +94,7 @@ export function buildToolChoiceSchema(
         args: argumentSchema(declaration),
       },
       required: ['kind', 'name', 'args'],
+      additionalProperties: false,
     });
   }
 
@@ -267,4 +283,64 @@ export function errorResponse(error: unknown): LlmResponse {
     };
   }
   return {errorCode: name, errorMessage: message, turnComplete: true};
+}
+
+/** Shown when a reply is JSON, is broken, and holds no readable answer. */
+export const TRUNCATED_REPLY =
+  'The model started an answer and did not finish it. Ask again.';
+
+/** True when a reply is the JSON envelope rather than plain prose. */
+export function looksLikeEnvelope(raw: string): boolean {
+  return /^\s*[[{]/.test(raw) || /"kind"\s*:/.test(raw);
+}
+
+/**
+ * Reads the answer out of a truncated `{"kind":"final","text":"…` envelope.
+ *
+ * A constrained reply that stops early is usually still readable: the answer
+ * sits in `text` and only the closing quote and brace are missing. Scanning it
+ * out by hand beats `JSON.parse`, which needs the whole document, and beats
+ * showing the envelope to the caller.
+ *
+ * Returns undefined when there is no `text` key to read.
+ */
+export function salvageFinalText(raw: string): string | undefined {
+  const key = raw.match(/"text"\s*:\s*"/);
+  if (key?.index === undefined) return undefined;
+
+  const escapes: Record<string, string> = {
+    n: '\n',
+    t: '\t',
+    r: '\r',
+    b: '\b',
+    f: '\f',
+    '"': '"',
+    '\\': '\\',
+    '/': '/',
+  };
+
+  let out = '';
+  for (let i = key.index + key[0].length; i < raw.length; i++) {
+    const char = raw[i]!;
+    if (char === '"') break; // the string closed normally
+    if (char !== '\\') {
+      out += char;
+      continue;
+    }
+    const next = raw[i + 1];
+    if (next === undefined) break; // truncated mid-escape
+    if (next === 'u') {
+      const hex = raw.slice(i + 2, i + 6);
+      if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+        out += String.fromCharCode(parseInt(hex, 16));
+        i += 5;
+        continue;
+      }
+    }
+    out += escapes[next] ?? next;
+    i++;
+  }
+
+  const text = out.trim();
+  return text.length ? text : undefined;
 }

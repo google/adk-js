@@ -67,10 +67,12 @@ describe('adk run with an invalid API key', () => {
       name: 'test_agent',
       model: new RejectingLlm({model: 'gemini-flash-latest'}),
     });
-    (AgentFile as unknown as Mock).mockImplementation(() => ({
-      load: async () => rootAgent,
-      [Symbol.asyncDispose]: async () => {},
-    }));
+    (AgentFile as unknown as Mock).mockImplementation(function () {
+      return {
+        load: async () => rootAgent,
+        [Symbol.asyncDispose]: async () => {},
+      };
+    });
     (loadFileData as Mock).mockResolvedValue({state: {}, queries: ['hello']});
   });
 

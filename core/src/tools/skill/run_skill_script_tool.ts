@@ -12,6 +12,7 @@ import {
   File,
 } from '../../code_executors/code_execution_utils.js';
 import {Script, Skill} from '../../skills/skill.js';
+import {recordSkillActivity} from '../../telemetry/api/instrumentation.js';
 import {experimental} from '../../utils/experimental.js';
 import {
   getMimeTypeAndEncoding,
@@ -79,6 +80,11 @@ export class RunSkillScriptTool extends BaseTool {
       };
     }
 
+    const skillActivity = recordSkillActivity({
+      kind: 'script',
+      skillName,
+      scriptPath,
+    });
     let skill;
     try {
       skill = await this.toolset.getOrFetchSkill(
@@ -98,12 +104,14 @@ export class RunSkillScriptTool extends BaseTool {
         errorCode: 'SKILL_NOT_FOUND',
       };
     }
+    skillActivity.recordSkill(skill);
 
-    const relScriptPath = scriptPath.startsWith('scripts/')
+    let relScriptPath = scriptPath.startsWith('scripts/')
       ? scriptPath.substring('scripts/'.length)
       : scriptPath;
     let script = skill.resources?.scripts?.[relScriptPath];
     if (!script) {
+      relScriptPath = scriptPath;
       script = skill.resources?.scripts?.[scriptPath];
     }
 
@@ -134,7 +142,9 @@ export class RunSkillScriptTool extends BaseTool {
       const result = await codeExecutor.executeCode({
         invocationContext: toolContext.invocationContext,
         codeExecutionInput: {
-          code: buildWrapperCode(scriptPath, language),
+          // Scripts are always written under scripts/ (see
+          // getSkillResourceFiles), with or without the prefix in script_path.
+          code: buildWrapperCode(`scripts/${relScriptPath}`, language),
           inputFiles: getSkillResourceFiles(skill),
           language,
           args: scriptArgs,

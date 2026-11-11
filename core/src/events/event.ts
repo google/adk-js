@@ -8,7 +8,7 @@ import {FunctionCall, FunctionResponse} from '@google/genai';
 
 import {LlmResponse} from '../models/llm_response.js';
 
-import {randomUUID} from '../utils/env_aware_utils.js';
+import {newId, newIdOr} from '../utils/id_provider.js';
 import {toCamelCase, toSnakeCase} from '../utils/object_notation_utils.js';
 import {createEventActions, EventActions} from './event_actions.js';
 
@@ -222,7 +222,7 @@ export function getFunctionCalls(event: Event): FunctionCall[] {
 export const AF_FUNCTION_CALL_ID_PREFIX = 'adk-';
 
 export function generateClientFunctionCallId(): string {
-  return `${AF_FUNCTION_CALL_ID_PREFIX}${randomUUID()}`;
+  return `${AF_FUNCTION_CALL_ID_PREFIX}${newId()}`;
 }
 
 /**
@@ -287,10 +287,17 @@ export function stringifyContent(event: Event): string {
 
 /**
  * Estimates the number of tokens in the event based on usage metadata or characters.
+ *
+ * Prefers `initialPromptTokenCount`, because the promptTokenCount of a
+ * generation that @google/genai resumed after continuation pauses is summed
+ * over every resumed request, each of which resent the prompt.
  */
 export function getEventTokens(event: Event): number {
-  if (event.usageMetadata?.promptTokenCount !== undefined) {
-    return event.usageMetadata.promptTokenCount;
+  const usage = event.usageMetadata;
+  const promptTokenCount =
+    usage?.initialPromptTokenCount ?? usage?.promptTokenCount;
+  if (promptTokenCount !== undefined) {
+    return promptTokenCount;
   }
   // Estimate: 4 chars per token.
   const contentStr = stringifyContent(event);
@@ -345,8 +352,15 @@ export function isEvent(obj: unknown): obj is Event {
 
 /**
  * Generates a new unique ID for the event.
+ *
+ * The ID comes from the provider set with `setIdProvider`, or is 8 random
+ * alphanumeric characters when none is set.
  */
 export function createNewEventId(): string {
+  return newIdOr(createRandomEventId);
+}
+
+function createRandomEventId(): string {
   let id = '';
 
   for (let i = 0; i < 8; i++) {

@@ -550,11 +550,408 @@ describe('toGeminiSchema', () => {
       ],
     });
   });
+
+  it('converts a boolean true branch inside anyOf to an object schema', () => {
+    const input = {anyOf: [true]} as unknown as MCPToolSchema;
+
+    expect(() => toGeminiSchema(input)).not.toThrow();
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({type: Type.OBJECT, properties: {}});
+  });
+
+  it('converts a boolean false branch inside anyOf to an object schema', () => {
+    const input = {anyOf: [false]} as unknown as MCPToolSchema;
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({type: Type.OBJECT, properties: {}});
+  });
+
+  it('keeps an anyOf with a boolean branch nullable', () => {
+    const input = {anyOf: [true, {type: 'null'}]} as unknown as MCPToolSchema;
+
+    expect(() => toGeminiSchema(input)).not.toThrow();
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      type: Type.OBJECT,
+      nullable: true,
+      properties: {},
+    });
+  });
+
+  it('converts a boolean branch alongside a typed branch', () => {
+    const input = {anyOf: [true, {type: 'string'}]} as unknown as MCPToolSchema;
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      anyOf: [{type: Type.OBJECT, properties: {}}, {type: Type.STRING}],
+    });
+  });
+
+  it('converts every boolean branch of an all-boolean anyOf', () => {
+    const input = {anyOf: [true, false]} as unknown as MCPToolSchema;
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      anyOf: [
+        {type: Type.OBJECT, properties: {}},
+        {type: Type.OBJECT, properties: {}},
+      ],
+    });
+  });
+
+  it('converts a boolean member of a type array', () => {
+    const input = {type: [true]} as unknown as MCPToolSchema;
+
+    expect(() => toGeminiSchema(input)).not.toThrow();
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({type: Type.OBJECT, properties: {}});
+  });
+
+  it('converts a boolean member alongside a named type', () => {
+    const input = {type: [true, 'string']} as unknown as MCPToolSchema;
+
+    expect(() => toGeminiSchema(input)).not.toThrow();
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      anyOf: [{type: Type.OBJECT, properties: {}}, {type: Type.STRING}],
+    });
+  });
+
+  it('converts a boolean branch on a nested property', () => {
+    const input: MCPToolSchema = {
+      type: 'object',
+      properties: {a: {anyOf: [true]}},
+    };
+
+    expect(() => toGeminiSchema(input)).not.toThrow();
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      type: Type.OBJECT,
+      properties: {a: {type: Type.OBJECT, properties: {}}},
+    });
+  });
+
+  it('converts a boolean branch inside array items', () => {
+    const input = {
+      type: 'array',
+      items: {anyOf: [true]},
+    } as unknown as MCPToolSchema;
+
+    expect(() => toGeminiSchema(input)).not.toThrow();
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      type: Type.ARRAY,
+      items: {type: Type.OBJECT, properties: {}},
+    });
+  });
+
+  it('converts a boolean true property schema to an object schema', () => {
+    const input: MCPToolSchema = {
+      type: 'object',
+      properties: {
+        model: true,
+      },
+    };
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      type: Type.OBJECT,
+      properties: {
+        model: {type: Type.OBJECT, properties: {}},
+      },
+    });
+  });
+
+  it('converts a boolean false property schema to an object schema without throwing', () => {
+    const input: MCPToolSchema = {
+      type: 'object',
+      properties: {
+        anything: false,
+      },
+    };
+
+    expect(() => toGeminiSchema(input)).not.toThrow();
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      type: Type.OBJECT,
+      properties: {
+        anything: {type: Type.OBJECT, properties: {}},
+      },
+    });
+  });
+
+  it('converts a boolean true schema nested in array item properties', () => {
+    const input: MCPToolSchema = {
+      type: 'object',
+      properties: {
+        title: {type: 'string'},
+        data: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              datasourceUid: {type: 'string'},
+              model: true,
+              queryType: {type: 'string'},
+              refId: {type: 'string'},
+            },
+          },
+        },
+      },
+      required: ['title', 'data'],
+    };
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      type: Type.OBJECT,
+      properties: {
+        title: {type: Type.STRING},
+        data: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              datasourceUid: {type: Type.STRING},
+              model: {type: Type.OBJECT, properties: {}},
+              queryType: {type: Type.STRING},
+              refId: {type: Type.STRING},
+            },
+          },
+        },
+      },
+      required: ['title', 'data'],
+    });
+  });
+
+  it('converts a boolean array items schema to an object schema', () => {
+    const input = {
+      type: 'array',
+      items: true,
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.ARRAY,
+      items: {type: Type.OBJECT, properties: {}},
+    });
+  });
+
+  it('converts a boolean false array items schema to an object schema', () => {
+    const input = {
+      type: 'array',
+      items: false,
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.ARRAY,
+      items: {type: Type.OBJECT, properties: {}},
+    });
+  });
+
+  it('converts a boolean schema in an anyOf branch to an object schema', () => {
+    const input = {
+      anyOf: [true, {type: 'string'}],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      anyOf: [{type: Type.OBJECT, properties: {}}, {type: Type.STRING}],
+    });
+  });
+});
+
+describe('toGeminiSchema constraint preservation', () => {
+  it('keeps array bounds on the root and on nested arrays', () => {
+    const schema = toGeminiSchema({
+      type: 'array',
+      maxItems: 4,
+      items: {type: 'array', minItems: 2, items: {type: 'string'}},
+    } as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.ARRAY,
+      maxItems: '4',
+      items: {
+        type: Type.ARRAY,
+        minItems: '2',
+        items: {type: Type.STRING},
+      },
+    });
+  });
+
+  it('keeps array bounds through a nullable anyOf branch', () => {
+    const schema = toGeminiSchema({
+      anyOf: [
+        {type: 'array', minItems: 2, maxItems: 3, items: {type: 'string'}},
+        {type: 'null'},
+      ],
+    } as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.ARRAY,
+      nullable: true,
+      minItems: '2',
+      maxItems: '3',
+      items: {type: Type.STRING},
+    });
+  });
+
+  it('keeps array bounds through a nullable type array', () => {
+    const schema = toGeminiSchema({
+      type: ['array', 'null'],
+      minItems: 2,
+      items: {type: 'string'},
+    } as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.ARRAY,
+      nullable: true,
+      minItems: '2',
+      items: {type: Type.STRING},
+    });
+  });
+
+  it('keeps the bounds of every anyOf branch', () => {
+    const schema = toGeminiSchema({
+      anyOf: [
+        {type: 'array', minItems: 2, items: {type: 'string'}},
+        {type: 'number', minimum: 1},
+      ],
+    } as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      anyOf: [
+        {type: Type.ARRAY, minItems: '2', items: {type: Type.STRING}},
+        {type: Type.NUMBER, minimum: 1},
+      ],
+    });
+  });
+
+  it('keeps string length bounds and pattern', () => {
+    const schema = toGeminiSchema({
+      type: 'object',
+      properties: {
+        name: {type: 'string', minLength: 3, maxLength: 5, pattern: '^[a-z]+$'},
+      },
+      required: ['name'],
+    } as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.OBJECT,
+      properties: {
+        name: {
+          type: Type.STRING,
+          minLength: '3',
+          maxLength: '5',
+          pattern: '^[a-z]+$',
+        },
+      },
+      required: ['name'],
+    });
+  });
+
+  it('keeps numeric range bounds as numbers', () => {
+    const schema = toGeminiSchema({
+      type: 'object',
+      properties: {age: {type: 'number', minimum: 1, maximum: 9}},
+      required: ['age'],
+    } as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.OBJECT,
+      properties: {age: {type: Type.NUMBER, minimum: 1, maximum: 9}},
+      required: ['age'],
+    });
+  });
+
+  it('keeps object property-count bounds as string counts', () => {
+    const schema = toGeminiSchema({
+      type: 'object',
+      minProperties: 1,
+      maxProperties: 3,
+      properties: {name: {type: 'string'}},
+    } as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.OBJECT,
+      properties: {name: {type: Type.STRING}},
+      minProperties: '1',
+      maxProperties: '3',
+    });
+  });
+
+  it('normalizes string counts already in the genai dialect', () => {
+    const schema = toGeminiSchema({
+      type: 'array',
+      minItems: '2',
+      items: {type: 'string'},
+    } as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.ARRAY,
+      minItems: '2',
+      items: {type: Type.STRING},
+    });
+  });
+
+  it('leaves an unbounded schema without constraint fields', () => {
+    const schema = toGeminiSchema({
+      type: 'array',
+      items: {type: 'string'},
+    } as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.ARRAY,
+      items: {type: Type.STRING},
+    });
+  });
+
+  it('drops the generated pattern that only restates an email format', () => {
+    const schema = toGeminiSchema({
+      type: 'string',
+      format: 'email',
+      pattern: '^[^@]+@[^@]+$',
+    } as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({type: Type.STRING});
+  });
 });
 
 describe('openApiSchemaToGeminiSchema', () => {
-  it('leaves the type unspecified when the schema declares a type union', () => {
+  it('normalizes a nullable type array into the non-null type with nullable set', () => {
     const schema = openApiSchemaToGeminiSchema({type: ['string', 'null']});
+
+    expect(schema).toEqual({
+      type: Type.STRING,
+      nullable: true,
+    });
+  });
+
+  it('leaves the type unspecified when the schema declares an unrecognized type', () => {
+    const schema = openApiSchemaToGeminiSchema({type: 'custom'});
 
     expect(schema?.type).toBe(Type.TYPE_UNSPECIFIED);
   });

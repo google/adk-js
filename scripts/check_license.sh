@@ -5,7 +5,7 @@ echo "🔍 Checking for license headers..."
 MISSING_FILES=""
 # Find files and check them using Perl (more robust for multi-line regex)
 FILES=$(find . -type d \( -name "node_modules" -o -name "dist" -o -name ".git" -o -name "browser" \) -prune -o \
-               -type f \( -name "*.js" -o -name "*.ts" \) -print)
+               -type f \( -name "*.js" -o -name "*.ts" -o -name "*.mjs" -o -name "*.cjs" \) -print)
 
 for FILE in $FILES; do
     # -0777 slurps the whole file, -ne executes, and we exit with 0 if found

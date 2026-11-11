@@ -28,8 +28,21 @@ export interface OpenIdConnectWithConfig
  * OpenIdConnectWithConfig.
  */
 export type AuthScheme =
-  | OpenAPIV3.SecuritySchemeObject
-  | OpenIdConnectWithConfig;
+  OpenAPIV3.SecuritySchemeObject | OpenIdConnectWithConfig;
+
+/**
+ * The OpenAPI security scheme types an {@link AuthScheme} can declare.
+ *
+ * The values are the exact strings of the OpenAPI `type` field, so a member
+ * compares equal to `authScheme.type` and can be enumerated at runtime with
+ * `Object.values(AuthSchemeType)`.
+ */
+export enum AuthSchemeType {
+  API_KEY = 'apiKey',
+  HTTP = 'http',
+  OAUTH2 = 'oauth2',
+  OPEN_ID_CONNECT = 'openIdConnect',
+}
 
 /**
  * Represents the OAuth2 flow (or grant type).

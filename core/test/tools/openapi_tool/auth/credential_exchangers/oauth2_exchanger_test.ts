@@ -20,11 +20,13 @@ import {
   AuthCredentialTypes,
   AuthScheme,
   exchangeCredential,
+  generateAuthToken as generateAuthTokenFromPackage,
   OpenIdConnectWithConfig,
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
-// `checkSchemeCredentialType` and `generateAuthToken` are internals of
-// `exchangeCredential`, so they are not on the package surface.
+// `checkSchemeCredentialType` is an internal of `exchangeCredential` and is not
+// on the package surface. The package export of `generateAuthToken` is covered
+// by its own block at the end of this file.
 import {
   checkSchemeCredentialType,
   generateAuthToken,
@@ -144,9 +146,43 @@ describe('OAuth2BearerExchanger ported reference tests', () => {
     );
   });
 
+  it('test_exchange_credential_refresh_token_only', () => {
+    const authCredential = oauth2Credential({
+      clientId: 'test_client',
+      clientSecret: 'test_secret',
+      redirectUri: 'http://localhost:8080',
+      refreshToken: 'test_refresh_token',
+    });
+
+    const updatedCredential = exchangeCredential(authScheme, authCredential);
+
+    expect(updatedCredential).toBeNull();
+  });
+
   it('test_exchange_credential_auth_missing', () => {
     expect(() => exchangeCredential(authScheme, undefined)).toThrow(
       'auth_credential is empty. Please create AuthCredential using',
     );
+  });
+});
+
+describe('generateAuthToken package export', () => {
+  it('converts an access token into an HTTP bearer credential', () => {
+    const authCredential = oauth2Credential({accessToken: 'package-token'});
+
+    expect(generateAuthTokenFromPackage(authCredential)).toEqual({
+      authType: AuthCredentialTypes.HTTP,
+      http: {scheme: 'bearer', credentials: {token: 'package-token'}},
+    });
+  });
+
+  it('returns the credential itself when it holds no access token', () => {
+    const authCredential = oauth2Credential({refreshToken: 'refresh-token'});
+
+    expect(generateAuthTokenFromPackage(authCredential)).toBe(authCredential);
+  });
+
+  it('is the same function the exchanger module defines', () => {
+    expect(generateAuthTokenFromPackage).toBe(generateAuthToken);
   });
 });

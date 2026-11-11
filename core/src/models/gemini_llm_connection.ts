@@ -21,6 +21,8 @@ import {LlmResponse} from './llm_response.js';
 
 /** The Gemini model connection. */
 export class GeminiLlmConnection implements BaseLlmConnection {
+  private messageIterator?: AsyncIterator<LiveServerMessage>;
+
   constructor(
     private readonly geminiSession: Session,
     private readonly modelVersion?: string,
@@ -137,28 +139,37 @@ export class GeminiLlmConnection implements BaseLlmConnection {
   }
 
   /**
-   * Builds a full text response.
+   * Receives the model responses for one model turn.
    *
-   * The text should not be partial and the returned LlmResponse is not be
-   * partial.
+   * The generator ends after the message that completes the turn has been
+   * processed, or when the server closes the connection. Call `receive()`
+   * again to read the next turn; it continues from the next server message.
    *
-   * @param text The text to be included in the response.
-   * @param isThought Whether the text is a thought.
-   * @param groundingMetadata The grounding metadata to include.
-   * @returns An LlmResponse containing the full text.
+   * @returns A generator of the LlmResponses of one model turn.
    */
   async *receive(): AsyncGenerator<LlmResponse, void, void> {
     if (!this.messageQueue) {
       throw new Error('Message queue is not initialized.');
     }
+    // Iterate with `next()` rather than `for await` so that leaving after a
+    // turn does not call `return()` and close a generator-backed source.
+    this.messageIterator ??= this.messageQueue[Symbol.asyncIterator]();
 
     const aggregator = new LiveResponseAggregator(this.modelVersion);
 
-    for await (const message of this.messageQueue) {
+    while (true) {
+      const next = await this.messageIterator.next();
+      if (next.done) {
+        break;
+      }
+      const message = next.value;
       logger.debug('Got LLM Live message:', message);
 
       for (const response of aggregator.processMessage(message)) {
         yield response;
+      }
+      if (message.serverContent?.turnComplete) {
+        return;
       }
     }
 

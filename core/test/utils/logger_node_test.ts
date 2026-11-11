@@ -141,12 +141,26 @@ describe('WinstonLogger', () => {
     expect(lines).toHaveLength(0);
   });
 
-  it('throws from log() because winston rejects the numeric level name', () => {
-    setLogLevel(LogLevel.ERROR);
+  it('maps numeric log levels to winston level names', async () => {
+    setLogLevel(LogLevel.DEBUG);
 
-    // Pre-existing behaviour, preserved by this change: `log()` passes the
-    // numeric enum value to winston, which knows only the 'debug'..'error'
-    // names. A separate change fixes it.
-    expect(() => getLogger().log(LogLevel.ERROR, 'boom')).toThrow();
+    const records: Array<[LogLevel, string]> = [
+      [LogLevel.DEBUG, 'DEBUG'],
+      [LogLevel.INFO, 'INFO'],
+      [LogLevel.WARN, 'WARN'],
+      [LogLevel.ERROR, 'ERROR'],
+    ];
+    for (const [level, message] of records) {
+      getLogger().log(level, `msg-${message.toLowerCase()}`);
+    }
+    await flush();
+
+    expect(lines.map((line) => stripAnsi(line).trimEnd())).toEqual(
+      records.map(([, level]) =>
+        expect.stringMatching(
+          new RegExp(`^${level}: \\[ADK\\] .* msg-${level.toLowerCase()}$`),
+        ),
+      ),
+    );
   });
 });

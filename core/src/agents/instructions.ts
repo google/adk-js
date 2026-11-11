@@ -5,6 +5,7 @@
  */
 
 import {State} from '../sessions/state.js';
+import {asSafePartForLlm} from '../tools/load_artifacts_tool.js';
 import type {WorkflowInstructionScope} from './invocation_context.js';
 import {ReadonlyContext} from './readonly_context.js';
 
@@ -62,12 +63,14 @@ async function resolveKey(
       }
       throw new Error(`Artifact ${fileName} not found.`);
     }
-    return formatValue(artifact, true);
+    // Same conversion as the load_artifacts tool, so text-like inline data is
+    // injected as text instead of base64 JSON.
+    return formatValue(asSafePartForLlm(artifact, fileName), true);
   }
 
   // Step 3: Handle state variable injection.
   if (isValidStateName(key)) {
-    if (key in invocationContext.session.state) {
+    if (Object.hasOwn(invocationContext.session.state, key)) {
       return formatValue(invocationContext.session.state[key], false);
     }
     if (isOptional) {
@@ -166,7 +169,13 @@ export async function injectSessionState(
     : [];
 
   const pattern = /\{+[^{}]*}+/g;
-  const matches = Array.from(template.matchAll(pattern));
+  // Braces right after `$` or `\` are literal text such as `${expr}`,
+  // `${{expr}}` or `\{expr}`, not a placeholder (as in adk-python). Checked
+  // here rather than with a lookbehind, which the web build targets lack.
+  const matches = Array.from(template.matchAll(pattern)).filter((match) => {
+    const previous = template[match.index! - 1];
+    return previous !== '$' && previous !== '\\';
+  });
 
   if (matches.length === 0 && sourceMatches.length === 0) {
     return template;

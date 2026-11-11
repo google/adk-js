@@ -22,7 +22,7 @@ import {
   RestApiTool,
 } from '@google/adk';
 import * as fs from 'fs';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import {OpenAPIV3} from 'openapi-types';
 import * as path from 'path';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';

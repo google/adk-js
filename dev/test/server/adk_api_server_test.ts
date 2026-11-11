@@ -6,25 +6,34 @@
 
 import {AGENT_CARD_PATH, AgentCard} from '@a2a-js/sdk';
 import {
+  App,
   BaseArtifactService,
   BaseMemoryService,
   BaseSessionService,
   createEvent,
   createSession,
+  EVAL_SESSION_ID_PREFIX,
+  EvalStatus,
   Event,
   FunctionTool,
   InMemoryArtifactService,
   InMemoryMemoryService,
   InMemorySessionService,
+  INTERNAL_METADATA_PREFIX,
   InvocationContext,
   LlmAgent,
   node,
+  RESTORED_EVENT_KEY,
   Runner,
   Session,
+  StreamingMode,
   Workflow,
 } from '@google/adk';
 import {ReadableSpan} from '@opentelemetry/sdk-trace-base';
+import * as fs from 'node:fs';
 import * as http from 'node:http';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
 
@@ -33,6 +42,7 @@ import {
   AdkApiServer,
 } from '../../src/server/adk_api_server.js';
 import {AgentLoader} from '../../src/utils/agent_loader.js';
+import {AdkLogger} from '../../src/utils/logger.js';
 import {version} from '../../src/version.js';
 
 interface JsonRpcResponse {
@@ -230,6 +240,11 @@ describe('AdkWebServer', () => {
       listAgents: () => Promise.resolve(['testApp']),
       getAgentFile: () =>
         Promise.resolve({
+          retain: () => ({
+            async [Symbol.asyncDispose](): Promise<void> {
+              return;
+            },
+          }),
           load() {
             return Promise.resolve(TEST_AGENT);
           },
@@ -643,6 +658,44 @@ describe('AdkWebServer', () => {
       );
     });
 
+    it('should find session in /run when exported App.name differs from route appName', async () => {
+      agentLoader.getAgentFile = (() =>
+        Promise.resolve({
+          retain: () => ({
+            async [Symbol.asyncDispose](): Promise<void> {
+              return;
+            },
+          }),
+          load() {
+            return Promise.resolve(
+              new App({name: 'real_name', rootAgent: TEST_AGENT}),
+            );
+          },
+          async [Symbol.asyncDispose](): Promise<void> {
+            return;
+          },
+        })) as unknown as AgentLoader['getAgentFile'];
+
+      await client.post<Session>(
+        '/apps/my_file/users/testUser/sessions/sessionId',
+        {},
+      );
+
+      const response = await client.post<Event[]>('/run', {
+        appName: 'my_file',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        newMessage: {
+          parts: [{text: 'Hello test agent!'}],
+          role: 'user',
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(Array.isArray(response.data)).toBe(true);
+      expect(response.data!.length).toBe(3);
+    });
+
     it('should update session state if stateDelta is provided', async () => {
       await sessionService.createSession({
         appName: 'testApp',
@@ -721,6 +774,11 @@ describe('AdkWebServer', () => {
       const originalGetAgentFile = agentLoader.getAgentFile;
       agentLoader.getAgentFile = (() =>
         Promise.resolve({
+          retain: () => ({
+            async [Symbol.asyncDispose](): Promise<void> {
+              return;
+            },
+          }),
           load: () =>
             Promise.resolve(
               new Workflow({
@@ -804,6 +862,177 @@ describe('AdkWebServer', () => {
 
       spy.mockRestore();
     });
+
+    it('forwards customMetadata from the request body to Runner.runAsync', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const spy = vi.spyOn(Runner.prototype, 'runAsync');
+
+      const response = await client.post<Event[]>('/run', {
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        newMessage: {
+          parts: [{text: 'Hello test agent!'}],
+          role: 'user',
+        },
+        customMetadata: {requestId: 'abc-123', tenant: 'acme'},
+      });
+
+      expect(response.status).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0][0].customMetadata).toEqual({
+        requestId: 'abc-123',
+        tenant: 'acme',
+      });
+
+      spy.mockRestore();
+    });
+
+    it('leaves customMetadata undefined when the body omits it', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const spy = vi.spyOn(Runner.prototype, 'runAsync');
+
+      const response = await client.post<Event[]>('/run', {
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        newMessage: {
+          parts: [{text: 'Hello test agent!'}],
+          role: 'user',
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0][0].customMetadata).toBeUndefined();
+
+      spy.mockRestore();
+    });
+
+    it('stamps customMetadata onto the user message event persisted in the session', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const response = await client.post<Event[]>('/run', {
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        newMessage: {
+          parts: [{text: 'Hello test agent!'}],
+          role: 'user',
+        },
+        customMetadata: {requestId: 'abc-123'},
+      });
+
+      expect(response.status).toBe(200);
+      const session = await sessionService.getSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+      const userEvent = session?.events.find((e) => e.author === 'user');
+      expect(userEvent?.customMetadata).toEqual({requestId: 'abc-123'});
+    });
+  });
+
+  describe('ADK-internal customMetadata', () => {
+    const INTERNAL_KEY = `${INTERNAL_METADATA_PREFIX}stamp`;
+    const runBody = {
+      appName: 'testApp',
+      userId: 'testUser',
+      sessionId: 'sessionId',
+      newMessage: {parts: [{text: 'Hello'}], role: 'user'},
+    };
+
+    beforeEach(async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+    });
+
+    it('is hidden from session endpoints but kept in storage', async () => {
+      const session = (await sessionService.getSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      }))!;
+      await sessionService.appendEvent({
+        session,
+        event: createEvent({
+          author: 'user',
+          customMetadata: {keep: 1, [RESTORED_EVENT_KEY]: true},
+        }),
+      });
+
+      const fetched = await client.get<Session>(
+        '/apps/testApp/users/testUser/sessions/sessionId',
+      );
+      const listed = await client.get<{sessions: Session[]}>(
+        '/apps/testApp/users/testUser/sessions',
+      );
+
+      expect(fetched.data?.events[0].customMetadata).toEqual({keep: 1});
+      const listedSession = listed.data?.sessions.find(
+        (s) => s.id === 'sessionId',
+      );
+      // The in-memory service lists sessions without events; others may not.
+      for (const event of listedSession?.events ?? []) {
+        expect(event.customMetadata).toEqual({keep: 1});
+      }
+      const stored = await sessionService.getSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+      expect(stored?.events[0].customMetadata).toEqual({
+        keep: 1,
+        [RESTORED_EVENT_KEY]: true,
+      });
+    });
+
+    it.each(['/run', '/run_sse'])(
+      'is hidden from events streamed by %s',
+      async (endpoint) => {
+        const spy = vi
+          .spyOn(Runner.prototype, 'runAsync')
+          .mockImplementation(async function* () {
+            yield createEvent({
+              author: 'testAgent',
+              content: {role: 'model', parts: [{text: 'reply'}]},
+              customMetadata: {keep: 1, [INTERNAL_KEY]: 'x'},
+            });
+          });
+
+        const response = await client.post<Event[]>(endpoint, runBody);
+
+        const events =
+          endpoint === '/run'
+            ? response.data!
+            : response
+                .text!.split('\n')
+                .filter((line) => line.startsWith('data: '))
+                .map(
+                  (line) => JSON.parse(line.slice('data: '.length)) as Event,
+                );
+        expect(events.map((e) => e.customMetadata)).toEqual([{keep: 1}]);
+        spy.mockRestore();
+      },
+    );
   });
 
   describe('run_sse', () => {
@@ -941,6 +1170,40 @@ describe('AdkWebServer', () => {
       const runAsyncParams = spy.mock.calls[0][0];
       expect(runAsyncParams.abortSignal).toBeDefined();
       expect(runAsyncParams.abortSignal).toBeInstanceOf(AbortSignal);
+
+      spy.mockRestore();
+    });
+
+    it('forwards customMetadata from the request body to Runner.runAsync', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const spy = vi.spyOn(Runner.prototype, 'runAsync');
+
+      const response = await client.post('/run_sse', {
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        newMessage: {
+          parts: [{text: 'Hello test agent!'}],
+          role: 'user',
+        },
+        streaming: true,
+        customMetadata: {requestId: 'abc-123', tenant: 'acme'},
+      });
+
+      expect(response.status).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const runAsyncParams = spy.mock.calls[0][0];
+      expect(runAsyncParams.customMetadata).toEqual({
+        requestId: 'abc-123',
+        tenant: 'acme',
+      });
+      // The metadata travels beside runConfig, so streaming is unaffected.
+      expect(runAsyncParams.runConfig?.streamingMode).toBe(StreamingMode.SSE);
 
       spy.mockRestore();
     });
@@ -1151,6 +1414,11 @@ describe('AdkWebServer', () => {
       const originalGetSession = sessionService.getSession;
       agentLoader.getAgentFile = (() =>
         Promise.resolve({
+          retain: () => ({
+            async [Symbol.asyncDispose](): Promise<void> {
+              return;
+            },
+          }),
           load: () =>
             Promise.resolve(
               new Workflow({
@@ -1232,10 +1500,16 @@ describe('AdkWebServer', () => {
 
   describe('Structure graph', () => {
     /** Points the loader at `agent` for the rest of the test. */
-    function loadInstead(agent: unknown) {
+    function loadInstead(agent: unknown, readme?: string) {
       agentLoader.getAgentFile = (() =>
         Promise.resolve({
+          retain: () => ({
+            async [Symbol.asyncDispose](): Promise<void> {
+              return;
+            },
+          }),
           load: () => Promise.resolve(agent),
+          readReadme: () => Promise.resolve(readme),
           async [Symbol.asyncDispose](): Promise<void> {
             return;
           },
@@ -1292,6 +1566,32 @@ describe('AdkWebServer', () => {
         expect(response.data?.root_agent.sub_agents).toEqual([
           expect.objectContaining({name: 'child', description: 'a child'}),
         ]);
+      });
+
+      it('includes the README.md the agent file resolves', async () => {
+        loadInstead(
+          new LlmAgent({name: 'documented'}),
+          '# Sample\n\nWhat it shows.\n',
+        );
+
+        const response = await client.get<{readme?: string}>(
+          '/dev/apps/testApp/build_graph',
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.data?.readme).toBe('# Sample\n\nWhat it shows.\n');
+      });
+
+      it('omits readme when the agent file resolves none', async () => {
+        loadInstead(new LlmAgent({name: 'undocumented'}));
+
+        const response = await client.get<{name: string; readme?: string}>(
+          '/dev/apps/testApp/build_graph',
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.data?.name).toBe('testApp');
+        expect(response.data?.readme).toBeUndefined();
       });
 
       // A workflow keeps its structure in its edges, so a serializer that only
@@ -1492,6 +1792,9 @@ describe('AdkWebServer', () => {
 
         expect(response.status).toBe(200);
         expect(response.data?.name).toBe('testAgent');
+        expect(response.data?.url).toBe(
+          `${a2aServer!.url}/a2a/testApp/jsonrpc`,
+        );
       },
     );
 
@@ -1592,6 +1895,40 @@ describe('AdkWebServer', () => {
       );
     });
 
+    it('forwards customMetadata from the reasoning engine input to Runner.runAsync', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const spy = vi.spyOn(Runner.prototype, 'runAsync');
+
+      const response = await client.post<{output: Event[]}>(
+        '/api/reasoning_engine',
+        {
+          input: {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'sessionId',
+            newMessage: {
+              parts: [{text: 'Hello'}],
+              role: 'user',
+            },
+            customMetadata: {requestId: 'abc-123'},
+          },
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0][0].customMetadata).toEqual({
+        requestId: 'abc-123',
+      });
+
+      spy.mockRestore();
+    });
+
     it('should auto-create session if not exists on reasoning_engine query', async () => {
       const response = await client.post<{output: Event[]}>(
         '/api/reasoning_engine',
@@ -1685,6 +2022,69 @@ describe('AdkWebServer', () => {
         agentLoader.getAgentFile = originalGetAgentFile;
       }
     });
+
+    it.each([
+      {name: 'already-parsed JSON body', contentType: 'application/json'},
+      {
+        name: 'raw request stream body',
+        contentType: 'application/json,application/json',
+      },
+    ])(
+      'does not log request headers or body for $name',
+      async ({contentType}) => {
+        const authSentinel = 'secret-bearer-token-sentinel';
+        const cookieSentinel = 'secret-cookie-value-sentinel';
+        const bodySentinel = 'secret-user-message-sentinel';
+        const loggedMessages: string[] = [];
+        const recordArgs = (...args: unknown[]) => {
+          loggedMessages.push(args.map(String).join(' '));
+        };
+        const spies = [
+          vi.spyOn(AdkLogger.prototype, 'debug').mockImplementation(recordArgs),
+          vi.spyOn(AdkLogger.prototype, 'info').mockImplementation(recordArgs),
+          vi.spyOn(AdkLogger.prototype, 'warn').mockImplementation(recordArgs),
+          vi.spyOn(AdkLogger.prototype, 'error').mockImplementation(recordArgs),
+          vi
+            .spyOn(AdkLogger.prototype, 'log')
+            .mockImplementation((_level, ...args) => {
+              recordArgs(...args);
+            }),
+        ];
+
+        try {
+          const res = await fetch(`${server.url}/api/reasoning_engine`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': contentType,
+              Authorization: `Bearer ${authSentinel}`,
+              Cookie: `session=${cookieSentinel}`,
+            },
+            body: JSON.stringify({
+              input: {
+                appName: 'testApp',
+                userId: 'testUser',
+                sessionId: 'sentinelSession',
+                newMessage: {
+                  parts: [{text: bodySentinel}],
+                  role: 'user',
+                },
+              },
+            }),
+          });
+
+          expect(res.status).toBe(200);
+          expect(loggedMessages).toContain('POST /api/reasoning_engine');
+          const allLogs = loggedMessages.join('\n');
+          expect(allLogs).not.toContain(authSentinel);
+          expect(allLogs).not.toContain(cookieSentinel);
+          expect(allLogs).not.toContain(bodySentinel);
+        } finally {
+          for (const spy of spies) {
+            spy.mockRestore();
+          }
+        }
+      },
+    );
   });
 
   describe('Startup', () => {
@@ -1864,6 +2264,338 @@ describe('AdkWebServer', () => {
       for (const eventId of INHERITED_KEYS) {
         const response = await fetch(`${server.url}/debug/trace/${eventId}`);
         expect(response.status).toBe(404);
+      }
+    });
+
+    it('replaces the cached Runner when an app reloads with a new agent instance', async () => {
+      const getRunner = (
+        server as unknown as {
+          getRunner: (agent: unknown, appName: string) => Promise<Runner>;
+        }
+      ).getRunner.bind(server);
+
+      const firstRunner = await getRunner(TEST_AGENT, 'testApp');
+      const sameRunner = await getRunner(TEST_AGENT, 'testApp');
+      expect(sameRunner).toBe(firstRunner);
+
+      const reloadedAgent = new LlmAgent({
+        name: 'testAgentReloaded',
+        description: 'reloaded agent',
+      });
+      const reloadedRunner = await getRunner(reloadedAgent, 'testApp');
+      expect(reloadedRunner).not.toBe(firstRunner);
+      expect(reloadedRunner.agent).toBe(reloadedAgent);
+    });
+
+    it('acquires and releases agentFile.retain() lease across /run requests, including failed runs', async () => {
+      const originalGetAgentFile = agentLoader.getAgentFile;
+      let activeLeases = 0;
+      let maxConcurrentLeases = 0;
+      let releaseCount = 0;
+      let shouldThrow = false;
+
+      agentLoader.getAgentFile = (() =>
+        Promise.resolve({
+          retain() {
+            activeLeases++;
+            maxConcurrentLeases = Math.max(maxConcurrentLeases, activeLeases);
+            return {
+              async [Symbol.asyncDispose]() {
+                activeLeases--;
+                releaseCount++;
+              },
+            };
+          },
+          load: () =>
+            Promise.resolve(
+              new Workflow({
+                name: 'lease_wf',
+                edges: [
+                  [
+                    'START',
+                    node(
+                      async () => {
+                        if (shouldThrow) {
+                          throw new Error('run failed');
+                        }
+                        return 'ok';
+                      },
+                      {name: 'step'},
+                    ),
+                  ],
+                ],
+              }),
+            ),
+        })) as unknown as AgentLoader['getAgentFile'];
+
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'leaseSession',
+      });
+
+      try {
+        const okRes = await client.post('/run', {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'leaseSession',
+          newMessage: {role: 'user', parts: [{text: 'hi'}]},
+        });
+        expect(okRes.status).toBe(200);
+        expect(maxConcurrentLeases).toBe(1);
+        expect(activeLeases).toBe(0);
+        expect(releaseCount).toBe(1);
+
+        shouldThrow = true;
+        await expect(
+          client.post('/run', {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'leaseSession',
+            newMessage: {role: 'user', parts: [{text: 'fail'}]},
+          }),
+        ).rejects.toThrow();
+        expect(activeLeases).toBe(0);
+        expect(releaseCount).toBe(2);
+      } finally {
+        agentLoader.getAgentFile = originalGetAgentFile;
+      }
+    });
+  });
+
+  describe('Eval sets, artifact versions, and live WebSocket endpoints', () => {
+    it('filters out eval sessions starting with EVAL_SESSION_ID_PREFIX in list_sessions', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'normal_session',
+      });
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: `${EVAL_SESSION_ID_PREFIX}hidden_session`,
+      });
+
+      const response = await client.get<{sessions: Session[]}>(
+        '/apps/testApp/users/testUser/sessions',
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.data?.sessions.map((s) => s.id)).toEqual([
+        'normal_session',
+      ]);
+    });
+
+    it('supports optional ?version query param on load_artifact endpoint', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+      await artifactService.saveArtifact({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        filename: 'doc.txt',
+        artifact: {text: 'v0-text'},
+      });
+      await artifactService.saveArtifact({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        filename: 'doc.txt',
+        artifact: {text: 'v1-text'},
+      });
+
+      const v0 = await client.get<{text: string}>(
+        '/apps/testApp/users/testUser/sessions/sessionId/artifacts/doc.txt?version=0',
+      );
+      const latest = await client.get<{text: string}>(
+        '/apps/testApp/users/testUser/sessions/sessionId/artifacts/doc.txt',
+      );
+
+      expect(v0.data).toEqual({text: 'v0-text'});
+      expect(latest.data).toEqual({text: 'v1-text'});
+    });
+
+    it('streams live events over the /run_live WebSocket endpoint (test_websocket_endpoint)', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'liveSessionId',
+      });
+
+      const target = new URL(
+        `${server.url}/run_live?app_name=testApp&user_id=testUser&session_id=liveSessionId&modalities=TEXT`,
+      );
+
+      const receivedEvent = await new Promise<Event>((resolve, reject) => {
+        const req = http.request({
+          host: target.hostname,
+          port: target.port,
+          path: `${target.pathname}${target.search}`,
+          method: 'GET',
+          headers: {
+            Connection: 'Upgrade',
+            Upgrade: 'websocket',
+            'Sec-WebSocket-Key':
+              Buffer.from('1234567890123456').toString('base64'),
+            'Sec-WebSocket-Version': '13',
+          },
+        });
+
+        req.on('upgrade', (_res, socket, head) => {
+          let buf = head.length > 0 ? Buffer.from(head) : Buffer.alloc(0);
+
+          const tryParseFrame = () => {
+            if (buf.length < 2) {
+              return;
+            }
+            const opcode = buf[0] & 0x0f;
+            let len = buf[1] & 0x7f;
+            let offset = 2;
+            if (len === 126) {
+              if (buf.length < 4) {
+                return;
+              }
+              len = buf.readUInt16BE(2);
+              offset = 4;
+            }
+            if (buf.length < offset + len) {
+              return;
+            }
+            const payload = buf.subarray(offset, offset + len);
+            buf = buf.subarray(offset + len);
+            if (opcode === 0x01) {
+              socket.destroy();
+              resolve(JSON.parse(payload.toString('utf-8')) as Event);
+            }
+          };
+
+          socket.on('data', (chunk: Buffer) => {
+            buf = Buffer.concat([buf, Buffer.from(chunk)]);
+            tryParseFrame();
+          });
+          socket.on('error', reject);
+
+          // Send a masked client text frame with a LiveRequest message.
+          const msg = Buffer.from(
+            JSON.stringify({
+              content: {role: 'user', parts: [{text: 'Hello live'}]},
+            }),
+            'utf-8',
+          );
+          const mask = Buffer.from([1, 2, 3, 4]);
+          const masked = Buffer.alloc(msg.length);
+          for (let i = 0; i < msg.length; i++) {
+            masked[i] = msg[i] ^ mask[i % 4];
+          }
+          socket.write(
+            Buffer.concat([
+              Buffer.from([0x81, 0x80 | msg.length]),
+              mask,
+              masked,
+            ]),
+          );
+          tryParseFrame();
+        });
+
+        req.on('error', reject);
+        req.end();
+      });
+
+      expect(receivedEvent.author).toBe('testAgent');
+      expect(receivedEvent.content?.parts?.[0].text).toBe('test live content');
+    });
+
+    it('creates, lists, populates, and runs eval sets through the eval_sets endpoints', async () => {
+      const tempAgentsDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-eval-api-test-'),
+      );
+      const evalServer = new AdkApiServer({
+        agentsDir: tempAgentsDir,
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+      });
+      await evalServer.start();
+      const evalClient = new HttpClient(evalServer.url);
+
+      try {
+        // 1. Create an eval set
+        const createRes = await evalClient.post(
+          '/apps/testApp/eval_sets/set_one',
+          {},
+        );
+        expect(createRes.status).toBe(200);
+
+        // 2. Reject invalid eval set ID
+        await expect(
+          evalClient.post('/apps/testApp/eval_sets/invalid-id!', {}),
+        ).rejects.toMatchObject({response: {status: 400}});
+
+        // 3. List eval sets
+        const listSetsRes = await evalClient.get<string[]>(
+          '/apps/testApp/eval_sets',
+        );
+        expect(listSetsRes.data).toEqual(['set_one']);
+
+        // 4. Create a session and run a turn so it has events
+        const sess = await sessionService.createSession({
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'sessForEval',
+        });
+        await sessionService.appendEvent({
+          session: sess,
+          event: createEvent({
+            author: 'user',
+            content: {role: 'user', parts: [{text: 'Hi'}]},
+          }),
+        });
+        await sessionService.appendEvent({
+          session: sess,
+          event: createEvent({
+            author: 'testAgent',
+            content: {role: 'model', parts: [{text: 'Event 2'}]},
+          }),
+        });
+
+        // 5. Add the session to the eval set
+        const addRes = await evalClient.post(
+          '/apps/testApp/eval_sets/set_one/add_session',
+          {
+            evalId: 'case_1',
+            sessionId: 'sessForEval',
+            userId: 'testUser',
+          },
+        );
+        expect(addRes.status).toBe(200);
+
+        // 6. List evals in the eval set
+        const listEvalsRes = await evalClient.get<string[]>(
+          '/apps/testApp/eval_sets/set_one/evals',
+        );
+        expect(listEvalsRes.data).toEqual(['case_1']);
+
+        // 7. Run the eval set
+        const runEvalRes = await evalClient.post<
+          Array<{evalId: string; finalEvalStatus: EvalStatus}>
+        >('/apps/testApp/eval_sets/set_one/run_eval', {
+          evalIds: ['case_1'],
+          evalMetrics: [
+            {metric_name: 'tool_trajectory_avg_score', threshold: 1.0},
+            {metric_name: 'response_match_score', threshold: 0.8},
+          ],
+        });
+        expect(runEvalRes.status).toBe(200);
+        expect(runEvalRes.data).toHaveLength(1);
+        expect(runEvalRes.data?.[0].evalId).toBe('case_1');
+        expect(runEvalRes.data?.[0].finalEvalStatus).toBe(EvalStatus.PASSED);
+      } finally {
+        await evalServer.stop();
+        fs.rmSync(tempAgentsDir, {recursive: true, force: true});
       }
     });
   });

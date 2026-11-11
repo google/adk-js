@@ -67,9 +67,7 @@ export class GcsArtifactService implements BaseArtifactService {
       }),
     );
 
-    const customMetadata: Record<string, unknown> = {
-      ...request.customMetadata,
-    };
+    const customMetadata = stringifyMetadataValues(request.customMetadata);
 
     if (request.artifact.inlineData) {
       if (request.artifact.inlineData.displayName) {
@@ -135,8 +133,7 @@ export class GcsArtifactService implements BaseArtifactService {
       const [metadata] = await file.getMetadata();
       const customMeta = (metadata.metadata ?? {}) as Record<string, unknown>;
       const fileUri = customMeta[GCS_FILE_URI_METADATA_KEY] as
-        | string
-        | undefined;
+        string | undefined;
 
       if (fileUri) {
         const mimeType =
@@ -149,8 +146,7 @@ export class GcsArtifactService implements BaseArtifactService {
       const [rawDataBuffer] = await file.download();
 
       const displayName = customMeta[GCS_DISPLAY_NAME_METADATA_KEY] as
-        | string
-        | undefined;
+        string | undefined;
       if (displayName) {
         return {
           inlineData: {
@@ -308,6 +304,22 @@ function getFileName({
     : `${appName}/${userId}/${sessionId}/${cleanFilename}`;
 
   return version !== undefined ? `${prefix}/${version}` : prefix;
+}
+
+/**
+ * Coerces every custom metadata value to a string, mirroring
+ * `adk-python`'s GCS artifact service. GCS object custom metadata is a
+ * `map<string, string>`, so a number or a boolean is not a storable value.
+ */
+function stringifyMetadataValues(
+  customMetadata: Record<string, unknown> | undefined,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(customMetadata ?? {}).map(([key, value]) => [
+      key,
+      String(value),
+    ]),
+  );
 }
 
 function extractArtifactKeys(

@@ -20,7 +20,10 @@ import {
   finalText,
   isAbortError,
   isRecord,
+  looksLikeEnvelope,
   renderToolInstructions,
+  salvageFinalText,
+  TRUNCATED_REPLY,
 } from './chrome_prompt_utils.js';
 import type {LlmRequest} from './llm_request.js';
 import type {LlmResponse} from './llm_response.js';
@@ -87,10 +90,7 @@ export {stripAdkIdentityPreamble} from './chrome_prompt_utils.js';
 
 /** Whether the on-device model can serve a request right now. */
 export type ChromeModelAvailability =
-  | 'unavailable'
-  | 'downloadable'
-  | 'downloading'
-  | 'available';
+  'unavailable' | 'downloadable' | 'downloading' | 'available';
 
 /** A modality declared at session creation. */
 export interface ChromeExpectedModality {
@@ -536,11 +536,24 @@ export class ChromeBuiltInLlm extends BaseLlm {
     }
 
     if (!isRecord(parsed)) {
+      // A reply cut off mid-object has no closing brace, so the salvage above
+      // cannot match it, and returning `raw` would show the caller the
+      // envelope. The answer is usually still in there, whole.
+      const salvaged = salvageFinalText(raw);
+      if (salvaged !== undefined) {
+        this.diagnostic({
+          phase: 'parse-fallback',
+          note: 'truncated envelope; recovered the text',
+        });
+        return finalText(salvaged);
+      }
       this.diagnostic({
         phase: 'parse-fallback',
         note: 'unparseable JSON; treated as text',
       });
-      return finalText(raw);
+      // Prose that was never JSON is the useful fallback here. A broken
+      // envelope is not: it puts braces and key names in front of the caller.
+      return finalText(looksLikeEnvelope(raw) ? TRUNCATED_REPLY : raw);
     }
 
     if (parsed['kind'] === 'tool' && typeof parsed['name'] === 'string') {
@@ -560,7 +573,13 @@ export class ChromeBuiltInLlm extends BaseLlm {
       };
     }
 
-    return finalText(typeof parsed['text'] === 'string' ? parsed['text'] : raw);
+    if (typeof parsed['text'] === 'string') return finalText(parsed['text']);
+    if (parsed['text'] !== undefined) return finalText(String(parsed['text']));
+    this.diagnostic({
+      phase: 'parse-fallback',
+      note: 'envelope carried no text',
+    });
+    return finalText(looksLikeEnvelope(raw) ? TRUNCATED_REPLY : raw);
   }
 
   override async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {

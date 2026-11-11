@@ -5,6 +5,7 @@
  */
 
 import {
+  App,
   BaseAgent,
   BasePlugin,
   BaseTool,
@@ -54,6 +55,20 @@ describe('InMemoryRunner', () => {
     const runner = new InMemoryRunner({agent, appName: 'MyApp'});
 
     expect(runner.appName).toBe('MyApp');
+  });
+
+  it('should default appName to app.name when app is provided without appName, and prefer explicit appName when both are provided', () => {
+    const agent = new MockAgent();
+    const app = new App({name: 'AppFromInstance', rootAgent: agent});
+
+    const defaultRunner = new InMemoryRunner({app});
+    expect(defaultRunner.appName).toBe('AppFromInstance');
+
+    const explicitRunner = new InMemoryRunner({
+      app,
+      appName: 'ExplicitOverride',
+    });
+    expect(explicitRunner.appName).toBe('ExplicitOverride');
   });
 
   it('should initialize with in-memory services', () => {

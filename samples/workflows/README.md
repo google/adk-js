@@ -132,6 +132,7 @@ what the dev UI reads to render a form for the reply.
 | Sample               | Docs section                                                                                                      | Shows                                                | Key |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | --- |
 | `get_started`        | [Get started](https://adk.dev/graphs/human-input/#get-started)                                                    | The two-node pause: `RequestInput`, reply feeds next | —   |
+| `rerun_on_resume`    | [Configuration options](https://adk.dev/graphs/human-input/#configuration-options)                                | `rerunOnResume: true`: one node pauses and re-runs   | —   |
 | `payload_and_schema` | [Message and payload](https://adk.dev/graphs/human-input/#request-input-with-a-message-and-payload)               | `message` + `payload` + `responseSchema`             | —   |
 | `initial_prompt`     | [Tool-confirmation section](https://adk.dev/graphs/human-input/#tool-confirmation-approval-prompts-in-llm-agents) | A HITL node as the FIRST step of a workflow          | —   |
 
@@ -169,6 +170,10 @@ sample's header comment.
   `"[object Object]"`; take a `Content` (or `unknown`) if you need to accept
   one. Values that genuinely are untyped — `ctx.runNode(...).output`, a
   `ctx.resumeInputs[id]` reply — are coerced explicitly at the point of use.
+- **A paused node does NOT re-run on resume** unless it declares
+  `rerunOnResume: true`. Under the default the reply becomes that node's output
+  and flows to its successor; with `true` the body runs again and reads the
+  reply from `ctx.resumeInputs[interruptId]` (see `human_input/rerun_on_resume`).
 - **`ctx.runNode()` resolves to a node _result_,** not the output directly — read
   `.output`. It also does not throw when a child interrupts: check
   `.interruptIds` and bail out (see `dynamic/human_input`).
