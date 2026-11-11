@@ -5,7 +5,10 @@
  */
 
 export type {ThinkingLevelName} from './advisor.js';
-export {ModelConsultContextConfig} from './context.js';
+export {
+  ModelConsultContextConfig,
+  isModelConsultContextConfig,
+} from './context.js';
 export type {ModelConsultContextConfigOptions} from './context.js';
 export {ModelConsultTool} from './model_consult_tool.js';
 export type {ModelConsultToolOptions} from './model_consult_tool.js';

@@ -75,6 +75,7 @@ function textResponse(
 
 class FakeAdvisorLlm extends BaseLlm {
   readonly requests: LlmRequest[] = [];
+  readonly signals: Array<AbortSignal | undefined> = [];
   private readonly responses: LlmResponse[];
   private readonly errors: Array<Error | null>;
   private readonly delaySeconds: number;
@@ -97,8 +98,10 @@ class FakeAdvisorLlm extends BaseLlm {
   override async *generateContentAsync(
     llmRequest: LlmRequest,
     _stream?: boolean,
+    abortSignal?: AbortSignal,
   ): AsyncGenerator<LlmResponse, void, void> {
     this.requests.push(llmRequest);
+    this.signals.push(abortSignal);
     const idx = this.callIndex;
     this.callIndex += 1;
     if (this.delaySeconds > 0) {
@@ -162,16 +165,16 @@ describe('advisor', () => {
 
   it('resolveThinkingLevel rejects unknown value', () => {
     expect(() => resolveThinkingLevel('ultra')).toThrow(
-      /Invalid advisor thinking_level/,
+      /Invalid advisor thinkingLevel/,
     );
   });
 
   it('resolveAdvisorLlm validates input', () => {
     const fake = new FakeAdvisorLlm();
     expect(resolveAdvisorLlm(fake)).toBe(fake);
-    expect(() => resolveAdvisorLlm('   ')).toThrow(/Invalid advisor_model/);
+    expect(() => resolveAdvisorLlm('   ')).toThrow(/Invalid advisor model/);
     expect(() => resolveAdvisorLlm(123 as unknown as string)).toThrow(
-      /Invalid advisor_model/,
+      /Invalid advisor model/,
     );
   });
 
@@ -253,7 +256,7 @@ describe('advisor', () => {
     });
 
     await expect(callAdvisor(starvedLlm, contents)).rejects.toThrow(
-      /hit max_output_tokens before producing any visible guidance/,
+      /hit maxOutputTokens before producing any visible guidance/,
     );
   });
 
@@ -278,13 +281,13 @@ describe('advisor', () => {
     );
   });
 
-  it('callAdvisor validates timeout and retry failures', async () => {
+  it('callAdvisor validates timeout and retry failures and passes AbortSignal without awaiting hung iterator.return()', async () => {
     const contents: Content[] = [{role: 'user', parts: [{text: 'q'}]}];
     const llm = new FakeAdvisorLlm();
 
     await expect(
       callAdvisor(llm, contents, {timeoutSeconds: 0}),
-    ).rejects.toThrow(/timeout_seconds must be > 0/);
+    ).rejects.toThrow(/timeoutSeconds must be > 0 or null/);
 
     // Fallback retry that itself raises a runtime error.
     const retryErrLlm = new FakeAdvisorLlm({
@@ -316,5 +319,20 @@ describe('advisor', () => {
     } catch (e) {
       expect(e).toBeInstanceOf(AdvisorError);
     }
+
+    // Verify wall-clock timeout does not wait for a slow next() to settle
+    // via iterator.return(), and forwards combined AbortSignal to the LLM.
+    const parentController = new AbortController();
+    const hungLlm = new FakeAdvisorLlm({delaySeconds: 2});
+    const t0 = performance.now();
+    await expect(
+      callAdvisor(hungLlm, contents, {
+        timeoutSeconds: 0.02,
+        abortSignal: parentController.signal,
+      }),
+    ).rejects.toThrow(/timed out/);
+    const elapsedMs = performance.now() - t0;
+    expect(elapsedMs).toBeLessThan(500);
+    expect(hungLlm.signals[0]).toBeInstanceOf(AbortSignal);
   });
 });

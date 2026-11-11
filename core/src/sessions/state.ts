@@ -92,17 +92,20 @@ export class State {
   /**
    * Returns the value of the state dict for the given key.
    *
+   * Only keys the state holds itself are found. Names inherited from
+   * `Object.prototype`, such as `toString`, are treated as missing.
+   *
    * @param key The key to get the value for.
    * @param defaultValue The default value to return if the key is not found.
    * @return The value of the state for the given key, or the default value if
    *     not found.
    */
   get<T>(key: string, defaultValue?: T): T | undefined {
-    if (key in this.delta) {
+    if (Object.hasOwn(this.delta, key)) {
       return this.delta[key] as T;
     }
 
-    if (key in this.value) {
+    if (Object.hasOwn(this.value, key)) {
       return this.value[key] as T;
     }
 
@@ -125,10 +128,11 @@ export class State {
   }
 
   /**
-   * Whether the state has pending delta.
+   * Whether the state holds the given key, either as a stored value or as a
+   * pending delta. Names inherited from `Object.prototype` are not keys.
    */
   has(key: string): boolean {
-    return key in this.value || key in this.delta;
+    return Object.hasOwn(this.value, key) || Object.hasOwn(this.delta, key);
   }
 
   /**

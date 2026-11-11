@@ -5,6 +5,12 @@
  */
 
 import {
+  isModelConsultContextConfig,
+  ModelConsultContextConfig,
+  ModelConsultTool,
+  ModelConsultToolOptions,
+} from '@google/adk';
+import {
   Content,
   GenerateContentConfig,
   Part,
@@ -23,10 +29,6 @@ import {
   LlmAgent,
   ToolUnion,
 } from '../../../src/agents/llm_agent.js';
-import {
-  ModelConsultContextConfig as TopLevelContextConfig,
-  ModelConsultTool as TopLevelModelConsultTool,
-} from '../../../src/common.js';
 import {createEvent, Event} from '../../../src/events/event.js';
 import {
   createEventActions,
@@ -45,11 +47,6 @@ import {createSession, Session} from '../../../src/sessions/session.js';
 import {State} from '../../../src/sessions/state.js';
 import {FunctionTool} from '../../../src/tools/function_tool.js';
 import * as modelConsultPkg from '../../../src/tools/model_consult/index.js';
-import {
-  ModelConsultContextConfig,
-  ModelConsultTool,
-  ModelConsultToolOptions,
-} from '../../../src/tools/model_consult/index.js';
 import {
   ADVISOR_SYSTEM_INSTRUCTION,
   DEFAULT_ADVISOR_MODEL,
@@ -192,7 +189,6 @@ function makeToolContext(
   events?: Event[],
   options: {
     instruction?: string | InstructionProvider;
-    staticInstruction?: unknown;
     tools?: ToolUnion[];
     session?: Session;
     invocationId?: string;
@@ -206,10 +202,6 @@ function makeToolContext(
       options.instruction ?? 'Investigate production issues carefully.',
     tools: options.tools ?? [],
   });
-  if (options.staticInstruction !== undefined) {
-    (agent as unknown as {staticInstruction?: unknown}).staticInstruction =
-      options.staticInstruction;
-  }
 
   let session = options.session;
   if (!session) {
@@ -264,11 +256,17 @@ function extractTexts(contents: Content[]): string[] {
 
 describe('ModelConsultTool', () => {
   it('verifies public exports and prompt constants', () => {
-    expect(TopLevelModelConsultTool).toBe(ModelConsultTool);
-    expect(TopLevelContextConfig).toBe(ModelConsultContextConfig);
+    expect(ModelConsultTool).toBe(modelConsultPkg.ModelConsultTool);
+    expect(ModelConsultContextConfig).toBe(
+      modelConsultPkg.ModelConsultContextConfig,
+    );
+    expect(isModelConsultContextConfig).toBe(
+      modelConsultPkg.isModelConsultContextConfig,
+    );
     expect(Object.keys(modelConsultPkg).sort()).toEqual([
       'ModelConsultContextConfig',
       'ModelConsultTool',
+      'isModelConsultContextConfig',
     ]);
     for (const privateName of [
       'ADVISOR_SYSTEM_INSTRUCTION',
@@ -518,7 +516,7 @@ describe('ModelConsultTool', () => {
     );
   });
 
-  it('executor instruction injects state and staticInstruction', async () => {
+  it('executor instruction injects session state and supports InstructionProvider', async () => {
     const llm = new FakeAdvisorLlm();
     const tool = new ModelConsultTool({model: llm});
     const session = createSession({
@@ -531,29 +529,22 @@ describe('ModelConsultTool', () => {
     const ctx = makeToolContext(undefined, {
       session,
       instruction: 'Only inspect cluster {target_env}.',
-      staticInstruction: {
-        role: 'user',
-        parts: [{text: 'Global policy: read-only mode.'}],
-      },
     });
 
     await runConsult(tool, ctx, {question: 'Which cluster?'});
 
     const prompt1 = extractTexts(llm.requests[0].contents).join('\n');
-    expect(prompt1).toContain('Global policy: read-only mode.');
     expect(prompt1).toContain('Only inspect cluster prod-eu-west.');
 
-    // Verify string staticInstruction and fallback when an unset {placeholder}
-    // coexists with a populated {target_env} state key.
+    // Verify fallback when an unset {placeholder} coexists with a populated
+    // {target_env} state key.
     const ctxFallback = makeToolContext(undefined, {
       session,
       instruction: 'Cluster {target_env} with {unset_var}.',
-      staticInstruction: 'String static instruction.',
       invocationId: 'inv-2',
     });
     await runConsult(tool, ctxFallback, {question: 'Fallback check?'});
     const prompt2 = extractTexts(llm.requests[1].contents).join('\n');
-    expect(prompt2).toContain('String static instruction.');
     expect(prompt2).toContain('Cluster prod-eu-west with {unset_var}.');
 
     // Verify callable instruction provider (bypass state injection).
@@ -565,34 +556,6 @@ describe('ModelConsultTool', () => {
     await runConsult(tool, ctxProvider, {question: 'Provider check?'});
     const prompt3 = extractTexts(llm.requests[2].contents).join('\n');
     expect(prompt3).toContain('Callable provider {target_env} literal.');
-
-    // Verify Part and list forms of staticInstruction.
-    const ctxPart = makeToolContext(undefined, {
-      session,
-      instruction: 'Dynamic instruction.',
-      staticInstruction: {text: 'Part static instruction.'},
-      invocationId: 'inv-4',
-    });
-    await runConsult(tool, ctxPart, {question: 'Part static check?'});
-    const prompt4 = extractTexts(llm.requests[3].contents).join('\n');
-    expect(prompt4).toContain('Part static instruction.');
-
-    const ctxList = makeToolContext(undefined, {
-      session,
-      instruction: 'Dynamic instruction.',
-      staticInstruction: [
-        'List static part 1.',
-        {text: 'List static part 2.'},
-        {text: 'Dict static part 3.'},
-        {inlineData: {data: 'aW1n', mimeType: 'image/png'}},
-      ],
-      invocationId: 'inv-5',
-    });
-    await runConsult(tool, ctxList, {question: 'List static check?'});
-    const prompt5 = extractTexts(llm.requests[4].contents).join('\n');
-    expect(prompt5).toContain(
-      'List static part 1.\nList static part 2.\nDict static part 3.',
-    );
   });
 
   it('pending model_consult call is not duplicated while completed stay', async () => {
@@ -736,24 +699,24 @@ describe('ModelConsultTool', () => {
   });
 
   it.each([
-    [{thinkingLevel: 'turbo'}, /thinking_level/],
-    [{maxUses: 0}, /max_uses/],
-    [{maxUses: -1}, /max_uses/],
-    [{sessionMaxUses: 0}, /session_max_uses/],
-    [{sessionMaxUses: -2}, /session_max_uses/],
-    [{maxOutputTokens: 0}, /max_output_tokens/],
+    [{thinkingLevel: 'turbo'}, /thinkingLevel/],
+    [{maxUses: 0}, /maxUses must be >= 1 or null/],
+    [{maxUses: -1}, /maxUses must be >= 1 or null/],
+    [{sessionMaxUses: 0}, /sessionMaxUses must be >= 1 or null/],
+    [{sessionMaxUses: -2}, /sessionMaxUses must be >= 1 or null/],
+    [{maxOutputTokens: 0}, /maxOutputTokens must be >= 1 or null/],
     [
       {generateContentConfig: {maxOutputTokens: 0}},
-      /generate_content_config\.max_output_tokens/,
+      /generateContentConfig\.maxOutputTokens must be >= 1/,
     ],
     [
       {
         maxOutputTokens: 2048,
         generateContentConfig: {maxOutputTokens: 512},
       },
-      /Conflicting max_output_tokens/,
+      /Conflicting maxOutputTokens/,
     ],
-    [{timeoutSeconds: 0}, /timeout_seconds/],
+    [{timeoutSeconds: 0}, /timeoutSeconds must be > 0 or null/],
     [{model: '   '}, /non-empty model string/],
   ] as Array<[ModelConsultToolOptions, RegExp]>)(
     'rejects invalid init arguments at construction (%o)',
@@ -1146,6 +1109,48 @@ describe('ModelConsultTool', () => {
     ).toBe(2);
   });
 
+  it('releases budget reservation when an error is thrown before callAdvisor', async () => {
+    const llm = new FakeAdvisorLlm();
+    const tool = new ModelConsultTool({
+      model: llm,
+      maxUses: 1,
+      sessionMaxUses: 1,
+    });
+    const session = createSession({
+      id: 'session-throw',
+      appName: 'app',
+      userId: 'u1',
+      state: {},
+      events: [],
+    });
+    const ctx = makeToolContext([userEvent('go')], {
+      session,
+      invocationId: 'inv-throw',
+    });
+
+    const throwingArgs: Record<string, unknown> = {question: 'First question?'};
+    Object.defineProperty(throwingArgs, 'context', {
+      get() {
+        throw new Error('pre-callAdvisor boom');
+      },
+    });
+
+    await expect(runConsult(tool, ctx, throwingArgs)).rejects.toThrow(
+      'pre-callAdvisor boom',
+    );
+
+    // Subsequent consult in the same turn and session should not hang or lose
+    // its reserved slot.
+    const nextRes = await runConsult(tool, ctx, {question: 'Second question?'});
+    expect(nextRes.status).toBe('ok');
+    expect((nextRes.consults as Record<string, unknown>).used_this_turn).toBe(
+      1,
+    );
+    expect(
+      (nextRes.consults as Record<string, unknown>).used_this_session,
+    ).toBe(1);
+  });
+
   it('sessionMaxUses persists with strict state schema', async () => {
     const strictSchema = z.object({allowed_field: z.string().default('ok')});
     const llm = new FakeAdvisorLlm();
@@ -1161,7 +1166,7 @@ describe('ModelConsultTool', () => {
       session,
       invocationId: 'inv-1',
     });
-    (ctx1 as unknown as {currentState: State}).currentState = new State(
+    (ctx1 as unknown as {_state: State})._state = new State(
       session.state,
       ctx1.actions.stateDelta,
       strictSchema,
@@ -1178,7 +1183,7 @@ describe('ModelConsultTool', () => {
       session,
       invocationId: 'inv-2',
     });
-    (ctx2 as unknown as {currentState: State}).currentState = new State(
+    (ctx2 as unknown as {_state: State})._state = new State(
       session.state,
       ctx2.actions.stateDelta,
       strictSchema,
@@ -1264,7 +1269,7 @@ describe('ModelConsultTool', () => {
     expect(llm.requests[1].config?.thinkingConfig).toBeUndefined();
   });
 
-  it('advisor receives executor tool inventory and caches canonicalTools', async () => {
+  it('advisor receives executor tool inventory', async () => {
     const listDeploys = new FunctionTool({
       name: 'list_deploys',
       description: 'Lists recent deploys for a service.',
@@ -1290,11 +1295,9 @@ describe('ModelConsultTool', () => {
     const ctx = makeToolContext([userEvent('go')], {
       tools: [listDeploys, verboseTool, noDocTool, tool],
     });
-    expect(ctx.invocationContext.canonicalToolsCache).toBeUndefined();
 
     await runConsult(tool, ctx, {question: 'What next?'});
 
-    expect(ctx.invocationContext.canonicalToolsCache).toBeDefined();
     const system = llm.requests[0].config?.systemInstruction;
     expect(system).toBe('Custom advisor system prompt.');
     const prompt1 = extractTexts(llm.requests[0].contents).join('\n');
@@ -1309,21 +1312,6 @@ describe('ModelConsultTool', () => {
     expect(inventorySection).toContain('- no_doc_tool');
     expect(inventorySection).not.toContain('- no_doc_tool:');
     expect(inventorySection).not.toContain('model_consult');
-
-    // Second call within the same invocation reuses canonicalToolsCache
-    // without calling agent.canonicalTools again.
-    (
-      ctx.invocationContext.agent as unknown as {
-        canonicalTools: () => Promise<never>;
-      }
-    ).canonicalTools = async () => {
-      throw new Error('canonicalTools should not be re-resolved');
-    };
-    await runConsult(tool, ctx, {question: 'Second check?'});
-    const prompt2 = extractTexts(llm.requests[1].contents).join('\n');
-    expect(prompt2).toContain(
-      '- list_deploys: Lists recent deploys for a service.',
-    );
   });
 
   it('tool inventory is withheld when disabled', async () => {
@@ -1357,8 +1345,8 @@ describe('ModelConsultTool', () => {
       instruction: 'Executor rule.',
       invocationId: '',
     });
-    ctx.state.set(tool._turnUsesStateKey(ctx), -5);
-    ctx.state.set(tool._sessionUsesStateKey(), 'not-an-int');
+    ctx.state.set(tool.turnUsesStateKey(ctx), -5);
+    ctx.state.set(tool.sessionUsesStateKey(), 'not-an-int');
     (ctx.invocationContext.agent as unknown as {name: unknown}).name = 123;
 
     const res0 = await runConsult(tool, ctx, {
@@ -1368,10 +1356,9 @@ describe('ModelConsultTool', () => {
     expect(extractTexts(llm.requests[0].contents).join('\n')).toContain(
       '(the executor)',
     );
-    expect(tool._turnUsesStateKey(ctx).endsWith(':unknown:uses')).toBe(true);
+    expect(tool.turnUsesStateKey(ctx).endsWith(':unknown:uses')).toBe(true);
 
     (ctx.invocationContext.agent as unknown as {name: string}).name = 'unknown';
-    ctx.invocationContext.canonicalToolsCache = undefined;
     (
       ctx.invocationContext.agent as unknown as {
         canonicalInstruction: () => Promise<never>;
@@ -1404,27 +1391,5 @@ describe('ModelConsultTool', () => {
     expect(handoffText).not.toContain('(unknown)');
     expect(handoffText).toContain('12345');
     expect(handoffText).toContain('67890');
-
-    // Verify non-callable instruction/tools attributes and failing state write.
-    ctx.invocationContext.canonicalToolsCache = undefined;
-    (
-      ctx.invocationContext.agent as unknown as {
-        canonicalInstruction: unknown;
-        canonicalTools: unknown;
-      }
-    ).canonicalInstruction = 42;
-    (
-      ctx.invocationContext.agent as unknown as {
-        canonicalTools: unknown;
-      }
-    ).canonicalTools = 42;
-    (ctx as unknown as {currentState: unknown}).currentState = {
-      get: () => 2,
-      set: () => {
-        throw new Error('storage write failure');
-      },
-    };
-    const res2 = await runConsult(tool, ctx, {question: 'Still works?'});
-    expect(res2.status).toBe('ok');
   });
 });

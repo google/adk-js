@@ -17,6 +17,7 @@ import {
   OpenIdConnectWithConfig,
 } from '../../../auth/auth_schemes.js';
 import {camelCaseKeys} from '../../../utils/case_utils.js';
+import {formatError} from '../../../utils/error_utils.js';
 import {ApiParameter} from '../openapi_spec_parser/operation_parser.js';
 
 /**
@@ -25,13 +26,33 @@ import {ApiParameter} from '../openapi_spec_parser/operation_parser.js';
  */
 export const INTERNAL_AUTH_PREFIX = '_auth_prefix_vaf_';
 
+/**
+ * The client settings an application registers with an OpenID Connect
+ * provider.
+ */
+export interface OpenIdConfig {
+  /** The client ID the provider issued to the application. */
+  clientId: string;
+  /** The provider's authorization endpoint. */
+  authUri: string;
+  /** The provider's token endpoint. */
+  tokenUri: string;
+  /** The client secret the provider issued to the application. */
+  clientSecret: string;
+  /**
+   * Where the provider sends the user after sign-in. When unset, the provider
+   * uses the redirect URI registered for the client.
+   */
+  redirectUri?: string;
+}
+
 /** Locations an OpenAPI API key may travel in. */
 const API_KEY_LOCATIONS = ['header', 'query', 'cookie'] as const;
 
 /** Deadline for the OpenID Connect discovery request, in milliseconds. */
 const OPENID_FETCH_TIMEOUT_MS = 10_000;
 
-/** Credential fields `openidDictToSchemeCredential` cannot work without. */
+/** Credential fields `openidRecordToSchemeCredential` cannot work without. */
 const REQUIRED_CREDENTIAL_FIELDS = ['client_id', 'client_secret'];
 
 const scopesSchema = z.record(z.string(), z.string()).default({});
@@ -224,7 +245,7 @@ function bearerTokenParam(
     originalName: 'Authorization',
     paramLocation: 'header',
     paramSchema: {type: 'string'},
-    description: authScheme.description ?? 'Bearer token',
+    description: authScheme.description || 'Bearer token',
     name: `${INTERNAL_AUTH_PREFIX}Authorization`,
     required: true,
   };
@@ -299,7 +320,7 @@ export function tokenToSchemeCredential(
  * @param scopes The scopes to request.
  * @returns A `[scheme, credential]` pair.
  */
-export function serviceAccountDictToSchemeCredential(
+export function serviceAccountRecordToSchemeCredential(
   config: Record<string, unknown>,
   scopes: string[],
 ): [AuthScheme, AuthCredential] {
@@ -338,22 +359,22 @@ export function serviceAccountSchemeCredential(
  * Builds an OpenID Connect scheme and credential from a configuration object
  * and a client-secret object.
  *
- * @param configDict An OpenID Connect configuration. Snake_case keys, as a
+ * @param configRecord An OpenID Connect configuration. Snake_case keys, as a
  *   discovery document delivers them, are accepted and normalized.
  * @param scopes The scopes to request.
- * @param credentialDict The Google OAuth client secret. Its keys stay
+ * @param credentialRecord The Google OAuth client secret. Its keys stay
  *   snake_case, because it is an on-disk wire format. A `{web: {…}}` or
  *   `{installed: {…}}` wrapper is unwrapped.
  * @returns A `[scheme, credential]` pair.
  * @throws Error When the configuration or the client secret is incomplete.
  */
-export function openidDictToSchemeCredential(
-  configDict: Record<string, unknown>,
+export function openidRecordToSchemeCredential(
+  configRecord: Record<string, unknown>,
   scopes: string[],
-  credentialDict: Record<string, unknown>,
+  credentialRecord: Record<string, unknown>,
 ): [OpenIdConnectWithConfig, AuthCredential] {
   const parsedConfig = OpenIdConnectConfigSchema.safeParse(
-    camelCaseKeys(configDict),
+    camelCaseKeys(configRecord),
   );
   if (!parsedConfig.success) {
     throw new Error(
@@ -362,7 +383,7 @@ export function openidDictToSchemeCredential(
   }
   const openidScheme: OpenIdConnectWithConfig = {...parsedConfig.data, scopes};
 
-  const values = Object.values(credentialDict);
+  const values = Object.values(credentialRecord);
   if (values.length === 1) {
     const wrapped = JsonObjectSchema.safeParse(values[0]);
     if (
@@ -370,27 +391,27 @@ export function openidDictToSchemeCredential(
       'client_id' in wrapped.data &&
       'client_secret' in wrapped.data
     ) {
-      credentialDict = wrapped.data;
+      credentialRecord = wrapped.data;
     }
   }
 
   const missingFields = REQUIRED_CREDENTIAL_FIELDS.filter(
-    (field) => !(field in credentialDict),
+    (field) => !(field in credentialRecord),
   );
   if (missingFields.length > 0) {
     throw new Error(
-      `Missing required fields in credential_dict: ${missingFields.join(', ')}`,
+      `Missing required fields in credentialRecord: ${missingFields.join(', ')}`,
     );
   }
 
   const authCredential: AuthCredential = {
     authType: AuthCredentialTypes.OPEN_ID_CONNECT,
     oauth2: {
-      clientId: String(credentialDict['client_id']),
-      clientSecret: String(credentialDict['client_secret']),
+      clientId: String(credentialRecord['client_id']),
+      clientSecret: String(credentialRecord['client_secret']),
       redirectUri:
-        'redirect_uri' in credentialDict
-          ? String(credentialDict['redirect_uri'])
+        'redirect_uri' in credentialRecord
+          ? String(credentialRecord['redirect_uri'])
           : undefined,
     },
   };
@@ -407,7 +428,7 @@ export function openidDictToSchemeCredential(
  *
  * @param openidUrl The OpenID Connect discovery URL.
  * @param scopes The scopes to request.
- * @param credentialDict The Google OAuth client secret, keyed snake_case.
+ * @param credentialRecord The Google OAuth client secret, keyed snake_case.
  * @returns A `[scheme, credential]` pair.
  * @throws Error When the request fails, the body is not a JSON object, or the
  *   configuration is incomplete.
@@ -415,7 +436,7 @@ export function openidDictToSchemeCredential(
 export async function openidUrlToSchemeCredential(
   openidUrl: string,
   scopes: string[],
-  credentialDict: Record<string, unknown>,
+  credentialRecord: Record<string, unknown>,
 ): Promise<[OpenIdConnectWithConfig, AuthCredential]> {
   let response: Response;
   try {
@@ -427,23 +448,23 @@ export async function openidUrlToSchemeCredential(
     }
   } catch (e: unknown) {
     throw new Error(
-      `Failed to fetch OpenID configuration from ${openidUrl}: ${String(e)}`,
+      `Failed to fetch OpenID configuration from ${openidUrl}: ${formatError(e)}`,
     );
   }
 
-  let configDict: Record<string, unknown>;
+  let configRecord: Record<string, unknown>;
   try {
-    configDict = JsonObjectSchema.parse(await response.json());
+    configRecord = JsonObjectSchema.parse(await response.json());
   } catch (e: unknown) {
     throw new Error(
-      `Invalid JSON response from OpenID configuration endpoint ${openidUrl}: ${String(e)}`,
+      `Invalid JSON response from OpenID configuration endpoint ${openidUrl}: ${formatError(e)}`,
     );
   }
 
-  return openidDictToSchemeCredential(
-    {...configDict, openIdConnectUrl: openidUrl},
+  return openidRecordToSchemeCredential(
+    {...configRecord, openIdConnectUrl: openidUrl},
     scopes,
-    credentialDict,
+    credentialRecord,
   );
 }
 
@@ -523,7 +544,7 @@ function parseSecurityScheme<S extends z.ZodType>(
  * `AuthScheme`.
  *
  * @example
- * const scheme = dictToAuthScheme({
+ * const scheme = recordToAuthScheme({
  *   type: 'apiKey',
  *   in: 'header',
  *   name: 'X-API-Key',
@@ -534,9 +555,9 @@ function parseSecurityScheme<S extends z.ZodType>(
  * @throws Error When `type` is missing or unrecognised, or the rest of the
  *   object does not match the shape that type requires.
  */
-export function dictToAuthScheme(data: Record<string, unknown>): AuthScheme {
+export function recordToAuthScheme(data: Record<string, unknown>): AuthScheme {
   if (!('type' in data)) {
-    throw new Error("Missing 'type' field in security scheme dictionary.");
+    throw new Error("Missing 'type' field in security scheme object.");
   }
 
   const securityType = data['type'];

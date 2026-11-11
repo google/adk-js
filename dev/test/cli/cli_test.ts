@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {LogLevel, setLogLevel} from '@google/adk';
+import {LogLevel, logToTmpFolder, setupAdkLogger} from '@google/adk';
 import {Command, CommanderError} from 'commander';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 import {createProgram} from '../../src/cli/cli.js';
@@ -13,12 +13,15 @@ import {runAgent} from '../../src/cli/cli_run.js';
 import {deployToAgentEngine} from '../../src/cli/deploy/cli_deploy_agent_engine.js';
 import {deployToCloudRun} from '../../src/cli/deploy/cli_deploy_cloud_run.js';
 import {AdkApiServer} from '../../src/server/adk_api_server.js';
+import {version} from '../../src/version.js';
 
 vi.mock('../../src/server/adk_api_server', () => {
   return {
-    AdkApiServer: vi.fn(() => ({
-      start: vi.fn(),
-    })),
+    AdkApiServer: vi.fn(function () {
+      return {
+        start: vi.fn(),
+      };
+    }),
   };
 });
 
@@ -46,7 +49,8 @@ vi.mock('@google/adk', async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...(actual as object),
-    setLogLevel: vi.fn(),
+    setupAdkLogger: vi.fn(),
+    logToTmpFolder: vi.fn(),
   };
 });
 
@@ -128,7 +132,7 @@ describe('CLI Entrypoint', () => {
     it('should start AdkApiServer with default options', async () => {
       await parse(['web']);
 
-      expect(setLogLevel).toHaveBeenCalledWith(LogLevel.INFO);
+      expect(setupAdkLogger).toHaveBeenCalledWith(LogLevel.INFO);
       // Verify AdkApiServer called. Since we mock it, we can check.
       expect(AdkApiServer).toHaveBeenCalled();
       const args = (AdkApiServer as unknown as Mock).mock.calls[0]?.[0];
@@ -146,12 +150,12 @@ describe('CLI Entrypoint', () => {
       // LogLevel.DEBUG is 0, so the previous `|| LogLevel.INFO` fallback
       // discarded it and the flag did nothing.
       await parse(['web', '--log_level', 'debug']);
-      expect(setLogLevel).toHaveBeenCalledWith(LogLevel.DEBUG);
+      expect(setupAdkLogger).toHaveBeenCalledWith(LogLevel.DEBUG);
     });
 
     it('falls back to INFO for an unrecognised --log_level', async () => {
       await parse(['web', '--log_level', 'not-a-level']);
-      expect(setLogLevel).toHaveBeenCalledWith(LogLevel.INFO);
+      expect(setupAdkLogger).toHaveBeenCalledWith(LogLevel.INFO);
     });
 
     it('should pass options to AdkApiServer', async () => {
@@ -167,7 +171,7 @@ describe('CLI Entrypoint', () => {
         '--otel_to_cloud',
       ]);
 
-      expect(setLogLevel).toHaveBeenCalledWith(LogLevel.DEBUG);
+      expect(setupAdkLogger).toHaveBeenCalledWith(LogLevel.DEBUG);
 
       const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
       expect(args).toMatchObject({
@@ -212,12 +216,18 @@ describe('CLI Entrypoint', () => {
     it('should start AdkApiServer with serveDebugUI: false', async () => {
       await parse(['api_server']);
 
+      expect(setupAdkLogger).toHaveBeenCalledWith(LogLevel.INFO);
       const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
       expect(args.serveDebugUI).toBe(false);
       expect(args.a2a).toBe(false);
 
       const instance = (AdkApiServer as unknown as Mock).mock.results[0].value;
       expect(instance.start).toHaveBeenCalled();
+    });
+
+    it('honours --log_level debug', async () => {
+      await parse(['api_server', '--log_level', 'debug']);
+      expect(setupAdkLogger).toHaveBeenCalledWith(LogLevel.DEBUG);
     });
 
     it('should start AdkApiServer with a2a: true when --a2a is set', async () => {
@@ -312,7 +322,7 @@ describe('CLI Entrypoint', () => {
       expect(runAgent).toHaveBeenCalledWith(
         expect.objectContaining({agentPath: 'agent.ts'}),
       );
-      expect(setLogLevel).toHaveBeenCalledWith(LogLevel.DEBUG);
+      expect(logToTmpFolder).toHaveBeenCalledWith({level: LogLevel.DEBUG});
     });
 
     it('should pass all options to runAgent', async () => {
@@ -380,7 +390,7 @@ describe('CLI Entrypoint', () => {
         expect.objectContaining({
           port: 8000,
           serviceName: 'adk-default-service-name',
-          adkVersion: 'latest',
+          adkVersion: version,
           withUi: false,
         }),
       );
@@ -460,7 +470,7 @@ describe('CLI Entrypoint', () => {
       expect(deployToAgentEngine).toHaveBeenCalledWith(
         expect.objectContaining({
           port: 8080,
-          adkVersion: 'latest',
+          adkVersion: version,
           withUi: false,
         }),
       );
@@ -571,6 +581,38 @@ describe('CLI Entrypoint', () => {
         stagingBucket: 'my-bucket',
       });
     });
+
+    it('should pass otelToCloud to deployToAgentEngine when --otel_to_cloud is set', async () => {
+      await parse(['deploy', 'agent_engine', '--otel_to_cloud']);
+
+      expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
+        otelToCloud: true,
+      });
+    });
+
+    it('should pass otelToCloud to deployToAgentEngine when --otel_to_cloud=true is set', async () => {
+      await parse(['deploy', 'agent_engine', '--otel_to_cloud=true']);
+
+      expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
+        otelToCloud: true,
+      });
+    });
+
+    it('should leave otelToCloud unset when --otel_to_cloud is absent', async () => {
+      await parse(['deploy', 'agent_engine']);
+
+      expect(
+        (deployToAgentEngine as Mock).mock.calls[0][0].otelToCloud,
+      ).toBeUndefined();
+    });
+
+    it('should leave otelToCloud unset when --otel_to_cloud=false is set', async () => {
+      await parse(['deploy', 'agent_engine', '--otel_to_cloud=false']);
+
+      expect(
+        (deployToAgentEngine as Mock).mock.calls[0][0].otelToCloud,
+      ).toBeUndefined();
+    });
   });
 
   describe('command: deploy reasoning_engine', () => {
@@ -580,7 +622,7 @@ describe('CLI Entrypoint', () => {
       expect(deployToAgentEngine).toHaveBeenCalledWith(
         expect.objectContaining({
           port: 8080,
-          adkVersion: 'latest',
+          adkVersion: version,
           withUi: false,
         }),
       );
@@ -605,6 +647,57 @@ describe('CLI Entrypoint', () => {
       expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
         stagingBucket: 'my-bucket',
       });
+    });
+
+    it('should pass otelToCloud to deployToAgentEngine when --otel_to_cloud is set', async () => {
+      await parse(['deploy', 'reasoning_engine', '--otel_to_cloud']);
+
+      expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
+        otelToCloud: true,
+      });
+    });
+
+    it('should leave otelToCloud unset when --otel_to_cloud is absent', async () => {
+      await parse(['deploy', 'reasoning_engine']);
+
+      expect(
+        (deployToAgentEngine as Mock).mock.calls[0][0].otelToCloud,
+      ).toBeUndefined();
+    });
+  });
+  describe('additional CLI options and eval command', () => {
+    it('maps --log_level warning and critical to WARN and ERROR', async () => {
+      await parse(['web', '--log_level', 'warning']);
+      expect(setupAdkLogger).toHaveBeenCalledWith(LogLevel.WARN);
+
+      await parse(['web', '--log_level', 'critical']);
+      expect(setupAdkLogger).toHaveBeenCalledWith(LogLevel.ERROR);
+    });
+
+    it('invokes logToTmpFolder unconditionally with the configured level on run', async () => {
+      await parse(['run', 'agent.ts']);
+      expect(logToTmpFolder).toHaveBeenCalledWith({level: LogLevel.INFO});
+
+      await parse(['run', 'agent.ts', '--log_level', 'debug']);
+      expect(logToTmpFolder).toHaveBeenCalledWith({level: LogLevel.DEBUG});
+    });
+
+    it('passes --app_name and --with_cloud_trace to deployToCloudRun', async () => {
+      await parse([
+        'deploy',
+        'cloud_run',
+        'my_agent',
+        '--app_name',
+        'custom_app',
+        '--with_cloud_trace',
+      ]);
+
+      expect(deployToCloudRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          appName: 'custom_app',
+          otelToCloud: true,
+        }),
+      );
     });
   });
 });

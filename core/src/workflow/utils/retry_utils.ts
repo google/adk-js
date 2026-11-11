@@ -33,7 +33,7 @@ export function errorNames(error: unknown): string[] {
     return [...new Set(names)];
   }
   if (typeof error === 'object' && error !== null) {
-    return [error.constructor.name];
+    return [error.constructor?.name ?? 'Object'];
   }
   return [typeof error];
 }

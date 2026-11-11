@@ -115,13 +115,29 @@ export interface LlmResponse {
 }
 
 /**
- * The fields of a GenerateContentResponse that an LlmResponse is created from,
- * so a plain copy of a response can be passed where the SDK class is not.
+ * Returns `usage` with initialPromptTokenCount as an own enumerable field when
+ * it differs from promptTokenCount.
+ *
+ * @google/genai defines it as a non-enumerable getter, which spreading an
+ * event or serializing it to JSON drops, and the summed promptTokenCount of a
+ * resumed generation overstates the request size. The getter falls back to
+ * promptTokenCount for every other response, where copying it would only add
+ * a redundant field to serialized events.
  */
-export type GenerateContentResponseFields = Pick<
-  GenerateContentResponse,
-  'candidates' | 'usageMetadata' | 'promptFeedback'
->;
+function withOwnInitialPromptTokenCount(
+  usage: GenerateContentResponseUsageMetadata | undefined,
+): GenerateContentResponseUsageMetadata | undefined {
+  const initialPromptTokenCount = usage?.initialPromptTokenCount;
+  if (
+    !usage ||
+    initialPromptTokenCount === undefined ||
+    initialPromptTokenCount === usage.promptTokenCount ||
+    Object.prototype.propertyIsEnumerable.call(usage, 'initialPromptTokenCount')
+  ) {
+    return usage;
+  }
+  return {...usage, initialPromptTokenCount};
+}
 
 /**
  * Creates an LlmResponse from a GenerateContentResponse.
@@ -131,9 +147,9 @@ export type GenerateContentResponseFields = Pick<
  * @returns The LlmResponse.
  */
 export function createLlmResponse(
-  response: GenerateContentResponseFields,
+  response: GenerateContentResponse,
 ): LlmResponse {
-  const usageMetadata = response.usageMetadata;
+  const usageMetadata = withOwnInitialPromptTokenCount(response.usageMetadata);
 
   if (response.candidates && response.candidates.length > 0) {
     const candidate = response.candidates[0];

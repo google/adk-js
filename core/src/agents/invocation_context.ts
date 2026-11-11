@@ -13,9 +13,8 @@ import {BaseMemoryService} from '../memory/base_memory_service.js';
 import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {Session} from '../sessions/session.js';
-import type {BaseTool} from '../tools/base_tool.js';
 import {AsyncQueue} from '../utils/async_queue.js';
-import {randomUUID} from '../utils/env_aware_utils.js';
+import {newId} from '../utils/id_provider.js';
 
 import {ActiveStreamingTool} from './active_streaming_tool.js';
 import {BaseAgent} from './base_agent.js';
@@ -65,10 +64,43 @@ export interface InvocationContextParams {
    * Request-level metadata passed from an incoming A2A request or caller.
    */
   a2aMetadata?: Record<string, unknown>;
-  /**
-   * Per-invocation cache of resolved canonical tools for the active agent.
-   */
-  canonicalToolsCache?: BaseTool[];
+}
+
+/**
+ * A unique symbol to identify {@link LlmCallsLimitExceededError} instances.
+ */
+const LLM_CALLS_LIMIT_EXCEEDED_ERROR_SIGNATURE_SYMBOL = Symbol.for(
+  'google.adk.llmCallsLimitExceededError',
+);
+
+/**
+ * Error thrown when the number of LLM calls in an invocation exceeds {@link RunConfig.maxLlmCalls}.
+ */
+export class LlmCallsLimitExceededError extends Error {
+  readonly [LLM_CALLS_LIMIT_EXCEEDED_ERROR_SIGNATURE_SYMBOL] = true;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'LlmCallsLimitExceededError';
+    Object.setPrototypeOf(this, LlmCallsLimitExceededError.prototype);
+  }
+}
+
+/**
+ * Type guard to check if an object is an instance of {@link LlmCallsLimitExceededError}.
+ *
+ * @param obj The object to check.
+ * @returns True if the object is an instance of {@link LlmCallsLimitExceededError}.
+ */
+export function isLlmCallsLimitExceededError(
+  obj: unknown,
+): obj is LlmCallsLimitExceededError {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    LLM_CALLS_LIMIT_EXCEEDED_ERROR_SIGNATURE_SYMBOL in obj &&
+    obj[LLM_CALLS_LIMIT_EXCEEDED_ERROR_SIGNATURE_SYMBOL] === true
+  );
 }
 
 /**
@@ -95,7 +127,7 @@ class InvocationCostManager {
       runConfig.maxLlmCalls! > 0 &&
       this.numberOfLlmCalls > runConfig.maxLlmCalls!
     ) {
-      throw new Error(
+      throw new LlmCallsLimitExceededError(
         `Max number of llm calls limit of ${runConfig.maxLlmCalls!} exceeded`,
       );
     }
@@ -258,7 +290,7 @@ export class InvocationContext {
    * The live request queue feeding the model on the bidirectional (live) path.
    * Set only for invocations started via `runner.runLive`.
    */
-  readonly liveRequestQueue?: LiveRequestQueue;
+  liveRequestQueue?: LiveRequestQueue;
 
   /**
    * The most recent session resumption handle observed on the live path.
@@ -271,11 +303,6 @@ export class InvocationContext {
    * Request-level metadata passed from an incoming A2A request or caller.
    */
   readonly a2aMetadata?: Record<string, unknown>;
-
-  /**
-   * Per-invocation cache of resolved canonical tools for the active agent.
-   */
-  canonicalToolsCache?: BaseTool[];
 
   /**
    * @param params The parameters for creating an invocation context.
@@ -299,7 +326,6 @@ export class InvocationContext {
     this.isolationScope = params.isolationScope;
     this.nodeToolDepth = params.nodeToolDepth ?? 0;
     this.a2aMetadata = params.a2aMetadata;
-    this.canonicalToolsCache = params.canonicalToolsCache;
     // Inherit the parent invocation's cost manager when one is available.
 
     // Child contexts created for sub-agents, agent transfers and loop
@@ -352,7 +378,7 @@ export class InvocationContext {
 }
 
 export function newInvocationContextId(): string {
-  return `e-${randomUUID()}`;
+  return `e-${newId()}`;
 }
 
 /**

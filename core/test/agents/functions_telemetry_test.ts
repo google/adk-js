@@ -27,18 +27,16 @@ import {
   SimpleSpanProcessor,
   type ReadableSpan,
 } from '@opentelemetry/sdk-trace-base';
-import {afterAll, beforeAll, beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {z} from 'zod';
 
 const {handleFunctionCallList} = functionsExportedForTestingOnly;
 
 const INVOCATION_ID = 'inv_telemetry_1';
 
-const exporter = new InMemorySpanExporter();
-const contextManager = new AsyncLocalStorageContextManager();
-const provider = new BasicTracerProvider({
-  spanProcessors: [new SimpleSpanProcessor(exporter)],
-});
+let exporter: InMemorySpanExporter;
+let contextManager: AsyncLocalStorageContextManager;
+let provider: BasicTracerProvider;
 
 const echoTool = new FunctionTool({
   name: 'echoTool',
@@ -47,20 +45,23 @@ const echoTool = new FunctionTool({
   execute: async () => ({result: 'echoed'}),
 });
 
-beforeAll(() => {
-  context.setGlobalContextManager(contextManager.enable());
+beforeEach(() => {
+  trace.disable();
+  context.disable();
+  exporter = new InMemorySpanExporter();
+  contextManager = new AsyncLocalStorageContextManager().enable();
+  provider = new BasicTracerProvider({
+    spanProcessors: [new SimpleSpanProcessor(exporter)],
+  });
+  context.setGlobalContextManager(contextManager);
   trace.setGlobalTracerProvider(provider);
 });
 
-afterAll(async () => {
+afterEach(async () => {
   await provider.shutdown();
   trace.disable();
   context.disable();
   contextManager.disable();
-});
-
-beforeEach(() => {
-  exporter.reset();
 });
 
 function createInvocationContext(): InvocationContext {
@@ -87,7 +88,7 @@ function onlySpan(name: string): ReadableSpan {
 }
 
 describe('tool span attributes from the function call path', () => {
-  it('records gen_ai.system and the invocation id on a single tool span', async () => {
+  it('records the tool, its agent and the call id on a single tool span', async () => {
     const event = await handleFunctionCallList({
       invocationContext: createInvocationContext(),
       functionCalls: [createCall('call-1')],
@@ -98,13 +99,21 @@ describe('tool span attributes from the function call path', () => {
 
     expect(event).not.toBeNull();
     const span = onlySpan('execute_tool echoTool');
-    expect(span.attributes['gen_ai.system']).toBe('gcp.vertex.agent');
-    expect(span.attributes['gcp.vertex.agent.invocation_id']).toBe(
-      INVOCATION_ID,
+    expect(span.attributes).toMatchObject({
+      'gen_ai.operation.name': 'execute_tool',
+      'gen_ai.tool.name': 'echoTool',
+      'gen_ai.tool.description': 'echoes a value',
+      'gen_ai.tool.type': 'FunctionTool',
+      'gen_ai.agent.name': 'test_agent',
+      'gen_ai.tool.call.id': 'call-1',
+    });
+    expect(span.attributes).not.toHaveProperty('gen_ai.system');
+    expect(span.attributes).not.toHaveProperty(
+      'gcp.vertex.agent.invocation_id',
     );
   });
 
-  it('records gen_ai.system and the invocation id on a merged tool span', async () => {
+  it('records the merged response event id on a merged tool span', async () => {
     const event = await handleFunctionCallList({
       invocationContext: createInvocationContext(),
       functionCalls: [createCall('call-1'), createCall('call-2')],
@@ -115,9 +124,27 @@ describe('tool span attributes from the function call path', () => {
 
     expect(event).not.toBeNull();
     const span = onlySpan('execute_tool (merged)');
-    expect(span.attributes['gen_ai.system']).toBe('gcp.vertex.agent');
-    expect(span.attributes['gcp.vertex.agent.invocation_id']).toBe(
-      INVOCATION_ID,
-    );
+    expect(span.attributes).toEqual({
+      'gen_ai.operation.name': 'execute_tool',
+      'gen_ai.tool.name': '(merged tools)',
+      'gen_ai.tool.description': '(merged tools)',
+      'gen_ai.tool.call.id': event?.id,
+      'gcp.vertex.agent.event_id': event?.id,
+    });
+  });
+
+  it('records a call to a tool the agent does not have on its own tool span', async () => {
+    await handleFunctionCallList({
+      invocationContext: createInvocationContext(),
+      functionCalls: [{id: 'call-1', name: 'missingTool', args: {}}],
+      toolsDict: {echoTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(onlySpan('execute_tool missingTool').attributes).toMatchObject({
+      'gen_ai.tool.name': 'missingTool',
+      'gen_ai.agent.name': 'test_agent',
+    });
   });
 });

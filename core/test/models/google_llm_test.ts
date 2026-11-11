@@ -5,14 +5,22 @@
  */
 
 import {
+  ComputerUseTool,
+  Context,
   Gemini,
   GeminiParams,
+  GoogleLLMVariant,
+  InvocationContext,
+  LlmAgent,
   LlmRequest,
   LlmResponse,
+  PluginManager,
+  createSession,
   geminiInitParams,
   version,
 } from '@google/adk';
 import {
+  Environment,
   GenerateContentResponse,
   GoogleGenAI,
   HttpOptions,
@@ -25,26 +33,35 @@ vi.mock('@google/genai', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@google/genai')>();
   return {
     ...actual,
-    GoogleGenAI: vi.fn().mockImplementation((options) => ({
-      apiClient: {
-        clientOptions: {
-          httpOptions: options.httpOptions,
+    GoogleGenAI: vi.fn().mockImplementation(function (options) {
+      return {
+        apiClient: {
+          clientOptions: {
+            httpOptions: options.httpOptions,
+          },
         },
-      },
-      models: {
-        generateContentStream: vi.fn(),
-        generateContent: vi.fn(),
-      },
-      live: {
-        connect: vi.fn().mockResolvedValue({
-          sendClientContent: vi.fn(),
-          sendToolResponse: vi.fn(),
-          sendRealtimeInput: vi.fn(),
-          close: vi.fn(),
-        }),
-      },
-      vertexai: options.vertexai || false,
-    })),
+        models: {
+          generateContentStream: vi.fn(),
+          generateContent: vi.fn(),
+        },
+        live: {
+          connect: vi.fn().mockResolvedValue({
+            sendClientContent: vi.fn(),
+            sendToolResponse: vi.fn(),
+            sendRealtimeInput: vi.fn(),
+            close: vi.fn(),
+          }),
+        },
+        vertexai:
+          options.vertexai ??
+          (['true', '1'].includes(
+            process.env['GOOGLE_GENAI_USE_ENTERPRISE'] ?? '',
+          ) ||
+            ['true', '1'].includes(
+              process.env['GOOGLE_GENAI_USE_VERTEXAI'] ?? '',
+            )),
+      };
+    }),
   };
 });
 
@@ -387,6 +404,28 @@ describe('GoogleLlm', () => {
       expect(params.vertexai).toBe(false);
     });
 
+    it('should not use Vertex AI when vertexai is explicitly false even if GOOGLE_GENAI_USE_ENTERPRISE is set', () => {
+      process.env['GOOGLE_GENAI_USE_ENTERPRISE'] = 'true';
+      process.env['GOOGLE_CLOUD_PROJECT'] = 'env-project';
+      process.env['GOOGLE_CLOUD_LOCATION'] = 'env-location';
+      const params = geminiInitParams({
+        model: 'gemini-1.5-flash',
+        vertexai: false,
+        apiKey: 'test-key',
+      });
+      expect(params.vertexai).toBe(false);
+    });
+
+    it('should not use Vertex AI when vertexai is explicitly false even if GOOGLE_GENAI_USE_VERTEXAI is set', () => {
+      process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'true';
+      const params = geminiInitParams({
+        model: 'gemini-1.5-flash',
+        vertexai: false,
+        apiKey: 'test-key',
+      });
+      expect(params.vertexai).toBe(false);
+    });
+
     it('should throw error if project is missing for Vertex AI', () => {
       const input = {
         model: 'gemini-1.5-flash',
@@ -395,6 +434,39 @@ describe('GoogleLlm', () => {
       };
       expect(() => geminiInitParams(input)).toThrow(/VertexAI project/);
     });
+  });
+
+  it('should use GEMINI_API backend and pass vertexai: false to clients when vertexai is explicitly false and GOOGLE_GENAI_USE_ENTERPRISE is set', () => {
+    process.env['GOOGLE_GENAI_USE_ENTERPRISE'] = 'true';
+    process.env['GOOGLE_CLOUD_PROJECT'] = 'env-project';
+    process.env['GOOGLE_CLOUD_LOCATION'] = 'env-location';
+
+    const spy = vi.mocked(GoogleGenAI);
+    spy.mockClear();
+
+    const llm = new TestGemini({
+      model: 'gemini-2.5-flash',
+      vertexai: false,
+      apiKey: 'test-key',
+    });
+
+    expect(llm.apiBackend).toBe(GoogleLLMVariant.GEMINI_API);
+    expect(llm.liveApiVersion).toBe('v1alpha');
+    expect(llm.liveApiClient.vertexai).toBe(false);
+    expect(spy).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        vertexai: false,
+        apiKey: 'test-key',
+      }),
+    );
+    expect(spy).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        vertexai: false,
+        apiKey: 'test-key',
+      }),
+    );
   });
 
   describe('generateContentAsync', () => {
@@ -724,6 +796,99 @@ describe('GoogleLlm', () => {
         ]);
       });
     });
+
+    it('preserves usageMetadata on the final aggregated LlmResponse', async () => {
+      const finalUsageMetadata = {
+        promptTokenCount: 10,
+        candidatesTokenCount: 5,
+        totalTokenCount: 15,
+      };
+      const gemini = createStreamingGemini([
+        {
+          candidates: [
+            {
+              content: {role: 'model', parts: [{text: 'Hello'}]},
+            },
+          ],
+          usageMetadata: {
+            promptTokenCount: 10,
+            candidatesTokenCount: 1,
+            totalTokenCount: 11,
+          },
+        },
+        {
+          candidates: [
+            {
+              content: {role: 'model', parts: [{text: ', how'}]},
+            },
+          ],
+          usageMetadata: {
+            promptTokenCount: 10,
+            candidatesTokenCount: 2,
+            totalTokenCount: 12,
+          },
+        },
+        {
+          candidates: [
+            {
+              content: {role: 'model', parts: [{text: ' can I help you?'}]},
+              finishReason: 'STOP',
+            },
+          ],
+          usageMetadata: finalUsageMetadata,
+        },
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      expect(responses).toHaveLength(4);
+      expect(responses[0].partial).toBe(true);
+      expect(responses[1].partial).toBe(true);
+      expect(responses[2].partial).toBe(true);
+      expect(responses[3].partial).toBe(false);
+      expect(responses[3].content?.parts?.[0]?.text).toBe(
+        'Hello, how can I help you?',
+      );
+      expect(responses[3].usageMetadata).toEqual(finalUsageMetadata);
+    });
+
+    it('preserves usageMetadata when flushing accumulated text before a function call chunk', async () => {
+      const usageMetadata = {
+        promptTokenCount: 8,
+        candidatesTokenCount: 4,
+        totalTokenCount: 12,
+      };
+      const functionCallPart = {
+        functionCall: {id: 'call-1', name: 'lookup', args: {}},
+      };
+      const gemini = createStreamingGemini([
+        {
+          candidates: [{content: {role: 'model', parts: [{text: 'Hello'}]}}],
+        },
+        {
+          candidates: [
+            {
+              content: {role: 'model', parts: [functionCallPart]},
+              finishReason: 'STOP',
+            },
+          ],
+          usageMetadata,
+        },
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      expect(responses).toHaveLength(4);
+      expect(responses[1].partial).toBe(false);
+      expect(responses[1].content?.parts).toEqual([{text: 'Hello'}]);
+      expect(responses[1].usageMetadata).toEqual(usageMetadata);
+      expect(responses[2].partial).toBe(false);
+      expect(responses[2].content?.parts).toEqual([functionCallPart]);
+      expect(responses[2].usageMetadata).toEqual(usageMetadata);
+      expect(responses[3].partial).toBe(false);
+      expect(responses[3].content).toBeUndefined();
+      expect(responses[3].usageMetadata).toEqual(usageMetadata);
+    });
   });
 
   describe('connect', () => {
@@ -809,5 +974,87 @@ describe('GoogleLlm', () => {
       });
       expect(llm.liveApiVersion).toBe('v1alpha');
     });
+  });
+});
+
+describe('Gemini computer use requests', () => {
+  function makeContext(): Context {
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv-1',
+      agent: new LlmAgent({name: 'agent', model: 'gemini-flash-latest'}),
+      session: createSession({id: 's1', appName: 'app', userId: 'u1'}),
+      pluginManager: new PluginManager([]),
+    });
+    return new Context({invocationContext, functionCallId: 'fc-1'});
+  }
+
+  function makeComputerUseRequest(model: string) {
+    const waitCalls: Array<Record<string, unknown>> = [];
+    const waitTool = new ComputerUseTool({
+      name: 'wait',
+      description: 'Waits for the specified number of seconds.',
+      screenSize: [1920, 1080],
+      execute: (args) => {
+        waitCalls.push(args);
+        return {screenshot: new Uint8Array([1]), url: 'https://example.com'};
+      },
+    });
+    const llmRequest: LlmRequest = {
+      model,
+      contents: [{role: 'user', parts: [{text: 'open the page'}]}],
+      config: {
+        systemInstruction: 'You are a browser agent.',
+        tools: [{computerUse: {environment: Environment.ENVIRONMENT_BROWSER}}],
+      },
+      liveConnectConfig: {},
+      toolsDict: {wait: waitTool},
+    };
+    return {llmRequest, waitTool, waitCalls};
+  }
+
+  async function send(llmRequest: LlmRequest) {
+    const llm = new TestGemini({apiKey: 'test-key'});
+    const generateContent = vi.fn().mockResolvedValue({
+      candidates: [{content: {parts: [{text: 'ok'}]}}],
+    });
+    llm.apiClient.models.generateContent = generateContent;
+    for await (const _response of llm.generateContentAsync(llmRequest)) {
+      // Drain the generator so the request is sent.
+    }
+    return generateContent;
+  }
+
+  it.each(['gemini-2.5-computer-use-preview-10-2025', 'gemini-3-pro-preview'])(
+    'drops the system instruction and adds wait_5_seconds for %s',
+    async (model) => {
+      const {llmRequest, waitTool, waitCalls} = makeComputerUseRequest(model);
+
+      const generateContent = await send(llmRequest);
+
+      expect(generateContent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.not.objectContaining({
+            systemInstruction: expect.anything(),
+          }),
+        }),
+      );
+      expect(llmRequest.toolsDict['wait']).toBe(waitTool);
+      const waitFiveSeconds = llmRequest.toolsDict['wait_5_seconds'];
+      expect(waitFiveSeconds).toBeInstanceOf(ComputerUseTool);
+      await waitFiveSeconds.runAsync({args: {}, toolContext: makeContext()});
+      expect(waitCalls).toEqual([{seconds: 5}]);
+    },
+  );
+
+  it('leaves a request without computer use alone', async () => {
+    const {llmRequest, waitTool} = makeComputerUseRequest('gemini-2.5-flash');
+    llmRequest.config = {systemInstruction: 'You are a browser agent.'};
+
+    await send(llmRequest);
+
+    expect(llmRequest.config.systemInstruction).toBe(
+      'You are a browser agent.',
+    );
+    expect(llmRequest.toolsDict).toEqual({wait: waitTool});
   });
 });

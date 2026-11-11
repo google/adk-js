@@ -16,6 +16,7 @@ import {
   InMemoryMemoryService,
   InMemorySessionService,
   isApp,
+  loadDotenvForAgent,
   markRestored,
   publicSession,
   requiresUserInput,
@@ -373,6 +374,9 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
   // as failed, rather than being swallowed or printed to stdout with exit 0.
   let watcher: fs.FSWatcher | undefined;
   try {
+    const absAgentPath = getAbsolutePath(options.agentPath);
+    loadDotenvForAgent(path.basename(absAgentPath), path.dirname(absAgentPath));
+
     const inputFileContent = options.inputFile
       ? await loadInputFile(options.inputFile)
       : undefined;

@@ -16,8 +16,9 @@ import {
   PluginManager,
 } from '@google/adk';
 import {Content} from '@google/genai';
-import {beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {ContextCompactionTrigger} from '../../src/plugins/base_plugin.js';
+import {logger} from '../../src/utils/logger.js';
 
 type PluginCallbackName = keyof BasePlugin;
 
@@ -174,6 +175,8 @@ describe('PluginManager', () => {
     plugin2 = new TestPlugin('plugin2');
   });
 
+  afterEach(() => vi.restoreAllMocks());
+
   it('should register and get a plugin', () => {
     service.registerPlugin(plugin1);
     expect(service.getPlugin('plugin1')).toBe(plugin1);
@@ -254,6 +257,43 @@ describe('PluginManager', () => {
 
     expect(error?.cause).toBe(originalException);
   });
+
+  it.each([
+    ['onAgentErrorCallback', 'runOnAgentErrorCallback'],
+    ['onRunErrorCallback', 'runOnRunErrorCallback'],
+  ] as const)(
+    '%s notifies every plugin in order despite exceptions or return values',
+    async (callback, dispatch) => {
+      const log = vi.spyOn(logger, 'error').mockImplementation(() => {});
+      const order: string[] = [];
+      const plugin3 = new TestPlugin('plugin3');
+      for (const plugin of [plugin1, plugin2, plugin3]) {
+        service.registerPlugin(plugin);
+      }
+      // Deliberately return a runtime value despite the notification-only API.
+      vi.spyOn(plugin1, callback).mockImplementation(async () => {
+        order.push('first');
+        return 'ignored' as never;
+      });
+      vi.spyOn(plugin2, callback).mockImplementation(async () => {
+        order.push('second');
+        throw undefined;
+      });
+      const last = vi.spyOn(plugin3, callback).mockImplementation(async () => {
+        order.push('third');
+      });
+      const params = {
+        agent: mockAgent,
+        callbackContext: mockCallbackContext,
+        invocationContext: mockInvocationContext,
+        error: mockError,
+      };
+      await expect(service[dispatch](params)).resolves.toBeUndefined();
+      expect(order).toEqual(['first', 'second', 'third']);
+      expect(last).toHaveBeenCalledExactlyOnceWith(params);
+      expect(log).toHaveBeenCalledOnce();
+    },
+  );
 
   it('should support all callbacks', async () => {
     service.registerPlugin(plugin1);

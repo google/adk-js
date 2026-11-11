@@ -4,7 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content, createUserContent, FunctionCall, Part} from '@google/genai';
+import {
+  Content,
+  createUserContent,
+  FunctionCall,
+  FunctionResponse,
+  Part,
+} from '@google/genai';
 import {isEmpty} from 'lodash-es';
 
 import {InvocationContext} from '../agents/invocation_context.js';
@@ -20,9 +26,13 @@ import {
   mergeEventActions,
 } from '../events/event_actions.js';
 import {BaseTool} from '../tools/base_tool.js';
+import {isComputerUseTool} from '../tools/computer_use/computer_use_tool.js';
+import {CallLiveToolRequest, isFunctionTool} from '../tools/function_tool.js';
 import {ResumeInputs} from '../tools/resume_inputs.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 import {logger} from '../utils/logger.js';
+import {Task} from '../utils/task.js';
+import {ActiveStreamingTool} from './active_streaming_tool.js';
 import {Context} from './context.js';
 import {
   REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
@@ -30,10 +40,9 @@ import {
 } from './framework_function_calls.js';
 
 import {
-  traceMergedToolCalls,
-  tracer,
-  traceToolCall,
-} from '../telemetry/tracing.js';
+  recordMergedToolCalls,
+  recordToolExecution,
+} from '../telemetry/api/instrumentation.js';
 
 import {
   SingleAfterToolCallback,
@@ -68,6 +77,8 @@ export {
 // Export these items for testing purposes only
 export const functionsExportedForTestingOnly = {
   handleFunctionCallList,
+  handleFunctionCallsLive,
+  processFunctionLiveHelper,
   generateAuthEvent,
   generateRequestConfirmationEvent,
 };
@@ -200,26 +211,64 @@ async function callToolAsync(
   toolContext: Context,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any> {
-  return tracer.startActiveSpan(`execute_tool ${tool.name}`, async (span) => {
-    try {
+  return recordToolExecution(
+    {tool, args, invocationContext: toolContext.invocationContext},
+    async (scope) => {
       logger.debug(`callToolAsync ${tool.name}`);
       const result = await tool.runAsync({args, toolContext});
-      traceToolCall({
-        tool,
-        args,
+      scope.recordSuccess({
         functionResponseEvent: buildResponseEvent(
           tool,
           result,
           toolContext,
           toolContext.invocationContext,
         ),
-        invocationContext: toolContext.invocationContext,
+        rawResult: result,
       });
       return result;
-    } finally {
-      span.end();
-    }
-  });
+    },
+  );
+}
+
+/** A base64 string, as a computer use tool encodes its screenshot. */
+const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
+
+/**
+ * Builds the function response for a tool's result.
+ *
+ * A computer use tool returns its screenshot as `{image: {data, mimetype}}`.
+ * The image moves out of the response into the function response's `parts`,
+ * so the model receives it as an image rather than as text.
+ */
+function buildFunctionResponse({
+  tool,
+  id,
+  response,
+}: {
+  tool: BaseTool;
+  id: string | undefined;
+  response: Record<string, unknown> | undefined;
+}): FunctionResponse {
+  const image = isComputerUseTool(tool) ? response?.['image'] : undefined;
+  if (
+    typeof image !== 'object' ||
+    image === null ||
+    !('data' in image) ||
+    !('mimetype' in image) ||
+    typeof image.data !== 'string' ||
+    typeof image.mimetype !== 'string' ||
+    !BASE64.test(image.data)
+  ) {
+    return {id, name: tool.name, response};
+  }
+  const rest = {...response};
+  delete rest['image'];
+  return {
+    id,
+    name: tool.name,
+    response: rest,
+    parts: [{inlineData: {data: image.data, mimeType: image.mimetype}}],
+  };
 }
 
 function buildResponseEvent(
@@ -238,11 +287,11 @@ function buildResponseEvent(
   }
 
   const partFunctionResponse: Part = {
-    functionResponse: {
-      name: tool.name,
-      response: responseResult,
+    functionResponse: buildFunctionResponse({
+      tool,
       id: toolContext.functionCallId,
-    },
+      response: responseResult,
+    }),
   };
 
   const content: Content = {
@@ -304,6 +353,46 @@ export async function handleFunctionCallsAsync({
     filters: filters,
     toolConfirmationDict: toolConfirmationDict,
     resumeInputsDict: resumeInputsDict,
+  });
+}
+
+/**
+ * Handles function calls in a live (bidirectional streaming) session.
+ *
+ * Supports regular sync/async tools, async-generator streaming tools that push
+ * incremental results onto `invocationContext.liveRequestQueue`, and the
+ * `stop_streaming` control call that cancels an active streaming tool task.
+ */
+export async function handleFunctionCallsLive({
+  invocationContext,
+  functionCallEvent,
+  toolsDict,
+  beforeToolCallbacks,
+  afterToolCallbacks,
+  filters,
+  toolConfirmationDict,
+  resumeInputsDict,
+}: {
+  invocationContext: InvocationContext;
+  functionCallEvent: Event;
+  toolsDict: Record<string, BaseTool>;
+  beforeToolCallbacks: SingleBeforeToolCallback[];
+  afterToolCallbacks: SingleAfterToolCallback[];
+  filters?: Set<string>;
+  toolConfirmationDict?: Record<string, ToolConfirmation>;
+  resumeInputsDict?: Record<string, ResumeInputs>;
+}): Promise<Event | null> {
+  const functionCalls = getFunctionCalls(functionCallEvent);
+  return handleFunctionCallList({
+    invocationContext,
+    functionCalls,
+    toolsDict,
+    beforeToolCallbacks,
+    afterToolCallbacks,
+    filters,
+    toolConfirmationDict,
+    resumeInputsDict,
+    isLive: true,
   });
 }
 
@@ -399,48 +488,43 @@ async function answerUnresolvableCall({
   // The sibling path opens `execute_tool <name>` inside `callToolAsync`.
   // Without this an unresolvable call is the one tool interaction that
   // leaves no span, which is the worst case to be missing from a waterfall.
-  return tracer.startActiveSpan(
-    `execute_tool ${functionCall.name || '<unnamed>'}`,
-    async (span) => {
-      try {
-        const toolName = functionCall.name || '<unnamed>';
-        const error = new Error(
-          `Function ${toolName} is not found in the toolsDict.`,
-        );
-        const tool = new ToolNotFoundPlaceholder(toolName, error);
-
-        const onToolErrorResponse =
-          await invocationContext.pluginManager.runOnToolErrorCallback({
-            tool,
-            toolArgs: functionCall.args ?? {},
-            toolContext,
-            error,
-          });
-
-        if (onToolErrorResponse == null) {
-          // Only an unhandled failure is the operator's problem; a plugin that
-          // answers these has made them an expected condition. The tool inventory
-          // belongs here rather than in the model's payload — the model already has
-          // its declarations, and a large toolset would cost kilobytes per
-          // occurrence.
-          const callableTools = Object.keys(toolsDict);
-          logger.warn(
-            `Could not resolve tool '${toolName}' for function call ` +
-              `'${functionCall.id ?? ''}'. Callable tools: ` +
-              `${callableTools.length ? callableTools.join(', ') : '(none)'}.\n` +
-              RESOLUTION_FAILURE_CAUSES,
-          );
-        }
-
-        return buildResponseEvent(
+  const toolName = functionCall.name || '<unnamed>';
+  const error = new Error(
+    `Function ${toolName} is not found in the toolsDict.`,
+  );
+  const tool = new ToolNotFoundPlaceholder(toolName, error);
+  return recordToolExecution(
+    {tool, args: functionCall.args ?? {}, invocationContext},
+    async () => {
+      const onToolErrorResponse =
+        await invocationContext.pluginManager.runOnToolErrorCallback({
           tool,
-          onToolErrorResponse ?? {error: error.message},
+          toolArgs: functionCall.args ?? {},
           toolContext,
-          invocationContext,
+          error,
+        });
+
+      if (onToolErrorResponse == null) {
+        // Only an unhandled failure is the operator's problem; a plugin that
+        // answers these has made them an expected condition. The tool inventory
+        // belongs here rather than in the model's payload — the model already has
+        // its declarations, and a large toolset would cost kilobytes per
+        // occurrence.
+        const callableTools = Object.keys(toolsDict);
+        logger.warn(
+          `Could not resolve tool '${toolName}' for function call ` +
+            `'${functionCall.id ?? ''}'. Callable tools: ` +
+            `${callableTools.length ? callableTools.join(', ') : '(none)'}.\n` +
+            RESOLUTION_FAILURE_CAUSES,
         );
-      } finally {
-        span.end();
       }
+
+      return buildResponseEvent(
+        tool,
+        onToolErrorResponse ?? {error: error.message},
+        toolContext,
+        invocationContext,
+      );
     },
   );
 }
@@ -459,6 +543,7 @@ export async function handleFunctionCallList({
   filters,
   toolConfirmationDict,
   resumeInputsDict,
+  isLive = false,
 }: {
   invocationContext: InvocationContext;
   functionCalls: FunctionCall[];
@@ -474,6 +559,7 @@ export async function handleFunctionCallList({
    * approval; see {@link ResumeInputs}.
    */
   resumeInputsDict?: Record<string, ResumeInputs>;
+  isLive?: boolean;
 }): Promise<Event | null> {
   const functionResponseEvents: Event[] = [];
 
@@ -526,8 +612,6 @@ export async function handleFunctionCallList({
     // Step 1: Check if plugin before_tool_callback overrides the function
     // response.
     let functionResponse = null;
-    let functionResponseError: unknown;
-    let functionResponseErrorOccurred = false;
     functionResponse =
       await invocationContext.pluginManager.runBeforeToolCallback({
         tool: tool,
@@ -559,7 +643,22 @@ export async function handleFunctionCallList({
     if (functionResponse == null) {
       // Cover both null and undefined
       try {
-        functionResponse = await callToolAsync(tool, functionArgs, toolContext);
+        const rawFunctionResponse = isLive
+          ? await processFunctionLiveHelper({
+              tool,
+              toolContext,
+              functionCall,
+              functionArgs,
+              invocationContext,
+            })
+          : await callToolAsync(tool, functionArgs, toolContext);
+        // Keep a long-running nullish return as undefined so the deferral below fires;
+        // wrap a normal nullish return as {result: null}.
+        if (rawFunctionResponse == null && !tool.isLongRunning) {
+          functionResponse = {result: rawFunctionResponse};
+        } else {
+          functionResponse = normalizeCallbackResponse(rawFunctionResponse);
+        }
       } catch (e: unknown) {
         if (e instanceof Error) {
           const onToolErrorResponse =
@@ -577,26 +676,25 @@ export async function handleFunctionCallList({
           } else {
             // If the error callback returns undefined, use the error message
             // as the function response error.
-            functionResponseError = e.message;
-            functionResponseErrorOccurred = true;
+            functionResponse = {error: e.message};
           }
         } else {
           // If the error is not an Error, use the error object as the function
           // response error.
-          functionResponseError = e;
-          functionResponseErrorOccurred = true;
+          functionResponse = {error: e};
         }
       }
     }
 
     // Step 4: Check if plugin after_tool_callback overrides the function
     // response.
+    const callbackResult = functionResponse ?? {};
     let alteredFunctionResponse =
       await invocationContext.pluginManager.runAfterToolCallback({
         tool: tool,
         toolArgs: functionArgs,
         toolContext: toolContext,
-        result: functionResponse,
+        result: callbackResult,
       });
 
     // Step 5: If no overrides are provided from the plugins, further run the
@@ -608,7 +706,7 @@ export async function handleFunctionCallList({
           tool: tool,
           args: functionArgs,
           context: toolContext,
-          response: functionResponse,
+          response: callbackResult,
         });
         if (alteredFunctionResponse) {
           break;
@@ -644,23 +742,15 @@ export async function handleFunctionCallList({
       continue;
     }
 
-    if (functionResponseErrorOccurred) {
-      functionResponse = {error: functionResponseError};
-    } else if (functionResponse == null) {
-      functionResponse = {result: functionResponse};
-    } else {
-      functionResponse = normalizeCallbackResponse(functionResponse);
-    }
-
     const functionResponseEvent = createEvent({
       invocationId: invocationContext.invocationId,
       author: toolEventAuthor(invocationContext),
       content: createUserContent({
-        functionResponse: {
+        functionResponse: buildFunctionResponse({
+          tool,
           id: toolContext.functionCallId,
-          name: tool.name,
           response: functionResponse,
-        },
+        }),
       }),
       actions: toolContext.actions,
       branch: invocationContext.branch,
@@ -677,18 +767,8 @@ export async function handleFunctionCallList({
   );
 
   if (functionResponseEvents.length > 1) {
-    tracer.startActiveSpan('execute_tool (merged)', (span) => {
-      try {
-        logger.debug('execute_tool (merged)');
-        traceMergedToolCalls({
-          responseEventId: mergedEvent.id,
-          functionResponseEvent: mergedEvent,
-          invocationContext,
-        });
-      } finally {
-        span.end();
-      }
-    });
+    logger.debug('execute_tool (merged)');
+    recordMergedToolCalls({responseEventId: mergedEvent.id});
   }
   return mergedEvent;
 }
@@ -729,6 +809,200 @@ export function mergeParallelFunctionResponseEvents(
     actions: mergedActions,
     timestamp: baseEvent.timestamp!,
   });
+}
+
+interface MaybeStreamingTool {
+  execute?: unknown;
+  func?: unknown;
+  _callLive?: (
+    request: CallLiveToolRequest,
+  ) => AsyncGenerator<unknown, void, unknown>;
+}
+
+function isAsyncGeneratorFunction(
+  fn: unknown,
+): fn is (...args: never[]) => AsyncGenerator<unknown, void, unknown> {
+  return (
+    typeof fn === 'function' &&
+    Object.prototype.toString.call(fn) === '[object AsyncGeneratorFunction]'
+  );
+}
+
+function isStreamingTool(
+  tool: BaseTool,
+): tool is BaseTool & Required<Pick<MaybeStreamingTool, '_callLive'>> {
+  const candidate = tool as BaseTool & MaybeStreamingTool;
+  if (typeof candidate._callLive !== 'function') {
+    return false;
+  }
+  if (isFunctionTool(tool)) {
+    return isAsyncGeneratorFunction(candidate.execute);
+  }
+  return (
+    isAsyncGeneratorFunction(candidate.execute) ||
+    isAsyncGeneratorFunction(candidate.func) ||
+    isAsyncGeneratorFunction(candidate._callLive)
+  );
+}
+
+async function* callToolLive({
+  tool,
+  args,
+  toolContext,
+  invocationContext,
+}: CallLiveToolRequest & {
+  tool: BaseTool & Required<Pick<MaybeStreamingTool, '_callLive'>>;
+}): AsyncGenerator<unknown, void, unknown> {
+  const results = tool._callLive({
+    args,
+    toolContext,
+    invocationContext,
+  });
+  for await (const result of results) {
+    yield result;
+  }
+}
+
+async function waitForTaskWithTimeout<T>(
+  task: Task<T>,
+  timeoutMs: number,
+): Promise<void> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<void>((resolve) => {
+    timeoutId = setTimeout(resolve, timeoutMs);
+  });
+  try {
+    await Promise.race([
+      task.promise.then(
+        () => undefined,
+        () => undefined,
+      ),
+      timeoutPromise,
+    ]);
+  } finally {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
+const STOP_STREAMING_FUNCTION_NAME = 'stop_streaming';
+const STOP_STREAMING_TIMEOUT_MS = 1000;
+
+/**
+ * Executes a single tool call in live mode, supporting `stop_streaming`,
+ * async-generator streaming tools, and standard sync/async tools.
+ */
+async function processFunctionLiveHelper({
+  tool,
+  toolContext,
+  functionCall,
+  functionArgs,
+  invocationContext,
+}: {
+  tool: BaseTool;
+  toolContext: Context;
+  functionCall: FunctionCall;
+  functionArgs: Record<string, unknown>;
+  invocationContext: InvocationContext;
+}): Promise<unknown> {
+  let functionResponse: unknown = undefined;
+  const targetFunctionName =
+    typeof functionArgs['function_name'] === 'string'
+      ? functionArgs['function_name']
+      : typeof functionArgs['functionName'] === 'string'
+        ? functionArgs['functionName']
+        : undefined;
+
+  // Case 1: stop_streaming function call.
+  if (
+    functionCall.name === STOP_STREAMING_FUNCTION_NAME &&
+    targetFunctionName !== undefined
+  ) {
+    const activeTasks = invocationContext.activeStreamingTools;
+    const activeTask = activeTasks?.[targetFunctionName]?.task;
+    if (activeTasks && activeTask && !activeTask.done()) {
+      activeTask.cancel();
+      await waitForTaskWithTimeout(activeTask, STOP_STREAMING_TIMEOUT_MS);
+      if (!activeTask.done()) {
+        logger.warn(`The task for ${targetFunctionName} is not cancelled yet.`);
+        functionResponse = {
+          status: `The task is not cancelled yet for ${targetFunctionName}.`,
+        };
+      } else {
+        activeTasks[targetFunctionName].task = undefined;
+        functionResponse = {
+          status: `Successfully stopped streaming function ${targetFunctionName}`,
+        };
+      }
+    } else {
+      functionResponse = {
+        status: `No active streaming function named ${targetFunctionName} found`,
+      };
+    }
+  } else if (isStreamingTool(tool)) {
+    // Case 2: the function is an async generator function (streaming tool).
+    const task = new Task<void>(async (abortSignal) => {
+      const generator = callToolLive({
+        tool,
+        args: functionArgs,
+        toolContext,
+        invocationContext,
+      });
+      let abortCleanup: (() => void) | undefined;
+      const abortPromise = new Promise<IteratorResult<unknown, void>>(
+        (resolve) => {
+          if (abortSignal.aborted) {
+            resolve({value: undefined, done: true});
+            return;
+          }
+          const onAbort = () => {
+            resolve({value: undefined, done: true});
+          };
+          abortSignal.addEventListener('abort', onAbort, {once: true});
+          abortCleanup = () =>
+            abortSignal.removeEventListener('abort', onAbort);
+        },
+      );
+      try {
+        while (!abortSignal.aborted) {
+          const nextResult = await Promise.race([
+            generator.next(),
+            abortPromise,
+          ]);
+          if (abortSignal.aborted || nextResult.done) {
+            break;
+          }
+          const result = nextResult.value;
+          const updatedContent: Content = createUserContent(
+            `Function ${tool.name} returned: ${String(result)}`,
+          );
+          invocationContext.liveRequestQueue?.sendContent(updatedContent);
+        }
+      } finally {
+        abortCleanup?.();
+        if (abortSignal.aborted) {
+          void generator.return?.(undefined);
+        }
+      }
+    });
+
+    invocationContext.activeStreamingTools ??= {};
+    if (tool.name in invocationContext.activeStreamingTools) {
+      invocationContext.activeStreamingTools[tool.name].task = task;
+    } else {
+      invocationContext.activeStreamingTools[tool.name] =
+        new ActiveStreamingTool({task});
+    }
+    functionResponse = {
+      status:
+        'The function is running asynchronously and the results are pending.',
+    };
+  } else {
+    // Case 3: the function is a regular sync or async function tool.
+    functionResponse = await callToolAsync(tool, functionArgs, toolContext);
+  }
+  return functionResponse;
 }
 
 // TODO - b/425992518: support function call in live connection.

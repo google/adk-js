@@ -16,14 +16,18 @@ import {ServiceAccountCredentialExchanger} from '../../../src/tools/openapi_tool
 
 vi.mock('google-auth-library', () => {
   return {
-    JWT: vi.fn().mockImplementation(() => ({
-      authorize: vi.fn().mockResolvedValue({access_token: 'mock-token'}),
-    })),
-    GoogleAuth: vi.fn().mockImplementation(() => ({
-      getClient: vi.fn().mockResolvedValue({
-        getAccessToken: vi.fn().mockResolvedValue({token: 'mock-adc-token'}),
-      }),
-    })),
+    JWT: vi.fn().mockImplementation(function () {
+      return {
+        authorize: vi.fn().mockResolvedValue({access_token: 'mock-token'}),
+      };
+    }),
+    GoogleAuth: vi.fn().mockImplementation(function () {
+      return {
+        getClient: vi.fn().mockResolvedValue({
+          getAccessToken: vi.fn().mockResolvedValue({token: 'mock-adc-token'}),
+        }),
+      };
+    }),
   };
 });
 
@@ -46,9 +50,9 @@ function fullServiceAccountCredential(): ServiceAccountCredential {
 
 /** Replaces the next `GoogleAuth` with one whose `getClient` behaves as given. */
 function stubGoogleAuthOnce(getClient: Mock): void {
-  vi.mocked(GoogleAuth).mockImplementationOnce(
-    () => ({getClient}) as unknown as GoogleAuth,
-  );
+  vi.mocked(GoogleAuth).mockImplementationOnce(function () {
+    return {getClient} as unknown as GoogleAuth;
+  });
 }
 
 describe('AutoAuthCredentialExchanger', () => {
@@ -161,13 +165,12 @@ describe('ServiceAccountCredentialExchanger', () => {
     };
 
     const mockJWT = vi.mocked(JWT);
-    mockJWT.mockImplementationOnce(
-      () =>
-        ({
-          authorize: vi.fn().mockResolvedValue({}),
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        }) as any,
-    );
+    mockJWT.mockImplementationOnce(function () {
+      return {
+        authorize: vi.fn().mockResolvedValue({}),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any;
+    });
 
     await expect(
       exchanger.exchange({
@@ -191,13 +194,12 @@ describe('ServiceAccountCredentialExchanger', () => {
     };
 
     const mockJWT = vi.mocked(JWT);
-    mockJWT.mockImplementationOnce(
-      () =>
-        ({
-          authorize: vi.fn().mockRejectedValue(new Error('Auth failed')),
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        }) as any,
-    );
+    mockJWT.mockImplementationOnce(function () {
+      return {
+        authorize: vi.fn().mockRejectedValue(new Error('Auth failed')),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any;
+    });
 
     await expect(
       exchanger.exchange({

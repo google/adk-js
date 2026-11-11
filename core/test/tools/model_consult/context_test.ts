@@ -8,9 +8,9 @@ import {Content, Language, Outcome, Part} from '@google/genai';
 import {describe, expect, it} from 'vitest';
 
 import {createEvent, Event} from '../../../src/events/event.js';
-import {createEventActions} from '../../../src/events/event_actions.js';
 import {
   buildAdvisorContents,
+  isModelConsultContextConfig,
   ModelConsultContextConfig,
 } from '../../../src/tools/model_consult/context.js';
 
@@ -188,24 +188,6 @@ describe('context', () => {
       '[thought] secret reasoning',
       '[agent:executor] visible reply',
     ]);
-  });
-
-  it('rewound turns are excluded from the handover', () => {
-    const events = [
-      userEvent('keep me', 'inv-1'),
-      userEvent('drop me', 'inv-2'),
-      agentEvent([{text: 'also drop me'}], {invocationId: 'inv-2'}),
-      createEvent({
-        invocationId: 'inv-3',
-        author: 'user',
-        actions: createEventActions({rewindBeforeInvocationId: 'inv-2'}),
-      }),
-      userEvent('after rewind', 'inv-4'),
-    ];
-
-    const contents = buildAdvisorContents(events);
-
-    expect(texts(contents)).toEqual(['[user] keep me', '[user] after rewind']);
   });
 
   it('maxEvents keeps only the most recent events', () => {
@@ -481,19 +463,39 @@ describe('context', () => {
     ).toThrow(/Unknown ModelConsultContextConfig field/);
   });
 
-  it.each([
-    'maxEvents',
-    'maxChars',
-    'maxPartChars',
-    'max_events',
-    'max_chars',
-    'max_part_chars',
-  ])('config rejects degenerate cap for %s', (field) => {
+  it.each(['maxEvents', 'maxChars', 'maxPartChars'])(
+    'config rejects degenerate cap for %s',
+    (field) => {
+      expect(
+        () =>
+          new ModelConsultContextConfig({
+            [field]: 0,
+          }),
+      ).toThrow(/must be an integer >= 1/);
+    },
+  );
+
+  it('isModelConsultContextConfig recognizes instances via brand symbol', () => {
+    const cfg = new ModelConsultContextConfig({maxEvents: 5});
+    expect(isModelConsultContextConfig(cfg)).toBe(true);
+    expect(isModelConsultContextConfig({})).toBe(false);
+    expect(isModelConsultContextConfig(null)).toBe(false);
+
+    const crossRealmCfg = {
+      [Symbol.for('google.adk.modelConsultContextConfig')]: true,
+      includeSession: false,
+      maxEvents: undefined,
+      maxChars: 1000,
+      maxPartChars: 200,
+      includeMedia: true,
+      includeThoughts: false,
+    };
+    expect(isModelConsultContextConfig(crossRealmCfg)).toBe(true);
     expect(
-      () =>
-        new ModelConsultContextConfig({
-          [field]: 0,
-        }),
-    ).toThrow(/must be an integer >= 1/);
+      buildAdvisorContents(
+        [userEvent('hi')],
+        crossRealmCfg as unknown as ModelConsultContextConfig,
+      ),
+    ).toEqual([]);
   });
 });

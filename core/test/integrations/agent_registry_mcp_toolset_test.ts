@@ -23,15 +23,19 @@ const mockConnect = vi.fn().mockResolvedValue(undefined);
 const mockClose = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
-  Client: vi.fn().mockImplementation(() => ({
-    connect: mockConnect,
-    close: mockClose,
-    listTools: mockListTools,
-  })),
+  Client: vi.fn().mockImplementation(function () {
+    return {
+      connect: mockConnect,
+      close: mockClose,
+      listTools: mockListTools,
+    };
+  }),
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
-  StreamableHTTPClientTransport: vi.fn().mockImplementation(() => ({})),
+  StreamableHTTPClientTransport: vi.fn().mockImplementation(function () {
+    return {};
+  }),
 }));
 
 const BASE_PARAMS: StreamableHTTPConnectionParams = {

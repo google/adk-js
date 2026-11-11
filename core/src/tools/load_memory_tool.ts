@@ -6,6 +6,7 @@
 
 import {FunctionDeclaration, Type} from '@google/genai';
 
+import type {MemoryEntry} from '../memory/memory_entry.js';
 import {appendInstructions} from '../models/llm_request.js';
 import {
   BaseTool,
@@ -14,17 +15,42 @@ import {
 } from './base_tool.js';
 
 /**
+ * Configuration options for {@link LoadMemoryTool}.
+ */
+export interface LoadMemoryToolOptions {
+  /**
+   * Whether to flatten memory content into space-separated text strings.
+   *
+   * @deprecated Set `textOnlyContent: true` only to retain legacy string content. The default is `false`, returning complete {@link MemoryEntry} objects. This option will be removed in a future release.
+   */
+  readonly textOnlyContent?: boolean;
+}
+
+/**
+ * Response returned by {@link LoadMemoryTool}.
+ *
+ * When {@link LoadMemoryToolOptions.textOnlyContent} is enabled, entries contain
+ * string content instead of a `Content` object.
+ */
+export interface LoadMemoryResponse {
+  memories: MemoryEntry[];
+}
+
+/**
  * A tool that loads the memory for the current user.
  *
  * NOTE: Currently this tool only uses text part from the memory.
  */
 export class LoadMemoryTool extends BaseTool {
-  constructor() {
+  private readonly textOnlyContent: boolean;
+
+  constructor(options: LoadMemoryToolOptions = {}) {
     super({
       name: 'load_memory',
       description:
         'Loads the memory for the current user.\n\nNOTE: Currently this tool only uses text part from the memory.',
     });
+    this.textOnlyContent = options.textOnlyContent ?? false;
   }
 
   override _getDeclaration(): FunctionDeclaration | undefined {
@@ -48,12 +74,12 @@ export class LoadMemoryTool extends BaseTool {
     args,
     toolContext,
   }: RunAsyncToolRequest): Promise<unknown> {
-    try {
-      const query = args['query'] as string;
-      if (!toolContext.invocationContext.memoryService) {
-        throw new Error('Memory service is not initialized.');
-      }
-      const searchMemoryResponse = await toolContext.searchMemory(query);
+    const query = args['query'] as string;
+    if (!toolContext.invocationContext.memoryService) {
+      throw new Error('Memory service is not initialized.');
+    }
+    const searchMemoryResponse = await toolContext.searchMemory(query);
+    if (this.textOnlyContent) {
       return {
         memories: searchMemoryResponse.memories.map((m) => ({
           // Join all text parts by a space, or empty string if no text parts
@@ -62,10 +88,10 @@ export class LoadMemoryTool extends BaseTool {
           timestamp: m.timestamp,
         })),
       };
-    } catch (e) {
-      console.error('ERROR in LoadMemoryTool runAsync:', e);
-      throw e;
     }
+    return {
+      memories: searchMemoryResponse.memories,
+    };
   }
 
   override async processLlmRequest(

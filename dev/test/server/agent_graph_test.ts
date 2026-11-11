@@ -5,6 +5,7 @@
  */
 
 import {
+  BaseRetrievalTool,
   createEvent,
   DEFAULT_ROUTE,
   Edge,
@@ -23,6 +24,7 @@ import {parse} from 'ts-graphviz/ast';
 import {describe, expect, it} from 'vitest';
 
 import {
+  getAgentGraph,
   getAgentGraphAsDot,
   getWorkflowHighlights,
 } from '../../src/server/agent_graph.js';
@@ -636,5 +638,33 @@ describe('AgentGraph — workflow execution highlights', () => {
     const event = createEvent({invocationId: 'inv-1', author: 'agent'});
 
     expect(getWorkflowHighlights([event], event)).toBeUndefined();
+  });
+});
+
+describe('AgentGraph — retrieval tools', () => {
+  it('renders BaseRetrievalTool with a magnifying glass icon and cylinder shape', async () => {
+    class TestRetrievalTool extends BaseRetrievalTool {
+      constructor() {
+        super({name: 'doc_retriever', description: 'Retrieves docs'});
+      }
+      override async runAsync(): Promise<unknown> {
+        return 'doc';
+      }
+    }
+
+    const agent = new LlmAgent({
+      name: 'ragAgent',
+      tools: [new TestRetrievalTool()],
+    });
+
+    const dotGraph = await getAgentGraphAsDot(agent, []);
+    expect(dotGraph).toContain('label = "🔎 doc_retriever"');
+    expect(dotGraph).toContain('shape = "cylinder"');
+
+    const digraph = await getAgentGraph(agent, [], false);
+    expect(Buffer.isBuffer(digraph)).toBe(false);
+    if (!Buffer.isBuffer(digraph)) {
+      expect(digraph.id).toBe('ragAgent');
+    }
   });
 });

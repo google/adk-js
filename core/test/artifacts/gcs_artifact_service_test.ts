@@ -105,7 +105,9 @@ const {StorageMock, storageMock} = vi.hoisted(() => {
   }
 
   const storageMock = new FakeStorage();
-  const StorageMock = vi.fn(() => storageMock);
+  const StorageMock = vi.fn(function () {
+    return storageMock;
+  });
   return {StorageMock, storageMock};
 });
 

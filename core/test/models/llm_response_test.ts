@@ -9,6 +9,7 @@ import {
   BlockedReason,
   FinishReason,
   GenerateContentResponse,
+  GenerateContentResponseUsageMetadata,
 } from '@google/genai';
 import {describe, expect, it} from 'vitest';
 import {createLlmResponse} from '../../src/models/llm_response.js';
@@ -218,6 +219,62 @@ describe('createLlmResponse', () => {
       const result = createLlmResponse(makeResponse({candidates: []}));
       expect(result.errorCode).toBe('UNKNOWN_ERROR');
     });
+  });
+});
+
+describe('createLlmResponse with a resumed generation', () => {
+  function resumedUsage({
+    promptTokenCount,
+    initialPromptTokenCount,
+  }: {
+    promptTokenCount: number;
+    initialPromptTokenCount: number;
+  }): GenerateContentResponseUsageMetadata {
+    const usage: GenerateContentResponseUsageMetadata = {promptTokenCount};
+    Object.defineProperty(usage, 'initialPromptTokenCount', {
+      get: () => initialPromptTokenCount,
+      enumerable: false,
+    });
+    return usage;
+  }
+
+  it('keeps initialPromptTokenCount when the response is serialized', () => {
+    const response = makeResponse({
+      candidates: [{content: {parts: [{text: 'hi'}], role: 'model'}}],
+      usageMetadata: resumedUsage({
+        promptTokenCount: 30,
+        initialPromptTokenCount: 10,
+      }),
+    });
+
+    const result = createLlmResponse(response);
+
+    expect(JSON.parse(JSON.stringify(result.usageMetadata))).toEqual({
+      promptTokenCount: 30,
+      initialPromptTokenCount: 10,
+    });
+  });
+
+  it('does not change the SDK usage object', () => {
+    const usageMetadata = resumedUsage({
+      promptTokenCount: 30,
+      initialPromptTokenCount: 10,
+    });
+
+    createLlmResponse(makeResponse({usageMetadata}));
+
+    expect(Object.keys(usageMetadata)).toEqual(['promptTokenCount']);
+  });
+
+  it('keeps the SDK usage object of a generation that was not resumed', () => {
+    const usageMetadata = resumedUsage({
+      promptTokenCount: 10,
+      initialPromptTokenCount: 10,
+    });
+
+    const result = createLlmResponse(makeResponse({usageMetadata}));
+
+    expect(result.usageMetadata).toBe(usageMetadata);
   });
 });
 

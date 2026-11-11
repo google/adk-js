@@ -31,6 +31,7 @@ import {
   CodeExecutionResult,
   File,
 } from './code_execution_utils.js';
+import {CONTEXT_KEY} from './code_executor_context.js';
 
 const DEFAULT_MAX_ATTEMPTS = 180;
 const DEFAULT_SANDBOX_TTL = '31536000s';
@@ -293,10 +294,14 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
       return this.sandboxResourceName;
     }
 
-    // Try to get from session state with language-specific key
+    // Try to get from session state with language-specific key, falling back to
+    // the persisted code execution context.
     const stateKey = `sandbox_name_${language.toLowerCase()}`;
-    let sandboxName = invocationContext.session?.state?.[stateKey] as
-      string | undefined;
+    const state = invocationContext.session?.state;
+    const codeExecutionContext = state?.[CONTEXT_KEY] as
+      Record<string, unknown> | undefined;
+    let sandboxName = (state?.[stateKey] ??
+      codeExecutionContext?.[stateKey]) as string | undefined;
     let createNewSandbox = false;
 
     if (!sandboxName) {
@@ -362,6 +367,11 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
           invocationContext.session.state = {};
         }
         invocationContext.session.state[stateKey] = sandboxName;
+        // Mutate in-place so CodeExecutorContext.context reference aliasing is
+        // preserved and CodeExecutorContext.getStateDelta() persists the name.
+        const context = (invocationContext.session.state[CONTEXT_KEY] ??=
+          {}) as Record<string, unknown>;
+        context[stateKey] = sandboxName;
       }
     }
 

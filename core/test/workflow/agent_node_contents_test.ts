@@ -20,6 +20,8 @@ import type {BaseLlmConnection} from '../../src/models/base_llm_connection.js';
 import type {LlmRequest} from '../../src/models/llm_request.js';
 import type {LlmResponse} from '../../src/models/llm_response.js';
 import {LLMRegistry} from '../../src/models/registry.js';
+import {Runner} from '../../src/runner/runner.js';
+import {InMemorySessionService} from '../../src/sessions/in_memory_session_service.js';
 import {AsyncQueue} from '../../src/utils/async_queue.js';
 import {node} from '../../src/workflow/node.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
@@ -104,6 +106,45 @@ describe('LlmAgent as a workflow node — request contents', () => {
 
     expect(requests).toHaveLength(1);
     expect(texts(requests[0])).toEqual(['wrapped:hello']);
+  });
+
+  it('keeps its node input out of the stored session', async () => {
+    requests.length = 0;
+    const produce = node(
+      (_c: NodeContext, value: string) => ({wrapped: value}),
+      {name: 'produce'},
+    );
+    const agent = new LlmAgent({
+      name: 'agent',
+      model: 'capture-1',
+      instruction: 'answer',
+    });
+    const wf = new Workflow({name: 'wf', edges: [['START', produce, agent]]});
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'app',
+      userId: 'u1',
+    });
+    const runner = new Runner({appName: 'app', agent: wf, sessionService});
+
+    for await (const _event of runner.runAsync({
+      userId: 'u1',
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'hello'}]},
+    })) {
+      // drain
+    }
+
+    const stored = await sessionService.getSession({
+      appName: 'app',
+      userId: 'u1',
+      sessionId: session.id,
+    });
+    const userTexts = stored!.events
+      .filter((e) => e.author === 'user')
+      .flatMap((e) => (e.content?.parts ?? []).map((p) => p.text));
+    expect(userTexts).toEqual(['hello']);
+    expect(texts(requests[0])).toEqual(['{"wrapped":"hello"}']);
   });
 
   it('honours an explicit includeContents', async () => {

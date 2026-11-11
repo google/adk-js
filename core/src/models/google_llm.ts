@@ -11,8 +11,10 @@ import {
   GoogleGenAI,
   HttpOptions,
   LiveServerMessage,
+  Tool,
 } from '@google/genai';
 
+import {adaptComputerUseTool} from '../tools/computer_use/computer_use_toolset.js';
 import {isBrowser, isEnterpriseModeEnabled} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
@@ -21,11 +23,6 @@ import {AsyncQueue} from '../utils/async_queue.js';
 import {GeminiStreamingResponseAggregator} from '../utils/streaming_utils.js';
 import {BaseLlm} from './base_llm.js';
 import {BaseLlmConnection} from './base_llm_connection.js';
-import {
-  GeminiContinuation,
-  ResumeRequest,
-  resumeToken,
-} from './gemini_continuation.js';
 import {GeminiLlmConnection} from './gemini_llm_connection.js';
 import {generateContentViaInteractions} from './interactions_utils.js';
 import {LlmRequest} from './llm_request.js';
@@ -170,6 +167,7 @@ export class Gemini extends BaseLlm {
     stream = false,
     abortSignal?: AbortSignal,
   ): AsyncGenerator<LlmResponse, void> {
+    await adaptComputerUseRequest(llmRequest);
     if (this.useInteractionsApi) {
       yield* generateContentViaInteractions(this.apiClient, llmRequest, stream);
       return;
@@ -195,52 +193,28 @@ export class Gemini extends BaseLlm {
       llmRequest.config.abortSignal = abortSignal;
     }
 
-    const model = llmRequest.model ?? this.model;
-    const continuation = new GeminiContinuation(
-      llmRequest.contents,
-      llmRequest.config,
-    );
-    // Each time the model pauses the generation with a continuation token,
-    // another request resumes it, until the generation completes.
-    let request: ResumeRequest | undefined = {
+    // The SDK resumes generations that the model pauses with a continuation
+    // token, so a paused generation still arrives as one response or stream.
+    const params = {
+      model: llmRequest.model ?? this.model,
       contents: llmRequest.contents,
       config: llmRequest.config,
     };
 
     if (stream) {
-      const aggregator = new GeminiStreamingResponseAggregator({continuation});
-      while (request) {
-        const streamResult = await this.apiClient.models.generateContentStream({
-          model,
-          contents: request.contents,
-          config: request.config,
-        });
-        for await (const response of streamResult) {
-          yield* aggregator.processResponse(response);
-        }
-        request = aggregator.endRequest();
+      const streamResult =
+        await this.apiClient.models.generateContentStream(params);
+      const aggregator = new GeminiStreamingResponseAggregator();
+      for await (const response of streamResult) {
+        yield* aggregator.processResponse(response);
       }
       const finalResponse = aggregator.close();
       if (finalResponse) {
         yield finalResponse;
       }
     } else {
-      while (request) {
-        const response = await this.apiClient.models.generateContent({
-          model,
-          contents: request.contents,
-          config: request.config,
-        });
-        const llmResponse = createLlmResponse(response);
-        continuation.addOutput(
-          llmResponse.content?.parts ?? [],
-          llmResponse.usageMetadata,
-        );
-        request = continuation.resumeRequest(resumeToken(response));
-        if (!request) {
-          yield continuation.complete(response);
-        }
-      }
+      const response = await this.apiClient.models.generateContent(params);
+      yield createLlmResponse(response);
     }
   }
 
@@ -262,6 +236,7 @@ export class Gemini extends BaseLlm {
       });
     } else {
       this._apiClient = new GoogleGenAI({
+        vertexai: false,
         apiKey: this.apiKey,
         httpOptions: this.getHttpOptions(),
       });
@@ -305,6 +280,7 @@ export class Gemini extends BaseLlm {
         });
       } else {
         this._liveApiClient = new GoogleGenAI({
+          vertexai: false,
           apiKey: this.apiKey,
           httpOptions: this.getLiveHttpOptions(),
         });
@@ -398,6 +374,41 @@ export class Gemini extends BaseLlm {
   }
 }
 
+/**
+ * Adapts a request that carries a computer use configuration to the computer
+ * use model.
+ *
+ * The model does not accept a system instruction alongside computer use, so it
+ * is dropped. The model can call `wait_5_seconds`, so a `wait_5_seconds` tool
+ * that waits 5 seconds is registered next to `wait`, which Gemini 3.x calls.
+ */
+async function adaptComputerUseRequest(llmRequest: LlmRequest): Promise<void> {
+  if (
+    !llmRequest.config?.tools?.some(
+      (tool) => 'computerUse' in tool && (tool as Tool).computerUse,
+    )
+  ) {
+    return;
+  }
+  llmRequest.config.systemInstruction = undefined;
+
+  const waitTool = Object.hasOwn(llmRequest.toolsDict, 'wait')
+    ? llmRequest.toolsDict['wait']
+    : undefined;
+  await adaptComputerUseTool({
+    methodName: 'wait',
+    adapter: (waitFunc) => ({
+      name: 'wait_5_seconds',
+      description: 'Waits for 5 seconds.',
+      execute: (_args, toolContext) => waitFunc({seconds: 5}, toolContext),
+    }),
+    llmRequest,
+  });
+  if (waitTool && Object.hasOwn(llmRequest.toolsDict, 'wait_5_seconds')) {
+    llmRequest.toolsDict['wait'] = waitTool;
+  }
+}
+
 function removeDisplayNameIfPresent(
   dataObj: Blob | FileData | undefined,
 ): void {
@@ -417,7 +428,7 @@ export function geminiInitParams({
   const params: GeminiParams = {model, vertexai, project, location, apiKey};
 
   params.vertexai = !!vertexai;
-  if (!params.vertexai && !isBrowser()) {
+  if (vertexai === undefined && !isBrowser()) {
     params.vertexai = isEnterpriseModeEnabled();
   }
 

@@ -5,9 +5,10 @@
  */
 
 import {OTelHooks, maybeSetOtelProviders} from '@google/adk';
-import {metrics, trace} from '@opentelemetry/api';
+import {metrics} from '@opentelemetry/api';
 import {logs} from '@opentelemetry/api-logs';
 import {MetricReader} from '@opentelemetry/sdk-metrics';
+import {NodeTracerProvider} from '@opentelemetry/sdk-trace-node';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 vi.hoisted(() => {
@@ -96,7 +97,9 @@ describe('maybeSetOtelProviders', () => {
           vi.stubEnv(key, value);
         });
 
-        const traceProviderMock = vi.mocked(trace.setGlobalTracerProvider);
+        const traceProviderRegisterMock = vi.mocked(
+          NodeTracerProvider.prototype.register,
+        );
         const meterProviderMock = vi.mocked(metrics.setGlobalMeterProvider);
         const logsProviderMock = vi.mocked(logs.setGlobalLoggerProvider);
 
@@ -104,7 +107,7 @@ describe('maybeSetOtelProviders', () => {
         await maybeSetOtelProviders();
 
         // Assert
-        expect(traceProviderMock).toHaveBeenCalledTimes(
+        expect(traceProviderRegisterMock).toHaveBeenCalledTimes(
           shouldSetupTrace ? 1 : 0,
         );
         expect(meterProviderMock).toHaveBeenCalledTimes(
@@ -120,7 +123,7 @@ describe('maybeSetOtelProviders', () => {
     await maybeSetOtelProviders();
 
     // Assert
-    expect(trace.setGlobalTracerProvider).not.toHaveBeenCalled();
+    expect(NodeTracerProvider.prototype.register).not.toHaveBeenCalled();
     expect(metrics.setGlobalMeterProvider).not.toHaveBeenCalled();
     expect(logs.setGlobalLoggerProvider).not.toHaveBeenCalled();
   });
@@ -160,8 +163,34 @@ describe('maybeSetOtelProviders', () => {
     await maybeSetOtelProviders([hooks]);
 
     // Assert
-    expect(trace.setGlobalTracerProvider).toHaveBeenCalledTimes(1);
+    expect(NodeTracerProvider.prototype.register).toHaveBeenCalledTimes(1);
     expect(metrics.setGlobalMeterProvider).toHaveBeenCalledTimes(1);
     expect(logs.setGlobalLoggerProvider).toHaveBeenCalledTimes(1);
+  });
+
+  it('detects resource attributes from OTEL_SERVICE_NAME and OTEL_RESOURCE_ATTRIBUTES', async () => {
+    vi.stubEnv('OTEL_SERVICE_NAME', 'my-test-service');
+    vi.stubEnv('OTEL_RESOURCE_ATTRIBUTES', 'custom.key=custom-val,env=test');
+
+    const mockSpanProcessor = {
+      forceFlush: vi.fn(),
+      onStart: vi.fn(),
+      onEnd: vi.fn(),
+      shutdown: vi.fn(),
+    };
+
+    await maybeSetOtelProviders([{spanProcessors: [mockSpanProcessor]}]);
+
+    expect(NodeTracerProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resource: expect.objectContaining({
+          attributes: expect.objectContaining({
+            'service.name': 'my-test-service',
+            'custom.key': 'custom-val',
+            env: 'test',
+          }),
+        }),
+      }),
+    );
   });
 });

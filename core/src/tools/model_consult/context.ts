@@ -35,56 +35,62 @@ export const DEFAULT_MAX_PART_CHARS = 4_000;
 const HEAD_BUDGET_FRACTION = 4; // 1/4 head, 3/4 tail
 
 /**
+ * Unique brand symbol used to identify {@link ModelConsultContextConfig}
+ * instances across module boundaries.
+ */
+const MODEL_CONSULT_CONTEXT_CONFIG_SYMBOL = Symbol.for(
+  'google.adk.modelConsultContextConfig',
+);
+
+/**
+ * Type guard to check if an object is an instance of
+ * {@link ModelConsultContextConfig}.
+ */
+export function isModelConsultContextConfig(
+  obj: unknown,
+): obj is ModelConsultContextConfig {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    MODEL_CONSULT_CONTEXT_CONFIG_SYMBOL in obj &&
+    (obj as {[MODEL_CONSULT_CONTEXT_CONFIG_SYMBOL]?: unknown})[
+      MODEL_CONSULT_CONTEXT_CONFIG_SYMBOL
+    ] === true
+  );
+}
+
+/**
  * Options for configuring {@link ModelConsultContextConfig}.
- *
- * Supports both camelCase and snake_case field names for parity with Python.
  */
 export interface ModelConsultContextConfigOptions {
   /** Whether to forward the session's prior events to the advisor. Defaults to `true`. */
   includeSession?: boolean;
-  /** Snake_case alias for {@link includeSession}. */
-  include_session?: boolean;
   /** Optional cap on the number of most-recent non-partial events to include. */
   maxEvents?: number | null;
-  /** Snake_case alias for {@link maxEvents}. */
-  max_events?: number | null;
   /** Approximate character budget across all forwarded session contents. Defaults to `200_000`. */
   maxChars?: number;
-  /** Snake_case alias for {@link maxChars}. */
-  max_chars?: number;
   /** Maximum characters kept for a single rendered tool call or tool response. Defaults to `4_000`. */
   maxPartChars?: number;
-  /** Snake_case alias for {@link maxPartChars}. */
-  max_part_chars?: number;
   /** Whether to pass inline media / file parts (`inlineData`, `fileData`) to the advisor. Defaults to `true`. */
   includeMedia?: boolean;
-  /** Snake_case alias for {@link includeMedia}. */
-  include_media?: boolean;
   /** Whether to include the executor's internal thought parts (`part.thought === true`). Defaults to `false`. */
   includeThoughts?: boolean;
-  /** Snake_case alias for {@link includeThoughts}. */
-  include_thoughts?: boolean;
 }
 
 const KNOWN_CONFIG_KEYS = new Set([
   'includeSession',
-  'include_session',
   'maxEvents',
-  'max_events',
   'maxChars',
-  'max_chars',
   'maxPartChars',
-  'max_part_chars',
   'includeMedia',
-  'include_media',
   'includeThoughts',
-  'include_thoughts',
 ]);
 
 /**
  * Controls how the executor's session is packaged for the advisor model.
  */
 export class ModelConsultContextConfig {
+  readonly [MODEL_CONSULT_CONTEXT_CONFIG_SYMBOL] = true;
   readonly includeSession: boolean;
   readonly maxEvents?: number;
   readonly maxChars: number;
@@ -104,11 +110,9 @@ export class ModelConsultContextConfig {
       }
     }
 
-    this.includeSession =
-      options.includeSession ?? options.include_session ?? true;
+    this.includeSession = options.includeSession ?? true;
 
-    const rawMaxEvents =
-      options.maxEvents !== undefined ? options.maxEvents : options.max_events;
+    const rawMaxEvents = options.maxEvents;
     if (rawMaxEvents !== undefined && rawMaxEvents !== null) {
       if (
         typeof rawMaxEvents !== 'number' ||
@@ -116,7 +120,7 @@ export class ModelConsultContextConfig {
         rawMaxEvents < 1
       ) {
         throw new Error(
-          `max_events must be an integer >= 1 when set, got ${String(rawMaxEvents)}.`,
+          `maxEvents must be an integer >= 1 or null, got ${String(rawMaxEvents)}.`,
         );
       }
       this.maxEvents = rawMaxEvents;
@@ -124,94 +128,33 @@ export class ModelConsultContextConfig {
       this.maxEvents = undefined;
     }
 
-    const rawMaxChars =
-      options.maxChars ?? options.max_chars ?? DEFAULT_MAX_CONTEXT_CHARS;
+    const rawMaxChars = options.maxChars ?? DEFAULT_MAX_CONTEXT_CHARS;
     if (
       typeof rawMaxChars !== 'number' ||
       !Number.isInteger(rawMaxChars) ||
       rawMaxChars < 1
     ) {
       throw new Error(
-        `max_chars must be an integer >= 1, got ${String(rawMaxChars)}.`,
+        `maxChars must be an integer >= 1, got ${String(rawMaxChars)}.`,
       );
     }
     this.maxChars = rawMaxChars;
 
-    const rawMaxPartChars =
-      options.maxPartChars ?? options.max_part_chars ?? DEFAULT_MAX_PART_CHARS;
+    const rawMaxPartChars = options.maxPartChars ?? DEFAULT_MAX_PART_CHARS;
     if (
       typeof rawMaxPartChars !== 'number' ||
       !Number.isInteger(rawMaxPartChars) ||
       rawMaxPartChars < 1
     ) {
       throw new Error(
-        `max_part_chars must be an integer >= 1, got ${String(rawMaxPartChars)}.`,
+        `maxPartChars must be an integer >= 1, got ${String(rawMaxPartChars)}.`,
       );
     }
     this.maxPartChars = rawMaxPartChars;
 
-    this.includeMedia = options.includeMedia ?? options.include_media ?? true;
-    this.includeThoughts =
-      options.includeThoughts ?? options.include_thoughts ?? false;
+    this.includeMedia = options.includeMedia ?? true;
+    this.includeThoughts = options.includeThoughts ?? false;
   }
-
-  get include_session(): boolean {
-    return this.includeSession;
-  }
-
-  get max_events(): number | undefined {
-    return this.maxEvents;
-  }
-
-  get max_chars(): number {
-    return this.maxChars;
-  }
-
-  get max_part_chars(): number {
-    return this.maxPartChars;
-  }
-
-  get include_media(): boolean {
-    return this.includeMedia;
-  }
-
-  get include_thoughts(): boolean {
-    return this.includeThoughts;
-  }
-}
-
-/**
- * Returns `events` with any rewound spans and their rewind markers removed.
- *
- * Walks the event list backward: whenever an event carries
- * `actions.rewindBeforeInvocationId`, all events from that rewind event back to
- * the first event of the target invocation (inclusive) are skipped.
- */
-export function applyRewinds(events: readonly Event[]): Event[] {
-  const result: Event[] = [];
-  let i = events.length - 1;
-  while (i >= 0) {
-    const event = events[i];
-    const rewindId =
-      event.actions?.rewindBeforeInvocationId ??
-      (event.actions as {rewind_before_invocation_id?: string} | undefined)
-        ?.rewind_before_invocation_id;
-    if (rewindId) {
-      let rewindIdx = i;
-      for (let j = 0; j < i; j++) {
-        if (events[j].invocationId === rewindId) {
-          rewindIdx = j;
-          break;
-        }
-      }
-      i = rewindIdx;
-    } else {
-      result.push(event);
-    }
-    i -= 1;
-  }
-  result.reverse();
-  return result;
 }
 
 function truncate(text: string, limit: number): string {
@@ -307,18 +250,10 @@ function renderResponse(
 
 function describeMediaPart(part: Part, reason: string): string {
   if (part.fileData !== undefined) {
-    const uri =
-      part.fileData.fileUri ||
-      (part.fileData as {file_uri?: string}).file_uri ||
-      part.fileData.mimeType ||
-      (part.fileData as {mime_type?: string}).mime_type ||
-      'file';
+    const uri = part.fileData.fileUri || part.fileData.mimeType || 'file';
     return `[file ${reason}: ${uri}]`;
   }
-  const mime =
-    part.inlineData?.mimeType ||
-    (part.inlineData as {mime_type?: string} | undefined)?.mime_type ||
-    'unknown';
+  const mime = part.inlineData?.mimeType || 'unknown';
   return `[media ${reason}: ${mime}]`;
 }
 
@@ -335,9 +270,7 @@ function convertPart(
     return undefined;
   }
 
-  const functionCall =
-    part.functionCall ??
-    (part as {function_call?: Part['functionCall']}).function_call;
+  const functionCall = part.functionCall;
   if (functionCall !== undefined) {
     if (functionCall.id && skipFunctionCallIds.has(functionCall.id)) {
       return undefined;
@@ -352,9 +285,7 @@ function convertPart(
     };
   }
 
-  const functionResponse =
-    part.functionResponse ??
-    (part as {function_response?: Part['functionResponse']}).function_response;
+  const functionResponse = part.functionResponse;
   if (functionResponse !== undefined) {
     if (functionResponse.id && skipFunctionCallIds.has(functionResponse.id)) {
       return undefined;
@@ -377,40 +308,26 @@ function convertPart(
     if (part.thought) {
       return {text: `[thought] ${text}`};
     }
-    const speaker =
-      author === 'user' ? 'user' : `agent:${author}` + (author ? '' : '');
     const resolvedSpeaker =
       author === 'user' ? 'user' : author ? `agent:${author}` : 'agent';
-    void speaker;
     return {text: `[${resolvedSpeaker}] ${text}`};
   }
 
-  const inlineData =
-    part.inlineData ?? (part as {inline_data?: Part['inlineData']}).inline_data;
-  const fileData =
-    part.fileData ?? (part as {file_data?: Part['fileData']}).file_data;
-  if (inlineData !== undefined || fileData !== undefined) {
+  if (part.inlineData !== undefined || part.fileData !== undefined) {
     if (config.includeMedia) {
       return part;
     }
     return {text: describeMediaPart(part, 'omitted')};
   }
 
-  const executableCode =
-    part.executableCode ??
-    (part as {executable_code?: Part['executableCode']}).executable_code;
-  if (executableCode !== undefined) {
-    const code = truncate(executableCode.code || '', config.maxPartChars);
+  if (part.executableCode !== undefined) {
+    const code = truncate(part.executableCode.code || '', config.maxPartChars);
     return {text: `[code]\n${code}`};
   }
 
-  const codeExecutionResult =
-    part.codeExecutionResult ??
-    (part as {code_execution_result?: Part['codeExecutionResult']})
-      .code_execution_result;
-  if (codeExecutionResult !== undefined) {
+  if (part.codeExecutionResult !== undefined) {
     const output = truncate(
-      codeExecutionResult.output || '',
+      part.codeExecutionResult.output || '',
       config.maxPartChars,
     );
     return {text: `[code_result] ${output}`};
@@ -589,7 +506,6 @@ function applyCharBudget(contents: Content[], maxChars: number): Content[] {
 export interface BuildAdvisorContentsOptions {
   config?: ModelConsultContextConfig | ModelConsultContextConfigOptions;
   skipFunctionCallIds?: Iterable<string>;
-  skip_function_call_ids?: Iterable<string>;
 }
 
 function isBuildAdvisorContentsOptions(
@@ -598,24 +514,19 @@ function isBuildAdvisorContentsOptions(
   if (!value || typeof value !== 'object') {
     return false;
   }
-  if (value instanceof ModelConsultContextConfig) {
+  if (isModelConsultContextConfig(value)) {
     return false;
   }
   const keys = Object.keys(value);
-  return keys.some(
-    (k) =>
-      k === 'config' ||
-      k === 'skipFunctionCallIds' ||
-      k === 'skip_function_call_ids',
-  );
+  return keys.some((k) => k === 'config' || k === 'skipFunctionCallIds');
 }
 
 /**
  * Builds the advisor's conversation contents from session events.
  *
- * Respects session rewinds, skips partial streaming events, omits the
- * in-flight `model_consult` function call (so the question is not duplicated),
- * and merges all kept parts into a single `role='user'` `Content`.
+ * Skips partial streaming events, omits the in-flight `model_consult` function
+ * call (so the question is not duplicated), and merges all kept parts into a
+ * single `role='user'` `Content`.
  */
 export function buildAdvisorContents(
   events: readonly Event[],
@@ -626,25 +537,19 @@ export function buildAdvisorContents(
   skipFunctionCallIdsArg?: Iterable<string>,
 ): Content[] {
   let rawConfig:
-    | ModelConsultContextConfig
-    | ModelConsultContextConfigOptions
-    | undefined;
+    ModelConsultContextConfig | ModelConsultContextConfigOptions | undefined;
   let rawSkipIds: Iterable<string> | undefined = skipFunctionCallIdsArg;
 
   if (isBuildAdvisorContentsOptions(configOrOptions)) {
     rawConfig = configOrOptions.config;
-    rawSkipIds =
-      rawSkipIds ??
-      configOrOptions.skipFunctionCallIds ??
-      configOrOptions.skip_function_call_ids;
+    rawSkipIds = rawSkipIds ?? configOrOptions.skipFunctionCallIds;
   } else {
     rawConfig = configOrOptions;
   }
 
-  const config =
-    rawConfig instanceof ModelConsultContextConfig
-      ? rawConfig
-      : new ModelConsultContextConfig(rawConfig);
+  const config = isModelConsultContextConfig(rawConfig)
+    ? rawConfig
+    : new ModelConsultContextConfig(rawConfig);
 
   if (!config.includeSession) {
     return [];
@@ -652,9 +557,7 @@ export function buildAdvisorContents(
 
   const skipIds = new Set<string>(rawSkipIds ?? []);
 
-  // Drop events that were rolled back by a session rewind, as well as partial
-  // streaming chunks.
-  let kept = applyRewinds(events).filter((e) => !e.partial);
+  let kept = events.filter((e) => !e.partial);
   if (config.maxEvents !== undefined && kept.length > config.maxEvents) {
     kept = kept.slice(-config.maxEvents);
   }

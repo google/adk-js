@@ -9,6 +9,8 @@ All models extend `BaseLlm`. The package exports these implementations:
 - `ChromeBuiltInLlm` - Calls Chrome's built-in on-device model through the Prompt API. It is registered by default, so a `chrome-on-device` or `chrome/…` name resolves to it.
 - `RoutedLlm` - Delegates each request to one of several models that a router function selects. You create it directly; it has no name pattern.
 
+`@google/adk-integrations` also exports [`Claude`](../integrations/models/anthropic_llm/index.md) for Anthropic Claude models on Vertex AI.
+
 ## Introduction
 
 An `LlmAgent` builds one `LlmRequest` for each model call. The request holds the conversation `contents`, a `config` with the system instruction, the tool declarations and the generation settings, and a `toolsDict` that maps tool names to tools. The agent gives the request to `generateContentAsync` on its model and turns each `LlmResponse` into an `Event`.
@@ -90,4 +92,5 @@ When the model is interrupted, the connection yields the text it has so far, and
 
 ## Related guides
 
+- [Claude on Vertex AI](../integrations/models/anthropic_llm/index.md) - Calling Anthropic Claude models on Vertex AI with `Claude` from `@google/adk-integrations`.
 - [Planners](../planners/index.md) - How a planner changes the `LlmRequest` before the model call and the response after it.

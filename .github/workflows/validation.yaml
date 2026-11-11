@@ -19,6 +19,26 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
+      - name: Configure Windows Defender exclusions
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Add-MpPreference -ExclusionPath @(
+            'D:\a',
+            $env:TEMP,
+            $env:LOCALAPPDATA,
+            'C:\hostedtoolcache'
+          )
+          Add-MpPreference -ExclusionProcess @(
+            'node.exe',
+            'git.exe',
+            'esbuild.exe',
+            'chrome-headless-shell.exe',
+            'python.exe',
+            'pwsh.exe',
+            'powershell.exe'
+          )
+
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -60,8 +80,17 @@ jobs:
       - name: Type check samples
         run: npm run ts:check:samples
 
+      # Only Linux needs `--with-deps` (for apt shared libraries); on Windows
+      # Server it invokes `Install-WindowsFeature Media-Foundation` via DISM,
+      # adding ~3.5 minutes before downloads begin. All browser tests run
+      # headless, so `--only-shell` skips the full headed Chrome archive.
       - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+        if: runner.os == 'Linux'
+        run: npx playwright install --with-deps --only-shell chromium
+
+      - name: Install Playwright browser
+        if: runner.os != 'Linux'
+        run: npx playwright install --only-shell chromium
 
       - name: Run tests and check code coverage
         run: npm run test:coverage

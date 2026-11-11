@@ -48,7 +48,7 @@ export class BasicLlmRequestProcessor extends BaseLlmRequestProcessor {
       agent.outputSchema &&
       agent.mode !== 'task' &&
       (!agent.tools?.length ||
-        canUseOutputSchemaWithTools(agent.canonicalModel.model))
+        canUseOutputSchemaWithTools(agent.canonicalModel))
     ) {
       setOutputSchema(llmRequest, agent.outputSchema);
     }

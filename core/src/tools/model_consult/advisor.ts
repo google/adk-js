@@ -18,7 +18,6 @@ import {
   FinishReason,
   GenerateContentConfig,
   GenerateContentResponseUsageMetadata,
-  ThinkingConfig,
   ThinkingLevel,
 } from '@google/genai';
 
@@ -76,7 +75,7 @@ export function resolveThinkingLevel(
     }
   }
   throw new Error(
-    `Invalid advisor thinking_level '${String(level)}'. Choose from: minimal, low, medium, high, or None.`,
+    `Invalid advisor thinkingLevel '${String(level)}'. Choose from: minimal, low, medium, high, or null.`,
   );
 }
 
@@ -93,21 +92,16 @@ export function resolveAdvisorLlm(
     return LLMRegistry.newLlm(model.trim());
   }
   throw new Error(
-    `Invalid advisor_model: expected a non-empty model string or BaseLlm instance, got ${JSON.stringify(model)}.`,
+    `Invalid advisor model: expected a non-empty model string or BaseLlm instance, got ${JSON.stringify(model)}.`,
   );
 }
 
 export interface AdvisorUsageParams {
   promptTokens?: number;
-  prompt_tokens?: number;
   outputTokens?: number;
-  output_tokens?: number;
   thoughtsTokens?: number;
-  thoughts_tokens?: number;
   cachedTokens?: number;
-  cached_tokens?: number;
   totalTokens?: number;
-  total_tokens?: number;
 }
 
 /**
@@ -121,58 +115,29 @@ export class AdvisorUsage {
   readonly totalTokens: number;
 
   constructor(params: AdvisorUsageParams = {}) {
-    this.promptTokens = params.promptTokens ?? params.prompt_tokens ?? 0;
-    this.outputTokens = params.outputTokens ?? params.output_tokens ?? 0;
-    this.thoughtsTokens = params.thoughtsTokens ?? params.thoughts_tokens ?? 0;
-    this.cachedTokens = params.cachedTokens ?? params.cached_tokens ?? 0;
-    this.totalTokens = params.totalTokens ?? params.total_tokens ?? 0;
-  }
-
-  get prompt_tokens(): number {
-    return this.promptTokens;
-  }
-
-  get output_tokens(): number {
-    return this.outputTokens;
-  }
-
-  get thoughts_tokens(): number {
-    return this.thoughtsTokens;
-  }
-
-  get cached_tokens(): number {
-    return this.cachedTokens;
-  }
-
-  get total_tokens(): number {
-    return this.totalTokens;
+    this.promptTokens = params.promptTokens ?? 0;
+    this.outputTokens = params.outputTokens ?? 0;
+    this.thoughtsTokens = params.thoughtsTokens ?? 0;
+    this.cachedTokens = params.cachedTokens ?? 0;
+    this.totalTokens = params.totalTokens ?? 0;
   }
 
   static fromMetadata(
-    meta:
-      | GenerateContentResponseUsageMetadata
-      | Record<string, unknown>
-      | undefined
-      | null,
+    meta: GenerateContentResponseUsageMetadata | undefined | null,
   ): AdvisorUsage {
     if (!meta || typeof meta !== 'object') {
       return new AdvisorUsage();
     }
-    const raw = meta as Record<string, unknown>;
     const toInt = (val: unknown): number => {
       const n = Number(val);
       return Number.isFinite(n) ? Math.trunc(n) : 0;
     };
     return new AdvisorUsage({
-      promptTokens: toInt(raw.promptTokenCount ?? raw.prompt_token_count),
-      outputTokens: toInt(
-        raw.candidatesTokenCount ?? raw.candidates_token_count,
-      ),
-      thoughtsTokens: toInt(raw.thoughtsTokenCount ?? raw.thoughts_token_count),
-      cachedTokens: toInt(
-        raw.cachedContentTokenCount ?? raw.cached_content_token_count,
-      ),
-      totalTokens: toInt(raw.totalTokenCount ?? raw.total_token_count),
+      promptTokens: toInt(meta.promptTokenCount),
+      outputTokens: toInt(meta.candidatesTokenCount),
+      thoughtsTokens: toInt(meta.thoughtsTokenCount),
+      cachedTokens: toInt(meta.cachedContentTokenCount),
+      totalTokens: toInt(meta.totalTokenCount),
     });
   }
 
@@ -222,18 +187,6 @@ export class AdvisorResult {
     this.usage = params.usage;
     this.latencyMs = params.latencyMs;
   }
-
-  get model_version(): string {
-    return this.modelVersion;
-  }
-
-  get thinking_level(): string | undefined {
-    return this.thinkingLevel;
-  }
-
-  get latency_ms(): number {
-    return this.latencyMs;
-  }
 }
 
 /**
@@ -255,17 +208,11 @@ function cloneGenerateContentConfig(
     return {};
   }
   const copy: GenerateContentConfig = {...baseConfig};
-  const raw = baseConfig as Record<string, unknown>;
-  const existingThinking = (baseConfig.thinkingConfig ??
-    raw.thinking_config) as ThinkingConfig | undefined;
-  if (existingThinking && typeof existingThinking === 'object') {
-    copy.thinkingConfig = {...existingThinking};
-  }
   if (
-    copy.maxOutputTokens === undefined &&
-    typeof raw.max_output_tokens === 'number'
+    baseConfig.thinkingConfig &&
+    typeof baseConfig.thinkingConfig === 'object'
   ) {
-    copy.maxOutputTokens = raw.max_output_tokens;
+    copy.thinkingConfig = {...baseConfig.thinkingConfig};
   }
   return copy;
 }
@@ -284,7 +231,6 @@ function buildAdvisorRequest(options: {
   // The advisor never executes tools itself; strip any inherited declarations.
   config.tools = [];
   config.toolConfig = undefined;
-  delete (config as Record<string, unknown>).tool_config;
 
   if (
     options.maxOutputTokens !== undefined &&
@@ -295,17 +241,12 @@ function buildAdvisorRequest(options: {
 
   if (options.clearThinkingConfig) {
     config.thinkingConfig = undefined;
-    delete (config as Record<string, unknown>).thinking_config;
   } else if (options.thinkingLevel !== undefined) {
     const existing = config.thinkingConfig ? {...config.thinkingConfig} : {};
     existing.thinkingLevel = options.thinkingLevel;
     // Do not stream internal thought text into the advisor's visible output
     // unless the caller explicitly asked for it in baseConfig.
-    const rawExisting = existing as Record<string, unknown>;
-    if (
-      existing.includeThoughts === undefined &&
-      rawExisting.include_thoughts === undefined
-    ) {
+    if (existing.includeThoughts === undefined) {
       existing.includeThoughts = false;
     }
     config.thinkingConfig = existing;
@@ -354,17 +295,20 @@ async function collectWithOptionalTimeout<T>(
   onItem: (item: T) => void,
 ): Promise<void> {
   const iterator = iterable[Symbol.asyncIterator]();
+  let timedOut = false;
   try {
     while (true) {
       let nextPromise = iterator.next();
       if (deadlineMs !== undefined) {
         const remainingMs = deadlineMs - performance.now();
         if (remainingMs <= 0) {
+          timedOut = true;
           throw new AdvisorTimeoutError('Timed out');
         }
         let timerId: ReturnType<typeof setTimeout> | undefined;
         const timeoutPromise = new Promise<never>((_, reject) => {
           timerId = setTimeout(() => {
+            timedOut = true;
             reject(new AdvisorTimeoutError('Timed out'));
           }, remainingMs);
         });
@@ -389,7 +333,7 @@ async function collectWithOptionalTimeout<T>(
       onItem(step.value);
     }
   } finally {
-    if (typeof iterator.return === 'function') {
+    if (!timedOut && typeof iterator.return === 'function') {
       try {
         await iterator.return();
       } catch {
@@ -401,15 +345,11 @@ async function collectWithOptionalTimeout<T>(
 
 export interface CallAdvisorOptions {
   systemInstruction?: string;
-  system_instruction?: string;
   thinkingLevel?: string | ThinkingLevel | null;
-  thinking_level?: string | ThinkingLevel | null;
   maxOutputTokens?: number | null;
-  max_output_tokens?: number | null;
   generateContentConfig?: GenerateContentConfig;
-  generate_content_config?: GenerateContentConfig;
   timeoutSeconds?: number | null;
-  timeout_seconds?: number | null;
+  abortSignal?: AbortSignal;
 }
 
 /**
@@ -421,32 +361,15 @@ export async function callAdvisor(
   options: CallAdvisorOptions = {},
 ): Promise<AdvisorResult> {
   const systemInstruction =
-    options.systemInstruction ??
-    options.system_instruction ??
-    ADVISOR_SYSTEM_INSTRUCTION;
+    options.systemInstruction ?? ADVISOR_SYSTEM_INSTRUCTION;
   const rawThinkingLevel =
-    options.thinkingLevel !== undefined
-      ? options.thinkingLevel
-      : options.thinking_level !== undefined
-        ? options.thinking_level
-        : 'high';
+    options.thinkingLevel !== undefined ? options.thinkingLevel : 'high';
   const maxOutputTokens =
     options.maxOutputTokens !== undefined
       ? (options.maxOutputTokens ?? undefined)
-      : (options.generateContentConfig?.maxOutputTokens ??
-        (
-          options.generate_content_config as
-            | {max_output_tokens?: number}
-            | undefined
-        )?.max_output_tokens ??
-        options.max_output_tokens ??
-        undefined);
-  const generateContentConfig =
-    options.generateContentConfig ?? options.generate_content_config;
-  const timeoutSeconds =
-    options.timeoutSeconds !== undefined
-      ? options.timeoutSeconds
-      : options.timeout_seconds;
+      : (options.generateContentConfig?.maxOutputTokens ?? undefined);
+  const generateContentConfig = options.generateContentConfig;
+  const timeoutSeconds = options.timeoutSeconds;
 
   if (
     timeoutSeconds !== undefined &&
@@ -454,15 +377,13 @@ export async function callAdvisor(
     timeoutSeconds <= 0
   ) {
     throw new Error(
-      `timeout_seconds must be > 0 when set, got ${timeoutSeconds}.`,
+      `timeoutSeconds must be > 0 or null, got ${timeoutSeconds}.`,
     );
   }
 
   const resolvedThinking = resolveThinkingLevel(rawThinkingLevel);
   const callerSetThinking = Boolean(
-    generateContentConfig?.thinkingConfig !== undefined ||
-    (generateContentConfig as Record<string, unknown> | undefined)
-      ?.thinking_config !== undefined,
+    generateContentConfig?.thinkingConfig !== undefined,
   );
   const request = buildAdvisorRequest({
     modelName: llm.model,
@@ -493,18 +414,29 @@ export async function callAdvisor(
     let modelVersion = llm.model;
     let hitMaxTokens = false;
 
+    let signal: AbortSignal | undefined = options.abortSignal;
+    if (attemptDeadlineMs !== undefined) {
+      const remainingMs = attemptDeadlineMs - performance.now();
+      if (remainingMs <= 0) {
+        throw new AdvisorTimeoutError('Timed out');
+      }
+      const timeoutSignal = AbortSignal.timeout(
+        Math.max(Math.ceil(remainingMs), 1),
+      );
+      signal = options.abortSignal
+        ? AbortSignal.any([timeoutSignal, options.abortSignal])
+        : timeoutSignal;
+    }
+
     await collectWithOptionalTimeout<LlmResponse>(
-      llm.generateContentAsync(req, false),
+      llm.generateContentAsync(req, false, signal),
       attemptDeadlineMs,
       (resp) => {
         if (resp.partial) {
           return;
         }
-        const rawResp = resp as Record<string, unknown>;
-        const errorCode =
-          resp.errorCode ?? (rawResp.error_code as string | undefined);
-        const errorMessage =
-          resp.errorMessage ?? (rawResp.error_message as string | undefined);
+        const errorCode = resp.errorCode;
+        const errorMessage = resp.errorMessage;
 
         // ADK's Gemini backend sets `errorCode = finishReason` whenever
         // `finishReason !== STOP`. For `MAX_TOKENS`, the response may still
@@ -521,24 +453,15 @@ export async function callAdvisor(
           }
         }
 
-        const usageMeta =
-          resp.usageMetadata ??
-          (rawResp.usage_metadata as
-            | GenerateContentResponseUsageMetadata
-            | undefined);
-        if (usageMeta) {
-          usage = usage.add(AdvisorUsage.fromMetadata(usageMeta));
+        if (resp.usageMetadata) {
+          usage = usage.add(AdvisorUsage.fromMetadata(resp.usageMetadata));
         }
 
-        const respModelVersion =
-          resp.modelVersion ?? (rawResp.model_version as string | undefined);
-        if (respModelVersion) {
-          modelVersion = respModelVersion;
+        if (resp.modelVersion) {
+          modelVersion = resp.modelVersion;
         }
 
-        const finishReason =
-          resp.finishReason ??
-          (rawResp.finish_reason as FinishReason | string | undefined);
+        const finishReason = resp.finishReason;
         if (
           finishReason === FinishReason.MAX_TOKENS ||
           (finishReason !== undefined &&
@@ -586,7 +509,7 @@ export async function callAdvisor(
       isThinkingConfigError(exc)
     ) {
       logger.warn(
-        `Advisor model '${llm.model}' rejected thinking_config (${String(exc)}); retrying consultation without thinking_config.`,
+        `Advisor model '${llm.model}' rejected thinkingConfig (${String(exc)}); retrying consultation without thinkingConfig.`,
       );
       const fallbackReq = buildAdvisorRequest({
         modelName: llm.model,
@@ -631,9 +554,9 @@ export async function callAdvisor(
   if (!guidance) {
     if (hitMaxTokens) {
       throw new AdvisorError(
-        `Advisor model '${llm.model}' hit max_output_tokens before producing ` +
+        `Advisor model '${llm.model}' hit maxOutputTokens before producing ` +
           'any visible guidance (all output tokens were spent on internal ' +
-          'thinking). Increase max_output_tokens or lower thinking_level.',
+          'thinking). Increase maxOutputTokens or lower thinkingLevel.',
       );
     }
     throw new AdvisorError(
