@@ -22,6 +22,7 @@ import {
   saveToFile,
   tryToFindFileRecursively,
 } from '../../src/utils/file_utils.js';
+import {version} from '../../src/version.js';
 
 type Callback = (error: Error | null, result?: unknown) => void;
 
@@ -168,6 +169,28 @@ describe('createDockerFileContent', () => {
     }
   });
 
+  it('should not echo a credentialed sessionServiceUri in the rejection message', () => {
+    // The deploy commands log this Error's message, and a session service URI
+    // carries its password in the userinfo, so the message must identify the
+    // option without reproducing the value.
+    const password = 'sw0rdf1sh';
+    const uri = `postgres://adk:${password}` + `@db.example.com/agents\nRUN id`;
+
+    let message: string | undefined;
+    try {
+      createDockerFileContent({...defaultOptions, sessionServiceUri: uri});
+    } catch (error) {
+      if (error instanceof Error) {
+        message = error.message;
+      }
+    }
+
+    expect(message).toContain('Invalid sessionServiceUri');
+    expect(message).toContain(`index ${uri.indexOf('\n')}`);
+    expect(message).not.toContain(password);
+    expect(message).not.toContain('db.example.com');
+  });
+
   it('should shell-quote logLevel/allowOrigins/sessionServiceUri/artifactServiceUri in the CMD line', () => {
     // These values reach /bin/sh at container start via the CMD line's
     // shell form, so shell metacharacters must be neutralized by quoting.
@@ -270,6 +293,39 @@ describe('createDockerFileContent', () => {
     const content = createDockerFileContent(defaultOptions);
     expect(content).not.toMatch(/FROM node:(lts|latest|current)/);
   });
+
+  it('should pin adk-devtools to the version of the deploying CLI', () => {
+    const content = createDockerFileContent(defaultOptions);
+    expect(content).toContain(
+      `RUN npm install @google/adk-devtools@${version}`,
+    );
+    expect(content).not.toContain('@google/adk-devtools@latest');
+  });
+
+  it.each(['1.2.3', '^2.4.0', '~2.4', '2.5.0-rc.1', 'next', 'latest'])(
+    'should install the adk-devtools version given in adkVersion (%s)',
+    (adkVersion) => {
+      const content = createDockerFileContent({...defaultOptions, adkVersion});
+      expect(content).toContain(
+        `RUN npm install @google/adk-devtools@${adkVersion}\n`,
+      );
+    },
+  );
+
+  it.each([
+    '1.0.0 && curl evil',
+    '1.0.0\nRUN id',
+    '>=1.0.0',
+    '$(id)',
+    '1.0.0;id',
+  ])(
+    'should reject an adkVersion that is unsafe to embed (%j)',
+    (adkVersion) => {
+      expect(() =>
+        createDockerFileContent({...defaultOptions, adkVersion}),
+      ).toThrow(/Invalid adkVersion/);
+    },
+  );
 });
 
 describe('deployToCloudRun', () => {
@@ -540,6 +596,15 @@ describe('deployToCloudRun', () => {
     );
   });
 
+  it('should install the requested adkVersion in the Dockerfile', async () => {
+    await deployToCloudRun(defaultOptions);
+
+    expect(saveToFile).toHaveBeenCalledWith(
+      path.join('/tmp/test-deploy', 'Dockerfile'),
+      expect.stringContaining('RUN npm install @google/adk-devtools@1.0.0\n'),
+    );
+  });
+
   it('should not stage an empty node_modules or package-lock.json', async () => {
     await deployToCloudRun(defaultOptions);
 
@@ -590,6 +655,23 @@ describe('deployToCloudRun', () => {
       expect(saveToFile).toHaveBeenCalledWith(
         path.join('/tmp/test-deploy', 'Dockerfile'),
         expect.stringContaining('agents/custom-app-name'),
+      );
+    });
+  });
+
+  describe('service URI options', () => {
+    it('forwards sessionServiceUri and artifactServiceUri into the generated Dockerfile CMD', async () => {
+      await deployToCloudRun({
+        ...defaultOptions,
+        sessionServiceUri: 'sqlite:///tmp/sessions.db',
+        artifactServiceUri: 'gs://my-artifact-bucket',
+      });
+
+      expect(saveToFile).toHaveBeenCalledWith(
+        path.join('/tmp/test-deploy', 'Dockerfile'),
+        expect.stringContaining(
+          "--artifact_service_uri='gs://my-artifact-bucket' --session_service_uri='sqlite:///tmp/sessions.db'",
+        ),
       );
     });
   });

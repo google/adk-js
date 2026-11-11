@@ -50,8 +50,8 @@ export interface IntegrationClientOptions {
   location: string;
   /** The integration name. */
   integration?: string;
-  /** The API trigger ID of the integration. */
-  trigger?: string;
+  /** The API trigger IDs of the integration. */
+  triggers?: string[];
   /** The connection name. */
   connection?: string;
   /**
@@ -80,7 +80,7 @@ export class IntegrationClient {
   private readonly project: string;
   private readonly location: string;
   private readonly integration?: string;
-  private readonly trigger?: string;
+  private readonly triggers?: string[];
   private readonly connection?: string;
   private readonly entityOperations: Record<string, string[]>;
   private readonly actions: string[];
@@ -91,7 +91,7 @@ export class IntegrationClient {
     this.project = options.project;
     this.location = options.location;
     this.integration = options.integration;
-    this.trigger = options.trigger;
+    this.triggers = options.triggers;
     this.connection = options.connection;
     this.entityOperations = options.entityOperations ?? {};
     this.actions = options.actions ?? [];
@@ -108,6 +108,8 @@ export class IntegrationClient {
    */
   async getOpenApiSpecForIntegration(): Promise<JsonObject> {
     const url = `https://${this.location}-integrations.googleapis.com/v1/projects/${this.project}/locations/${this.location}:generateOpenApiSpec`;
+    const triggerId = this.triggers ?? null;
+    const invalidRequestMessage = `Invalid request. Please check the provided values of project(${this.project}), location(${this.location}), integration(${this.integration}).`;
     const body = await sendCloudRequest({
       url,
       method: 'POST',
@@ -115,13 +117,13 @@ export class IntegrationClient {
         apiTriggerResources: [
           {
             integrationResource: this.integration,
-            triggerId: [this.trigger],
+            triggerId,
           },
         ],
         fileFormat: 'JSON',
       },
       tokenSource: this.tokenSource,
-      invalidRequestMessage: `Invalid request. Please check the provided values of project(${this.project}), location(${this.location}), integration(${this.integration}) and trigger(${this.trigger}).`,
+      invalidRequestMessage,
     });
 
     try {
@@ -245,22 +247,25 @@ export class IntegrationClient {
     for (const action of this.actions) {
       const {inputSchema, outputSchema, displayName} =
         await connectionsClient.getActionSchema(action);
+      const actionDisplayName = displayName.replace(/ /g, '');
       let operation = 'EXECUTE_ACTION';
       if (action === EXECUTE_CUSTOM_QUERY_ACTION) {
-        schemas[`${action}_Request`] = executeCustomQueryRequest();
+        schemas[`${actionDisplayName}_Request`] = executeCustomQueryRequest();
         operation = 'EXECUTE_QUERY';
       } else {
-        schemas[`${displayName}_Request`] = actionRequest(displayName);
-        schemas[`connectorInputPayload_${displayName}`] =
+        schemas[`${actionDisplayName}_Request`] =
+          actionRequest(actionDisplayName);
+        schemas[`connectorInputPayload_${actionDisplayName}`] =
           connectorPayload(inputSchema);
       }
-      schemas[`connectorOutputPayload_${displayName}`] =
+      schemas[`connectorOutputPayload_${actionDisplayName}`] =
         connectorPayload(outputSchema);
-      schemas[`${displayName}_Response`] = actionResponse(displayName);
+      schemas[`${actionDisplayName}_Response`] =
+        actionResponse(actionDisplayName);
       connectorSpec.paths[`${pathPrefix}#${action}`] = getActionOperation({
         action,
         operation,
-        actionDisplayName: displayName,
+        actionDisplayName,
         toolName,
         toolInstructions,
       });

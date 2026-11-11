@@ -8,6 +8,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {pathToFileURL} from 'node:url';
+import * as vm from 'node:vm';
 import {
   afterAll,
   afterEach,
@@ -433,8 +434,17 @@ describe('AgentLoader', () => {
 
       expect((esbuild.build as Mock).mock.calls[0][0]).toMatchObject({
         minify: true,
+        keepNames: true,
         sourcemap: false,
       });
+      const buildOptions = (esbuild.build as Mock).mock.calls[0][0];
+      const transformed = await esbuild.transform(
+        'function myFunctionNode() {} globalThis.nodeName = myFunctionNode.name;',
+        {minify: buildOptions.minify, keepNames: buildOptions.keepNames},
+      );
+      const context = vm.createContext({});
+      vm.runInContext(transformed.code, context);
+      expect(context.nodeName).toBe('myFunctionNode');
       expect(setSourceMapsEnabledSpy).not.toHaveBeenCalled();
 
       await agentFile.dispose();
@@ -517,6 +527,104 @@ describe('AgentLoader', () => {
       });
       await agentFile.load();
       expect(agentFile.getFilePath()).toEqual(agentPath);
+      await agentFile.dispose();
+      expect(() => agentFile.getFilePath()).toThrow(
+        'Agent is disposed and can not be used',
+      );
+      expect(() => agentFile.retain()).toThrow(
+        'Agent is disposed and can not be used',
+      );
+    });
+
+    it('reads the README.md sitting beside the agent source', async () => {
+      const agentPath = path.join(tempAgentsDir, 'documented_agent.js');
+      await fs.writeFile(agentPath, agent1JsContent);
+      await fs.writeFile(
+        path.join(tempAgentsDir, 'README.md'),
+        '# Sample\n\nWhat it shows.\n',
+      );
+
+      const agentFile = new AgentFile(agentPath);
+
+      expect(await agentFile.readReadme()).toBe('# Sample\n\nWhat it shows.\n');
+    });
+
+    it('reads a README.txt beside the agent source', async () => {
+      const agentPath = path.join(tempAgentsDir, 'txt_agent.js');
+      await fs.writeFile(agentPath, agent1JsContent);
+      await fs.writeFile(
+        path.join(tempAgentsDir, 'README.txt'),
+        'Plain text docs.\n',
+      );
+
+      const agentFile = new AgentFile(agentPath);
+
+      expect(await agentFile.readReadme()).toBe('Plain text docs.\n');
+    });
+
+    it('reads an extensionless README beside the agent source', async () => {
+      const agentPath = path.join(tempAgentsDir, 'bare_agent.js');
+      await fs.writeFile(agentPath, agent1JsContent);
+      await fs.writeFile(path.join(tempAgentsDir, 'README'), 'No extension.\n');
+
+      const agentFile = new AgentFile(agentPath);
+
+      expect(await agentFile.readReadme()).toBe('No extension.\n');
+    });
+
+    it('reads a lowercase readme.md beside the agent source', async () => {
+      const agentPath = path.join(tempAgentsDir, 'lower_agent.js');
+      await fs.writeFile(agentPath, agent1JsContent);
+      await fs.writeFile(
+        path.join(tempAgentsDir, 'readme.md'),
+        '# lowercase\n',
+      );
+
+      const agentFile = new AgentFile(agentPath);
+
+      expect(await agentFile.readReadme()).toBe('# lowercase\n');
+    });
+
+    it('prefers README.md over README.txt when both are present', async () => {
+      const agentPath = path.join(tempAgentsDir, 'both_agent.js');
+      await fs.writeFile(agentPath, agent1JsContent);
+      await fs.writeFile(
+        path.join(tempAgentsDir, 'README.md'),
+        '# Markdown wins\n',
+      );
+      await fs.writeFile(
+        path.join(tempAgentsDir, 'README.txt'),
+        'Text loses.\n',
+      );
+
+      const agentFile = new AgentFile(agentPath);
+
+      expect(await agentFile.readReadme()).toBe('# Markdown wins\n');
+    });
+
+    it('returns undefined when no README.md sits beside the agent', async () => {
+      const agentPath = path.join(tempAgentsDir, 'undocumented_agent.js');
+      await fs.writeFile(agentPath, agent1JsContent);
+
+      const agentFile = new AgentFile(agentPath);
+
+      expect(await agentFile.readReadme()).toBeUndefined();
+    });
+
+    it('reads the README beside the source, never from the compiled bundle', async () => {
+      const agentPath = path.join(tempAgentsDir, 'bundled_agent.ts');
+      await fs.writeFile(agentPath, agent2TsContent);
+      await fs.writeFile(
+        path.join(tempAgentsDir, 'README.md'),
+        '# Beside the source\n',
+      );
+      mockCompiledOutput(agent2CjsContentMocked);
+
+      const agentFile = new AgentFile(agentPath);
+      await agentFile.load();
+
+      // getFilePath() now points at the temp bundle dir, which has no README.
+      expect(await agentFile.readReadme()).toBe('# Beside the source\n');
       await agentFile.dispose();
     });
 
@@ -1035,6 +1143,40 @@ describe('AgentLoader', () => {
       ).toBe(false);
 
       await loader.disposeAll();
+    });
+
+    it('defers bundle disposal during invalidateAll while an active retain lease is held, and reloads a new bundle for subsequent requests', async () => {
+      const loader = new AgentLoader(tempAgentsDir);
+      const firstAgentFile = await loader.getAgentFile('agent2');
+      const firstCompiledPath = firstAgentFile.getFilePath();
+
+      const lease1 = firstAgentFile.retain();
+      const lease2 = firstAgentFile.retain();
+
+      // Trigger watch-mode invalidation while leases are active
+      (loader as unknown as {invalidateAll: () => void}).invalidateAll();
+
+      // Bundle must still exist while active leases hold it
+      await expect(fs.access(firstCompiledPath)).resolves.toBeUndefined();
+
+      // Releasing only the first lease must keep the bundle for the second
+      await lease1[Symbol.asyncDispose]();
+      await expect(fs.access(firstCompiledPath)).resolves.toBeUndefined();
+
+      // A new request loads a fresh bundle into a different temp directory
+      const reloadedAgentFile = await loader.getAgentFile('agent2');
+      const reloadedCompiledPath = reloadedAgentFile.getFilePath();
+      expect(reloadedCompiledPath).not.toBe(firstCompiledPath);
+      await expect(fs.access(reloadedCompiledPath)).resolves.toBeUndefined();
+
+      // Releasing the last active lease disposes the retired bundle while
+      // leaving the newly reloaded bundle intact
+      await lease2[Symbol.asyncDispose]();
+      await expect(fs.access(firstCompiledPath)).rejects.toThrow();
+      await expect(fs.access(reloadedCompiledPath)).resolves.toBeUndefined();
+
+      await loader.disposeAll();
+      await expect(fs.access(reloadedCompiledPath)).rejects.toThrow();
     });
 
     it('ignores node_modules and hidden dot directories during discovery', async () => {

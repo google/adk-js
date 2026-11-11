@@ -42,6 +42,7 @@ import {
   AdkApiServer,
 } from '../../src/server/adk_api_server.js';
 import {AgentLoader} from '../../src/utils/agent_loader.js';
+import {AdkLogger} from '../../src/utils/logger.js';
 import {version} from '../../src/version.js';
 
 interface JsonRpcResponse {
@@ -239,6 +240,11 @@ describe('AdkWebServer', () => {
       listAgents: () => Promise.resolve(['testApp']),
       getAgentFile: () =>
         Promise.resolve({
+          retain: () => ({
+            async [Symbol.asyncDispose](): Promise<void> {
+              return;
+            },
+          }),
           load() {
             return Promise.resolve(TEST_AGENT);
           },
@@ -655,6 +661,11 @@ describe('AdkWebServer', () => {
     it('should find session in /run when exported App.name differs from route appName', async () => {
       agentLoader.getAgentFile = (() =>
         Promise.resolve({
+          retain: () => ({
+            async [Symbol.asyncDispose](): Promise<void> {
+              return;
+            },
+          }),
           load() {
             return Promise.resolve(
               new App({name: 'real_name', rootAgent: TEST_AGENT}),
@@ -763,6 +774,11 @@ describe('AdkWebServer', () => {
       const originalGetAgentFile = agentLoader.getAgentFile;
       agentLoader.getAgentFile = (() =>
         Promise.resolve({
+          retain: () => ({
+            async [Symbol.asyncDispose](): Promise<void> {
+              return;
+            },
+          }),
           load: () =>
             Promise.resolve(
               new Workflow({
@@ -1244,6 +1260,43 @@ describe('AdkWebServer', () => {
         expect((e as {response: {status: number}}).response.status).toBe(422);
       }
     });
+
+    it.each(['/run', '/run_sse'])(
+      'should return 400 in %s when serviceTier is invalid',
+      async (endpoint) => {
+        await sessionService.createSession({
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'sessionId',
+        });
+
+        await expect(
+          client.post(endpoint, {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'sessionId',
+            serviceTier: 12345,
+            newMessage: {
+              parts: [{text: 'Hello test agent!'}],
+              role: 'user',
+            },
+          }),
+        ).rejects.toMatchObject({response: {status: 400}});
+
+        await expect(
+          client.post(endpoint, {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'sessionId',
+            service_tier: 'invalid_tier',
+            newMessage: {
+              parts: [{text: 'Hello test agent!'}],
+              role: 'user',
+            },
+          }),
+        ).rejects.toMatchObject({response: {status: 400}});
+      },
+    );
   });
 
   describe('List Apps', () => {
@@ -1451,6 +1504,11 @@ describe('AdkWebServer', () => {
       const originalGetSession = sessionService.getSession;
       agentLoader.getAgentFile = (() =>
         Promise.resolve({
+          retain: () => ({
+            async [Symbol.asyncDispose](): Promise<void> {
+              return;
+            },
+          }),
           load: () =>
             Promise.resolve(
               new Workflow({
@@ -1532,10 +1590,16 @@ describe('AdkWebServer', () => {
 
   describe('Structure graph', () => {
     /** Points the loader at `agent` for the rest of the test. */
-    function loadInstead(agent: unknown) {
+    function loadInstead(agent: unknown, readme?: string) {
       agentLoader.getAgentFile = (() =>
         Promise.resolve({
+          retain: () => ({
+            async [Symbol.asyncDispose](): Promise<void> {
+              return;
+            },
+          }),
           load: () => Promise.resolve(agent),
+          readReadme: () => Promise.resolve(readme),
           async [Symbol.asyncDispose](): Promise<void> {
             return;
           },
@@ -1592,6 +1656,32 @@ describe('AdkWebServer', () => {
         expect(response.data?.root_agent.sub_agents).toEqual([
           expect.objectContaining({name: 'child', description: 'a child'}),
         ]);
+      });
+
+      it('includes the README.md the agent file resolves', async () => {
+        loadInstead(
+          new LlmAgent({name: 'documented'}),
+          '# Sample\n\nWhat it shows.\n',
+        );
+
+        const response = await client.get<{readme?: string}>(
+          '/dev/apps/testApp/build_graph',
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.data?.readme).toBe('# Sample\n\nWhat it shows.\n');
+      });
+
+      it('omits readme when the agent file resolves none', async () => {
+        loadInstead(new LlmAgent({name: 'undocumented'}));
+
+        const response = await client.get<{name: string; readme?: string}>(
+          '/dev/apps/testApp/build_graph',
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.data?.name).toBe('testApp');
+        expect(response.data?.readme).toBeUndefined();
       });
 
       // A workflow keeps its structure in its edges, so a serializer that only
@@ -2022,6 +2112,69 @@ describe('AdkWebServer', () => {
         agentLoader.getAgentFile = originalGetAgentFile;
       }
     });
+
+    it.each([
+      {name: 'already-parsed JSON body', contentType: 'application/json'},
+      {
+        name: 'raw request stream body',
+        contentType: 'application/json,application/json',
+      },
+    ])(
+      'does not log request headers or body for $name',
+      async ({contentType}) => {
+        const authSentinel = 'secret-bearer-token-sentinel';
+        const cookieSentinel = 'secret-cookie-value-sentinel';
+        const bodySentinel = 'secret-user-message-sentinel';
+        const loggedMessages: string[] = [];
+        const recordArgs = (...args: unknown[]) => {
+          loggedMessages.push(args.map(String).join(' '));
+        };
+        const spies = [
+          vi.spyOn(AdkLogger.prototype, 'debug').mockImplementation(recordArgs),
+          vi.spyOn(AdkLogger.prototype, 'info').mockImplementation(recordArgs),
+          vi.spyOn(AdkLogger.prototype, 'warn').mockImplementation(recordArgs),
+          vi.spyOn(AdkLogger.prototype, 'error').mockImplementation(recordArgs),
+          vi
+            .spyOn(AdkLogger.prototype, 'log')
+            .mockImplementation((_level, ...args) => {
+              recordArgs(...args);
+            }),
+        ];
+
+        try {
+          const res = await fetch(`${server.url}/api/reasoning_engine`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': contentType,
+              Authorization: `Bearer ${authSentinel}`,
+              Cookie: `session=${cookieSentinel}`,
+            },
+            body: JSON.stringify({
+              input: {
+                appName: 'testApp',
+                userId: 'testUser',
+                sessionId: 'sentinelSession',
+                newMessage: {
+                  parts: [{text: bodySentinel}],
+                  role: 'user',
+                },
+              },
+            }),
+          });
+
+          expect(res.status).toBe(200);
+          expect(loggedMessages).toContain('POST /api/reasoning_engine');
+          const allLogs = loggedMessages.join('\n');
+          expect(allLogs).not.toContain(authSentinel);
+          expect(allLogs).not.toContain(cookieSentinel);
+          expect(allLogs).not.toContain(bodySentinel);
+        } finally {
+          for (const spy of spies) {
+            spy.mockRestore();
+          }
+        }
+      },
+    );
   });
 
   describe('Startup', () => {
@@ -2201,6 +2354,101 @@ describe('AdkWebServer', () => {
       for (const eventId of INHERITED_KEYS) {
         const response = await fetch(`${server.url}/debug/trace/${eventId}`);
         expect(response.status).toBe(404);
+      }
+    });
+
+    it('replaces the cached Runner when an app reloads with a new agent instance', async () => {
+      const getRunner = (
+        server as unknown as {
+          getRunner: (agent: unknown, appName: string) => Promise<Runner>;
+        }
+      ).getRunner.bind(server);
+
+      const firstRunner = await getRunner(TEST_AGENT, 'testApp');
+      const sameRunner = await getRunner(TEST_AGENT, 'testApp');
+      expect(sameRunner).toBe(firstRunner);
+
+      const reloadedAgent = new LlmAgent({
+        name: 'testAgentReloaded',
+        description: 'reloaded agent',
+      });
+      const reloadedRunner = await getRunner(reloadedAgent, 'testApp');
+      expect(reloadedRunner).not.toBe(firstRunner);
+      expect(reloadedRunner.agent).toBe(reloadedAgent);
+    });
+
+    it('acquires and releases agentFile.retain() lease across /run requests, including failed runs', async () => {
+      const originalGetAgentFile = agentLoader.getAgentFile;
+      let activeLeases = 0;
+      let maxConcurrentLeases = 0;
+      let releaseCount = 0;
+      let shouldThrow = false;
+
+      agentLoader.getAgentFile = (() =>
+        Promise.resolve({
+          retain() {
+            activeLeases++;
+            maxConcurrentLeases = Math.max(maxConcurrentLeases, activeLeases);
+            return {
+              async [Symbol.asyncDispose]() {
+                activeLeases--;
+                releaseCount++;
+              },
+            };
+          },
+          load: () =>
+            Promise.resolve(
+              new Workflow({
+                name: 'lease_wf',
+                edges: [
+                  [
+                    'START',
+                    node(
+                      async () => {
+                        if (shouldThrow) {
+                          throw new Error('run failed');
+                        }
+                        return 'ok';
+                      },
+                      {name: 'step'},
+                    ),
+                  ],
+                ],
+              }),
+            ),
+        })) as unknown as AgentLoader['getAgentFile'];
+
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'leaseSession',
+      });
+
+      try {
+        const okRes = await client.post('/run', {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'leaseSession',
+          newMessage: {role: 'user', parts: [{text: 'hi'}]},
+        });
+        expect(okRes.status).toBe(200);
+        expect(maxConcurrentLeases).toBe(1);
+        expect(activeLeases).toBe(0);
+        expect(releaseCount).toBe(1);
+
+        shouldThrow = true;
+        await expect(
+          client.post('/run', {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'leaseSession',
+            newMessage: {role: 'user', parts: [{text: 'fail'}]},
+          }),
+        ).rejects.toThrow();
+        expect(activeLeases).toBe(0);
+        expect(releaseCount).toBe(2);
+      } finally {
+        agentLoader.getAgentFile = originalGetAgentFile;
       }
     });
   });

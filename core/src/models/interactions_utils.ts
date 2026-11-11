@@ -484,6 +484,10 @@ export function convertToolsConfigToInteractionsFormat(
     if (t.urlContext) {
       interactionTools.push({type: 'url_context'} as Interactions.Tool);
     }
+
+    if (t.computerUse) {
+      interactionTools.push({type: 'computer_use'} as Interactions.Tool);
+    }
   }
 
   return interactionTools;
@@ -920,9 +924,14 @@ async function waitForInteraction(
   );
   const interactionId = interaction.id;
   if (!interactionId) {
-    return interaction;
+    throw new Error(
+      `Interaction is ${interaction.status} but has no id to poll.`,
+    );
   }
   const sleep = options?.sleepFn ?? defaultSleep;
+  const requestOptions = options?.abortSignal
+    ? {signal: options.abortSignal}
+    : undefined;
   let delay = POLL_INITIAL_DELAY_MS;
   let consecutiveErrors = 0;
   let current = interaction;
@@ -931,7 +940,13 @@ async function waitForInteraction(
     await sleep(delay, options?.abortSignal);
     delay = Math.min(delay * 2, POLL_MAX_DELAY_MS);
     try {
-      current = await apiClient.interactions.get(interactionId);
+      current = requestOptions
+        ? await apiClient.interactions.get(
+            interactionId,
+            undefined,
+            requestOptions,
+          )
+        : await apiClient.interactions.get(interactionId);
     } catch (e: unknown) {
       if (options?.abortSignal?.aborted) {
         throw e;
@@ -1004,19 +1019,30 @@ export async function* generateContentViaInteractions(
       serviceTierParams['background'] = true;
     }
   }
+  const requestOptions = options?.abortSignal
+    ? {signal: options.abortSignal}
+    : undefined;
 
   if (stream) {
-    const responses = (await apiClient.interactions.create({
+    const createStreamingParams = {
       model: (llmRequest.model || 'gemini-2.5-flash') as 'gemini-2.5-flash',
       input: inputSteps,
-      stream: true,
+      stream: true as const,
       system_instruction: systemInstruction,
       tools: interactionTools.length > 0 ? interactionTools : undefined,
       generation_config:
         Object.keys(generationConfig).length > 0 ? generationConfig : undefined,
       previous_interaction_id: previousInteractionId,
       ...serviceTierParams,
-    })) as AsyncIterable<ExtendedInteractionSSEEvent>;
+    };
+    const responses = (
+      requestOptions
+        ? await apiClient.interactions.create(
+            createStreamingParams,
+            requestOptions,
+          )
+        : await apiClient.interactions.create(createStreamingParams)
+    ) as AsyncIterable<ExtendedInteractionSSEEvent>;
 
     const aggregatedParts: Part[] = [];
     for await (const event of responses) {
@@ -1044,17 +1070,25 @@ export async function* generateContentViaInteractions(
       };
     }
   } else {
-    let interaction = (await apiClient.interactions.create({
+    const createNonStreamingParams = {
       model: (llmRequest.model || 'gemini-2.5-flash') as 'gemini-2.5-flash',
       input: inputSteps,
-      stream: false,
+      stream: false as const,
       system_instruction: systemInstruction,
       tools: interactionTools.length > 0 ? interactionTools : undefined,
       generation_config:
         Object.keys(generationConfig).length > 0 ? generationConfig : undefined,
       previous_interaction_id: previousInteractionId,
       ...serviceTierParams,
-    })) as ExtendedInteraction;
+    };
+    let interaction = (
+      requestOptions
+        ? await apiClient.interactions.create(
+            createNonStreamingParams,
+            requestOptions,
+          )
+        : await apiClient.interactions.create(createNonStreamingParams)
+    ) as ExtendedInteraction;
 
     logger.info('Interaction response received from the model.');
     if (

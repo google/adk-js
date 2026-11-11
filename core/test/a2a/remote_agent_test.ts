@@ -19,12 +19,16 @@ import {
 import {
   Event as AdkEvent,
   createEvent,
+  InMemoryRunner,
   InvocationContext,
   RemoteA2AAgent,
   RemoteA2AAgentConfig,
+  Runner,
   Session,
 } from '@google/adk';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {AdkMetadataKeys} from '../../src/a2a/metadata_converter_utils.js';
+import {toA2AParts} from '../../src/a2a/part_converter_utils.js';
 
 type A2AStreamEventData =
   Message | Task | TaskStatusUpdateEvent | TaskArtifactUpdateEvent;
@@ -250,6 +254,169 @@ describe('A2ARemoteAgent', () => {
     expect(events.length).toBe(1);
     expect(events[0].content?.parts![0].text).toBe('static response');
   });
+
+  it.each(['local', 'other-peer'])(
+    'resumes its pending task when a %s tool response comes first',
+    async (firstResponseAuthor) => {
+      const card: AgentCard = {
+        name: 'Remote',
+        description: 'test',
+        protocolVersion: '1.0',
+        defaultInputModes: [],
+        defaultOutputModes: [],
+        capabilities: {streaming: false},
+        skills: [],
+        url: 'https://example.com',
+        version: '1.0',
+      };
+      const makeTask = (
+        id: string,
+        contextId: string,
+        callId: string,
+      ): Task => ({
+        kind: 'task',
+        id,
+        contextId,
+        status: {
+          state: 'input-required',
+          message: {
+            kind: 'message',
+            messageId: `${id}-message`,
+            role: 'agent',
+            parts: toA2AParts(
+              [
+                {
+                  functionCall: {
+                    id: callId,
+                    name: 'request_approval',
+                    args: {},
+                  },
+                },
+              ],
+              [callId],
+            ),
+          },
+        },
+      });
+      const agent = new RemoteA2AAgent({
+        name: 'test-agent',
+        agentCard: card,
+        clientFactory: mockClientFactory,
+      });
+      const runner = new InMemoryRunner({agent, appName: 'caller'});
+      const session = await runner.sessionService.createSession({
+        appName: 'caller',
+        userId: 'user',
+      });
+      vi.mocked(mockClient.sendMessage).mockResolvedValueOnce(
+        makeTask('own-task', 'own-context', 'own-call'),
+      );
+      const events: AdkEvent[] = [];
+      for await (const event of runner.runAsync({
+        userId: 'user',
+        sessionId: session.id,
+        newMessage: {role: 'user', parts: [{text: 'Start the task'}]},
+      })) {
+        events.push(event);
+      }
+      const pending = events.find((event) =>
+        event.longRunningToolIds?.includes('own-call'),
+      );
+      expect(pending?.customMetadata?.[AdkMetadataKeys.TASK_ID]).toBe(
+        'own-task',
+      );
+      expect(pending?.customMetadata?.[AdkMetadataKeys.CONTEXT_ID]).toBe(
+        'own-context',
+      );
+
+      if (firstResponseAuthor === 'other-peer') {
+        const otherRunner = new Runner({
+          agent: new RemoteA2AAgent({
+            name: 'other-peer',
+            agentCard: card,
+            clientFactory: mockClientFactory,
+          }),
+          appName: 'caller',
+          sessionService: runner.sessionService,
+        });
+        vi.mocked(mockClient.sendMessage).mockResolvedValueOnce(
+          makeTask('other-task', 'other-context', 'other-call'),
+        );
+        for await (const _ of otherRunner.runAsync({
+          userId: 'user',
+          sessionId: session.id,
+          newMessage: {role: 'user', parts: [{text: 'Start another task'}]},
+        })) {
+          // The second peer's task metadata is stored through its runner too.
+        }
+      } else {
+        const storedSession = await runner.sessionService.getSession({
+          appName: 'caller',
+          userId: 'user',
+          sessionId: session.id,
+        });
+        await runner.sessionService.appendEvent({
+          session: storedSession!,
+          event: createEvent({
+            author: 'local-agent',
+            content: {
+              role: 'model',
+              parts: [{functionCall: {id: 'other-call', name: 'local_tool'}}],
+            },
+          }),
+        });
+      }
+
+      const reply = {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'other-call',
+              name:
+                firstResponseAuthor === 'local'
+                  ? 'local_tool'
+                  : 'request_approval',
+              response: {result: 'other result'},
+            },
+          },
+          {text: 'Approved'},
+          {
+            functionResponse: {
+              id: 'own-call',
+              name: 'request_approval',
+              response: {status: 'approved'},
+            },
+          },
+        ],
+      };
+      const originalReply = structuredClone(reply);
+      vi.mocked(mockClient.sendMessage).mockResolvedValueOnce({
+        kind: 'message',
+        messageId: 'completed-message',
+        role: 'agent',
+        parts: [{kind: 'text', text: 'Task complete'}],
+      });
+      for await (const _ of runner.runAsync({
+        userId: 'user',
+        sessionId: session.id,
+        newMessage: reply,
+      })) {
+        // Inspect the request emitted by the real remote agent below.
+      }
+
+      expect(mockClient.sendMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          message: expect.objectContaining({
+            taskId: 'own-task',
+            contextId: 'own-context',
+            parts: toA2AParts(reply.parts),
+          }),
+        }),
+      );
+      expect(reply).toEqual(originalReply);
+    },
+  );
 
   it('sets branch from the local invocation context, ignoring a peer-forged adk_branch (streaming)', async () => {
     const card: AgentCard = {

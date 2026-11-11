@@ -8,6 +8,7 @@
 
 import {
   Content,
+  Environment,
   FinishReason,
   FunctionCall,
   FunctionResponse,
@@ -18,6 +19,7 @@ import {
   Part,
 } from '@google/genai';
 import {describe, expect, it, vi} from 'vitest';
+import {Gemini} from '../../src/models/google_llm.js';
 import {
   convertContentToSteps,
   convertInteractionEventToLlmResponse,
@@ -28,6 +30,7 @@ import {
   generateContentViaInteractions,
   getLatestUserContents,
 } from '../../src/models/interactions_utils.js';
+import {ServiceTier} from '../../src/models/service_tier.js';
 
 describe('interactions_utils', () => {
   describe('getLatestUserContents', () => {
@@ -708,6 +711,15 @@ describe('interactions_utils', () => {
       expect(convertToolsConfigToInteractionsFormat(config as any)).toEqual(
         expected,
       );
+    });
+    it('converts a computer use tool', () => {
+      const config: GenerateContentConfig = {
+        tools: [{computerUse: {environment: Environment.ENVIRONMENT_BROWSER}}],
+      };
+
+      expect(convertToolsConfigToInteractionsFormat(config)).toEqual([
+        {type: 'computer_use'},
+      ]);
     });
   });
 
@@ -2313,6 +2325,201 @@ describe('interactions_utils', () => {
       expect(responses[0].content?.parts?.[0]?.text).toBe(
         'Finished after polling',
       );
+    });
+
+    it('should forward non-deferred service_tier (priority) and omit background=true', async () => {
+      const mockCreate = vi.fn().mockResolvedValue({
+        id: 'int-priority-1',
+        status: 'completed',
+        steps: [
+          {
+            type: 'model_output',
+            content: [{type: 'text', text: 'Priority result'}],
+          },
+        ],
+      });
+      const mockApiClient = {
+        interactions: {
+          create: mockCreate,
+        },
+      };
+      const llmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [{role: 'user', parts: [{text: 'Hello'}]}],
+        serviceTier: ServiceTier.PRIORITY,
+      };
+
+      const responses = [];
+      for await (const res of generateContentViaInteractions(
+        mockApiClient as any,
+        llmRequest as any,
+        false,
+      )) {
+        responses.push(res);
+      }
+
+      expect(mockCreate).toHaveBeenCalledOnce();
+      const createArg = mockCreate.mock.calls[0][0];
+      expect(createArg.service_tier).toBe('priority');
+      expect(createArg.background).toBeUndefined();
+      expect(responses).toHaveLength(1);
+      expect(responses[0].content?.parts?.[0]?.text).toBe('Priority result');
+    });
+
+    it('should throw when a queued/in_progress interaction has no id to poll', async () => {
+      const mockCreate = vi.fn().mockResolvedValue({
+        status: 'queued',
+      });
+      const mockApiClient = {
+        interactions: {
+          create: mockCreate,
+        },
+      };
+      const llmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [{role: 'user', parts: [{text: 'Hello'}]}],
+        serviceTier: ServiceTier.DEFERRED,
+      };
+
+      const gen = generateContentViaInteractions(
+        mockApiClient as any,
+        llmRequest as any,
+        false,
+      );
+      await expect(gen.next()).rejects.toThrow(
+        'Interaction is queued but has no id to poll.',
+      );
+    });
+
+    it('should rethrow after POLL_MAX_CONSECUTIVE_ERRORS (5) consecutive failed reads', async () => {
+      const mockCreate = vi.fn().mockResolvedValue({
+        id: 'int-queued-fail',
+        status: 'queued',
+      });
+      const mockGet = vi
+        .fn()
+        .mockRejectedValue(new Error('persistent read error'));
+      const mockApiClient = {
+        interactions: {
+          create: mockCreate,
+          get: mockGet,
+        },
+      };
+      const llmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [{role: 'user', parts: [{text: 'Hello'}]}],
+        serviceTier: ServiceTier.DEFERRED,
+      };
+
+      const gen = generateContentViaInteractions(
+        mockApiClient as any,
+        llmRequest as any,
+        false,
+        {
+          sleepFn: async () => {},
+        },
+      );
+      await expect(gen.next()).rejects.toThrow('persistent read error');
+      expect(mockGet).toHaveBeenCalledTimes(5);
+    });
+
+    it('should reject when abortSignal aborts during the poll sleep', async () => {
+      const abortController = new AbortController();
+      const mockCreate = vi.fn().mockResolvedValue({
+        id: 'int-abort-1',
+        status: 'queued',
+      });
+      const mockGet = vi.fn();
+      const mockApiClient = {
+        interactions: {
+          create: mockCreate,
+          get: mockGet,
+        },
+      };
+      const llmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [{role: 'user', parts: [{text: 'Hello'}]}],
+        serviceTier: ServiceTier.DEFERRED,
+      };
+
+      const gen = generateContentViaInteractions(
+        mockApiClient as any,
+        llmRequest as any,
+        false,
+        {
+          abortSignal: abortController.signal,
+        },
+      );
+      const nextPromise = gen.next();
+      setTimeout(() => {
+        abortController.abort(new Error('Aborted during poll sleep'));
+      }, 10);
+
+      await expect(nextPromise).rejects.toThrow('Aborted during poll sleep');
+      expect(mockGet).not.toHaveBeenCalled();
+    });
+
+    it('should forward serviceTier and abortSignal from Gemini.generateContentAsync to interactions API', async () => {
+      const abortController = new AbortController();
+      const mockCreate = vi.fn().mockResolvedValue({
+        id: 'int-gemini-1',
+        status: 'queued',
+      });
+      const mockGet = vi.fn().mockResolvedValue({
+        id: 'int-gemini-1',
+        status: 'completed',
+        steps: [
+          {
+            type: 'model_output',
+            content: [{type: 'text', text: 'Completed via Gemini'}],
+          },
+        ],
+      });
+
+      const gemini = new Gemini({
+        model: 'gemini-2.5-flash',
+        apiKey: 'test-key',
+        useInteractionsApi: true,
+      });
+      vi.spyOn(gemini, 'apiClient', 'get').mockReturnValue({
+        interactions: {
+          create: mockCreate,
+          get: mockGet,
+        },
+      } as any);
+
+      vi.useFakeTimers();
+      try {
+        const gen = gemini.generateContentAsync(
+          {
+            model: 'gemini-2.5-flash',
+            contents: [{role: 'user', parts: [{text: 'Hello'}]}],
+            toolsDict: {},
+            liveConnectConfig: {},
+            serviceTier: ServiceTier.DEFERRED,
+          },
+          false,
+          abortController.signal,
+        );
+
+        const nextPromise = gen.next();
+        await vi.advanceTimersByTimeAsync(5000);
+        const {value} = await nextPromise;
+
+        expect(mockCreate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            service_tier: 'deferred',
+            background: true,
+          }),
+          {signal: abortController.signal},
+        );
+        expect(mockGet).toHaveBeenCalledWith('int-gemini-1', undefined, {
+          signal: abortController.signal,
+        });
+        expect(value?.content?.parts?.[0]?.text).toBe('Completed via Gemini');
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

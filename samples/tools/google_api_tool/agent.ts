@@ -5,22 +5,17 @@
  */
 
 /**
- * Google API tool: Discovery conversion, OpenID Connect auth, and tool filtering
+ * Google API tool: CalendarToolset, OpenID Connect auth, and tool filtering
  * ../../../docs/guides/tools/google_api_tool/index.md
  *
- * A deterministic `BaseAgent` that converts a Google Calendar Discovery
- * specification into an OpenAPI v3 document with `GoogleApiToOpenApiConverter`,
- * builds a `GoogleApiToolSet` configured with Google OpenID Connect endpoints
- * via `GoogleApiToolSet.loadToolSetWithOidcAuth`, narrows exposed operations
- * with `toolFilter`, configures OAuth 2.0 client credentials across all
- * `GoogleApiTool` instances with `configureAuth`, and invokes a tool to observe
- * the generated OpenID Connect authorization request.
+ * A deterministic `BaseAgent` that instantiates a `CalendarToolset`,
+ * narrows exposed operations with `toolFilter`, configures OAuth 2.0 client
+ * credentials across all `GoogleApiTool` instances with `configureAuth`, and
+ * invokes a tool to observe the generated OpenID Connect authorization request.
  *
- * Easy to get wrong: `OpenAPIToolset` normalizes each Discovery method `id` to
+ * Easy to get wrong: `CalendarToolset` normalizes each Discovery method `id` to
  * `snake_case`, so `calendar.calendars.get` becomes `calendar_calendars_get`.
- * `toolFilter` narrows what `getTools()` exposes to an agent, while
- * `getTool(name)` searches every operation in the toolset regardless of the
- * active filter.
+ * `toolFilter` narrows what `getTools()` exposes to an agent.
  *
  * The client secret is a placeholder string, and the agent prints its value
  * only in redacted form.
@@ -31,17 +26,13 @@
 
 import {
   BaseAgent,
-  calendarToolSet,
+  CalendarToolset,
   Context,
   createEvent,
   Event,
-  GoogleApiSpec,
-  GoogleApiToolSet,
-  GoogleApiToOpenApiConverter,
   InvocationContext,
   isGoogleApiTool,
-  isGoogleApiToolSet,
-  RestApiTool,
+  isGoogleApiToolset,
 } from '@google/adk';
 import {readFileSync} from 'node:fs';
 import {dirname, join} from 'node:path';
@@ -58,47 +49,53 @@ const CALENDAR_DISCOVERY_SPEC = JSON.parse(
     ),
     'utf8',
   ),
-) as GoogleApiSpec;
+);
+
+// Stub globalThis.fetch to support offline execution with the local calendar discovery fixture.
+const originalFetch = globalThis.fetch;
+globalThis.fetch = async (
+  ...args: Parameters<typeof globalThis.fetch>
+): Promise<Response> => {
+  const [input] = args;
+  const url =
+    typeof input === 'string'
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : 'url' in input
+          ? input.url
+          : String(input);
+  if (url.includes('apis/calendar/v3/rest')) {
+    return new Response(JSON.stringify(CALENDAR_DISCOVERY_SPEC), {
+      status: 200,
+      headers: {'Content-Type': 'application/json'},
+    });
+  }
+  return originalFetch(...args);
+};
 
 /** Shows a secret's shape without its value. */
 function redact(secret: string | undefined): string {
   return secret ? `<redacted, ${secret.length} chars>` : '<none>';
 }
 
-/** Runs the Discovery-to-OpenAPI conversion and inspects the toolset. */
-async function describeGoogleApiToolSet(
+/** Instantiates CalendarToolset and inspects the tools. */
+async function describeCalendarToolset(
   ctx: InvocationContext,
 ): Promise<string[]> {
-  const converter = new GoogleApiToOpenApiConverter('calendar', 'v3');
-  converter.googleApiSpec = CALENDAR_DISCOVERY_SPEC;
-  const openApiSpec = await converter.convert();
+  const unfilteredToolset = new CalendarToolset();
+  const allTools = await unfilteredToolset.getTools();
 
-  const scope = Object.keys(
-    openApiSpec.components?.securitySchemes?.oauth2 &&
-      'flows' in openApiSpec.components.securitySchemes.oauth2
-      ? (openApiSpec.components.securitySchemes.oauth2.flows.authorizationCode
-          ?.scopes ?? {})
-      : {},
-  )[0];
-
-  const oidcToolset = GoogleApiToolSet.loadToolSetWithOidcAuth({
-    specDict: openApiSpec,
-    scopes: scope ? [scope] : [],
-  });
-  const restTools = ['calendar_calendars_get', 'calendar_calendars_clear']
-    .map((name) => oidcToolset.getTool(name))
-    .filter((tool): tool is RestApiTool => tool !== undefined);
-  const unfilteredToolSet = new GoogleApiToolSet(restTools);
-  const allTools = await unfilteredToolSet.getTools();
-
-  const toolSet = new GoogleApiToolSet(restTools, {
+  const toolset = new CalendarToolset({
+    clientId: PLACEHOLDER_CLIENT_ID,
+    clientSecret: PLACEHOLDER_CLIENT_SECRET,
     toolFilter: ['calendar_calendars_get'],
   });
-  const filteredTools = await toolSet.getTools();
-  toolSet.configureAuth(PLACEHOLDER_CLIENT_ID, PLACEHOLDER_CLIENT_SECRET);
+  const filteredTools = await toolset.getTools();
 
-  const getCalendarTool = await toolSet.getTool('calendar_calendars_get');
-  const clearCalendarTool = await toolSet.getTool('calendar_calendars_clear');
+  const getCalendarTool = filteredTools.find(
+    (tool) => tool.name === 'calendar_calendars_get',
+  );
   const declaration = getCalendarTool?._getDeclaration();
   const paramNames = Object.keys(declaration?.parameters?.properties ?? {});
 
@@ -114,16 +111,13 @@ async function describeGoogleApiToolSet(
     toolContext.eventActions.requestedAuthConfigs['call_calendar_get'];
   const oauth2Cred = requestedAuth?.exchangedAuthCredential?.oauth2;
 
-  await unfilteredToolSet.close();
-  await toolSet.close();
+  await unfilteredToolset.close();
+  await toolset.close();
 
   return [
-    `Converted OpenAPI version: ${openApiSpec.openapi}`,
-    `Server URL: ${openApiSpec.servers?.[0]?.url ?? '<none>'}`,
     `All tools (${allTools.length}): ${allTools.map((t) => t.name).join(', ')}`,
     `Filtered tools (${filteredTools.length}): ${filteredTools.map((t) => t.name).join(', ')}`,
-    `Direct getTool ignores filter: ${Boolean(clearCalendarTool)}`,
-    `isGoogleApiToolSet(calendarToolSet): ${isGoogleApiToolSet(calendarToolSet)}`,
+    `isGoogleApiToolset(toolset): ${isGoogleApiToolset(toolset)}`,
     `isGoogleApiTool(getCalendarTool): ${isGoogleApiTool(getCalendarTool)}`,
     `calendar_calendars_get parameters: ${paramNames.join(', ')}`,
     `Configured OIDC clientId: ${oauth2Cred?.clientId ?? '<none>'}`,
@@ -136,14 +130,14 @@ class GoogleApiShowcaseAgent extends BaseAgent {
     super({
       name: 'google_api_showcase_agent',
       description:
-        'Converts a Google Discovery specification into a GoogleApiToolSet and configures OpenID Connect credentials, offline.',
+        'Instantiates a CalendarToolset and configures OpenID Connect credentials, offline.',
     });
   }
 
   protected override async *runAsyncImpl(
     ctx: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    const lines = await describeGoogleApiToolSet(ctx);
+    const lines = await describeCalendarToolset(ctx);
 
     yield createEvent({
       invocationId: ctx.invocationId,

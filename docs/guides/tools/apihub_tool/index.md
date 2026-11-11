@@ -108,12 +108,15 @@ an `OpenAPIToolset` from the parsed document:
 - `authScheme` and `authCredential` are passed to `OpenAPIToolset`, which
   applies them to every tool.
 
-`getTools(context)` and `getTool(name)` then delegate to that `OpenAPIToolset`.
-`getTool` returns a Promise, unlike `OpenAPIToolset.getTool`, because the spec
-may still be loading. Await it:
+`getTools(context)` then delegates to that `OpenAPIToolset`. To expose a subset
+of tools, configure `toolFilter` with tool names or a predicate:
 
 ```ts
-const tool = await toolset.getTool('get_pet');
+const toolset = new APIHubToolset({
+  apihubResourceName: 'projects/my-project/locations/us-central1/apis/my-api',
+  toolFilter: ['get_pet'],
+});
+const tools = await toolset.getTools();
 ```
 
 Invalid YAML rejects with the `YAMLException` that `js-yaml` throws.
@@ -122,14 +125,14 @@ Invalid YAML rejects with the `YAMLException` that `js-yaml` throws.
 
 The toolset starts fetching the spec in its constructor by default. A
 constructor cannot wait for a request, so the fetch runs in the background and
-a failure is reported by the first `getTools` or `getTool` call. Every later
-call reports the same failure. Construct a new toolset to try again.
+a failure is reported by the first `getTools` call. Every later call reports the
+same failure. Construct a new toolset to try again.
 
-With `lazyLoadSpec: true`, nothing is fetched until the first `getTools` or
-`getTool` call. A successful result is kept, including a spec that produced no
-tools. A failed fetch is not kept, so the next call fetches again. Lazy loading
-suits a module that builds agents at import time, because importing it then
-does no network I/O.
+With `lazyLoadSpec: true`, nothing is fetched until the first `getTools` call. A
+successful result is kept, including a spec that produced no tools. A failed
+fetch is not kept, so the next call fetches again. Lazy loading suits a module
+that builds agents at import time, because importing it then does no network
+I/O.
 
 In both modes, `name` and `description` are filled in only when the spec has
 loaded. Read them after awaiting `getTools()`.
@@ -175,6 +178,7 @@ the spec describes.
 | `authScheme`         | `OpenAPIV3.SecuritySchemeObject` | `undefined`          | Auth scheme applied to every tool.                                                         |
 | `authCredential`     | `AuthCredential`                 | `undefined`          | Auth credential applied to every tool.                                                     |
 | `apihubClient`       | `BaseAPIHubClient`               | A new `APIHubClient` | The client that fetches the spec.                                                          |
+| `toolFilter`         | `ToolPredicate \| string[]`      | `[]`                 | Which tools `getTools()` exposes.                                                          |
 
 `apihubResourceName` is passed to the client unchanged, so a custom client can
 give it any meaning it likes. The default client parses it as described in
@@ -318,8 +322,7 @@ The version `@google/adk` declares, `^7.1.1`, requires Node.js 22 or later.
 
 **One spec per toolset.** The toolset reads exactly one spec, the first one
 unless the resource name says otherwise. An API with several specs needs one
-toolset per spec. The toolset has no `toolFilter` or `prefix` option, so it
-always exposes every operation in the spec.
+toolset per spec. The toolset has no `prefix` option.
 
 **No pagination.** `listApis` makes one request and returns the APIs in that
 response. A project with more APIs than API Hub returns in one page shows only

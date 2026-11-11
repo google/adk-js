@@ -10,6 +10,7 @@ import {
   BaseLlmConnection,
   createSession,
   FunctionTool,
+  Gemini,
   InvocationContext,
   LlmAgent,
   LLMRegistry,
@@ -216,13 +217,13 @@ describe('BasicLlmRequestProcessor', () => {
     });
 
     async function runWithOutputSchemaAndTools(
-      model: string,
+      model: string | BaseLlm,
     ): Promise<LlmRequest> {
       const agent = new LlmAgent({
         name: 'test_agent',
         // A model instance is used so that `canonicalModel` resolves without
         // credentials.
-        model: new TestLlmModel({model}),
+        model: typeof model === 'string' ? new TestLlmModel({model}) : model,
         outputSchema: OUTPUT_SCHEMA,
         tools: [
           new FunctionTool({
@@ -246,6 +247,37 @@ describe('BasicLlmRequestProcessor', () => {
 
       expect(llmRequest.config?.responseSchema).toBeDefined();
       expect(llmRequest.config?.responseMimeType).toBe('application/json');
+    });
+
+    it('should set outputSchema for a Gemini({ vertexai: true }) 2.0+ instance when env var is unset', async () => {
+      vi.stubEnv(VERTEX_ENV_VAR, undefined);
+
+      const llmRequest = await runWithOutputSchemaAndTools(
+        new Gemini({
+          model: 'gemini-2.5-flash',
+          vertexai: true,
+          project: 'test-project',
+          location: 'us-central1',
+        }),
+      );
+
+      expect(llmRequest.config?.responseSchema).toBeDefined();
+      expect(llmRequest.config?.responseMimeType).toBe('application/json');
+    });
+
+    it('should not set outputSchema for a Gemini({ vertexai: false }) instance even when env var is true', async () => {
+      vi.stubEnv(VERTEX_ENV_VAR, 'true');
+
+      const llmRequest = await runWithOutputSchemaAndTools(
+        new Gemini({
+          model: 'gemini-2.5-flash',
+          vertexai: false,
+          apiKey: 'test-key',
+        }),
+      );
+
+      expect(llmRequest.config?.responseSchema).toBeUndefined();
+      expect(llmRequest.config?.responseMimeType).toBeUndefined();
     });
 
     it('should not set outputSchema on Vertex AI with a pre-2.0 model', async () => {

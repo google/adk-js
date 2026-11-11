@@ -9,6 +9,8 @@ All models extend `BaseLlm`. The package exports these implementations:
 - `ChromeBuiltInLlm` - Calls Chrome's built-in on-device model through the Prompt API. It is registered by default, so a `chrome-on-device` or `chrome/…` name resolves to it.
 - `RoutedLlm` - Delegates each request to one of several models that a router function selects. You create it directly; it has no name pattern.
 
+`@google/adk-integrations` also exports [`Claude`](../integrations/models/anthropic_llm/index.md) for Anthropic Claude models on Vertex AI.
+
 ## Introduction
 
 An `LlmAgent` builds one `LlmRequest` for each model call. The request holds the conversation `contents`, a `config` with the system instruction, the tool declarations and the generation settings, and a `toolsDict` that maps tool names to tools. The agent gives the request to `generateContentAsync` on its model and turns each `LlmResponse` into an `Event`.
@@ -84,10 +86,15 @@ With streaming on, `Gemini` yields each text chunk as a partial response, and th
 
 When the model is interrupted, the connection yields the text it has so far, and then always yields a response with `interrupted: true`.
 
+### Serving tiers (`RunConfig.serviceTier`)
+
+Set `serviceTier` on `RunConfig` (using `ServiceTier.FLEX`, `ServiceTier.STANDARD`, `ServiceTier.PRIORITY`, or `ServiceTier.DEFERRED`) when running a `Gemini` model configured with `useInteractionsApi: true`. `InteractionsRequestProcessor` copies `runConfig.serviceTier` onto `LlmRequest.serviceTier` and forwards it as `service_tier` on the interactions API call. `ServiceTier.DEFERRED` sets `background: true`, polls `queued` or `in_progress` interactions with exponential backoff until completion, and cannot be combined with `StreamingMode.SSE`.
+
 ## Related samples
 
 - [samples/models/](../../../samples/models/README.md) - A `BaseAgent` that builds an `LlmRequest`, calls `appendInstructions`, creates a custom `BaseLlm` with `LLMRegistry.newLlm`, and converts its response with `createLlmResponse`, with no API key.
 
 ## Related guides
 
+- [Claude on Vertex AI](../integrations/models/anthropic_llm/index.md) - Calling Anthropic Claude models on Vertex AI with `Claude` from `@google/adk-integrations`.
 - [Planners](../planners/index.md) - How a planner changes the `LlmRequest` before the model call and the response after it.

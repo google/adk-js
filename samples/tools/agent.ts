@@ -5,7 +5,7 @@
  */
 
 /**
- * Tools (`FunctionTool`, `LongRunningFunctionTool`, `AgentTool`, `ExitLoopTool`, `CrewaiTool`, `LangchainTool`, `ToolboxTool`, and `ToolContext`)
+ * Tools (`FunctionTool`, `LongRunningFunctionTool`, `AgentTool`, `ExitLoopTool`, `CrewaiTool`, `LangchainTool`, `ToolboxToolset`, and `ToolContext`)
  * ../../docs/guides/tools/index.md
  *
  * A deterministic `BaseAgent` that exercises the `tools` subsystem end-to-end:
@@ -15,7 +15,7 @@
  * - `AgentTool` wrapping a child `LlmAgent` configured with `inputSchema` and
  *   `outputSchema` (removing nullish fields on both input and output)
  * - `ExitLoopTool` (`EXIT_LOOP`) setting `escalate` and `skipSummarization`
- * - `CrewaiTool`, `LangchainTool`, and `ToolboxTool` ecosystem adapters
+ * - `CrewaiTool`, `LangchainTool`, and `ToolboxToolset` ecosystem adapters
  * - `ToolContext` state updates and session-bound `ctx.artifactService`
  *   persistence recorded in `EventActions.artifactDelta`
  *
@@ -39,7 +39,6 @@ import {
   Context,
   createEvent,
   createEventActions,
-  CrewaiTool,
   Event,
   EXIT_LOOP,
   FunctionTool,
@@ -48,16 +47,16 @@ import {
   InMemoryRunner,
   InvocationContext,
   isFinalResponse,
-  LangchainTool,
   LiveRequestQueue,
   LlmAgent,
   LlmRequest,
   LlmResponse,
   LongRunningFunctionTool,
   stringifyContent,
-  ToolboxTool,
+  ToolboxToolset,
   ToolContext,
 } from '@google/adk';
+import {CrewaiTool, LangchainTool} from '@google/adk-integrations';
 import {Type} from '@google/genai';
 import {fileURLToPath} from 'node:url';
 import {z} from 'zod';
@@ -214,24 +213,25 @@ const langchainTaxTool = new LangchainTool({
   },
 });
 
-const toolboxShippingToolset = new ToolboxTool({
-  url: 'http://127.0.0.1:8080',
+const toolboxShippingToolset = new ToolboxToolset({
+  serverUrl: 'http://127.0.0.1:8080',
+  toolsetName: 'shipping_tools',
   client: {
-    loadTool: (name: string) => ({
+    loadTool: async (name: string) => ({
       name,
       description: `Loads shipping tool ${name}`,
-      args: {region: {type: 'string'}},
-      _run: async ({region}: Record<string, unknown>) => ({
+      parameters: z.object({region: z.string()}),
+      execute: async ({region}: {region: string}) => ({
         region,
         carrier: 'ExpressFreight',
       }),
     }),
-    loadToolset: () => [
+    loadToolset: async () => [
       {
         name: 'estimate_shipping',
         description: 'Estimates shipping carrier for a target region.',
-        args: {region: {type: 'string'}},
-        _run: async ({region}: Record<string, unknown>) => ({
+        parameters: z.object({region: z.string()}),
+        execute: async ({region}: {region: string}) => ({
           region,
           carrier: 'ExpressFreight',
         }),
@@ -240,12 +240,36 @@ const toolboxShippingToolset = new ToolboxTool({
   },
 });
 
+const asyncToolboxCustomsToolset = new ToolboxToolset({
+  serverUrl: 'http://127.0.0.1:8080',
+  toolNames: ['check_customs_duty'],
+  authTokenGetters: {
+    customs_service: () => 'sample-token',
+  },
+  boundParams: {
+    originCountry: 'US',
+  },
+  client: {
+    loadTool: async (name: string) => ({
+      name,
+      description: 'Computes customs duty status for a destination region.',
+      execute: async (input: unknown) => {
+        const args = input as {region?: string};
+        return {
+          region: String(args.region ?? 'GLOBAL'),
+          dutyCleared: true,
+        };
+      },
+    }),
+  },
+});
+
 class ToolsShowcaseAgent extends BaseAgent {
   constructor() {
     super({
       name: 'tools_showcase_agent',
       description:
-        'Demonstrates FunctionTool, LongRunningFunctionTool, AgentTool, ExitLoopTool, CrewaiTool, LangchainTool, ToolboxTool, and ToolContext.',
+        'Demonstrates FunctionTool, LongRunningFunctionTool, AgentTool, ExitLoopTool, CrewaiTool, LangchainTool, ToolboxToolset, and ToolContext.',
     });
   }
 
@@ -322,11 +346,19 @@ class ToolsShowcaseAgent extends BaseAgent {
       toolContext,
     });
 
-    const [shippingTool] = toolboxShippingToolset.getToolset('shipping_tools');
+    const [shippingTool] = await toolboxShippingToolset.getTools();
     const shippingResult = await shippingTool.runAsync({
       args: {region: 'EU'},
       toolContext,
     });
+    await toolboxShippingToolset.close();
+
+    const [customsTool] = await asyncToolboxCustomsToolset.getTools();
+    const customsResult = await customsTool.runAsync({
+      args: {region: 'EU'},
+      toolContext,
+    });
+    await asyncToolboxCustomsToolset.close();
 
     const exitLoopContext = new Context({
       invocationContext: ctx,
@@ -347,6 +379,7 @@ class ToolsShowcaseAgent extends BaseAgent {
       stockResult,
       taxResult,
       shippingResult,
+      customsResult,
       exitLoopActions: {
         escalate: exitLoopContext.actions.escalate,
         skipSummarization: exitLoopContext.actions.skipSummarization,

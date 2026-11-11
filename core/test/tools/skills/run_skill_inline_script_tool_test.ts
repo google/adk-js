@@ -25,9 +25,14 @@ import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {ToolConfirmation} from '../../../src/tools/tool_confirmation.js';
 import {materializeFiles} from '../../../src/utils/file_utils.js';
 
-vi.mock('../../../src/utils/file_utils.js', () => ({
-  materializeFiles: vi.fn().mockImplementation((files) => files),
-}));
+vi.mock('../../../src/utils/file_utils.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../../src/utils/file_utils.js')>();
+  return {
+    ...actual,
+    materializeFiles: vi.fn().mockImplementation((files) => files),
+  };
+});
 
 class MockCodeExecutor extends BaseCodeExecutor {
   mockResult: CodeExecutionResult = {

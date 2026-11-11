@@ -5,22 +5,38 @@
  */
 
 import {OpenAPIV3} from 'openapi-types';
+import {ReadonlyContext} from '../../agents/readonly_context.js';
 import {
   AuthCredential,
   AuthCredentialTypes,
 } from '../../auth/auth_credential.js';
+import {AuthScheme} from '../../auth/auth_schemes.js';
+import {toSnakeCaseName} from '../../utils/case_utils.js';
 import {experimental} from '../../utils/experimental.js';
-import {isJsonObject, JsonObject} from '../../utils/json_utils.js';
+import {
+  isJsonObject,
+  JsonObject,
+  toJsonObject,
+} from '../../utils/json_utils.js';
+import {logger} from '../../utils/logger.js';
 import {BaseTool} from '../base_tool.js';
-import {BaseToolset} from '../base_toolset.js';
-import {serviceAccountDictToSchemeCredential} from '../openapi_tool/auth/auth_helpers.js';
+import {BaseToolset, ToolPredicate} from '../base_toolset.js';
+import {serviceAccountRecordToSchemeCredential} from '../openapi_tool/auth/auth_helpers.js';
+import {OpenApiSpecParser} from '../openapi_tool/openapi_spec_parser/openapi_spec_parser.js';
 import {OpenAPIToolset} from '../openapi_tool/openapi_toolset.js';
+import {createRestApiTool} from '../openapi_tool/rest_api_tool.js';
 import {CLOUD_PLATFORM_SCOPE} from './clients/cloud_request.js';
 import {
   ConnectionsClient,
   ConnectorSpec,
 } from './clients/connections_client.js';
 import {IntegrationClient} from './clients/integration_client.js';
+import {
+  IntegrationConnectorTool,
+  type IntegrationConnectorToolOptions,
+} from './integration_connector_tool.js';
+
+export {IntegrationConnectorTool, type IntegrationConnectorToolOptions};
 
 /** The scheme the credential of every generated tool is applied with. */
 const AUTH_SCHEME: OpenAPIV3.HttpSecurityScheme = {
@@ -35,10 +51,13 @@ export interface ApplicationIntegrationToolsetOptions {
   project: string;
   /** The Google Cloud location, such as `us-central1`. */
   location: string;
-  /** The integration name. Set it together with `trigger`. */
+  /** The integration name. Set it together with `triggers` or alone for all triggers. */
   integration?: string;
-  /** The API trigger ID of the integration, such as `api_trigger/my_trigger`. */
-  trigger?: string;
+  /**
+   * The API trigger IDs of the integration, such as
+   * `['api_trigger/my_trigger']`.
+   */
+  triggers?: string[];
   /**
    * The Integration Connectors connection name. Set it together with
    * `entityOperations`, `actions`, or both.
@@ -53,7 +72,7 @@ export interface ApplicationIntegrationToolsetOptions {
   /** Connection actions to expose, such as `['ExecuteCustomQuery']`. */
   actions?: string[];
   /** Prefix of every generated tool name. Defaults to `''`. */
-  toolName?: string;
+  toolNamePrefix?: string;
   /** Text appended to every generated tool description. Defaults to `''`. */
   toolInstructions?: string;
   /**
@@ -62,6 +81,20 @@ export interface ApplicationIntegrationToolsetOptions {
    * Default Credentials.
    */
   serviceAccountJson?: string;
+  /**
+   * Authentication scheme for dynamic end-user credentials on connection tools,
+   * when `authOverrideEnabled` is enabled on the connection.
+   */
+  authScheme?: AuthScheme;
+  /**
+   * Authentication credential for dynamic end-user credentials on connection
+   * tools, when `authOverrideEnabled` is enabled on the connection.
+   */
+  authCredential?: AuthCredential;
+  /**
+   * Filter used to select which generated tools are exposed by `getTools`.
+   */
+  toolFilter?: ToolPredicate | string[];
 }
 
 /**
@@ -78,7 +111,7 @@ export interface ApplicationIntegrationToolsetOptions {
  *   project: 'my-project',
  *   location: 'us-central1',
  *   integration: 'my-integration',
- *   trigger: 'api_trigger/my_trigger',
+ *   triggers: ['api_trigger/my_trigger'],
  * });
  *
  * @example
@@ -95,14 +128,15 @@ export interface ApplicationIntegrationToolsetOptions {
 export class ApplicationIntegrationToolset extends BaseToolset {
   private readonly options: ApplicationIntegrationToolsetOptions;
   private toolsPromise?: Promise<BaseTool[]>;
+  private openApiToolsets: OpenAPIToolset[] = [];
 
   /**
-   * @throws Error Unless the options name either an integration and a trigger,
-   *   or a connection with at least one entity operation or action.
+   * @throws Error Unless the options name either an integration, or a
+   *   connection with at least one entity operation or action.
    */
   constructor(options: ApplicationIntegrationToolsetOptions) {
-    super([]);
-    const hasIntegration = Boolean(options.integration && options.trigger);
+    super(options.toolFilter ?? []);
+    const hasIntegration = Boolean(options.integration);
     const hasConnection = Boolean(
       options.connection &&
       (Object.keys(options.entityOperations ?? {}).length > 0 ||
@@ -110,7 +144,7 @@ export class ApplicationIntegrationToolset extends BaseToolset {
     );
     if (!hasIntegration && !hasConnection) {
       throw new Error(
-        'Either (integration and trigger) or (connection and (entityOperations or actions)) should be provided.',
+        'Either integration or (connection and (entityOperations or actions)) should be provided.',
       );
     }
     this.options = options;
@@ -122,81 +156,177 @@ export class ApplicationIntegrationToolset extends BaseToolset {
    * The first call fetches the spec and builds the tools. Concurrent calls
    * share that load. When it fails, the next call tries again.
    */
-  override async getTools(): Promise<BaseTool[]> {
+  override async getTools(context?: ReadonlyContext): Promise<BaseTool[]> {
     if (!this.toolsPromise) {
       this.toolsPromise = this.loadTools();
     }
     try {
-      return await this.toolsPromise;
+      const tools = await this.toolsPromise;
+      return tools.filter((tool) => this.isToolSelected(tool, context));
     } catch (e: unknown) {
       this.toolsPromise = undefined;
       throw e;
     }
   }
 
-  override async close(): Promise<void> {}
+  override async close(): Promise<void> {
+    for (const openApiToolset of this.openApiToolsets) {
+      await openApiToolset.close();
+    }
+  }
 
   private async loadTools(): Promise<BaseTool[]> {
     const {
       project,
       location,
       integration,
-      trigger,
+      triggers,
       connection,
       entityOperations,
       actions,
-      toolName = '',
+      toolNamePrefix,
       toolInstructions = '',
       serviceAccountJson,
+      authScheme,
+      authCredential: dynamicAuthCredential,
     } = this.options;
+    const resolvedToolName = toolNamePrefix ?? '';
+    this.openApiToolsets = [];
+
     const integrationClient = new IntegrationClient({
       project,
       location,
       integration,
-      trigger,
+      triggers,
       connection,
       entityOperations,
       actions,
       serviceAccountJson,
     });
 
-    let specDict: JsonObject | ConnectorSpec;
-    if (integration && trigger) {
-      specDict = await integrationClient.getOpenApiSpecForIntegration();
-    } else {
-      const connectionName = connection ?? '';
-      const {serviceName, host} = await new ConnectionsClient({
-        project,
-        location,
-        connection: connectionName,
-        serviceAccountJson,
-      }).getConnectionDetails();
-      const instructions = `${toolInstructions}ALWAYS use serviceName = ${serviceName}, host = ${host} and the connection name = projects/${project}/locations/${location}/connections/${connectionName} when using this tool. DO NOT ask the user for these values as you already have those.`;
-      specDict = await integrationClient.getOpenApiSpecForConnection(
-        toolName,
-        instructions,
-      );
-    }
-
-    const spec = specDict as OpenAPIV3.Document;
     const authCredential = buildAuthCredential(serviceAccountJson);
     const toolsByName = new Map<string, BaseTool>();
+
+    if (integration) {
+      const specDict = await integrationClient.getOpenApiSpecForIntegration();
+      const spec = toOpenApiDocument(specDict);
+      for (const [path, pathItem] of Object.entries(spec.paths ?? {})) {
+        const openApiToolset = new OpenAPIToolset({
+          specDict: {...spec, paths: {[removeFragment(path)]: pathItem}},
+          authCredential,
+          authScheme: AUTH_SCHEME,
+        });
+        this.openApiToolsets.push(openApiToolset);
+        const tools = await openApiToolset.getTools();
+        for (const tool of tools) {
+          toolsByName.set(tool.name, tool);
+        }
+      }
+      return [...toolsByName.values()];
+    }
+
+    const connectionName = connection ?? '';
+    const connectionDetails = await new ConnectionsClient({
+      project,
+      location,
+      connection: connectionName,
+      serviceAccountJson,
+    }).getConnectionDetails();
+    if (
+      authScheme &&
+      dynamicAuthCredential &&
+      !connectionDetails.authOverrideEnabled
+    ) {
+      logger.warn(
+        'Authentication schema and credentials are not used because authOverrideEnabled is not enabled in the connection.',
+      );
+    }
+    const specDict = await integrationClient.getOpenApiSpecForConnection(
+      resolvedToolName,
+      toolInstructions,
+    );
+    const spec = toOpenApiDocument(specDict);
+    addDynamicAuthConfigToConnectionSchemas(spec);
+    const operations = new OpenApiSpecParser({
+      preservePropertyNames: true,
+    }).parse(spec);
     // A connection spec tells its operations apart by a URL fragment, such as
     // `…?triggerId=api_trigger/ExecuteConnection#list_Issues`. A fragment is
     // never sent, and a tool would carry it into the query string, so each
-    // path is turned into tools on its own with the fragment removed.
-    for (const [path, pathItem] of Object.entries(spec.paths ?? {})) {
-      const tools = await new OpenAPIToolset({
-        specDict: {...spec, paths: {[removeFragment(path)]: pathItem}},
-        authCredential,
-        authScheme: AUTH_SCHEME,
-      }).getTools();
-      for (const tool of tools) {
-        toolsByName.set(tool.name, tool);
-      }
+    // operation has the fragment removed from its path.
+    for (const openApiOperation of operations) {
+      const operationObject = toJsonObject(openApiOperation.operation);
+      const operation = toStringValue(operationObject['x-operation']);
+      const entity = toStringValue(operationObject['x-entity']);
+      const action = toStringValue(operationObject['x-action']);
+      const restApiTool = createRestApiTool(
+        {
+          ...openApiOperation,
+          name: toSnakeCaseName(openApiOperation.name),
+          endpoint: {
+            ...openApiOperation.endpoint,
+            path: removeFragment(openApiOperation.endpoint.path),
+          },
+        },
+        {preservePropertyNames: true},
+      );
+      restApiTool.configureAuthScheme(AUTH_SCHEME);
+      restApiTool.configureAuthCredential(authCredential);
+      const tool = new IntegrationConnectorTool({
+        name: restApiTool.name,
+        description: restApiTool.description,
+        connectionName: connectionDetails.name ?? '',
+        connectionHost: connectionDetails.host,
+        connectionServiceName: connectionDetails.serviceName,
+        entity,
+        action,
+        operation,
+        restApiTool,
+        authScheme: connectionDetails.authOverrideEnabled
+          ? authScheme
+          : undefined,
+        authCredential: connectionDetails.authOverrideEnabled
+          ? dynamicAuthCredential
+          : undefined,
+      });
+      toolsByName.set(tool.name, tool);
     }
     return [...toolsByName.values()];
   }
+}
+
+function addDynamicAuthConfigToConnectionSchemas(
+  spec: OpenAPIV3.Document,
+): void {
+  const schemas = spec.components?.schemas;
+  if (!schemas) {
+    return;
+  }
+  for (const [schemaName, schema] of Object.entries(schemas)) {
+    if (
+      schemaName.endsWith('_Request') &&
+      isJsonObject(schema) &&
+      isJsonObject(schema.properties) &&
+      !('dynamicAuthConfig' in schema.properties)
+    ) {
+      schema.properties = {
+        ...schema.properties,
+        dynamicAuthConfig: {
+          $ref: '#/components/schemas/dynamicAuthConfig',
+        },
+      };
+    }
+  }
+}
+
+function toOpenApiDocument(
+  specDict: JsonObject | ConnectorSpec,
+): OpenAPIV3.Document {
+  return specDict as OpenAPIV3.Document;
+}
+
+function toStringValue(value: unknown): string {
+  return typeof value === 'string' ? value : '';
 }
 
 /**
@@ -217,7 +347,7 @@ function buildAuthCredential(serviceAccountJson?: string): AuthCredential {
   if (!isJsonObject(key)) {
     throw new Error('serviceAccountJson must hold a JSON object.');
   }
-  const [, authCredential] = serviceAccountDictToSchemeCredential(key, [
+  const [, authCredential] = serviceAccountRecordToSchemeCredential(key, [
     CLOUD_PLATFORM_SCOPE,
   ]);
   return authCredential;

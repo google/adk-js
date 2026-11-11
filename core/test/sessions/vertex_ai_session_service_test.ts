@@ -1877,9 +1877,7 @@ describe('VertexAiSessionService', () => {
 
       const session = await getTestSession();
 
-      // `in` is the exact predicate instruction resolution uses to decide
-      // whether to inject a `{placeholder}`, so an inherited hit renders
-      // `function toString() { [native code] }` into the prompt.
+      // The map has a null prototype, so inherited names are not keys.
       expect('toString' in session!.state).toBe(false);
       expect('constructor' in session!.state).toBe(false);
       expect('persona' in session!.state).toBe(true);

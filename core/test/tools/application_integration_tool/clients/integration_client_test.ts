@@ -99,7 +99,7 @@ function integrationClient(serviceAccountJson?: string): IntegrationClient {
     project: PROJECT,
     location: LOCATION,
     integration: INTEGRATION,
-    trigger: TRIGGER,
+    triggers: [TRIGGER],
     serviceAccountJson,
   });
 }
@@ -161,15 +161,70 @@ describe('IntegrationClient', () => {
       });
     });
 
-    it('reports a missing credential as an unexpected error', async () => {
-      mocks.getAccessToken.mockRejectedValue(new Error('no credentials'));
-
-      await expect(
-        integrationClient().getOpenApiSpecForIntegration(),
-      ).rejects.toThrow(
-        `An unexpected error occurred: ${MISSING_CREDENTIALS_MESSAGE}`,
+    it.each([
+      ['a single trigger in triggers', ['test-trigger']],
+      ['multiple triggers in triggers', ['test-trigger', 'test-trigger2']],
+    ])('posts %s and parses the returned spec', async (_, triggers) => {
+      const expectedSpec = {
+        openapi: '3.0.0',
+        info: {title: 'Test Integration'},
+      };
+      fetchMock.mockResolvedValue(
+        jsonResponse({openApiSpec: JSON.stringify(expectedSpec)}),
       );
-      expect(fetchMock).not.toHaveBeenCalled();
+      const client = new IntegrationClient({
+        project: PROJECT,
+        location: LOCATION,
+        integration: INTEGRATION,
+        triggers,
+      });
+
+      await expect(client.getOpenApiSpecForIntegration()).resolves.toEqual(
+        expectedSpec,
+      );
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe(GENERATE_SPEC_URL);
+      expect(init).toEqual({
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer test_token',
+        },
+        body: JSON.stringify({
+          apiTriggerResources: [
+            {integrationResource: INTEGRATION, triggerId: triggers},
+          ],
+          fileFormat: 'JSON',
+        }),
+      });
+    });
+
+    it('sends null triggerId when triggers is omitted', async () => {
+      const expectedSpec = {
+        openapi: '3.0.0',
+        info: {title: 'Test Integration'},
+      };
+      fetchMock.mockResolvedValue(
+        jsonResponse({openApiSpec: JSON.stringify(expectedSpec)}),
+      );
+      const client = new IntegrationClient({
+        project: PROJECT,
+        location: LOCATION,
+        integration: INTEGRATION,
+      });
+
+      await expect(client.getOpenApiSpecForIntegration()).resolves.toEqual(
+        expectedSpec,
+      );
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const [, init] = fetchMock.mock.calls[0];
+      expect(JSON.parse(String(init?.body))).toEqual({
+        apiTriggerResources: [
+          {integrationResource: INTEGRATION, triggerId: null},
+        ],
+        fileFormat: 'JSON',
+      });
     });
 
     it.each([
@@ -185,10 +240,21 @@ describe('IntegrationClient', () => {
         await expect(
           integrationClient().getOpenApiSpecForIntegration(),
         ).rejects.toThrow(
-          `Invalid request. Please check the provided values of project(${PROJECT}), location(${LOCATION}), integration(${INTEGRATION}) and trigger(${TRIGGER}).`,
+          `Invalid request. Please check the provided values of project(${PROJECT}), location(${LOCATION}), integration(${INTEGRATION}).`,
         );
       },
     );
+
+    it('reports a missing credential as an unexpected error', async () => {
+      mocks.getAccessToken.mockRejectedValue(new Error('no credentials'));
+
+      await expect(
+        integrationClient().getOpenApiSpecForIntegration(),
+      ).rejects.toThrow(
+        `An unexpected error occurred: ${MISSING_CREDENTIALS_MESSAGE}`,
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
 
     it('reports any other HTTP error as a request error', async () => {
       fetchMock.mockResolvedValue(
@@ -351,7 +417,7 @@ describe('IntegrationClient', () => {
         [`${PATH_PREFIX}#TestAction`]: getActionOperation({
           action: 'TestAction',
           operation: 'EXECUTE_ACTION',
-          actionDisplayName: 'Test Action',
+          actionDisplayName: 'TestAction',
           toolName: 'tool',
           toolInstructions: 'Extra.',
         }),
@@ -359,16 +425,16 @@ describe('IntegrationClient', () => {
       const baseSchemas = CONNECTOR_BASE_SPEC.components.schemas;
       expect(spec.components.schemas).toEqual({
         ...baseSchemas,
-        'Test Action_Request': actionRequest('Test Action'),
-        'connectorInputPayload_Test Action': {
+        TestAction_Request: actionRequest('TestAction'),
+        connectorInputPayload_TestAction: {
           type: 'object',
           properties: {input: {type: 'string'}},
         },
-        'connectorOutputPayload_Test Action': {
+        connectorOutputPayload_TestAction: {
           type: 'object',
           properties: {output: {type: 'string', nullable: true}},
         },
-        'Test Action_Response': actionResponse('Test Action'),
+        TestAction_Response: actionResponse('TestAction'),
       });
     });
 
@@ -389,16 +455,50 @@ describe('IntegrationClient', () => {
         [`${PATH_PREFIX}#ExecuteCustomQuery`]: getActionOperation({
           action: 'ExecuteCustomQuery',
           operation: 'EXECUTE_QUERY',
-          actionDisplayName: 'Execute Custom Query',
+          actionDisplayName: 'ExecuteCustomQuery',
         }),
       });
       const baseSchemas = CONNECTOR_BASE_SPEC.components.schemas;
       expect(spec.components.schemas).toEqual({
         ...baseSchemas,
         ExecuteCustomQuery_Request: executeCustomQueryRequest(),
-        'connectorOutputPayload_Execute Custom Query': {type: 'object'},
-        'Execute Custom Query_Response': actionResponse('Execute Custom Query'),
+        connectorOutputPayload_ExecuteCustomQuery: {type: 'object'},
+        ExecuteCustomQuery_Response: actionResponse('ExecuteCustomQuery'),
       });
+    });
+
+    it('keys ExecuteCustomQuery schemas by the space-stripped displayName', async () => {
+      routeFetch(
+        actionRoutes('ExecuteCustomQuery', {
+          inputJsonSchema: {type: 'object'},
+          outputJsonSchema: {type: 'object'},
+          displayName: 'Run Custom SQL Query',
+        }),
+      );
+
+      const spec = await connectionClient(undefined, [
+        'ExecuteCustomQuery',
+      ]).getOpenApiSpecForConnection();
+
+      expect(spec.paths).toEqual({
+        [`${PATH_PREFIX}#ExecuteCustomQuery`]: getActionOperation({
+          action: 'ExecuteCustomQuery',
+          operation: 'EXECUTE_QUERY',
+          actionDisplayName: 'RunCustomSQLQuery',
+        }),
+      });
+      expect(spec.components.schemas['RunCustomSQLQuery_Request']).toEqual(
+        executeCustomQueryRequest(),
+      );
+      expect(spec.components.schemas['RunCustomSQLQuery_Response']).toEqual(
+        actionResponse('RunCustomSQLQuery'),
+      );
+      expect(
+        spec.components.schemas['connectorOutputPayload_RunCustomSQLQuery'],
+      ).toEqual({type: 'object'});
+      expect(
+        spec.components.schemas['ExecuteCustomQuery_Request'],
+      ).toBeUndefined();
     });
 
     it('throws for an unknown operation', async () => {

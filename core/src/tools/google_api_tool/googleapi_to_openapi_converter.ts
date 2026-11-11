@@ -62,6 +62,7 @@ export interface GoogleApiSchema {
 export interface GoogleApiMethod {
   id?: string;
   path?: string;
+  flatPath?: string;
   httpMethod?: string;
   description?: string;
   parameters?: Record<string, GoogleApiParameter>;
@@ -447,7 +448,7 @@ export function convertMethods(
     const httpMethod = (
       methodData.httpMethod ?? 'GET'
     ).toLowerCase() as OpenAPIV3.HttpMethods;
-    let restPath = (methodData.path ?? '/').replace(
+    let restPath = (methodData.flatPath ?? methodData.path ?? '/').replace(
       /\{\+([^{}]+)\}/g,
       (_match, paramName: string) => `{${paramName}}`,
     );
@@ -495,10 +496,10 @@ export function convertResources(
  */
 @experimental
 export class GoogleApiToOpenApiConverter {
-  readonly apiName: string;
-  readonly apiVersion: string;
-  googleApiSpec: GoogleApiSpec | null = null;
-  openapiSpec: OpenAPIV3.Document;
+  private readonly apiName: string;
+  private readonly apiVersion: string;
+  private googleApiSpec: GoogleApiSpec | null = null;
+  private openapiSpec: OpenAPIV3.Document;
 
   constructor(apiName: string, apiVersion: string) {
     this.apiName = apiName;

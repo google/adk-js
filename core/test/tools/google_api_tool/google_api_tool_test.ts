@@ -70,7 +70,6 @@ describe('GoogleApiTool', () => {
     expect(googleApiTool.name).toBe('calendar_calendars_get');
     expect(googleApiTool.description).toBe('Returns metadata for a calendar.');
     expect(googleApiTool.isLongRunning).toBe(false);
-    expect(googleApiTool.restApiTool).toBe(restApiTool);
     expect(isGoogleApiTool(googleApiTool)).toBe(true);
     expect(isGoogleApiTool(restApiTool)).toBe(false);
   });
@@ -120,5 +119,40 @@ describe('GoogleApiTool', () => {
         clientSecret: 'my-client-secret',
       },
     });
+  });
+});
+
+describe('GoogleApiTool constructor options', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('configures OpenID Connect credentials when clientId and clientSecret are provided in constructor options', () => {
+    const restApiTool = createTestRestApiTool();
+    const configureSpy = vi.spyOn(restApiTool, 'configureAuthCredential');
+    const googleApiTool = new GoogleApiTool(restApiTool, {
+      clientId: 'ctor-client-id',
+      clientSecret: 'ctor-client-secret',
+    });
+
+    expect(isGoogleApiTool(googleApiTool)).toBe(true);
+    expect(configureSpy).toHaveBeenCalledTimes(1);
+    expect(configureSpy).toHaveBeenCalledWith({
+      authType: AuthCredentialTypes.OPEN_ID_CONNECT,
+      oauth2: {
+        clientId: 'ctor-client-id',
+        clientSecret: 'ctor-client-secret',
+      },
+    });
+  });
+
+  it('does not overwrite credentials when constructor options are omitted or empty', () => {
+    const restApiTool = createTestRestApiTool();
+    const configureSpy = vi.spyOn(restApiTool, 'configureAuthCredential');
+
+    new GoogleApiTool(restApiTool);
+    new GoogleApiTool(restApiTool, {});
+
+    expect(configureSpy).not.toHaveBeenCalled();
   });
 });

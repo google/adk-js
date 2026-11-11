@@ -45,9 +45,27 @@ export interface ParsedOperation {
 @experimental
 export class OpenApiSpecParser {
   private preservePropertyNames: boolean;
+  private unconstrainedObjectBodyAsParameter: boolean;
 
-  constructor(options: {preservePropertyNames?: boolean} = {}) {
+  /**
+   * @param options.preservePropertyNames Keeps the original parameter and
+   *     function names instead of converting them to snake_case.
+   * @param options.unconstrainedObjectBodyAsParameter Emits a whole-body
+   *     parameter named `body` when an object request body schema has no
+   *     properties. Defaults to `false`.
+   *     @deprecated Retained for backwards compatibility; empty object schemas
+   *     produce no parameters by default. This option will be removed in a
+   *     future release.
+   */
+  constructor(
+    options: {
+      preservePropertyNames?: boolean;
+      unconstrainedObjectBodyAsParameter?: boolean;
+    } = {},
+  ) {
     this.preservePropertyNames = options.preservePropertyNames ?? false;
+    this.unconstrainedObjectBodyAsParameter =
+      options.unconstrainedObjectBodyAsParameter ?? false;
   }
 
   /**
@@ -62,6 +80,8 @@ export class OpenApiSpecParser {
     const sanitizedSpec = sanitizeSchemaTypes(resolvedSpec);
     return collectOperations(sanitizedSpec, {
       preservePropertyNames: this.preservePropertyNames,
+      unconstrainedObjectBodyAsParameter:
+        this.unconstrainedObjectBodyAsParameter,
     });
   }
 }
@@ -253,9 +273,14 @@ function resolveServerUrl(server: OpenAPIV3.ServerObject): string {
  */
 function collectOperations(
   spec: OpenAPIV3.Document,
-  options: {preservePropertyNames?: boolean} = {},
+  options: {
+    preservePropertyNames?: boolean;
+    unconstrainedObjectBodyAsParameter?: boolean;
+  } = {},
 ): ParsedOperation[] {
   const preservePropertyNames = options.preservePropertyNames ?? false;
+  const unconstrainedObjectBodyAsParameter =
+    options.unconstrainedObjectBodyAsParameter ?? false;
   const operations: ParsedOperation[] = [];
   const server = spec.servers?.[0];
   const baseUrl = server ? resolveServerUrl(server) : '';
@@ -302,6 +327,7 @@ function collectOperations(
 
       const parser = new OperationParser(operation, {
         preservePropertyNames,
+        unconstrainedObjectBodyAsParameter,
       });
 
       let authSchemeName: string | undefined;

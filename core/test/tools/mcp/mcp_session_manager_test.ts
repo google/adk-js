@@ -16,7 +16,7 @@ import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {SSEClientTransport} from '@modelcontextprotocol/sdk/client/sse.js';
 import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import {describe, expect, it, vi} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 // The logger singleton is internal (not part of the public API), so it is
 // imported via a relative path to spy on the exact instance the manager uses.
 import {logger} from '../../../src/utils/logger.js';
@@ -60,6 +60,15 @@ function trackingHeaders(): Record<string, string> {
 }
 
 describe('MCPSessionManager', () => {
+  beforeEach(() => {
+    vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY', undefined);
+    vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY_FEATURES', undefined);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('creates an stdio client', async () => {
     const manager = new MCPSessionManager({
       type: 'StdioConnectionParams',
@@ -609,6 +618,91 @@ describe('MCPSessionManager', () => {
       );
       expect((error as Error).message).toContain('SSE endpoint unreachable');
       expect((error as Error).cause).toBe(cause);
+    });
+  });
+
+  describe('with MCP telemetry enabled', () => {
+    const URL_STRING = 'http://test-url/mcp';
+
+    beforeEach(() => {
+      vi.stubEnv('ADK_EXPERIMENTAL_TELEMETRY', 'true');
+    });
+
+    function transportFetch(
+      transport:
+        typeof StreamableHTTPClientTransport | typeof SSEClientTransport,
+    ): (
+      url: string | URL,
+      init?: Parameters<typeof fetch>[1],
+    ) => Promise<Response> {
+      const options = vi.mocked(transport).mock.lastCall?.[1];
+      if (options?.fetch === undefined) {
+        return expect.fail('the transport received no fetch');
+      }
+      return options.fetch;
+    }
+
+    async function expectDelegatingFetch(
+      transport:
+        typeof StreamableHTTPClientTransport | typeof SSEClientTransport,
+      customFetch: ReturnType<typeof vi.fn>,
+      response: Response,
+    ): Promise<void> {
+      const fetch = transportFetch(transport);
+      const init: NonNullable<Parameters<typeof fetch>[1]> = {
+        method: 'POST',
+        body: '{}',
+      };
+      const received = await fetch(URL_STRING, init);
+
+      expect(fetch).not.toBe(customFetch);
+      expect(customFetch).toHaveBeenCalledWith(URL_STRING, init);
+      expect(received).toBe(response);
+    }
+
+    it('gives the streamable HTTP transport a fetch that delegates to the caller fetch', async () => {
+      const response = new Response('{}', {status: 200});
+      const customFetch = vi.fn().mockResolvedValue(response);
+      const manager = new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: URL_STRING,
+        transportOptions: {fetch: customFetch},
+      });
+
+      await manager.createSession();
+
+      await expectDelegatingFetch(
+        StreamableHTTPClientTransport,
+        customFetch,
+        response,
+      );
+    });
+
+    it('gives the SSE transport a fetch that delegates to the caller fetch', async () => {
+      const response = new Response('{}', {status: 200});
+      const customFetch = vi.fn().mockResolvedValue(response);
+      const manager = new MCPSessionManager({
+        type: 'SseConnectionParams',
+        url: URL_STRING,
+        transportOptions: {fetch: customFetch},
+      });
+
+      await manager.createSession();
+
+      await expectDelegatingFetch(SSEClientTransport, customFetch, response);
+    });
+
+    it('gives the transport a fetch when the caller gives none', async () => {
+      const manager = new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: URL_STRING,
+      });
+
+      await manager.createSession();
+
+      expect(transportFetch(StreamableHTTPClientTransport)).toBeTypeOf(
+        'function',
+      );
     });
   });
 });

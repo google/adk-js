@@ -9,6 +9,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {logger} from '../../../src/utils/logger.js';
 
 describe('cli/utils/envs', () => {
   let tempDir: string;
@@ -117,6 +118,48 @@ describe('cli/utils/envs', () => {
           '.nonexistent_adk_env_file_xyz',
         ),
       ).not.toThrow();
+    });
+  });
+
+  describe('loadDotenvForAgent logging', () => {
+    let infoMessages: unknown[][];
+    let originalInfo: typeof logger.info;
+
+    beforeEach(() => {
+      infoMessages = [];
+      originalInfo = logger.info;
+      logger.info = (...args: unknown[]) => {
+        infoMessages.push(args);
+      };
+    });
+
+    afterEach(() => {
+      logger.info = originalInfo;
+    });
+
+    it('logs a single Loaded message when a dotenv file is found', () => {
+      const agentDir = path.join(tempDir, 'logged_agent');
+      fs.mkdirSync(agentDir, {recursive: true});
+      const envPath = path.join(agentDir, '.env');
+      fs.writeFileSync(envPath, 'ADK_TEST_ENV_KEY_1=1\n');
+
+      loadDotenvForAgent('logged_agent', tempDir);
+
+      expect(infoMessages).toEqual([
+        [`Loaded .env file for logged_agent at ${path.resolve(envPath)}`],
+      ]);
+    });
+
+    it('logs a single message when no dotenv file is found', () => {
+      loadDotenvForAgent(
+        'missing_agent',
+        tempDir,
+        '.nonexistent_adk_env_file_xyz',
+      );
+
+      expect(infoMessages).toEqual([
+        ['No .nonexistent_adk_env_file_xyz file found for missing_agent'],
+      ]);
     });
   });
 });

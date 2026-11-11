@@ -6,17 +6,22 @@
 
 import {Gemini, LlmRequest} from '@google/adk';
 import {Modality} from '@google/genai';
+import * as dotenv from 'dotenv';
+import {fileURLToPath} from 'node:url';
 import {describe, expect, it} from 'vitest';
 
-const isCI = process.env.CI === 'true';
+// No existsSync guard: a missing .env is the normal CI state and dotenv
+// reports it in the return value instead of throwing.
+dotenv.config({
+  path: fileURLToPath(new URL('.env', import.meta.url)),
+  quiet: true,
+});
 
-describe.skipIf(isCI)('Live Gemini Live Connection E2E', () => {
-  const project =
-    process.env.GCP_PROJECT ||
-    process.env.GOOGLE_CLOUD_PROJECT ||
-    'placeholder-project';
-  const location = process.env.GCP_LOCATION || 'us-central1';
+// No sensible default for a project id, so unset means skip, not fail.
+const project = process.env.GOOGLE_CLOUD_PROJECT;
+const location = process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
 
+describe.skipIf(!project)('Live Gemini Live Connection E2E', () => {
   it('should connect and stream responses from Gemini Live using Vertex AI', async () => {
     const llm = new Gemini({
       model: 'gemini-live-2.5-flash-native-audio',

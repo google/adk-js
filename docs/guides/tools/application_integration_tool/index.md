@@ -3,7 +3,8 @@
 `ApplicationIntegrationToolset` gives an agent tools for a Google Cloud
 Application Integration API trigger, or for the entities and actions of an
 Integration Connectors connection. It gets or builds an OpenAPI spec for the
-resource and turns each operation in it into a `RestApiTool`.
+resource and turns each operation in it into a `RestApiTool` or an
+`IntegrationConnectorTool`.
 
 ## Introduction
 
@@ -11,22 +12,24 @@ Application Integration and Integration Connectors already describe what a
 resource can do. An integration with an API trigger can produce an OpenAPI
 spec for that trigger, and a connection can report the schema of each entity
 and action it exposes. `ApplicationIntegrationToolset` reads that description
-and hands it to [`OpenAPIToolset`](../openapi_tool/index.md), so an agent can
-call the resource without you writing a spec or a tool by hand.
+and turns each operation into a callable tool, so an agent can call the
+resource without you writing a spec or a tool by hand.
 
 The toolset has two modes:
 
-- **Integration mode** asks Application Integration for the spec of one API
-  trigger. The agent gets one tool per operation in that spec.
+- **Integration mode** asks Application Integration for the spec of one or more
+  API triggers. The agent gets one tool per operation in that spec.
 - **Connection mode** reads the schemas of the entities and actions you name
   and builds the spec itself. Every operation runs through an integration
   named `ExecuteConnection`, which executes it on the connection.
 
-Two lower-level classes do the work, and both are exported for callers who
-want the spec rather than the tools. `IntegrationClient` returns the spec for
-either mode, and `ConnectionsClient` reads connection details and schemas.
+Lower-level classes fetch the specs and schemas, and `IntegrationConnectorTool`
+wraps each connection tool. `IntegrationClient` returns the spec for either
+mode, `ConnectionsClient` reads connection details and schemas, and
+`IntegrationConnectorTool` hides the internal connection routing fields from
+the model declaration and injects them into each request at runtime.
 
-All three classes are marked experimental, so each logs a warning the first
+All four classes are marked experimental, so each logs a warning the first
 time one is constructed. They are exported from the Node entry point of
 `@google/adk` and not from the browser entry point, because they depend on
 `google-auth-library`.
@@ -46,7 +49,7 @@ const issueTracker = new ApplicationIntegrationToolset({
   connection: 'my-issue-tracker',
   entityOperations: {Issues: ['LIST', 'GET']},
   actions: ['ExecuteCustomQuery'],
-  toolName: 'tracker',
+  toolNamePrefix: 'tracker',
 });
 
 export const rootAgent = new LlmAgent({
@@ -61,7 +64,7 @@ The agent sees `tracker_list_issues`, `tracker_get_issues`, and one tool for
 the custom query, named after the display name Integration Connectors reports
 for the action.
 
-For integration mode, name the integration and its API trigger instead of a
+For integration mode, name the integration and its API triggers instead of a
 connection:
 
 ```ts
@@ -69,34 +72,35 @@ const orders = new ApplicationIntegrationToolset({
   project: 'my-project',
   location: 'us-central1',
   integration: 'process-orders',
-  trigger: 'api_trigger/process-orders',
+  triggers: ['api_trigger/process-orders'],
 });
 ```
 
 ## How it works
 
 The constructor only validates the options. It throws
-`Either (integration and trigger) or (connection and (entityOperations or actions)) should be provided.`
-unless you set both `integration` and `trigger`, or set `connection` together
-with a non-empty `entityOperations` or `actions`. An empty object and an empty
-array count as not set. When both modes are configured, integration mode
-wins.
+`Either integration or (connection and (entityOperations or actions)) should be provided.`
+unless you set `integration`, or set
+`connection` together with a non-empty `entityOperations` or `actions`. An empty
+object and an empty `actions` array count as not set. When both modes are
+configured, integration mode wins.
 
 The network calls happen on the first `getTools` call, which the agent makes
 at the start of its first turn. That call does the following:
 
 1. In integration mode, it asks Application Integration to generate the
-   OpenAPI spec of the trigger.
-2. In connection mode, it reads the service name and host of the connection,
-   then reads the schema of every entity and action you named. It builds a
-   spec with one operation per entity operation and per action.
-3. It passes the spec to `OpenAPIToolset`, together with one credential, and
-   returns the tools that come back. Connection-mode paths share one URL and
-   differ only by a fragment, such as `#list_Issues`. The toolset removes the
-   fragment from each path first, so the request carries only
-   `triggerId=api_trigger/ExecuteConnection`.
+   OpenAPI spec of the trigger or triggers, passes the spec to `OpenAPIToolset`
+   with one credential, and returns the `RestApiTool` instances that come back.
+2. In connection mode, it reads the resource name, service name and host of
+   the connection, then reads the schema of every entity and action you named.
+   It builds a spec with one operation per entity operation and per action.
+3. In connection mode, it parses the spec with `OpenApiSpecParser`, creates a
+   `RestApiTool` for each operation with its URL fragment removed so the
+   request carries only `triggerId=api_trigger/ExecuteConnection`, and wraps
+   each tool in an `IntegrationConnectorTool`.
 
-Later calls return the same tool objects without another request. Concurrent
+Later calls reuse the loaded tool objects without another request and apply
+`toolFilter` (if configured) for the call's context. Concurrent
 calls share one load. When the load fails, `getTools` rejects, and the next
 call tries again from the start, so a transient failure does not disable the
 toolset for the life of the process.
@@ -116,16 +120,16 @@ selects every supported operation. Each operation becomes one tool:
 
 | Operation | Tool name, before the parser normalizes it | What the tool does             |
 | :-------- | :----------------------------------------- | :----------------------------- |
-| `LIST`    | `{toolName}_list_{entity}`                 | Lists records, with paging     |
-| `GET`     | `{toolName}_get_{entity}`                  | Reads one record by `entityId` |
-| `CREATE`  | `{toolName}_create_{entity}`               | Creates a record               |
-| `UPDATE`  | `{toolName}_update_{entity}`               | Updates a record by `entityId` |
-| `DELETE`  | `{toolName}_delete_{entity}`               | Deletes a record by `entityId` |
+| `LIST`    | `{toolNamePrefix}_list_{entity}`           | Lists records, with paging     |
+| `GET`     | `{toolNamePrefix}_get_{entity}`            | Reads one record by `entityId` |
+| `CREATE`  | `{toolNamePrefix}_create_{entity}`         | Creates a record               |
+| `UPDATE`  | `{toolNamePrefix}_update_{entity}`         | Updates a record by `entityId` |
+| `DELETE`  | `{toolNamePrefix}_delete_{entity}`         | Deletes a record by `entityId` |
 
 The operation names are not case sensitive. Any other name rejects the load
 with `Invalid operation: {operation} for entity: {entity}`.
 
-Each action becomes one tool named `{toolName}_{displayName}`, where
+Each action becomes one tool named `{toolNamePrefix}_{displayName}`, where
 `displayName` is the display name Integration Connectors reports. The
 `ExecuteCustomQuery` action is different from the others: its tool takes a
 SQL `query`, a `timeout` and a `pageSize` rather than an input payload, and
@@ -134,14 +138,20 @@ into SQL.
 
 `OpenAPIToolset` turns each name into snake case and cuts it at 60
 characters, so `tracker_list_Issues` reaches the model as
-`tracker_list_issues`. With the default empty `toolName`, the name is
+`tracker_list_issues`. With the default empty `toolNamePrefix`, the name is
 `list_issues`.
 
-Every tool description tells the model which entity or action and which
-operation to send, so the model does not ask the user for them. The toolset
-also adds the service name, the host and the full connection name to the end
-of `toolInstructions`, because every request must carry them and the user has
-no reason to know them.
+Each connection operation is wrapped in an `IntegrationConnectorTool`. Its
+`_getDeclaration` removes the internal routing and dynamic authentication fields
+(`connection_name`, `connectionName`, `service_name`, `serviceName`, `host`,
+`entity`, `operation`, `action`, `dynamic_auth_config` and `dynamicAuthConfig`)
+from `parameters.properties` and removes those fields along with `page_size`,
+`pageSize`, `page_token`, `pageToken`, `filter`, `filter_clause` and
+`filterClause` from `parameters.required`. When the agent calls the tool,
+`runAsync` prepares any configured dynamic end-user credentials and injects the
+connection name, service name, host, and any configured entity, action,
+operation and dynamic auth configuration before delegating the request to the
+wrapped `RestApiTool`.
 
 The entity schema reaches the model in two places. The list and get tools
 quote it in their response description, and the create and update tools take
@@ -162,30 +172,42 @@ tool, paired with a bearer scheme.
   When those are not available, the load rejects with
   `An unexpected error occurred: Please provide a service account that has the required permissions to access the connection.`
 
+In connection mode, when `authOverrideEnabled` is enabled on the connection, you
+can also pass `authScheme` and `authCredential` to supply dynamic end-user
+credentials (including for `ExecuteCustomQuery`). Each `IntegrationConnectorTool`
+prepares those credentials through `ToolAuthHandler` before running and sends
+the resolved access token in `dynamicAuthConfig`. When `authOverrideEnabled` is
+false on the connection, the toolset logs a warning and ignores `authScheme` and
+`authCredential`.
+
 ## Configuration options
 
 The options are the fields of `ApplicationIntegrationToolsetOptions`.
 
-| Option               | Type                       | Default  | Description                                               |
-| :------------------- | :------------------------- | :------- | :-------------------------------------------------------- |
-| `project`            | `string`                   | Required | The Google Cloud project ID.                              |
-| `location`           | `string`                   | Required | The Google Cloud location, such as `us-central1`.         |
-| `integration`        | `string`                   | None     | The integration name, for integration mode.               |
-| `trigger`            | `string`                   | None     | The API trigger ID, for integration mode.                 |
-| `connection`         | `string`                   | None     | The connection name, for connection mode.                 |
-| `entityOperations`   | `Record<string, string[]>` | None     | Operations to expose, keyed by entity name.               |
-| `actions`            | `string[]`                 | None     | Actions to expose.                                        |
-| `toolName`           | `string`                   | `''`     | Prefix of every tool name, in connection mode.            |
-| `toolInstructions`   | `string`                   | `''`     | Text added to every tool description, in connection mode. |
-| `serviceAccountJson` | `string`                   | None     | A service-account key, as JSON. Without it, ADC is used.  |
+| Option               | Type                        | Default  | Description                                                                     |
+| :------------------- | :-------------------------- | :------- | :------------------------------------------------------------------------------ |
+| `project`            | `string`                    | Required | The Google Cloud project ID.                                                    |
+| `location`           | `string`                    | Required | The Google Cloud location, such as `us-central1`.                               |
+| `integration`        | `string`                    | None     | The integration name, for integration mode.                                     |
+| `triggers`           | `string[]`                  | None     | The API trigger IDs, for integration mode.                                      |
+| `connection`         | `string`                    | None     | The connection name, for connection mode.                                       |
+| `entityOperations`   | `Record<string, string[]>`  | None     | Operations to expose, keyed by entity name.                                     |
+| `actions`            | `string[]`                  | None     | Actions to expose.                                                              |
+| `toolNamePrefix`     | `string`                    | `''`     | Prefix of every tool name, in connection mode.                                  |
+| `toolInstructions`   | `string`                    | `''`     | Text added to every tool description, in connection mode.                       |
+| `serviceAccountJson` | `string`                    | None     | A service-account key, as JSON. Without it, ADC is used.                        |
+| `authScheme`         | `AuthScheme`                | None     | Authentication scheme for dynamic end-user credentials, in connection mode.     |
+| `authCredential`     | `AuthCredential`            | None     | Authentication credential for dynamic end-user credentials, in connection mode. |
+| `toolFilter`         | `ToolPredicate \| string[]` | `[]`     | Filter selecting which generated tools `getTools` exposes.                      |
 
 `project` and `location` name where the resources live. In connection mode,
 the `ExecuteConnection` integration must be in the same project and location
 as the connection, because the generated tools call it there.
 
-`integration` and `trigger` select integration mode, and only together. The
+`integration` selects integration mode. When `triggers` is provided, each
 trigger is the ID Application Integration shows for the API trigger, such as
-`api_trigger/process-orders`.
+`api_trigger/process-orders`. When `triggers` is omitted, tools are generated
+for all triggers of the integration.
 
 `connection` selects connection mode, together with `entityOperations`,
 `actions`, or both. `entityOperations` maps an entity name to the operations
@@ -193,13 +215,14 @@ to expose. Give an empty list to expose every operation the entity supports,
 or name operations to expose fewer, because each one is a tool the model has
 to choose between.
 
-`toolName` and `toolInstructions` shape the generated tools in connection
-mode. `toolName` keeps the tool names of two connections apart when one agent
-holds both, because the operation part of the names would otherwise collide.
+`toolNamePrefix` and `toolInstructions` shape the generated tools in
+connection mode. `toolNamePrefix` keeps the tool names of two connections apart
+when one agent holds both, because the operation part of the names would
+otherwise collide.
 `toolInstructions` is the place for guidance that applies to every tool of
-the connection. The toolset writes the connection details after it with no
-separator, so end it with a space or a full stop. Integration mode takes the
-names and descriptions from the generated spec and ignores both options.
+the connection. Each operation description appends it at the end. Integration
+mode takes the names and descriptions from the generated spec and ignores these
+options.
 
 `serviceAccountJson` is the content of a service-account key file, not its
 path. Use it when the process has no Application Default Credentials, or when
@@ -207,14 +230,22 @@ the integration needs a different identity from the rest of the application.
 The toolset throws `serviceAccountJson must hold a JSON object.` on the first
 `getTools` call when the value is JSON of another shape.
 
+`authScheme` and `authCredential` configure dynamic end-user authentication for
+connection tools when `authOverrideEnabled` is enabled on the connection. If
+`authOverrideEnabled` is not enabled, the toolset logs a warning and omits them.
+
+`toolFilter` accepts an array of tool names or a `ToolPredicate` function
+`(tool, readonlyContext?) => boolean` and filters the tools returned by
+`getTools` in both integration and connection modes.
+
 ## Advanced applications
 
 ### Build the spec yourself
 
-`ApplicationIntegrationToolset` returns every generated tool and has no tool
-filter or prefix option. To select tools, or to change the spec before it
-becomes tools, build the spec with `IntegrationClient` and give it to
-`OpenAPIToolset`.
+Use `toolFilter` and `toolNamePrefix` on `ApplicationIntegrationToolset` when
+you only need to filter tools or prefix connection tool names. To inspect or
+modify the OpenAPI spec before it becomes tools, build the spec with
+`IntegrationClient` and give it to `OpenAPIToolset`.
 
 ```ts
 import {IntegrationClient, OpenAPIToolset} from '@google/adk';

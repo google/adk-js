@@ -159,4 +159,226 @@ describe('cli/utils/evals', () => {
       });
     });
   });
+
+  describe('convertSessionToEvalFormat edge cases', () => {
+    it('converts a single-turn session with only a text response', () => {
+      const session = createSession({
+        id: 's1',
+        appName: 'app',
+        userId: 'u1',
+        events: [
+          createEvent({
+            author: 'user',
+            content: {role: 'user', parts: [{text: 'What is the time?'}]},
+          }),
+          createEvent({
+            author: 'root_agent',
+            content: {role: 'model', parts: [{text: 'It is 3 PM.'}]},
+          }),
+        ],
+      });
+
+      expect(convertSessionToEvalFormat(session)).toEqual([
+        {
+          query: 'What is the time?',
+          expected_tool_use: [],
+          expected_intermediate_agent_responses: [],
+          reference: 'It is 3 PM.',
+        },
+      ]);
+    });
+
+    it('converts a single-turn session with only a tool call and leaves reference empty', () => {
+      const session = createSession({
+        id: 's1',
+        appName: 'app',
+        userId: 'u1',
+        events: [
+          createEvent({
+            author: 'user',
+            content: {
+              role: 'user',
+              parts: [{text: 'Get weather for Seattle'}],
+            },
+          }),
+          createEvent({
+            author: 'root_agent',
+            content: {
+              role: 'model',
+              parts: [
+                {
+                  functionCall: {
+                    name: 'get_weather',
+                    args: {city: 'Seattle'},
+                  },
+                },
+              ],
+            },
+          }),
+        ],
+      });
+
+      expect(convertSessionToEvalFormat(session)).toEqual([
+        {
+          query: 'Get weather for Seattle',
+          expected_tool_use: [
+            {tool_name: 'get_weather', tool_input: {city: 'Seattle'}},
+          ],
+          expected_intermediate_agent_responses: [],
+          reference: '',
+        },
+      ]);
+    });
+
+    it('converts a single-turn session with multiple tool calls and intermediate text responses', () => {
+      const session = createSession({
+        id: 's1',
+        appName: 'app',
+        userId: 'u1',
+        events: [
+          createEvent({
+            author: 'user',
+            content: {role: 'user', parts: [{text: 'Do task A then task B'}]},
+          }),
+          createEvent({
+            author: 'root_agent',
+            content: {role: 'model', parts: [{text: 'Okay, starting task A.'}]},
+          }),
+          createEvent({
+            author: 'root_agent',
+            content: {
+              role: 'model',
+              parts: [{functionCall: {name: 'task_A', args: {param: 1}}}],
+            },
+          }),
+          createEvent({
+            author: 'root_agent',
+            content: {
+              role: 'model',
+              parts: [{text: 'Task A done. Now starting task B.'}],
+            },
+          }),
+          createEvent({
+            author: 'another_agent',
+            content: {
+              role: 'model',
+              parts: [{functionCall: {name: 'task_B', args: {}}}],
+            },
+          }),
+          createEvent({
+            author: 'root_agent',
+            content: {role: 'model', parts: [{text: 'All tasks completed.'}]},
+          }),
+        ],
+      });
+
+      expect(convertSessionToEvalFormat(session)).toEqual([
+        {
+          query: 'Do task A then task B',
+          expected_tool_use: [
+            {tool_name: 'task_A', tool_input: {param: 1}},
+            {tool_name: 'task_B', tool_input: {}},
+          ],
+          expected_intermediate_agent_responses: [
+            ['root_agent', [{text: 'Okay, starting task A.'}]],
+            ['root_agent', [{text: 'Task A done. Now starting task B.'}]],
+          ],
+          reference: 'All tasks completed.',
+        },
+      ]);
+    });
+
+    it('defaults missing tool name, tool args, and agent author to empty values', () => {
+      const session = createSession({
+        id: 's1',
+        appName: 'app',
+        userId: 'u1',
+        events: [
+          createEvent({
+            author: 'user',
+            content: {role: 'user', parts: [{text: 'Call tools'}]},
+          }),
+          createEvent({
+            author: 'agent',
+            content: {
+              role: 'model',
+              parts: [{functionCall: {name: undefined, args: {a: 1}}}],
+            },
+          }),
+          createEvent({
+            author: 'agent',
+            content: {
+              role: 'model',
+              parts: [{functionCall: {name: 'tool_B', args: undefined}}],
+            },
+          }),
+          createEvent({
+            content: {
+              role: 'model',
+              parts: [{functionCall: undefined, text: 'some text'}],
+            },
+          }),
+          createEvent({
+            author: 'agent',
+            content: {role: 'model', parts: [{text: 'Done'}]},
+          }),
+        ],
+      });
+
+      expect(convertSessionToEvalFormat(session)).toEqual([
+        {
+          query: 'Call tools',
+          expected_tool_use: [
+            {tool_name: '', tool_input: {a: 1}},
+            {tool_name: 'tool_B', tool_input: {}},
+          ],
+          expected_intermediate_agent_responses: [
+            ['', [{functionCall: undefined, text: 'some text'}]],
+          ],
+          reference: 'Done',
+        },
+      ]);
+    });
+
+    it('defaults user query to empty string when the first part has undefined or empty text', () => {
+      const session = createSession({
+        id: 's1',
+        appName: 'app',
+        userId: 'u1',
+        events: [
+          createEvent({
+            author: 'user',
+            content: {role: 'user', parts: [{text: undefined}]},
+          }),
+          createEvent({
+            author: 'agent',
+            content: {role: 'model', parts: [{text: 'Response 1'}]},
+          }),
+          createEvent({
+            author: 'user',
+            content: {role: 'user', parts: [{text: ''}]},
+          }),
+          createEvent({
+            author: 'agent',
+            content: {role: 'model', parts: [{text: 'Response 2'}]},
+          }),
+        ],
+      });
+
+      expect(convertSessionToEvalFormat(session)).toEqual([
+        {
+          query: '',
+          expected_tool_use: [],
+          expected_intermediate_agent_responses: [],
+          reference: 'Response 1',
+        },
+        {
+          query: '',
+          expected_tool_use: [],
+          expected_intermediate_agent_responses: [],
+          reference: 'Response 2',
+        },
+      ]);
+    });
+  });
 });

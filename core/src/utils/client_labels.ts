@@ -144,7 +144,8 @@ function headerEntries(headers?: HeadersInput): Array<[string, string]> {
  * single space, so the two differ only for values with repeated or non-space
  * whitespace. Commas are not treated as separators, so a `Headers` object that
  * joined two values of one header with `, ` keeps the comma on the first
- * token. All other headers keep the caller's name and value.
+ * token. Other repeated header names use the platform `Headers` semantics;
+ * for example, repeated `Cookie` values are joined with `; `.
  *
  * The input is never mutated.
  *
@@ -154,7 +155,8 @@ function headerEntries(headers?: HeadersInput): Array<[string, string]> {
 export function mergeTrackingHeaders(
   headers?: HeadersInput,
 ): Record<string, string> {
-  const merged: Record<string, string> = {};
+  const otherHeaders = new Headers();
+  const originalNames = new Map<string, string>();
   const callerValues = new Map<string, string[]>();
 
   for (const [name, value] of headerEntries(headers)) {
@@ -165,9 +167,24 @@ export function mergeTrackingHeaders(
         value,
       ]);
     } else {
-      merged[name] = value;
+      if (!originalNames.has(lowerName)) {
+        originalNames.set(lowerName, name);
+      }
+      otherHeaders.append(name, value);
     }
   }
+
+  const normalizedEntries: Array<[string, string]> = [];
+  otherHeaders.forEach((value, name) => {
+    normalizedEntries.push([name, value]);
+  });
+
+  const merged = Object.fromEntries(
+    normalizedEntries.map(([name, value]) => [
+      originalNames.get(name) ?? name,
+      value,
+    ]),
+  ) as Record<string, string>;
 
   for (const [name, trackingValue] of Object.entries(getTrackingHeaders())) {
     const tokens = trackingValue.split(' ');

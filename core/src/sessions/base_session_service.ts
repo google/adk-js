@@ -171,15 +171,11 @@ export abstract class BaseSessionService {
       return event;
     }
 
-    event = trimTempDeltaState(event);
-
+    // Apply the delta before trimming its temp: keys, so they stay in the
+    // in-memory session for the rest of the invocation, as in adk-python
     this.updateSessionState({session, event});
-    const index = session.events.findIndex((e) => e.id === event.id);
-    if (index >= 0) {
-      session.events[index] = event;
-    } else {
-      session.events.push(event);
-    }
+    event = trimTempDeltaState(event);
+    upsertSessionEvent(session, event);
 
     return event;
   }
@@ -194,9 +190,6 @@ export abstract class BaseSessionService {
       return;
     }
     for (const [key, value] of Object.entries(event.actions.stateDelta)) {
-      if (key.startsWith(State.TEMP_PREFIX)) {
-        continue;
-      }
       // Commits lag the writes they carry, and events arrive here in the order
       // they were streamed rather than the order their writes happened.
       // Applying an entry that a newer write already superseded would roll the
@@ -218,6 +211,19 @@ export abstract class BaseSessionService {
         configurable: true,
       });
     }
+  }
+}
+
+/**
+ * Places `event` into `session.events`, replacing the entry with the same id
+ * if one is already there and appending it otherwise.
+ */
+export function upsertSessionEvent(session: Session, event: Event): void {
+  const index = session.events.findIndex((e) => e.id === event.id);
+  if (index >= 0) {
+    session.events[index] = event;
+  } else {
+    session.events.push(event);
   }
 }
 
@@ -255,8 +261,6 @@ export function trimTempDeltaState(event: Event): Event {
  * and `JSON.parse` makes `__proto__` an own key, so copying it into a plain
  * object literal would invoke the inherited `__proto__` setter: the entry is
  * dropped and the new state object is re-parented onto the attacker's object.
- * `State.get`/`State.has` use the `in` operator, so every key on that object
- * would then read back as session state.
  */
 export function trimTempState(
   state: Record<string, unknown>,

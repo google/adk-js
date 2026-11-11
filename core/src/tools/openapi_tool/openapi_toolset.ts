@@ -31,6 +31,11 @@ export class OpenAPIToolset extends BaseToolset {
       authCredential?: AuthCredential;
       credentialKey?: string;
       headerProvider?: (context: ReadonlyContext) => Record<string, string>;
+      /**
+       * @deprecated Emits a whole-body parameter for unconstrained object schemas.
+       * Will be removed in a future release.
+       */
+      unconstrainedObjectBodyAsParameter?: boolean;
     } = {},
   ) {
     super(options.toolFilter || [], options.prefix);
@@ -55,6 +60,8 @@ export class OpenAPIToolset extends BaseToolset {
 
     const parser = new OpenApiSpecParser({
       preservePropertyNames: options.preservePropertyNames,
+      unconstrainedObjectBodyAsParameter:
+        options.unconstrainedObjectBodyAsParameter,
     });
     const parsedOperations = parser.parse(spec);
 
@@ -78,6 +85,8 @@ export class OpenAPIToolset extends BaseToolset {
           preservePropertyNames: options.preservePropertyNames,
           headerProvider: options.headerProvider,
           credentialKey: options.credentialKey,
+          unconstrainedObjectBodyAsParameter:
+            options.unconstrainedObjectBodyAsParameter,
         },
       );
 
@@ -97,15 +106,7 @@ export class OpenAPIToolset extends BaseToolset {
 
   @experimental
   override async getTools(context?: ReadonlyContext): Promise<BaseTool[]> {
-    return this.tools.filter((tool) => {
-      if (Array.isArray(this.toolFilter) && this.toolFilter.length > 0) {
-        return (this.toolFilter as string[]).includes(tool.name);
-      }
-      if (context) {
-        return this.isToolSelected(tool, context);
-      }
-      return true;
-    });
+    return this.tools.filter((tool) => this.isToolSelected(tool, context));
   }
 
   /**

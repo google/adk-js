@@ -86,17 +86,10 @@ export function quoteFilterLiteral(value: string): string {
 /**
  * Copies an API-returned state map into a null-prototype map.
  *
- * Session state is read with the `in` operator by instruction placeholder
- * resolution in `agents/instructions.ts`, so on a map that inherits from
- * `Object.prototype`, `{toString}` resolves to the inherited member and lands
- * in the prompt instead of raising "Context variable not found". The other
- * session services get this from `trimTempState`; state on an API response is
- * plain `JSON.parse` output and has to be re-homed here.
- *
  * Copying onto a null-prototype target also keeps an own `__proto__` key as an
  * own data property instead of invoking the inherited `__proto__` setter.
  *
- * Shallow, like `trimTempState`: only the top level is read with `in`.
+ * Shallow, like `trimTempState`.
  */
 function toStateMap(
   state: Record<string, unknown> | undefined,

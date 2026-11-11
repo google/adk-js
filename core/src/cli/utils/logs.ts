@@ -94,7 +94,7 @@ function createWriterLogger(
  *
  * @param level The minimum `LogLevel` to emit. Defaults to `LogLevel.INFO`.
  */
-export function logToStderr(level: LogLevel = LogLevel.INFO): void {
+export function setupAdkLogger(level: LogLevel = LogLevel.INFO): void {
   setLogLevel(level);
   setLogger(
     createWriterLogger(level, (line) => {

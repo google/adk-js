@@ -5,7 +5,6 @@
  */
 
 import {GenerateContentConfig, Modality, Schema} from '@google/genai';
-import {context, trace} from '@opentelemetry/api';
 import {FinishTaskTool} from '../tools/finish_task_tool.js';
 import {FunctionTool} from '../tools/function_tool.js';
 import {AsyncQueue} from '../utils/async_queue.js';
@@ -30,7 +29,10 @@ import {
   isFinalResponse,
   populateClientFunctionCallId,
 } from '../events/event.js';
-import {isDefaultEventActions} from '../events/event_actions.js';
+import {
+  createEventActions,
+  isDefaultEventActions,
+} from '../events/event_actions.js';
 
 import {BaseExampleProvider} from '../examples/base_example_provider.js';
 import {Example} from '../examples/example.js';
@@ -43,7 +45,7 @@ import type {BasePlanner} from '../planners/base_planner.js';
 import {isBuiltInPlanner} from '../planners/built_in_planner.js';
 
 import {BaseTool, isBaseTool} from '../tools/base_tool.js';
-import {BaseToolset} from '../tools/base_toolset.js';
+import {BaseToolset, isBaseToolset} from '../tools/base_toolset.js';
 
 import {logger} from '../utils/logger.js';
 import {canUseOutputSchemaWithTools} from '../utils/output_schema_utils.js';
@@ -51,11 +53,9 @@ import {ActiveStreamingTool} from './active_streaming_tool.js';
 import {Context} from './context.js';
 
 import {
-  runAsyncGeneratorWithOtelContext,
-  traceCallLlm,
-  tracer,
-  traceSendData,
-} from '../telemetry/tracing.js';
+  recordInference,
+  recordSendData,
+} from '../telemetry/api/instrumentation.js';
 import {parseWithSchema, SchemaLike} from '../utils/schema.js';
 import {isZodObject, zodObjectToSchema} from '../utils/simple_zod_to_json.js';
 import {BaseAgent, BaseAgentConfig} from './base_agent.js';
@@ -143,6 +143,17 @@ function isRecoverableLiveError(err: unknown): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Whether a function response event answers a call that is not waiting for
+ * confirmation, i.e. a parallel call that already ran.
+ */
+function hasSettledResponses(functionResponseEvent: Event): boolean {
+  const awaiting = functionResponseEvent.actions.requestedToolConfirmations;
+  return getFunctionResponses(functionResponseEvent).some(
+    (response) => !response.id || !Object.hasOwn(awaiting, response.id),
+  );
 }
 
 /**
@@ -424,7 +435,11 @@ export interface LlmAgentConfig extends BaseAgentConfig {
   contextCompactors?: BaseContextCompactor[];
 
   /**
-   * Instructs the agent to make a plan and execute it step by step.
+   * Allows the agent to execute code blocks from model responses using the
+   * provided `BaseCodeExecutor`.
+   *
+   * NOTE: to use the model's built-in code executor, use the
+   * `BuiltInCodeExecutor`.
    */
   codeExecutor?: BaseCodeExecutor;
 
@@ -631,7 +646,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       }
       if (config.generateContentConfig.responseSchema) {
         throw new Error(
-          'Response schema must be set via LlmAgent.output_schema.',
+          'Response schema must be set via LlmAgent.outputSchema.',
         );
       }
       if (
@@ -850,8 +865,23 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       );
       return;
     }
+    // A final event with no answer text, such as a function response ending
+    // the turn through skipSummarization, has no output to save. Writing ''
+    // would overwrite whatever a tool already put under `outputKey`.
+    if (
+      !event.content.parts.some(
+        (part) => part.text !== undefined && !part.thought,
+      )
+    ) {
+      logger.debug(
+        `Skipping output save for agent ${this.name}: event has no text`,
+      );
+      return;
+    }
 
+    // Thoughts are the model's reasoning, not its output.
     const resultStr: string = event.content.parts
+      .filter((part) => !part.thought)
       .map((part) => (part.text ? part.text : ''))
       .join('');
     let result: unknown = resultStr;
@@ -1097,18 +1127,14 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         llmRequest.contents.length > 0 &&
         !invocationContext.liveSessionResumptionHandle
       ) {
-        await tracer.startActiveSpan('send_data', async (span) => {
-          try {
-            await connection.sendHistory(llmRequest.contents);
-            traceSendData({
-              invocationContext,
-              eventId: createNewEventId(),
-              data: llmRequest.contents,
-            });
-          } finally {
-            span.end();
-          }
-        });
+        await recordSendData(
+          {
+            invocationContext,
+            eventId: createNewEventId(),
+            data: llmRequest.contents,
+          },
+          () => connection.sendHistory(llmRequest.contents),
+        );
       }
 
       let sendError: unknown;
@@ -1202,6 +1228,12 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     }
     for (const toolUnion of this.tools) {
       const toolContext = new Context({invocationContext});
+      if (isBaseToolset(toolUnion)) {
+        await toolUnion.processLlmRequest(toolContext, llmRequest);
+        if (invocationContext.abortSignal?.aborted) {
+          return;
+        }
+      }
       const tools = (
         await convertToolUnionToTools(
           toolUnion,
@@ -1568,7 +1600,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     } else if (
       this.outputSchema &&
       allTools.length > 0 &&
-      !canUseOutputSchemaWithTools(this.canonicalModel.model)
+      !canUseOutputSchemaWithTools(this.canonicalModel)
     ) {
       const setModelResponseTool = new FunctionTool({
         name: 'set_model_response',
@@ -1596,6 +1628,14 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         invocationContext,
         eventActions: modelResponseEvent.actions,
       });
+
+      if (isBaseToolset(toolUnion)) {
+        await toolUnion.processLlmRequest(toolContext, llmRequest);
+
+        if (invocationContext.abortSignal?.aborted) {
+          return;
+        }
+      }
 
       // process all tools from this tool union
       const tools = (
@@ -1636,69 +1676,54 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // =========================================================================
     // Calls the LLM
     // =========================================================================
-    const span = tracer.startSpan('call_llm');
-    const ctx = trace.setSpan(context.active(), span);
-    try {
-      yield* runAsyncGeneratorWithOtelContext<LlmAgent, Event>(
-        ctx,
-        this,
-        async function* () {
-          const responsesGenerator = async function* (this: LlmAgent) {
-            for await (const llmResponse of this.callLlmAsync(
-              invocationContext,
-              llmRequest,
-              modelResponseEvent,
-            )) {
-              if (invocationContext.abortSignal?.aborted) {
-                return;
-              }
+    const responsesGenerator = async function* (this: LlmAgent) {
+      for await (const llmResponse of this.callLlmAsync(
+        invocationContext,
+        llmRequest,
+        modelResponseEvent,
+      )) {
+        if (invocationContext.abortSignal?.aborted) {
+          return;
+        }
 
-              if (
-                invocationContext.runConfig?.supportCfc &&
-                isEvent(llmResponse)
-              ) {
-                modelResponseEvent.id = createNewEventId();
-                modelResponseEvent.timestamp = new Date().getTime();
-                yield llmResponse;
-                continue;
-              }
+        if (invocationContext.runConfig?.supportCfc && isEvent(llmResponse)) {
+          modelResponseEvent.id = createNewEventId();
+          modelResponseEvent.timestamp = new Date().getTime();
+          yield llmResponse;
+          continue;
+        }
 
-              // ======================================================================
-              // Postprocess after calling the LLM
-              // ======================================================================
-              for await (const event of this.postprocess(
-                invocationContext,
-                llmRequest,
-                llmResponse,
-                modelResponseEvent,
-              )) {
-                if (invocationContext.abortSignal?.aborted) {
-                  return;
-                }
+        // ======================================================================
+        // Postprocess after calling the LLM
+        // ======================================================================
+        for await (const event of this.postprocess(
+          invocationContext,
+          llmRequest,
+          llmResponse,
+          modelResponseEvent,
+        )) {
+          if (invocationContext.abortSignal?.aborted) {
+            return;
+          }
 
-                // Partial chunks of one streaming response share the base id;
-                // mint a fresh id only after a complete event so distinct
-                // responses differ.
-                if (!event.partial) {
-                  modelResponseEvent.id = createNewEventId();
-                  modelResponseEvent.timestamp = new Date().getTime();
-                }
-                yield event;
-              }
-            }
-          };
+          // Partial chunks of one streaming response share the base id;
+          // mint a fresh id only after a complete event so distinct
+          // responses differ.
+          if (!event.partial) {
+            modelResponseEvent.id = createNewEventId();
+            modelResponseEvent.timestamp = new Date().getTime();
+          }
+          yield event;
+        }
+      }
+    };
 
-          yield* this.runAndHandleError(
-            responsesGenerator.call(this),
-            invocationContext,
-            llmRequest,
-            modelResponseEvent,
-          );
-        },
-      );
-    } finally {
-      span.end();
-    }
+    yield* this.runAndHandleError(
+      responsesGenerator.call(this),
+      invocationContext,
+      llmRequest,
+      modelResponseEvent,
+    );
   }
 
   private async *postprocess(
@@ -1785,6 +1810,12 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       return;
     }
 
+    // Partial events are not saved to the session, and the final event repeats
+    // their function calls, so only the final event runs them.
+    if (mergedEvent.partial) {
+      return;
+    }
+
     if (invocationContext.runConfig?.pauseOnToolCalls) {
       invocationContext.endInvocation = true;
       return;
@@ -1849,6 +1880,25 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       functionResponseEvent: functionResponseEvent,
     });
     if (toolConfirmationEvent) {
+      // Parallel calls that needed no confirmation have already run. Their
+      // responses are stored before the pause, or the resumed request carries
+      // those calls without responses, which the model rejects. Each action is
+      // stored once: the responses keep the state and artifact changes, and
+      // the gate keeps the confirmation request and stays the final event.
+      if (hasSettledResponses(functionResponseEvent)) {
+        // Only requestedToolConfirmations and skipSummarization move to the
+        // gate. Every other field (stateDelta, artifactDelta,
+        // requestedAuthConfigs, transferToAgent, escalate, agentState, ...)
+        // intentionally stays on functionResponseEvent.
+        const {requestedToolConfirmations, skipSummarization, ...settled} =
+          functionResponseEvent.actions;
+        functionResponseEvent.actions = createEventActions(settled);
+        toolConfirmationEvent.actions = createEventActions({
+          requestedToolConfirmations,
+          skipSummarization,
+        });
+        yield functionResponseEvent;
+      }
       yield toolConfirmationEvent;
       invocationContext.endInvocation = true;
       return;
@@ -1960,21 +2010,18 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         liveRequestQueue.close();
       }
     } else {
-      const responsesGenerator = llm.generateContentAsync(
-        llmRequest,
-        /* stream= */ invocationContext.runConfig?.streamingMode ===
-          StreamingMode.SSE,
-        invocationContext.abortSignal,
+      const responsesGenerator = recordInference(
+        {invocationContext, llmRequest, modelResponseEvent},
+        () =>
+          llm.generateContentAsync(
+            llmRequest,
+            /* stream= */ invocationContext.runConfig?.streamingMode ===
+              StreamingMode.SSE,
+            invocationContext.abortSignal,
+          ),
       );
 
       for await (const llmResponse of responsesGenerator) {
-        traceCallLlm({
-          invocationContext,
-          eventId: modelResponseEvent.id,
-          llmRequest,
-          llmResponse,
-        });
-
         if (invocationContext.abortSignal?.aborted) {
           return;
         }

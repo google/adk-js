@@ -3,7 +3,7 @@
 The LLM flow pipeline in the Agent Development Kit builds each `LlmRequest`, invokes the model, processes each `LlmResponse`, executes tool calls including live streaming tools, and routes agent transfers. In `@google/adk`, the flow engine is integrated directly into `LlmAgent`, while processors and function-call helpers are exposed as composable units:
 
 - `BaseLlmRequestProcessor` and `BaseLlmResponseProcessor` - Abstract base classes for processors that inspect or mutate `LlmRequest` before the model call and `LlmResponse` after the model call, optionally yielding `Event` objects.
-- `CONTENT_REQUEST_PROCESSOR`, `INTERACTIONS_REQUEST_PROCESSOR`, `AgentTransferLlmRequestProcessor`, `ContextCompactorRequestProcessor`, and `CodeExecutionResponseProcessor` - Built-in request and response processors exported from `@google/adk`.
+- `CONTENT_REQUEST_PROCESSOR`, `INTERACTIONS_REQUEST_PROCESSOR`, `AgentTransferLlmRequestProcessor`, `ContextCompactorRequestProcessor`, `CodeExecutionResponseProcessor`, and `injectSessionState` - Built-in request and response processors and instruction state-interpolation utility exported from `@google/adk`.
 - `handleFunctionCallsLive`, `findEventByFunctionCallId`, `findMatchingFunctionCall`, and `isToolNotFound` - Function-calling helpers for live sessions, event correlation, and unresolvable tool detection.
 - `createRunConfig` and `StreamingMode` - Runtime configuration helpers for `supportCfc`, SSE streaming, and LLM call limits.
 
@@ -76,7 +76,7 @@ export const agent = new LlmAgent({
    - `BASIC_LLM_REQUEST_PROCESSOR`: Copies `agent.generateContentConfig`, sets `llmRequest.model`, and applies `agent.outputSchema` when tools are not combined with an unsupported model.
    - `AUTH_PREPROCESSOR`: Resumes pending credential requests for `adk_request_credential` from user responses.
    - `IDENTITY_LLM_REQUEST_PROCESSOR`: Appends the agent `name` and `description` to the system instruction.
-   - `INSTRUCTIONS_LLM_REQUEST_PROCESSOR`: Resolves `agent.globalInstruction` and `agent.instruction` as a string or `InstructionProvider`, interpolates session state variables, and appends them to `llmRequest`.
+   - `INSTRUCTIONS_LLM_REQUEST_PROCESSOR`: Resolves `agent.globalInstruction` and `agent.instruction` as a string or `InstructionProvider`, interpolates `{state}` and `{artifact.*}` placeholders on string instructions via `injectSessionState(template, readonlyContext)` (or lets custom `InstructionProvider` functions call `injectSessionState` directly), and appends them to `llmRequest`.
    - `REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR`: Resumes tool calls gated by `adk_request_confirmation`.
    - `REQUEST_INPUT_LLM_REQUEST_PROCESSOR`: Resumes workflow and tool input interrupts for `adk_request_input`.
    - `ContextCompactorRequestProcessor`: Inserted immediately before `CONTENT_REQUEST_PROCESSOR` when `config.contextCompactors` is non-empty, compacting older session events.

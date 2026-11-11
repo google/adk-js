@@ -182,10 +182,8 @@ a mismatch renames a parameter between the two SDKs.
 
 The declaration the model receives is a Gemini `Schema`, not the raw OpenAPI
 schema, and the two are not the same language. The conversion keeps the fields
-Gemini declares, drops `title`, `default` and `format` because the backend
-refuses them, and gives an operation with no arguments a placeholder property
-named `dummy_DO_NOT_GENERATE`, because the backend also refuses an object type
-with no properties. A schema whose `type` is outside Gemini's set — `array`,
+Gemini declares, and drops `title`, `default` and `format` because the backend
+refuses them. A schema whose `type` is outside Gemini's set — `array`,
 `boolean`, `integer`, `null`, `number`, `object`, `string` — has its type
 dropped rather than mapped to a near equivalent, because a schema with no type
 is valid and a schema Gemini rejects fails the whole declaration.
@@ -233,15 +231,15 @@ pair that does not agree fails at the first request with a header the service
 does not accept. The helpers exist so you state the intent once and get both
 halves back together, as a tuple, in the same order adk-python returns them.
 
-| Helper                                 | Returns                                                                  |
-| :------------------------------------- | :----------------------------------------------------------------------- |
-| `tokenToSchemeCredential`              | An `apiKey` or bearer scheme, and the matching credential.               |
-| `serviceAccountDictToSchemeCredential` | A bearer scheme, and a service-account credential built from a key file. |
-| `serviceAccountSchemeCredential`       | A bearer scheme, and a service-account credential you already built.     |
-| `openidDictToSchemeCredential`         | An `OpenIdConnectWithConfig` scheme, and an OpenID Connect credential.   |
-| `openidUrlToSchemeCredential`          | The same pair, from a discovery URL that the helper fetches.             |
-| `dictToAuthScheme`                     | One `AuthScheme`, validated against the shape its `type` requires.       |
-| `credentialToParam`                    | The tool parameter carrying a credential, and the value to send for it.  |
+| Helper                                   | Returns                                                                  |
+| :--------------------------------------- | :----------------------------------------------------------------------- |
+| `tokenToSchemeCredential`                | An `apiKey` or bearer scheme, and the matching credential.               |
+| `serviceAccountRecordToSchemeCredential` | A bearer scheme, and a service-account credential built from a key file. |
+| `serviceAccountSchemeCredential`         | A bearer scheme, and a service-account credential you already built.     |
+| `openidRecordToSchemeCredential`         | An `OpenIdConnectWithConfig` scheme, and an OpenID Connect credential.   |
+| `openidUrlToSchemeCredential`            | The same pair, from a discovery URL that the helper fetches.             |
+| `recordToAuthScheme`                     | One `AuthScheme`, validated against the shape its `type` requires.       |
+| `credentialToParam`                      | The tool parameter carrying a credential, and the value to send for it.  |
 
 Everything that ends as a bearer token pairs with one scheme,
 `{type: 'http', scheme: 'bearer', bearerFormat: 'JWT'}`. A service account, an
@@ -462,8 +460,8 @@ The sniff is a convenience, not a parser; a YAML document without the leading
 `---` is read as JSON and fails. Pass `specType` whenever you know the format.
 
 `toolFilter` narrows `getTools()`. A `string[]` lists names to keep and applies
-whether or not a context is supplied; a `ToolPredicate` takes the tool and a
-`ReadonlyContext` and applies only when `getTools()` receives one. Use the array
+whether or not a context is supplied; a `ToolPredicate` takes the tool and an
+optional `ReadonlyContext`. Use the array
 to trim a large spec, the predicate when the answer depends on who is asking.
 
 `prefix` prepends `<prefix>_` to every name, so two toolsets on one agent can

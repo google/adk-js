@@ -6,6 +6,7 @@
 
 import {
   getGcpExporters,
+  getGcpProjectId,
   getGcpResource,
   maybeSetOtelProviders,
   OTelHooks,
@@ -47,6 +48,7 @@ export class ApiServerSpanExporter implements SpanExporter {
     for (const span of spans) {
       if (
         span.name === 'call_llm' ||
+        span.name.startsWith('generate_content') ||
         span.name === 'send_data' ||
         span.name.startsWith('execute_tool')
       ) {
@@ -162,14 +164,17 @@ async function setupGcpTelemetryExperimental(
     });
   }
 
+  const projectId = await getGcpProjectId();
+
   const gcpExporters = await getGcpExporters({
     enableTracing: true,
-    enableLogging: false,
+    enableLogging: true,
     enableMetrics: true,
+    projectId,
   });
   otelHooksToAdd.push(gcpExporters);
 
-  const otelResource = getGcpResource();
+  const otelResource = await getGcpResource(projectId);
 
   maybeSetOtelProviders(otelHooksToAdd, otelResource);
 }

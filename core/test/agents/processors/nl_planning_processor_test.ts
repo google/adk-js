@@ -6,7 +6,9 @@
 
 import {
   BaseAgent,
+  BasePlanner,
   BuiltInPlanner,
+  Context,
   createEvent,
   createSession,
   Event,
@@ -18,6 +20,7 @@ import {
   PluginManager,
   ReadonlyContext,
 } from '@google/adk';
+import {Part} from '@google/genai';
 import {describe, expect, it} from 'vitest';
 import {
   NL_PLANNING_REQUEST_PROCESSOR,
@@ -30,6 +33,29 @@ class MockBaseAgent extends BaseAgent {
   }
   protected async *runAsyncImpl(_context: InvocationContext) {}
   protected async *runLiveImpl(_context: InvocationContext) {}
+}
+
+class StateUpdatingPlanner extends BasePlanner {
+  constructor(
+    private readonly stateUpdates: Record<string, unknown> = {},
+    private readonly processedParts?: Part[],
+  ) {
+    super();
+  }
+
+  override buildPlanningInstruction(): string | undefined {
+    return undefined;
+  }
+
+  override processPlanningResponse(
+    callbackContext: Context,
+    _responseParts: Part[],
+  ): Part[] | undefined {
+    for (const [key, value] of Object.entries(this.stateUpdates)) {
+      callbackContext.state.set(key, value);
+    }
+    return this.processedParts;
+  }
 }
 
 function createInvocationContext(
@@ -373,5 +399,48 @@ describe('NlPlanningResponseProcessor', () => {
     );
 
     expect(llmResponse).toEqual(expected);
+  });
+
+  it('yields a state-update event when the planner modifies state', async () => {
+    const agent = new LlmAgent({
+      name: 'agent',
+      planner: new StateUpdatingPlanner({planStep: 'step-1'}, [
+        {text: 'processed'},
+      ]),
+    });
+    const ctx = createInvocationContext(agent);
+    ctx.branch = 'root.agent';
+    const llmResponse = createLlmResponse();
+
+    const events = await collectEvents(
+      NL_PLANNING_RESPONSE_PROCESSOR.runAsync(ctx, llmResponse),
+    );
+
+    expect(llmResponse.content?.parts).toEqual([{text: 'processed'}]);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      invocationId: 'test-invocation',
+      author: 'agent',
+      branch: 'root.agent',
+      actions: {
+        stateDelta: {planStep: 'step-1'},
+      },
+    });
+  });
+
+  it('updates response parts and yields no event when the planner does not modify state', async () => {
+    const agent = new LlmAgent({
+      name: 'agent',
+      planner: new StateUpdatingPlanner({}, [{text: 'processed'}]),
+    });
+    const ctx = createInvocationContext(agent);
+    const llmResponse = createLlmResponse();
+
+    const events = await collectEvents(
+      NL_PLANNING_RESPONSE_PROCESSOR.runAsync(ctx, llmResponse),
+    );
+
+    expect(llmResponse.content?.parts).toEqual([{text: 'processed'}]);
+    expect(events).toHaveLength(0);
   });
 });

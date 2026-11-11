@@ -135,12 +135,10 @@ that are still active on the session manager.
 | `toolFilter`       | `ToolPredicate \| string[]` | `[]`        | Selects which discovered tools `getTools()` returns.                                                          |
 | `prefix`           | `string`                    | `undefined` | Prepends `${prefix}_` to the tool name exposed to the model.                                                  |
 
-`toolFilter` accepts either a list of tool names or a `(tool, readonlyContext) => boolean`
+`toolFilter` accepts either a list of tool names or a `(tool, readonlyContext?) => boolean`
 predicate. A `string[]` filter matches against the tool's exposed name, which
 includes `${prefix}_` when `prefix` is set, and runs whether or not `getTools()`
-receives a `ReadonlyContext`. A `ToolPredicate` requires a `ReadonlyContext`; if
-`getTools()` is called with no context while a predicate filter is configured,
-`MCPToolset` logs a warning and returns all discovered tools unfiltered. An
+receives a `ReadonlyContext`. A `ToolPredicate` receives an optional `ReadonlyContext`. An
 empty array disables filtering and returns every tool.
 
 `prefix` namespaces the tool names the model sees without changing the name sent
@@ -313,11 +311,9 @@ resource contents open two sequential sessions. A stdio MCP server therefore
 starts a fresh subprocess for each discovery or tool call unless the server is
 hosted externally over Streamable HTTP or SSE.
 
-**Predicate filter requires a context.** Passing a `ToolPredicate` function as
-`toolFilter` only filters tools when `getTools(context)` receives a
-`ReadonlyContext`. Calling `mcpToolset.getTools()` with no argument logs a
-warning and returns every tool from the server. Use a `string[]` filter when you
-call `getTools()` directly without a context.
+**Predicate filter evaluates with optional context.** Passing a `ToolPredicate` function as
+`toolFilter` evaluates the predicate for every discovered tool. When `getTools()` is called without
+a context argument, the predicate receives `undefined` for its second parameter.
 
 **Timeout fields on connection parameters.** `timeout`, `sseReadTimeout`, and
 `terminateOnClose` on `StdioConnectionParams`,

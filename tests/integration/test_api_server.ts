@@ -22,6 +22,10 @@ export interface TestApiServerParams {
   serveDebugUI?: boolean;
 }
 
+/**
+ * Start watchdog for the spawned CLI server. Keep it below the `integration`
+ * project's `hookTimeout` so a failed start is reported here, not by vitest.
+ */
 const DEFAULT_TIMEOUT = 60000;
 
 /**

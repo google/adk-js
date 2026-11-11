@@ -1037,7 +1037,7 @@ describe('cli_run', () => {
   });
 
   describe('environment and logging setup', () => {
-    it('loads .env from the agent directory and supports logToTmp', async () => {
+    it('loads .env from the agent directory', async () => {
       const tempDir = fs.mkdtempSync(
         path.join(os.tmpdir(), 'adk-cli-run-env-'),
       );
@@ -1051,7 +1051,6 @@ describe('cli_run', () => {
       try {
         await runAgent({
           agentPath: agentFile,
-          logToTmp: true,
           sessionService: createMockSessionService(),
         });
 
