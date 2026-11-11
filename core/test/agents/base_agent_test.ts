@@ -1260,5 +1260,78 @@ describe('BaseAgent', () => {
         );
       });
     });
+
+    describe('branch preservation', () => {
+      it('preserves parentContext.branch on events emitted during runAsync', async () => {
+        const agent = new MockAgent({
+          name: 'test_agent',
+          afterAgentCallback: () => ({
+            parts: [{text: 'After callback reply'}],
+          }),
+        });
+        const parentContext = new InvocationContext({
+          invocationId: 'test_invocation',
+          branch: 'parent_branch',
+          agent,
+          session: createSession({
+            id: 'test-session',
+            appName: 'test-app',
+            userId: 'test-user',
+          }),
+          pluginManager: new PluginManager(),
+        });
+
+        const events = await collectEvents(agent, parentContext);
+
+        expect(events).toHaveLength(2);
+        expect(events[0].author).toBe('test_agent');
+        expect(events[0].content?.parts?.[0]?.text).toBe(
+          'Response from test_agent',
+        );
+        expect(events[0].branch).toBe('parent_branch');
+        expect(events[1].author).toBe('test_agent');
+        expect(events[1].content?.parts?.[0]?.text).toBe(
+          'After callback reply',
+        );
+        expect(events[1].branch).toBe('parent_branch');
+      });
+
+      it('preserves parentContext.branch on events emitted during runLive', async () => {
+        const agent = new MockAgent({
+          name: 'test_agent',
+          afterAgentCallback: () => ({
+            parts: [{text: 'After live callback reply'}],
+          }),
+        });
+        const parentContext = new InvocationContext({
+          invocationId: 'test_invocation',
+          branch: 'parent_branch',
+          agent,
+          session: createSession({
+            id: 'test-session',
+            appName: 'test-app',
+            userId: 'test-user',
+          }),
+          pluginManager: new PluginManager(),
+        });
+
+        const events: Event[] = [];
+        for await (const event of agent.runLive(parentContext)) {
+          events.push(event);
+        }
+
+        expect(events).toHaveLength(2);
+        expect(events[0].author).toBe('test_agent');
+        expect(events[0].content?.parts?.[0]?.text).toBe(
+          'Live response from test_agent',
+        );
+        expect(events[0].branch).toBe('parent_branch');
+        expect(events[1].author).toBe('test_agent');
+        expect(events[1].content?.parts?.[0]?.text).toBe(
+          'After live callback reply',
+        );
+        expect(events[1].branch).toBe('parent_branch');
+      });
+    });
   });
 });

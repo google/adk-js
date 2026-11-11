@@ -1180,6 +1180,44 @@ describe('VertexAiSessionService', () => {
 
       expect(mockClient.delete).not.toHaveBeenCalled();
     });
+
+    it('logs and rethrows when sessions.delete rejects with an Error', async () => {
+      const deleteError = new Error('Delete RPC failed');
+      mockClient.delete.mockRejectedValueOnce(deleteError);
+      const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+      await expect(
+        service.deleteSession({
+          appName: '12345',
+          userId: 'testUser',
+          sessionId: 'delete-session',
+        }),
+      ).rejects.toThrow('Delete RPC failed');
+
+      expect(loggerSpy).toHaveBeenCalledWith(
+        'Error deleting session delete-session: Delete RPC failed',
+      );
+      loggerSpy.mockRestore();
+    });
+
+    it('logs the formatted message and rethrows when sessions.delete rejects with a non-Error object', async () => {
+      const plainRejection = {code: 13, message: 'Internal backend failure'};
+      mockClient.delete.mockRejectedValueOnce(plainRejection);
+      const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+      await expect(
+        service.deleteSession({
+          appName: '12345',
+          userId: 'testUser',
+          sessionId: 'delete-session',
+        }),
+      ).rejects.toEqual(plainRejection);
+
+      expect(loggerSpy).toHaveBeenCalledWith(
+        'Error deleting session delete-session: Internal backend failure',
+      );
+      loggerSpy.mockRestore();
+    });
   });
 
   describe('appendEvent', () => {

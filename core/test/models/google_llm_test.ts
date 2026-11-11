@@ -532,6 +532,68 @@ describe('GoogleLlm', () => {
 
       await expect(generator.next()).rejects.toThrow('Aborted');
     });
+
+    it('should strip config.labels when calling the Gemini API backend', async () => {
+      const llm = new TestGemini({apiKey: 'test-key'});
+      const generateContentMock = vi.fn().mockResolvedValue({
+        candidates: [{content: {parts: [{text: 'response'}]}}],
+      });
+      llm.apiClient.models.generateContent = generateContentMock;
+
+      const llmRequest: LlmRequest = {
+        contents: [{role: 'user', parts: [{text: 'hello'}]}],
+        config: {labels: {env: 'prod'}},
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      for await (const _ of llm.generateContentAsync(llmRequest, false)) {
+        // consume response
+      }
+
+      expect(llm.apiBackend).toBe(GoogleLLMVariant.GEMINI_API);
+      expect(llmRequest.config?.labels).toBeUndefined();
+      expect(generateContentMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            labels: undefined,
+          }),
+        }),
+      );
+    });
+
+    it('should preserve config.labels when calling the Vertex AI backend', async () => {
+      const llm = new TestGemini({
+        vertexai: true,
+        project: 'test-project',
+        location: 'us-central1',
+      });
+      const generateContentMock = vi.fn().mockResolvedValue({
+        candidates: [{content: {parts: [{text: 'response'}]}}],
+      });
+      llm.apiClient.models.generateContent = generateContentMock;
+
+      const llmRequest: LlmRequest = {
+        contents: [{role: 'user', parts: [{text: 'hello'}]}],
+        config: {labels: {env: 'prod'}},
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      for await (const _ of llm.generateContentAsync(llmRequest, false)) {
+        // consume response
+      }
+
+      expect(llm.apiBackend).toBe(GoogleLLMVariant.VERTEX_AI);
+      expect(llmRequest.config?.labels).toEqual({env: 'prod'});
+      expect(generateContentMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            labels: {env: 'prod'},
+          }),
+        }),
+      );
+    });
   });
 
   describe('generateContentAsync streaming', () => {
@@ -888,6 +950,54 @@ describe('GoogleLlm', () => {
       expect(responses[3].partial).toBe(false);
       expect(responses[3].content).toBeUndefined();
       expect(responses[3].usageMetadata).toEqual(usageMetadata);
+    });
+
+    it('preserves separate thinking and text parts on the aggregated LlmResponse', async () => {
+      const gemini = createStreamingGemini([
+        {
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: [{text: 'Think1', thought: true}],
+              },
+            },
+          ],
+        },
+        {
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: [{text: 'Think2', thought: true}],
+              },
+            },
+          ],
+        },
+        {
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: [{text: 'Answer.'}],
+              },
+              finishReason: 'STOP',
+            },
+          ],
+        },
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      expect(responses).toHaveLength(4);
+      expect(responses[0].partial).toBe(true);
+      expect(responses[1].partial).toBe(true);
+      expect(responses[2].partial).toBe(true);
+      expect(responses[3].partial).toBe(false);
+      expect(responses[3].content?.parts).toEqual([
+        {text: 'Think1Think2', thought: true},
+        {text: 'Answer.'},
+      ]);
     });
   });
 

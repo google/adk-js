@@ -11,6 +11,7 @@ import {
   LLMRegistry,
   type LlmRequest,
   type LlmResponse,
+  logger,
 } from '@google/adk';
 import {
   AnthropicLlm,
@@ -18,6 +19,7 @@ import {
   Claude,
   isAnthropicLlm,
   isClaude,
+  MAX_TOKEN,
 } from '@google/adk-integrations';
 import {FinishReason, Type} from '@google/genai';
 import {
@@ -29,8 +31,6 @@ import {
   it,
   vi,
 } from 'vitest';
-
-import {MAX_TOKEN} from '../../src/models/anthropic_llm.js';
 
 const {mockMessagesCreate, mockAnthropicVertexCtor, mockImportState} =
   vi.hoisted(() => {
@@ -384,7 +384,6 @@ describe('Claude', () => {
         ],
         tool_choice: {
           type: 'auto',
-          disable_parallel_tool_use: true,
         },
         max_tokens: 8192,
       },
@@ -920,7 +919,7 @@ describe('Claude', () => {
     );
   });
 
-  it('test_claude_anthropic_client_creation', async () => {
+  it('creates an AnthropicVertex client from GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION', async () => {
     mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
     vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'env-project');
     vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'env-location');
@@ -944,12 +943,12 @@ describe('Claude', () => {
     expect(mockAnthropicCtor).not.toHaveBeenCalled();
   });
 
-  it('test_supported_models', () => {
+  it('exposes the supported Claude model regex pattern on supportedModels', () => {
     expect(Claude.supportedModels).toEqual([/claude-.*/]);
     expect(AnthropicLlm.supportedModels).toEqual([/claude-.*/]);
   });
 
-  it('test_generate_content_async', async () => {
+  it('generates a non-streaming response from Claude for a text prompt', async () => {
     mockMessagesCreate.mockResolvedValue(
       createSampleAnthropicMessage({
         content: [
@@ -982,7 +981,7 @@ describe('Claude', () => {
     );
   });
 
-  it('test_claude_vertex_error_explains_direct_anthropic_alternative', async () => {
+  it('explains the direct AnthropicLlm alternative when Vertex AI env vars are missing', async () => {
     vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
     vi.stubEnv('GOOGLE_CLOUD_LOCATION', '');
 
@@ -1111,19 +1110,19 @@ describe('AnthropicLlm', () => {
     );
   });
 
-  it('test_anthropic_llm_generate_content_async', async () => {
-    mockMessagesCreate.mockResolvedValue(
-      createSampleAnthropicMessage({
-        model: 'claude-sonnet-5-5',
-        content: [
-          {
-            type: 'text',
-            text: 'Hello, how can I help you?',
-            citations: null,
-          },
-        ],
-      }),
-    );
+  it('generates a non-streaming response via the direct Anthropic client', async () => {
+    const sampleMessage = createSampleAnthropicMessage({
+      model: 'claude-sonnet-5-5',
+      content: [
+        {
+          type: 'text',
+          text: 'Hello, how can I help you?',
+          citations: null,
+        },
+      ],
+    });
+    mockMessagesCreate.mockResolvedValue(sampleMessage);
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
 
     const anthropicLlmInstance = new AnthropicLlm({
       model: 'claude-sonnet-5-5',
@@ -1137,12 +1136,21 @@ describe('AnthropicLlm', () => {
     };
 
     const responses: LlmResponse[] = [];
-    for await (const response of anthropicLlmInstance.generateContentAsync(
-      request,
-      false,
-      abortController.signal,
-    )) {
-      responses.push(response);
+    try {
+      for await (const response of anthropicLlmInstance.generateContentAsync(
+        request,
+        false,
+        abortController.signal,
+      )) {
+        responses.push(response);
+      }
+
+      expect(debugSpy).toHaveBeenCalledWith(
+        'Claude response:',
+        JSON.stringify(sampleMessage, null, 2),
+      );
+    } finally {
+      debugSpy.mockRestore();
     }
 
     expect(responses).toHaveLength(1);
@@ -1174,7 +1182,7 @@ describe('AnthropicLlm', () => {
     );
   });
 
-  it('test_generate_content_async_collects_declarations_from_all_tools', async () => {
+  it('collects function declarations across all config.tools entries', async () => {
     mockMessagesCreate.mockResolvedValue(
       createSampleAnthropicMessage({model: 'claude-sonnet-5-5'}),
     );
@@ -1217,8 +1225,194 @@ describe('AnthropicLlm', () => {
     ).toEqual(['first_tool', 'second_tool']);
     expect(mockMessagesCreate.mock.calls[0]?.[0]?.tool_choice).toEqual({
       type: 'auto',
-      disable_parallel_tool_use: true,
     });
+  });
+
+  it('sets tool_choice to auto when config.tools has declarations even if toolsDict is empty', async () => {
+    mockMessagesCreate.mockResolvedValue(
+      createSampleAnthropicMessage({model: 'claude-sonnet-5-5'}),
+    );
+
+    const llm = new AnthropicLlm({model: 'claude-sonnet-5-5'});
+    const request: LlmRequest = {
+      contents: [{role: 'user', parts: [{text: 'Call a tool'}]}],
+      config: {
+        tools: [
+          {
+            functionDeclarations: [{name: 'declared_only_tool'}],
+          },
+        ],
+      },
+      liveConnectConfig: {},
+      toolsDict: {},
+    };
+
+    for await (const _ of llm.generateContentAsync(request, false)) {
+      // consume response
+    }
+
+    expect(mockMessagesCreate.mock.calls[0]?.[0]?.tool_choice).toEqual({
+      type: 'auto',
+    });
+  });
+
+  it('supports a multi-tool_use parallel tool call and tool_result round-trip', async () => {
+    mockMessagesCreate
+      .mockResolvedValueOnce(
+        createSampleAnthropicMessage({
+          model: 'claude-sonnet-5-5',
+          stop_reason: 'tool_use',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_parallel_1',
+              name: 'get_weather',
+              input: {city: 'Paris'},
+              caller: {type: 'direct'},
+            },
+            {
+              type: 'tool_use',
+              id: 'toolu_parallel_2',
+              name: 'get_time',
+              input: {city: 'Paris'},
+              caller: {type: 'direct'},
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        createSampleAnthropicMessage({
+          model: 'claude-sonnet-5-5',
+          stop_reason: 'end_turn',
+          content: [
+            {
+              type: 'text',
+              text: 'In Paris it is sunny and 14:00.',
+              citations: null,
+            },
+          ],
+        }),
+      );
+
+    const llm = new AnthropicLlm({model: 'claude-sonnet-5-5'});
+    const firstTurnRequest: LlmRequest = {
+      contents: [{role: 'user', parts: [{text: 'Weather and time in Paris?'}]}],
+      config: {
+        tools: [
+          {
+            functionDeclarations: [{name: 'get_weather'}, {name: 'get_time'}],
+          },
+        ],
+      },
+      liveConnectConfig: {},
+      toolsDict: {},
+    };
+
+    const firstTurnResponses: LlmResponse[] = [];
+    for await (const response of llm.generateContentAsync(firstTurnRequest)) {
+      firstTurnResponses.push(response);
+    }
+
+    expect(firstTurnResponses).toHaveLength(1);
+    expect(firstTurnResponses[0]?.content?.parts).toEqual([
+      {
+        functionCall: {
+          id: 'toolu_parallel_1',
+          name: 'get_weather',
+          args: {city: 'Paris'},
+        },
+      },
+      {
+        functionCall: {
+          id: 'toolu_parallel_2',
+          name: 'get_time',
+          args: {city: 'Paris'},
+        },
+      },
+    ]);
+
+    if (firstTurnResponses[0]?.content === undefined) {
+      throw new Error('Expected first turn response to contain content.');
+    }
+
+    const secondTurnRequest: LlmRequest = {
+      contents: [
+        ...firstTurnRequest.contents,
+        firstTurnResponses[0].content,
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'toolu_parallel_1',
+                name: 'get_weather',
+                response: {result: 'Sunny'},
+              },
+            },
+            {
+              functionResponse: {
+                id: 'toolu_parallel_2',
+                name: 'get_time',
+                response: {result: '14:00'},
+              },
+            },
+          ],
+        },
+      ],
+      config: firstTurnRequest.config,
+      liveConnectConfig: {},
+      toolsDict: {},
+    };
+
+    const secondTurnResponses: LlmResponse[] = [];
+    for await (const response of llm.generateContentAsync(secondTurnRequest)) {
+      secondTurnResponses.push(response);
+    }
+
+    expect(secondTurnResponses).toHaveLength(1);
+    expect(secondTurnResponses[0]?.content?.parts).toEqual([
+      {text: 'In Paris it is sunny and 14:00.'},
+    ]);
+    expect(mockMessagesCreate.mock.calls[1]?.[0]?.messages).toEqual([
+      {
+        role: 'user',
+        content: [{type: 'text', text: 'Weather and time in Paris?'}],
+      },
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_parallel_1',
+            name: 'get_weather',
+            input: {city: 'Paris'},
+          },
+          {
+            type: 'tool_use',
+            id: 'toolu_parallel_2',
+            name: 'get_time',
+            input: {city: 'Paris'},
+          },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'toolu_parallel_1',
+            content: 'Sunny',
+            is_error: false,
+          },
+          {
+            type: 'tool_result',
+            tool_use_id: 'toolu_parallel_2',
+            content: '14:00',
+            is_error: false,
+          },
+        ],
+      },
+    ]);
   });
 
   it('forwards constructor maxTokens and allows llmRequest.config.maxOutputTokens to override it', async () => {
@@ -1303,7 +1497,7 @@ describe('AnthropicLlm', () => {
     expect(mockMessagesCreate).toHaveBeenCalledTimes(1);
   });
 
-  it('test_anthropic_client_raises_when_sdk_resolves_no_credential', async () => {
+  it('throws a credential error when the SDK resolves no credential', async () => {
     vi.stubEnv('ANTHROPIC_API_KEY', '');
     vi.stubEnv('ANTHROPIC_AUTH_TOKEN', '');
 
@@ -1343,7 +1537,7 @@ describe('AnthropicLlm', () => {
     });
   });
 
-  it('test_anthropic_client_created_from_api_key_env_var', async () => {
+  it('creates an Anthropic client from ANTHROPIC_API_KEY', async () => {
     mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
     vi.stubEnv('ANTHROPIC_API_KEY', 'placeholder-not-a-real-key');
     vi.stubEnv('ANTHROPIC_AUTH_TOKEN', '');
@@ -1367,7 +1561,7 @@ describe('AnthropicLlm', () => {
     );
   });
 
-  it('test_anthropic_client_created_from_auth_token_env_var', async () => {
+  it('creates an Anthropic client from ANTHROPIC_AUTH_TOKEN', async () => {
     mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
     vi.stubEnv('ANTHROPIC_API_KEY', '');
     vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'placeholder-not-a-real-token');
@@ -1391,7 +1585,7 @@ describe('AnthropicLlm', () => {
     );
   });
 
-  it('test_anthropic_client_created_from_sdk_credential_provider', async () => {
+  it('creates an Anthropic client from an SDK credential provider', async () => {
     mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
     vi.stubEnv('ANTHROPIC_API_KEY', '');
     vi.stubEnv('ANTHROPIC_AUTH_TOKEN', '');
@@ -1417,7 +1611,7 @@ describe('AnthropicLlm', () => {
     expect(createdClient?.credentials).toBe(provider);
   });
 
-  it('test_anthropic_client_accepts_credential_resolved_without_env_vars', async () => {
+  it('accepts credentials resolved by the SDK without environment variables', async () => {
     mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
     vi.stubEnv('ANTHROPIC_API_KEY', '');
     vi.stubEnv('ANTHROPIC_AUTH_TOKEN', '');
@@ -1482,7 +1676,7 @@ describe('AnthropicLlm', () => {
     expect(mockAnthropicVertexCtor).not.toHaveBeenCalled();
   });
 
-  it('test_non_streaming_passes_thinking_param', async () => {
+  it('passes the thinking parameter in non-streaming requests', async () => {
     mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
 
     const llm = new AnthropicLlm({model: 'claude-sonnet-4-6'});
@@ -1514,7 +1708,7 @@ describe('AnthropicLlm', () => {
     );
   });
 
-  it('test_non_streaming_no_thinking_param_without_config', async () => {
+  it('omits the thinking parameter when thinkingConfig is unset', async () => {
     mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
 
     const llm = new AnthropicLlm({model: 'claude-sonnet-4-6'});
@@ -1535,7 +1729,7 @@ describe('AnthropicLlm', () => {
     expect(callPayload !== undefined && 'thinking' in callPayload).toBe(false);
   });
 
-  it('test_turn_of_only_dropped_parts_is_not_sent_as_empty_message', async () => {
+  it('omits a turn containing only dropped parts instead of sending an empty message', async () => {
     mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
 
     const llm = new AnthropicLlm({model: 'claude-sonnet-4-6'});
@@ -1567,7 +1761,7 @@ describe('AnthropicLlm', () => {
     );
   });
 
-  it('test_generate_content_async_retains_turn_with_lone_empty_text_part', async () => {
+  it('retains a user turn with a lone empty text part using a placeholder block', async () => {
     mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
 
     const llm = new AnthropicLlm({model: 'claude-sonnet-4-6'});
