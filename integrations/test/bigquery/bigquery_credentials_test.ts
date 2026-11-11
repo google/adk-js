@@ -94,6 +94,21 @@ describe('BigQueryCredentialsConfig', () => {
     ]);
   });
 
+  it('defaults scopes when credentials.scopes is empty', () => {
+    const credentials: GoogleOAuthCredentials = {
+      clientId: 'test_client_id',
+      clientSecret: 'test_client_secret',
+      scopes: [],
+    };
+
+    const config = new BigQueryCredentialsConfig({credentials});
+
+    expect(config.credentials).toBe(credentials);
+    expect(config.clientId).toBe('test_client_id');
+    expect(config.clientSecret).toBe('test_client_secret');
+    expect(config.scopes).toEqual(BIGQUERY_SCOPES);
+  });
+
   // reference: test_valid_credentials_object_oauth2_credentials
   it('accepts BigQueryOAuthCredentials as credentials', () => {
     const oauth2Creds = new BigQueryOAuthCredentials({
