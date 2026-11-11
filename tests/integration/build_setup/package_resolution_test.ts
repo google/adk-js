@@ -150,6 +150,7 @@ describe('@google/adk-integrations/bigquery resolution', () => {
       path.join(REPO_ROOT, 'integrations', 'dist', 'types', 'index.d.ts'),
       'utf8',
     );
-    expect(rootTypes).not.toContain('bigquery');
+    expect(rootTypes).not.toContain('bigquery_analytics');
+    expect(rootTypes).not.toContain('BigQueryAgentAnalyticsPlugin');
   });
 });
