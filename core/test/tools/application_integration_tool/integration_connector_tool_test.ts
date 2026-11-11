@@ -45,25 +45,25 @@ function createRestTool(): RestApiTool {
           schema: {
             type: 'object',
             properties: {
-              user_id: {type: 'string', description: 'User ID'},
-              connection_name: {type: 'string'},
+              userId: {type: 'string', description: 'User ID'},
+              connectionName: {type: 'string'},
               host: {type: 'string'},
-              service_name: {type: 'string'},
+              serviceName: {type: 'string'},
               entity: {type: 'string'},
               operation: {type: 'string'},
               action: {type: 'string'},
-              dynamic_auth_config: {type: 'object'},
-              page_size: {type: 'integer'},
-              page_token: {type: 'string'},
-              filter: {type: 'string'},
+              dynamicAuthConfig: {type: 'object'},
+              pageSize: {type: 'integer'},
+              pageToken: {type: 'string'},
+              filterClause: {type: 'string'},
             },
             required: [
-              'user_id',
-              'page_size',
-              'page_token',
-              'filter',
-              'connection_name',
-              'dynamic_auth_config',
+              'userId',
+              'pageSize',
+              'pageToken',
+              'filterClause',
+              'connectionName',
+              'dynamicAuthConfig',
             ],
           },
         },
@@ -76,6 +76,9 @@ function createRestTool(): RestApiTool {
     'Mock REST tool description.',
     {baseUrl: 'https://example.com', path: '/v1/test', method: 'post'},
     operation,
+    undefined,
+    undefined,
+    {preservePropertyNames: true},
   );
 }
 
@@ -114,9 +117,7 @@ describe('IntegrationConnectorTool', () => {
 
   it('exposes frozen EXCLUDE_FIELDS and OPTIONAL_FIELDS on IntegrationConnectorTool', () => {
     expect(IntegrationConnectorTool.EXCLUDE_FIELDS).toEqual([
-      'connection_name',
       'connectionName',
-      'service_name',
       'serviceName',
       'host',
       'entity',
@@ -124,12 +125,8 @@ describe('IntegrationConnectorTool', () => {
       'action',
     ]);
     expect(IntegrationConnectorTool.OPTIONAL_FIELDS).toEqual([
-      'page_size',
       'pageSize',
-      'page_token',
       'pageToken',
-      'filter',
-      'filter_clause',
       'filterClause',
     ]);
     expect(Object.isFrozen(IntegrationConnectorTool.EXCLUDE_FIELDS)).toBe(true);
@@ -138,7 +135,7 @@ describe('IntegrationConnectorTool', () => {
     );
   });
 
-  it('test_get_declaration', () => {
+  it('hides routing and dynamic auth fields from the declaration', () => {
     const restApiTool = createRestTool();
     const integrationTool = createIntegrationTool({restApiTool});
 
@@ -150,31 +147,23 @@ describe('IntegrationConnectorTool', () => {
     const params = declaration.parameters;
     expect(params?.type).toBe(Type.OBJECT);
     expect(params?.properties).toBeDefined();
-    expect('user_id' in (params?.properties ?? {})).toBe(true);
-    expect('connection_name' in (params?.properties ?? {})).toBe(false);
-    expect('host' in (params?.properties ?? {})).toBe(false);
-    expect('service_name' in (params?.properties ?? {})).toBe(false);
-    expect('entity' in (params?.properties ?? {})).toBe(false);
-    expect('operation' in (params?.properties ?? {})).toBe(false);
-    expect('action' in (params?.properties ?? {})).toBe(false);
-    expect('dynamic_auth_config' in (params?.properties ?? {})).toBe(false);
-    expect('page_size' in (params?.properties ?? {})).toBe(true);
-    expect('page_token' in (params?.properties ?? {})).toBe(true);
-    expect('filter' in (params?.properties ?? {})).toBe(true);
-
-    expect(params?.required).toEqual(['user_id']);
+    expect(Object.keys(params?.properties ?? {})).toEqual([
+      'userId',
+      'pageSize',
+      'pageToken',
+      'filterClause',
+    ]);
+    expect(params?.required).toEqual(['userId']);
 
     // Verify the underlying RestApiTool declaration is not mutated.
     const underlyingParams = restApiTool._getDeclaration().parameters;
-    expect('connection_name' in (underlyingParams?.properties ?? {})).toBe(
+    expect('connectionName' in (underlyingParams?.properties ?? {})).toBe(true);
+    expect('dynamicAuthConfig' in (underlyingParams?.properties ?? {})).toBe(
       true,
     );
-    expect('dynamic_auth_config' in (underlyingParams?.properties ?? {})).toBe(
-      true,
-    );
-    expect(underlyingParams?.required).toContain('connection_name');
-    expect(underlyingParams?.required).toContain('dynamic_auth_config');
-    expect(underlyingParams?.required).toContain('page_size');
+    expect(underlyingParams?.required).toContain('connectionName');
+    expect(underlyingParams?.required).toContain('dynamicAuthConfig');
+    expect(underlyingParams?.required).toContain('pageSize');
   });
 
   it('excludes camelCase routing fields and optional fields when preservePropertyNames is enabled', () => {
@@ -198,7 +187,6 @@ describe('IntegrationConnectorTool', () => {
                 pageSize: {type: 'integer'},
                 pageToken: {type: 'string'},
                 filterClause: {type: 'string'},
-                filter_clause: {type: 'string'},
               },
               required: [
                 'userId',
@@ -208,7 +196,6 @@ describe('IntegrationConnectorTool', () => {
                 'pageSize',
                 'pageToken',
                 'filterClause',
-                'filter_clause',
               ],
             },
           },
@@ -234,18 +221,17 @@ describe('IntegrationConnectorTool', () => {
       'pageSize',
       'pageToken',
       'filterClause',
-      'filter_clause',
     ]);
     expect(params?.required).toEqual(['userId']);
   });
 
-  it('test_run_async', async () => {
+  it('injects the connection details and delegates to the wrapped tool', async () => {
     const restApiTool = createRestTool();
     const runAsyncSpy = vi
       .spyOn(restApiTool, 'runAsync')
       .mockResolvedValue({status: 'success', data: 'mock_data'});
     const integrationTool = createIntegrationTool({restApiTool});
-    const inputArgs = {user_id: 'user123', page_size: 10};
+    const inputArgs = {userId: 'user123', pageSize: 10};
     const toolContext = createToolContext();
 
     const result = await integrationTool.runAsync({
@@ -255,12 +241,10 @@ describe('IntegrationConnectorTool', () => {
 
     expect(runAsyncSpy).toHaveBeenCalledExactlyOnceWith({
       args: {
-        user_id: 'user123',
-        page_size: 10,
-        connection_name: 'test-conn',
+        userId: 'user123',
+        pageSize: 10,
         connectionName: 'test-conn',
         host: 'test.example.com',
-        service_name: 'test-service',
         serviceName: 'test-service',
         entity: 'TestEntity',
         operation: 'LIST',
@@ -269,10 +253,10 @@ describe('IntegrationConnectorTool', () => {
       toolContext,
     });
     expect(result).toEqual({status: 'success', data: 'mock_data'});
-    expect(inputArgs).toEqual({user_id: 'user123', page_size: 10});
+    expect(inputArgs).toEqual({userId: 'user123', pageSize: 10});
   });
 
-  it('injects dynamic_auth_config when authScheme and authCredential provide a token', async () => {
+  it('injects dynamicAuthConfig when the credential has a token', async () => {
     const restApiTool = createRestTool();
     const runAsyncSpy = vi
       .spyOn(restApiTool, 'runAsync')
@@ -292,25 +276,20 @@ describe('IntegrationConnectorTool', () => {
     const toolContext = createToolContext();
 
     const result = await integrationTool.runAsync({
-      args: {user_id: 'user123', page_size: 10},
+      args: {userId: 'user123', pageSize: 10},
       toolContext,
     });
 
     expect(runAsyncSpy).toHaveBeenCalledExactlyOnceWith({
       args: {
-        user_id: 'user123',
-        page_size: 10,
-        connection_name: 'test-conn',
+        userId: 'user123',
+        pageSize: 10,
         connectionName: 'test-conn',
         host: 'test.example.com',
-        service_name: 'test-service',
         serviceName: 'test-service',
         entity: 'TestEntity',
         operation: 'LIST',
         action: 'TestAction',
-        dynamic_auth_config: {
-          'oauth2_auth_code_flow.access_token': 'test_token',
-        },
         dynamicAuthConfig: {
           'oauth2_auth_code_flow.access_token': 'test_token',
         },
@@ -320,60 +299,48 @@ describe('IntegrationConnectorTool', () => {
     expect(result).toEqual({status: 'success', data: 'mock_data'});
   });
 
-  it('injects an empty object in dynamic_auth_config when the credential has no token', async () => {
-    const restApiTool = createRestTool();
-    const runAsyncSpy = vi
-      .spyOn(restApiTool, 'runAsync')
-      .mockResolvedValue({status: 'success', data: 'mock_data'});
-    const credentialWithoutToken: AuthCredential = {
-      authType: AuthCredentialTypes.HTTP,
-      http: {
-        scheme: 'bearer',
-        credentials: {},
-      },
-    };
-    vi.spyOn(
-      ToolAuthHandler.prototype,
-      'prepareAuthCredentials',
-    ).mockResolvedValue({
-      state: 'done',
-      authCredential: credentialWithoutToken,
-    });
-    const integrationTool = createIntegrationTool({
-      restApiTool,
-      authScheme: TEST_AUTH_SCHEME,
-      authCredential: credentialWithoutToken,
-    });
-    const toolContext = createToolContext();
-
-    const result = await integrationTool.runAsync({
-      args: {user_id: 'user123', page_size: 10},
-      toolContext,
-    });
-
-    expect(runAsyncSpy).toHaveBeenCalledExactlyOnceWith({
-      args: {
-        user_id: 'user123',
-        page_size: 10,
-        connection_name: 'test-conn',
-        connectionName: 'test-conn',
-        host: 'test.example.com',
-        service_name: 'test-service',
-        serviceName: 'test-service',
-        entity: 'TestEntity',
-        operation: 'LIST',
-        action: 'TestAction',
-        dynamic_auth_config: {
-          'oauth2_auth_code_flow.access_token': {},
+  it.each([
+    ['has no token', {}],
+    ['has an empty token', {token: ''}],
+  ])(
+    'returns an error without calling restApiTool when the credential %s',
+    async (_, credentials) => {
+      const restApiTool = createRestTool();
+      const runAsyncSpy = vi
+        .spyOn(restApiTool, 'runAsync')
+        .mockResolvedValue({status: 'success', data: 'mock_data'});
+      const credentialWithoutToken: AuthCredential = {
+        authType: AuthCredentialTypes.HTTP,
+        http: {
+          scheme: 'bearer',
+          credentials,
         },
-        dynamicAuthConfig: {
-          'oauth2_auth_code_flow.access_token': {},
-        },
-      },
-      toolContext,
-    });
-    expect(result).toEqual({status: 'success', data: 'mock_data'});
-  });
+      };
+      vi.spyOn(
+        ToolAuthHandler.prototype,
+        'prepareAuthCredentials',
+      ).mockResolvedValue({
+        state: 'done',
+        authCredential: credentialWithoutToken,
+      });
+      const integrationTool = createIntegrationTool({
+        restApiTool,
+        authScheme: TEST_AUTH_SCHEME,
+        authCredential: credentialWithoutToken,
+      });
+      const toolContext = createToolContext();
+
+      const result = await integrationTool.runAsync({
+        args: {userId: 'user123', pageSize: 10},
+        toolContext,
+      });
+
+      expect(runAsyncSpy).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        error: 'The resolved end-user credential has no access token.',
+      });
+    },
+  );
 
   it('returns a pending authorization response without calling restApiTool when auth state is pending', async () => {
     const restApiTool = createRestTool();
@@ -392,7 +359,7 @@ describe('IntegrationConnectorTool', () => {
     const toolContext = createToolContext();
 
     const result = await integrationTool.runAsync({
-      args: {user_id: 'user123', page_size: 10},
+      args: {userId: 'user123', pageSize: 10},
       toolContext,
     });
 
@@ -417,17 +384,15 @@ describe('IntegrationConnectorTool', () => {
     const toolContext = createToolContext();
 
     await integrationTool.runAsync({
-      args: {user_id: 'user123'},
+      args: {userId: 'user123'},
       toolContext,
     });
 
     expect(runAsyncSpy).toHaveBeenCalledExactlyOnceWith({
       args: {
-        user_id: 'user123',
-        connection_name: 'test-conn',
+        userId: 'user123',
         connectionName: 'test-conn',
         host: 'test.example.com',
-        service_name: 'test-service',
         serviceName: 'test-service',
       },
       toolContext,

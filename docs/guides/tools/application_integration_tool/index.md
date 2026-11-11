@@ -141,13 +141,14 @@ characters, so `tracker_list_Issues` reaches the model as
 `tracker_list_issues`. With the default empty `toolNamePrefix`, the name is
 `list_issues`.
 
-Each connection operation is wrapped in an `IntegrationConnectorTool`. Its
+Each connection operation is wrapped in an `IntegrationConnectorTool`. The
+tool parameters keep the camelCase names of the request schema. Its
 `_getDeclaration` removes the internal routing and dynamic authentication fields
-(`connection_name`, `connectionName`, `service_name`, `serviceName`, `host`,
-`entity`, `operation`, `action`, `dynamic_auth_config` and `dynamicAuthConfig`)
-from `parameters.properties` and removes those fields along with `page_size`,
-`pageSize`, `page_token`, `pageToken`, `filter`, `filter_clause` and
-`filterClause` from `parameters.required`. When the agent calls the tool,
+(`connectionName`, `serviceName`, `host`, `entity`, `operation`, `action` and
+`dynamicAuthConfig`) from `parameters.properties`. It also removes those fields,
+together with the optional `pageSize`, `pageToken` and `filterClause`, from
+`parameters.required`. The model still sees the other parameters, such as
+`entityId` and `connectorInputPayload`. When the agent calls the tool,
 `runAsync` prepares any configured dynamic end-user credentials and injects the
 connection name, service name, host, and any configured entity, action,
 operation and dynamic auth configuration before delegating the request to the
@@ -176,29 +177,30 @@ In connection mode, when `authOverrideEnabled` is enabled on the connection, you
 can also pass `authScheme` and `authCredential` to supply dynamic end-user
 credentials (including for `ExecuteCustomQuery`). Each `IntegrationConnectorTool`
 prepares those credentials through `ToolAuthHandler` before running and sends
-the resolved access token in `dynamicAuthConfig`. When `authOverrideEnabled` is
-false on the connection, the toolset logs a warning and ignores `authScheme` and
-`authCredential`.
+the resolved access token in `dynamicAuthConfig`. When the resolved credential
+has no token, the tool returns an error result without calling the endpoint.
+When `authOverrideEnabled` is false on the connection, the toolset logs a
+warning and ignores `authScheme` and `authCredential`.
 
 ## Configuration options
 
 The options are the fields of `ApplicationIntegrationToolsetOptions`.
 
-| Option               | Type                        | Default  | Description                                                                     |
-| :------------------- | :-------------------------- | :------- | :------------------------------------------------------------------------------ |
-| `project`            | `string`                    | Required | The Google Cloud project ID.                                                    |
-| `location`           | `string`                    | Required | The Google Cloud location, such as `us-central1`.                               |
-| `integration`        | `string`                    | None     | The integration name, for integration mode.                                     |
-| `triggers`           | `string[]`                  | None     | The API trigger IDs, for integration mode.                                      |
-| `connection`         | `string`                    | None     | The connection name, for connection mode.                                       |
-| `entityOperations`   | `Record<string, string[]>`  | None     | Operations to expose, keyed by entity name.                                     |
-| `actions`            | `string[]`                  | None     | Actions to expose.                                                              |
-| `toolNamePrefix`     | `string`                    | `''`     | Prefix of every tool name, in connection mode.                                  |
-| `toolInstructions`   | `string`                    | `''`     | Text added to every tool description, in connection mode.                       |
-| `serviceAccountJson` | `string`                    | None     | A service-account key, as JSON. Without it, ADC is used.                        |
-| `authScheme`         | `AuthScheme`                | None     | Authentication scheme for dynamic end-user credentials, in connection mode.     |
-| `authCredential`     | `AuthCredential`            | None     | Authentication credential for dynamic end-user credentials, in connection mode. |
-| `toolFilter`         | `ToolPredicate \| string[]` | `[]`     | Filter selecting which generated tools `getTools` exposes.                      |
+| Option               | Type                        | Default     | Description                                                                     |
+| :------------------- | :-------------------------- | :---------- | :------------------------------------------------------------------------------ |
+| `project`            | `string`                    | Required    | The Google Cloud project ID.                                                    |
+| `location`           | `string`                    | Required    | The Google Cloud location, such as `us-central1`.                               |
+| `integration`        | `string`                    | `undefined` | The integration name, for integration mode.                                     |
+| `triggers`           | `string[]`                  | `undefined` | The API trigger IDs, for integration mode.                                      |
+| `connection`         | `string`                    | `undefined` | The connection name, for connection mode.                                       |
+| `entityOperations`   | `Record<string, string[]>`  | `undefined` | Operations to expose, keyed by entity name.                                     |
+| `actions`            | `string[]`                  | `undefined` | Actions to expose.                                                              |
+| `toolNamePrefix`     | `string`                    | `''`        | Prefix of every tool name, in connection mode.                                  |
+| `toolInstructions`   | `string`                    | `''`        | Text added to every tool description, in connection mode.                       |
+| `serviceAccountJson` | `string`                    | `undefined` | A service-account key, as JSON. Without it, ADC is used.                        |
+| `authScheme`         | `AuthScheme`                | `undefined` | Authentication scheme for dynamic end-user credentials, in connection mode.     |
+| `authCredential`     | `AuthCredential`            | `undefined` | Authentication credential for dynamic end-user credentials, in connection mode. |
+| `toolFilter`         | `ToolPredicate \| string[]` | `[]`        | Filter selecting which generated tools `getTools` exposes.                      |
 
 `project` and `location` name where the resources live. In connection mode,
 the `ExecuteConnection` integration must be in the same project and location
@@ -273,12 +275,14 @@ The paths of a connection spec differ only by their URL fragment, such as
 removed, as above. A path that keeps its fragment produces a tool that sends
 the fragment inside the `triggerId` query parameter, and the call fails.
 
-A spec built this way does not carry the connection details in its
-descriptions, and its tools carry no credential. Read the details with
-`new ConnectionsClient({project, location, connection}).getConnectionDetails()`
-and pass them in the second argument of `getOpenApiSpecForConnection`. Pass
-`authScheme` and `authCredential` to `OpenAPIToolset` the way the
-[OpenAPI tool guide](../openapi_tool/index.md) describes.
+`getOpenApiSpecForConnection(toolName, toolInstructions)` reads the entity and
+action schemas through `ConnectionsClient`, prefixes each `operationId` with
+`toolName`, and appends `toolInstructions` to each operation description. Tools
+built directly with `OpenAPIToolset` carry no credential and no connection
+routing fields. Pass `authScheme` and `authCredential` to `OpenAPIToolset` the
+way the [OpenAPI tool guide](../openapi_tool/index.md) describes, and wrap each
+`RestApiTool` in `IntegrationConnectorTool` with the details from
+`new ConnectionsClient({project, location, connection}).getConnectionDetails()`.
 
 ## Limitations
 
@@ -287,11 +291,10 @@ and pass them in the second argument of `getOpenApiSpecForConnection`. Pass
   credential or an unreachable API surfaces when the agent first calls
   `getTools`, which is inside the first request it handles. Call
   `await toolset.getTools()` at startup to fail earlier.
-- **Schema reads poll without a limit.** Integration Connectors answers an
-  entity or action schema request with a long-running operation. The toolset
-  checks it once a second until it reports that it is done, with no maximum,
-  so an operation that never finishes stops the first `getTools` call from
-  returning.
+- **Schema reads poll up to 60 times.** Integration Connectors answers an
+  entity or action schema request with a long-running operation. The client
+  checks it once a second and throws an error if the operation fails or does
+  not finish within 60 polls.
 - **One credential for all tools.** Every generated tool carries the same
   credential. Use one toolset per identity when operations need different
   ones.
