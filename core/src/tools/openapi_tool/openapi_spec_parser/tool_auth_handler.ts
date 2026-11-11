@@ -11,6 +11,10 @@ import {
   AuthCredentialTypes,
   isAuthCredential,
 } from '../../../auth/auth_credential.js';
+import {
+  credentialWithoutClientSecret,
+  withConfiguredClient,
+} from '../../../auth/auth_handler.js';
 import {AuthScheme} from '../../../auth/auth_schemes.js';
 import {AuthConfig} from '../../../auth/auth_tool.js';
 import {
@@ -214,7 +218,14 @@ export class ToolAuthHandler {
     // need no user interaction, so requesting one would strand the tool in
     // `pending` forever.
     const authResponseCredential = this.context.getAuthResponse(authConfig);
-    const credential = authResponseCredential ?? this.authCredential;
+    // An auth response carries the outcome of the user's browser round trip,
+    // not the agent's own client identity: it travelled through the client, so
+    // the request it answers was redacted and the token endpoint would be
+    // given no secret to authenticate with. The configured credential supplies
+    // that half, and it is the only authority for it.
+    const credential = authResponseCredential
+      ? withConfiguredClient(authResponseCredential, this.authCredential)
+      : this.authCredential;
 
     const exchanged = credential
       ? await this.tryExchange(credential)
@@ -239,7 +250,16 @@ export class ToolAuthHandler {
         this.authScheme,
         this.authCredential,
       );
-      this.credentialStore.storeCredential(key, exchanged.credential);
+      // This is written to session state, which the client can read, so the
+      // cached copy drops the OAuth2 client secret that was merged in to obtain
+      // the access token. It keeps every other secret: for apiKey, http and
+      // serviceAccount the secret is the credential itself, so stripping it
+      // would cache a credential that the next invocation reads back and then
+      // sends an unauthenticated request with.
+      this.credentialStore.storeCredential(
+        key,
+        credentialWithoutClientSecret(exchanged.credential)!,
+      );
     }
 
     return {
