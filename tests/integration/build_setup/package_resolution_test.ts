@@ -129,3 +129,28 @@ describe.each(PACKAGES)('$specifier resolution', ({specifier, dir}) => {
     expect(existsSync(resolved)).toBe(true);
   });
 });
+
+describe('@google/adk-integrations/bigquery resolution', () => {
+  const specifier = '@google/adk-integrations/bigquery';
+
+  it('resolves Node ESM to the esm build', () => {
+    expect(resolveWith('import', specifier)).toBe(
+      distPath('integrations', './dist/esm/bigquery_analytics/index.js'),
+    );
+  });
+
+  it('resolves Node CJS to the cjs build', () => {
+    expect(resolveWith('require', specifier)).toBe(
+      distPath('integrations', './dist/cjs/bigquery_analytics/index.js'),
+    );
+  });
+
+  it('keeps the plugin out of the package root types', () => {
+    const rootTypes = readFileSync(
+      path.join(REPO_ROOT, 'integrations', 'dist', 'types', 'index.d.ts'),
+      'utf8',
+    );
+    expect(rootTypes).not.toContain('bigquery_analytics');
+    expect(rootTypes).not.toContain('BigQueryAgentAnalyticsPlugin');
+  });
+});

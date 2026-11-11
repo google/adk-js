@@ -24,6 +24,10 @@ import type {
   InternalGetBigQueryClientOptions,
 } from '../../src/bigquery/client.js';
 
+vi.mock('@google-cloud/bigquery', () => {
+  throw new Error("Cannot find package '@google-cloud/bigquery'");
+});
+
 describe('getBigQueryClient and BigQueryClient', () => {
   afterEach(() => {
     vi.unstubAllEnvs();

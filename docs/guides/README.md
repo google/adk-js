@@ -64,6 +64,7 @@ Third-party model and ecosystem integrations packaged in `@google/adk-integratio
 - [Claude on Vertex AI](integrations/models/anthropic_llm/index.md) - `Claude`, `LLMRegistry` registration for `claude-*` models on Vertex AI, and Anthropic message and tool conversion helpers.
 - [CrewAI tool](integrations/crewai/index.md) - `CrewaiTool`, `isCrewaiTool`, and adapting CrewAI tools into ADK tools.
 - [LangChain tool](integrations/langchain/index.md) - `LangchainTool`, `isLangchainTool`, and adapting LangChain structured and simple tools into ADK tools.
+- [BigQuery agent analytics](integrations/plugins/bigquery_agent_analytics_plugin/index.md) - `BigQueryAgentAnalyticsPlugin` from `@google/adk-integrations/bigquery`, logging agent events to BigQuery through the Storage Write API.
 
 ### Memory
 
