@@ -486,5 +486,67 @@ describe('CodeExecutionResponseProcessor', () => {
       });
       expect(llmResponse.content).toBeUndefined();
     });
+
+    it('runs code that writes no files without an artifact service', async () => {
+      const executor = new RecordingCodeExecutor({
+        stdout: '2',
+        stderr: '',
+        outputFiles: [],
+      });
+      const agent = new LlmAgent({
+        name: 'agent-with-executor',
+        model: 'gemini-flash-latest',
+        codeExecutor: executor,
+      });
+      const ctx = createMockInvocationContext(agent);
+      const llmResponse = {
+        partial: false,
+        content: {
+          role: 'model',
+          parts: [{text: '```python\nprint(1 + 1)\n```'}],
+        },
+      };
+
+      const events = await collectEvents(
+        responseProcessor.runAsync(ctx, llmResponse),
+      );
+
+      expect(events).toHaveLength(2);
+      expect(events[1].content?.parts?.[0].codeExecutionResult?.output).toBe(
+        'Code execution result:\n2\n',
+      );
+    });
+
+    it('still requires an artifact service when the code writes files', async () => {
+      const executor = new RecordingCodeExecutor({
+        stdout: '',
+        stderr: '',
+        outputFiles: [
+          {
+            name: 'result.txt',
+            content: '2',
+            contentEncoding: FileContentEncoding.UTF8,
+            mimeType: 'text/plain',
+          },
+        ],
+      });
+      const agent = new LlmAgent({
+        name: 'agent-with-executor',
+        model: 'gemini-flash-latest',
+        codeExecutor: executor,
+      });
+      const ctx = createMockInvocationContext(agent);
+      const llmResponse = {
+        partial: false,
+        content: {
+          role: 'model',
+          parts: [{text: '```python\nprint(1 + 1)\n```'}],
+        },
+      };
+
+      await expect(
+        collectEvents(responseProcessor.runAsync(ctx, llmResponse)),
+      ).rejects.toThrow('Artifact service is not initialized.');
+    });
   });
 });
