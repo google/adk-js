@@ -4,7 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {App, isApp, isRunnableRoot, RunnableRoot} from '@google/adk';
+import {
+  App,
+  isApp,
+  isRunnableRoot,
+  loadDotenvForAgent,
+  RunnableRoot,
+} from '@google/adk';
 import esbuild from 'esbuild';
 import {shimPlugin} from 'esbuild-shim-plugin';
 import * as fs from 'node:fs';
@@ -771,23 +777,25 @@ export class AgentLoader {
       ? [await getFileMetadata(this.agentsDirPath)]
       : await getDirFiles(this.agentsDirPath);
 
-    await Promise.all(
-      files.map(async (fileOrDir: FileMetadata) => {
-        if (fileOrDir.isFile && isJsFile(fileOrDir.ext)) {
-          return this.loadAgentFromFile(fileOrDir, generation);
-        }
+    for (const fileOrDir of files) {
+      if (this.invalidationGeneration !== generation) {
+        return;
+      }
+      if (fileOrDir.isFile && isJsFile(fileOrDir.ext)) {
+        await this.loadAgentFromFile(fileOrDir, generation);
+        continue;
+      }
 
-        if (fileOrDir.isDirectory) {
-          if (
-            fileOrDir.name === 'node_modules' ||
-            fileOrDir.name.startsWith('.')
-          ) {
-            return;
-          }
-          return this.loadAgentFromDirectory(fileOrDir, generation);
+      if (fileOrDir.isDirectory) {
+        if (
+          fileOrDir.name === 'node_modules' ||
+          fileOrDir.name.startsWith('.')
+        ) {
+          continue;
         }
-      }),
-    );
+        await this.loadAgentFromDirectory(fileOrDir, generation);
+      }
+    }
 
     if (this.invalidationGeneration !== generation) {
       return;
@@ -807,6 +815,7 @@ export class AgentLoader {
     generation: number,
   ): Promise<void> {
     try {
+      loadDotenvForAgent(file.name, path.dirname(file.path));
       const agentFile = new AgentFile(file.path, this.options);
       await agentFile.load();
       if (this.invalidationGeneration !== generation) {
@@ -828,13 +837,15 @@ export class AgentLoader {
     const subFiles = await getDirFiles(dir.path);
     const possibleEntryFile =
       subFiles.find((f) => f.isFile && f.name === 'app' && isJsFile(f.ext)) ??
-      subFiles.find((f) => f.isFile && f.name === 'agent' && isJsFile(f.ext));
+      subFiles.find((f) => f.isFile && f.name === 'agent' && isJsFile(f.ext)) ??
+      subFiles.find((f) => f.isFile && f.name === 'index' && isJsFile(f.ext));
 
     if (!possibleEntryFile) {
       return;
     }
 
     try {
+      loadDotenvForAgent(dir.name, path.dirname(dir.path));
       const agentFile = new AgentFile(possibleEntryFile.path, this.options);
       await agentFile.load();
       if (this.invalidationGeneration !== generation) {
