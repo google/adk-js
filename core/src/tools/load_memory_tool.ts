@@ -29,17 +29,19 @@ export interface LoadMemoryToolOptions {
 /**
  * Response returned by {@link LoadMemoryTool}.
  *
- * When {@link LoadMemoryToolOptions.textOnlyContent} is enabled, entries contain
- * string content instead of a `Content` object.
+ * By default, `memories` contains complete {@link MemoryEntry} objects.
+ * When {@link LoadMemoryToolOptions.textOnlyContent} is `true`, each entry
+ * contains a flattened `string` in `content` alongside `author` and
+ * `timestamp`.
  */
-export interface LoadMemoryResponse {
-  memories: MemoryEntry[];
+export interface LoadMemoryResponse<T = MemoryEntry> {
+  memories: T[];
 }
 
 /**
- * A tool that loads the memory for the current user.
+ * A tool that loads memory entries for the current user.
  *
- * NOTE: Currently this tool only uses text part from the memory.
+ * By default, returns complete {@link MemoryEntry} objects.
  */
 export class LoadMemoryTool extends BaseTool {
   private readonly textOnlyContent: boolean;
@@ -47,8 +49,7 @@ export class LoadMemoryTool extends BaseTool {
   constructor(options: LoadMemoryToolOptions = {}) {
     super({
       name: 'load_memory',
-      description:
-        'Loads the memory for the current user.\n\nNOTE: Currently this tool only uses text part from the memory.',
+      description: 'Loads the memory for the current user.',
     });
     this.textOnlyContent = options.textOnlyContent ?? false;
   }
@@ -70,10 +71,16 @@ export class LoadMemoryTool extends BaseTool {
     };
   }
 
-  override async runAsync({
-    args,
-    toolContext,
-  }: RunAsyncToolRequest): Promise<unknown> {
+  override async runAsync({args, toolContext}: RunAsyncToolRequest): Promise<
+    LoadMemoryResponse<
+      | MemoryEntry
+      | {
+          content: string;
+          author?: string;
+          timestamp?: string;
+        }
+    >
+  > {
     const query = args['query'] as string;
     if (!toolContext.invocationContext.memoryService) {
       throw new Error('Memory service is not initialized.');
