@@ -7,6 +7,7 @@ import {spawnSync} from 'node:child_process';
 import {existsSync, readFileSync, realpathSync} from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import ts from 'typescript';
 import {beforeAll, describe, expect, it} from 'vitest';
 
 const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -144,50 +145,163 @@ function rootConditions(manifest: PackageManifest): Record<string, unknown> {
   return conditions;
 }
 
-describe('@google/adk-integrations export conditions', () => {
-  const manifest = readManifest('integrations');
-  const browserTypesPath = distPath(
-    'integrations',
-    './dist/types/index_web.d.ts',
+/**
+ * Resolves the declaration file for `specifier` with TypeScript's own module
+ * resolver, which reads the real `node_modules` links and `exports` maps.
+ *
+ * The options carry only what the caller passes: the root tsconfig `paths`
+ * map both packages to `src` and would skip the `exports` map entirely.
+ */
+function resolveTypes(specifier: string, options: ts.CompilerOptions): string {
+  const {resolvedModule} = ts.resolveModuleName(
+    specifier,
+    path.join(REPO_ROOT, 'index.ts'),
+    options,
+    ts.sys,
   );
+
+  expect(
+    resolvedModule,
+    `TypeScript could not resolve "${specifier}" with ${JSON.stringify(options)}`,
+  ).toBeDefined();
+  if (!resolvedModule) {
+    throw new Error(`TypeScript could not resolve "${specifier}"`);
+  }
+
+  return normalize(resolvedModule.resolvedFileName);
+}
+
+/** The TypeScript resolver configurations a consumer can choose. */
+interface TypesResolutionCase {
+  name: string;
+  options: ts.CompilerOptions;
+  expected: string;
+}
+
+const TYPES_RESOLUTION_CASES: TypesResolutionCase[] = [
+  {
+    name: 'bundler with the browser condition',
+    options: {
+      moduleResolution: ts.ModuleResolutionKind.Bundler,
+      customConditions: ['browser'],
+    },
+    expected: './dist/types/index_web.d.ts',
+  },
+  {
+    name: 'bundler without custom conditions',
+    options: {moduleResolution: ts.ModuleResolutionKind.Bundler},
+    expected: './dist/types/index.d.ts',
+  },
+  {
+    name: 'nodenext with the browser condition',
+    options: {
+      moduleResolution: ts.ModuleResolutionKind.NodeNext,
+      customConditions: ['browser'],
+    },
+    expected: './dist/types/index_web.d.ts',
+  },
+  {
+    name: 'nodenext without custom conditions',
+    options: {moduleResolution: ts.ModuleResolutionKind.NodeNext},
+    expected: './dist/types/index.d.ts',
+  },
+];
+
+describe.each(PACKAGES)('$specifier export conditions', ({specifier, dir}) => {
+  const manifest = readManifest(dir);
+  const browserTypesPath = distPath(dir, './dist/types/index_web.d.ts');
 
   beforeAll(() => {
     expect(
       existsSync(browserTypesPath),
-      'integrations is not built; run "npm run build" before this suite',
+      `${dir} is not built; run "npm run build" before this suite`,
     ).toBe(true);
   });
 
-  it('orders the browser condition before root types in exports["."]', () => {
+  it('orders the browser condition first in exports["."]', () => {
     // Resolvers take the first matching condition in declaration order, so a
     // root `types` listed first hides the browser declarations from TypeScript.
     const keys = Object.keys(rootConditions(manifest));
+    const browserIndex = keys.indexOf('browser');
 
-    expect(keys.indexOf('browser')).not.toBe(-1);
-    expect(keys.indexOf('browser')).toBeLessThan(keys.indexOf('types'));
+    expect(browserIndex).not.toBe(-1);
+    for (const condition of ['types', 'import', 'require', 'default']) {
+      expect(keys.indexOf(condition), condition).not.toBe(-1);
+      expect(browserIndex, condition).toBeLessThan(keys.indexOf(condition));
+    }
   });
 
   it('declares browser types and default entry under exports["."].browser', () => {
-    expect(rootConditions(manifest)['browser']).toEqual({
+    const browserCondition = rootConditions(manifest)['browser'];
+
+    expect(isRecord(browserCondition)).toBe(true);
+    if (!isRecord(browserCondition)) {
+      throw new Error('exports["."].browser is not a conditions object');
+    }
+    // `types` must precede `default`, or TypeScript matches `default` first.
+    expect(Object.keys(browserCondition)).toEqual(['types', 'default']);
+    expect(browserCondition).toEqual({
       types: './dist/types/index_web.d.ts',
       default: './dist/web/index_web.js',
     });
     expect(existsSync(browserTypesPath)).toBe(true);
-    expect(
-      existsSync(distPath('integrations', './dist/web/index_web.js')),
-    ).toBe(true);
+    expect(existsSync(distPath(dir, './dist/web/index_web.js'))).toBe(true);
   });
 
-  it('keeps Node-only modules out of browser types', () => {
-    const browserTypes = readFileSync(browserTypesPath, 'utf8');
-
-    expect(browserTypes).toContain('CrewaiTool');
-    expect(browserTypes).toContain('LangchainTool');
-    expect(browserTypes).not.toContain('BigQuery');
-    expect(browserTypes).not.toContain('Claude');
-    expect(browserTypes).not.toContain('AnthropicLlm');
-  });
+  it.each(TYPES_RESOLUTION_CASES)(
+    'resolves types with $name',
+    ({options, expected}) => {
+      expect(resolveTypes(specifier, options)).toBe(distPath(dir, expected));
+    },
+  );
 });
+
+/** Names each package's browser declarations must and must not mention. */
+interface BrowserTypesCase {
+  specifier: string;
+  dir: string;
+  present: string[];
+  absent: string[];
+}
+
+const BROWSER_TYPES_CASES: BrowserTypesCase[] = [
+  {
+    specifier: '@google/adk',
+    dir: 'core',
+    present: ["'./common.js'"],
+    absent: [
+      'GcsArtifactService',
+      'FileArtifactService',
+      'DatabaseSessionService',
+    ],
+  },
+  {
+    specifier: '@google/adk-integrations',
+    dir: 'integrations',
+    present: ['CrewaiTool', 'LangchainTool'],
+    absent: ['BigQuery', 'Claude', 'AnthropicLlm'],
+  },
+];
+
+describe.each(BROWSER_TYPES_CASES)(
+  '$specifier browser types',
+  ({dir, present, absent}) => {
+    it('keeps Node-only modules out of browser types', () => {
+      const browserTypes = readFileSync(
+        distPath(dir, './dist/types/index_web.d.ts'),
+        'utf8',
+      );
+
+      // The present names prove the test reads the real, non-empty file.
+      for (const name of present) {
+        expect(browserTypes).toContain(name);
+      }
+      for (const name of absent) {
+        expect(browserTypes).not.toContain(name);
+      }
+    });
+  },
+);
 
 describe('@google/adk-integrations/bigquery resolution', () => {
   const specifier = '@google/adk-integrations/bigquery';
