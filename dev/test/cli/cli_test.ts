@@ -1182,6 +1182,419 @@ describe('CLI Entrypoint', () => {
       expect(runCommand?.helpInformation()).not.toContain('minifies');
     });
   });
+
+  describe('kebab-case option flags and command aliases', () => {
+    describe('command: web with kebab-case flags', () => {
+      it('parses --log-level, --allow-origins, --session-service-uri, --a2a-auth-token, and --otel-to-cloud', async () => {
+        await parse([
+          'web',
+          '--log-level',
+          'debug',
+          '--allow-origins',
+          'http://example.com',
+          '--session-service-uri',
+          'memory://',
+          '--a2a-auth-token',
+          'tok-web',
+          '--otel-to-cloud',
+        ]);
+
+        expect(setupAdkLogger).toHaveBeenCalledWith(LogLevel.DEBUG);
+        const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+        expect(args).toMatchObject({
+          allowOrigins: 'http://example.com',
+          a2aAuthToken: 'tok-web',
+          otelToCloud: true,
+        });
+        expect(args.sessionService).toBeDefined();
+      });
+
+      it('parses kebab-case flags using =value format', async () => {
+        await parse([
+          'web',
+          '--log-level=warn',
+          '--allow-origins=http://custom.origin',
+          '--session-service-uri=memory://',
+          '--a2a-auth-token=tok-web-eq',
+          '--otel-to-cloud=false',
+        ]);
+
+        expect(setupAdkLogger).toHaveBeenCalledWith(LogLevel.WARN);
+        const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+        expect(args).toMatchObject({
+          allowOrigins: 'http://custom.origin',
+          a2aAuthToken: 'tok-web-eq',
+          otelToCloud: false,
+        });
+      });
+    });
+
+    describe('command: api-server alias and flags', () => {
+      it('starts AdkApiServer using api-server alias and parses kebab-case flags', async () => {
+        await parse([
+          'api-server',
+          '--log-level=debug',
+          '--allow-origins=http://example.com',
+          '--session-service-uri=memory://',
+          '--a2a-auth-token=tok-api',
+        ]);
+
+        expect(setupAdkLogger).toHaveBeenCalledWith(LogLevel.DEBUG);
+        const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+        expect(args).toMatchObject({
+          serveDebugUI: false,
+          allowOrigins: 'http://example.com',
+          a2aAuthToken: 'tok-api',
+        });
+        expect(args.sessionService).toBeDefined();
+      });
+
+      it('parses kebab-case flags with space on api_server command', async () => {
+        await parse([
+          'api_server',
+          '--log-level',
+          'debug',
+          '--allow-origins',
+          'http://example.org',
+          '--a2a-auth-token',
+          'tok-api-2',
+        ]);
+
+        expect(setupAdkLogger).toHaveBeenCalledWith(LogLevel.DEBUG);
+        const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+        expect(args).toMatchObject({
+          serveDebugUI: false,
+          allowOrigins: 'http://example.org',
+          a2aAuthToken: 'tok-api-2',
+        });
+      });
+    });
+
+    describe('command: create with --api-key', () => {
+      it('passes --api-key in both space and equals forms', async () => {
+        await parse([
+          'create',
+          'my-agent-1',
+          '--api-key',
+          'secret-key-1',
+          '--yes',
+        ]);
+        expect(createAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            agentName: 'my-agent-1',
+            apiKey: 'secret-key-1',
+          }),
+        );
+
+        await parse([
+          'create',
+          'my-agent-2',
+          '--api-key=secret-key-2',
+          '--yes',
+        ]);
+        expect(createAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            agentName: 'my-agent-2',
+            apiKey: 'secret-key-2',
+          }),
+        );
+      });
+    });
+
+    describe('command: run with kebab-case flags', () => {
+      it('passes --save-session and --session-id with space separated values', async () => {
+        await parse([
+          'run',
+          'agent.ts',
+          '--save-session',
+          '--session-id',
+          'sess-space',
+          '--log-level',
+          'debug',
+          '--otel-to-cloud',
+        ]);
+
+        expect(logToTmpFolder).toHaveBeenCalledWith({level: LogLevel.DEBUG});
+        expect(runAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            saveSession: true,
+            sessionId: 'sess-space',
+            otelToCloud: true,
+          }),
+        );
+      });
+
+      it('passes --save-session and --session-id with equals separated values', async () => {
+        await parse([
+          'run',
+          'agent.ts',
+          '--save-session=true',
+          '--session-id=sess-eq',
+          '--log-level=warn',
+          '--otel-to-cloud=false',
+        ]);
+
+        expect(logToTmpFolder).toHaveBeenCalledWith({level: LogLevel.WARN});
+        expect(runAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            saveSession: true,
+            sessionId: 'sess-eq',
+            otelToCloud: false,
+          }),
+        );
+      });
+    });
+
+    describe('command: eval with kebab-case flags', () => {
+      it('parses --config-file-path and --print-detailed-results', async () => {
+        const tempDir = fs.mkdtempSync(
+          path.join(os.tmpdir(), 'adk-cli-eval-kebab-'),
+        );
+        const agentDir = path.join(tempDir, 'my_eval_app');
+        fs.mkdirSync(agentDir, {recursive: true});
+
+        const agentFile = path.join(agentDir, 'agent.js');
+        fs.writeFileSync(
+          agentFile,
+          [
+            `import {BaseAgent, createEvent} from '@google/adk';`,
+            `class EvalAgent extends BaseAgent {`,
+            `  constructor() { super({name: 'my_eval_agent'}); }`,
+            `  async *runAsyncImpl(ctx) {`,
+            `    const text = ctx.userContent?.parts?.[0]?.text ?? '';`,
+            `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'Echo: ' + text}]}});`,
+            `  }`,
+            `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+            `}`,
+            `export const rootAgent = new EvalAgent();`,
+          ].join('\n'),
+          'utf-8',
+        );
+
+        const evalSetFile = path.join(tempDir, 'kebab_set.evalset.json');
+        fs.writeFileSync(
+          evalSetFile,
+          JSON.stringify([
+            {
+              name: 'pass_case',
+              data: [
+                {
+                  query: 'ping',
+                  expected_tool_use: [],
+                  expected_intermediate_agent_responses: [],
+                  reference: 'Echo: ping',
+                },
+              ],
+              initial_session: {
+                app_name: 'my_eval_app',
+                user_id: 'user_1',
+                state: {},
+              },
+            },
+          ]),
+          'utf-8',
+        );
+
+        const configFile = path.join(tempDir, 'config.json');
+        fs.writeFileSync(
+          configFile,
+          JSON.stringify({criteria: {response_match_score: 0.5}}),
+          'utf-8',
+        );
+
+        const stdoutChunks: string[] = [];
+        const stdoutSpy = vi
+          .spyOn(process.stdout, 'write')
+          .mockImplementation((chunk: string | Uint8Array) => {
+            stdoutChunks.push(String(chunk));
+            return true;
+          });
+
+        try {
+          await parse([
+            'eval',
+            agentDir,
+            evalSetFile,
+            '--config-file-path',
+            configFile,
+            '--print-detailed-results',
+          ]);
+
+          const output = stdoutChunks.join('');
+          expect(output).toContain('Eval Run Summary');
+          expect(output).toContain('Tests passed: 1');
+
+          await parse([
+            'eval',
+            agentDir,
+            evalSetFile,
+            `--config-file-path=${configFile}`,
+            '--print-detailed-results=true',
+          ]);
+        } finally {
+          stdoutSpy.mockRestore();
+          fs.rmSync(tempDir, {recursive: true, force: true});
+        }
+      });
+    });
+
+    describe('command: deploy cloud_run and cloud-run alias with kebab-case flags', () => {
+      it('supports cloud-run subcommand alias and kebab-case options', async () => {
+        await parse([
+          'deploy',
+          'cloud-run',
+          './my-agent-path',
+          '--service-name=custom-svc',
+          '--app-name=custom-app',
+          '--temp-folder=/tmp/custom-temp',
+          '--with-cloud-trace',
+          '--adk-version=2.0.0',
+          '--with-ui',
+        ]);
+
+        expect(deployToCloudRun).toHaveBeenCalledWith(
+          expect.objectContaining({
+            serviceName: 'custom-svc',
+            appName: 'custom-app',
+            tempFolder: '/tmp/custom-temp',
+            otelToCloud: true,
+            adkVersion: '2.0.0',
+            withUi: true,
+          }),
+        );
+      });
+
+      it('filters recognized kebab-case flags at index >= 5 out of extraGcloudArgs', async () => {
+        await parse([
+          'deploy',
+          'cloud-run',
+          './my-agent-path',
+          '--project=my-proj',
+          '--region=us-west1',
+          '--service-name=my-svc',
+          '--app-name=my-app',
+          '--a2a-auth-token=tok',
+          '--with-cloud-trace',
+          '--extra-flag=passthrough',
+        ]);
+
+        const args = (deployToCloudRun as Mock).mock.calls[0][0];
+        expect(args).toMatchObject({
+          serviceName: 'my-svc',
+          appName: 'my-app',
+          a2aAuthToken: 'tok',
+          otelToCloud: true,
+          extraGcloudArgs: ['--extra-flag=passthrough'],
+        });
+        expect(args.extraGcloudArgs).not.toContain('--service-name=my-svc');
+        expect(args.extraGcloudArgs).not.toContain('--app-name=my-app');
+        expect(args.extraGcloudArgs).not.toContain('--a2a-auth-token=tok');
+        expect(args.extraGcloudArgs).not.toContain('--with-cloud-trace');
+      });
+    });
+
+    describe('command: deploy agent-engine and reasoning-engine aliases with kebab-case flags', () => {
+      it('supports agent-engine alias and kebab-case options in =format', async () => {
+        await parse([
+          'deploy',
+          'agent-engine',
+          './my-agent-path',
+          '--project=my-proj',
+          '--region=us-west1',
+          '--display-name=engine-disp',
+          '--staging-bucket=my-bucket',
+          '--temp-folder=/tmp/engine-temp',
+          '--agent-engine-id=engine-456',
+          '--min-instances=2',
+          '--max-instances=8',
+          '--with-ui',
+          '--adk-version=1.2.3',
+          '--otel-to-cloud=true',
+        ]);
+
+        expect(deployToAgentEngine).toHaveBeenCalledWith(
+          expect.objectContaining({
+            displayName: 'engine-disp',
+            stagingBucket: 'my-bucket',
+            tempFolder: '/tmp/engine-temp',
+            agentEngineId: 'engine-456',
+            minInstances: 2,
+            maxInstances: 8,
+            withUi: true,
+            adkVersion: '1.2.3',
+            otelToCloud: true,
+          }),
+        );
+      });
+
+      it('supports reasoning-engine alias and kebab-case options in space format', async () => {
+        await parse([
+          'deploy',
+          'reasoning-engine',
+          './my-agent-path',
+          '--display-name',
+          'reasoning-disp',
+          '--staging-bucket',
+          'reasoning-bucket',
+          '--temp-folder',
+          '/tmp/reasoning-temp',
+          '--agent-engine-id',
+          'reasoning-789',
+          '--min-instances',
+          '3',
+          '--max-instances',
+          '6',
+          '--otel-to-cloud',
+        ]);
+
+        expect(deployToAgentEngine).toHaveBeenCalledWith(
+          expect.objectContaining({
+            displayName: 'reasoning-disp',
+            stagingBucket: 'reasoning-bucket',
+            tempFolder: '/tmp/reasoning-temp',
+            agentEngineId: 'reasoning-789',
+            minInstances: 3,
+            maxInstances: 6,
+            otelToCloud: true,
+          }),
+        );
+      });
+    });
+
+    describe('command: integration conformance with kebab-case flags', () => {
+      it('passes --agents-dir and --tests-dir in both space and equals formats', async () => {
+        await parse([
+          'integration',
+          'conformance',
+          '--agents-dir',
+          '/path/to/agents',
+          '--tests-dir',
+          '/path/to/tests',
+        ]);
+
+        expect(runIntegrationTests).toHaveBeenCalledWith(
+          expect.objectContaining({
+            agentsDir: '/path/to/agents',
+            testsDir: '/path/to/tests',
+          }),
+        );
+
+        await parse([
+          'integration',
+          'conformance',
+          '--agents-dir=/path/to/agents2',
+          '--tests-dir=/path/to/tests2',
+        ]);
+
+        expect(runIntegrationTests).toHaveBeenCalledWith(
+          expect.objectContaining({
+            agentsDir: '/path/to/agents2',
+            testsDir: '/path/to/tests2',
+          }),
+        );
+      });
+    });
+  });
 });
 
 describe('usage errors', () => {

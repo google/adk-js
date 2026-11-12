@@ -50,11 +50,11 @@ export function removeClientFunctionCallId(content: Content): void {
 /**
  * Get the contents for the LLM request.
  *
- * @param events: A list of all session events.
- * @param agentName: The name of the agent.
- * @param currentBranch: The current branch of the agent.
- * @param currentIsolationScope: The isolation scope of the current node, if any.
- * @param preserveFunctionCallIds: Whether to preserve client-generated
+ * @param events A list of all session events.
+ * @param agentName The name of the agent.
+ * @param currentBranch The current branch of the agent.
+ * @param currentIsolationScope The isolation scope of the current node, if any.
+ * @param preserveFunctionCallIds Whether to preserve client-generated
  *     `adk-*` function call and response IDs instead of stripping them.
  *
  * @returns A list of processed contents.
@@ -177,9 +177,9 @@ function isRequestInputEvent(event: Event): boolean {
  * In multi-agent scenarios, the "current turn" for an agent starts from an
  * actual user or from another agent.
  *
- * @param events: A list of all session events.
- * @param agentName: The name of the agent.
- * @param currentBranch: The current branch of the agent.
+ * @param events A list of all session events.
+ * @param agentName The name of the agent.
+ * @param currentBranch The current branch of the agent.
  *
  * @returns A list of contents for the current turn only, preserving context
  *     needed for proper tool execution while excluding conversation history.
@@ -441,7 +441,7 @@ function convertForeignEvent(event: Event): Event | undefined {
  *  1. function_call and function_response are always of the same number.
  *  2. The function_call and function_response are consecutively in the content.
  *
- * @param events: A list of function_response events.
+ * @param events A list of function_response events.
  *
  * NOTE:
  * function_response_events must fulfill these requirements:
@@ -623,7 +623,7 @@ function rearrangeEventsForLatestFunctionResponse(events: Event[]): Event[] {
  * between the initial function_call and the latest function_response will be
  * removed.
  *
- * @param event: A list of events.
+ * @param events A list of events.
  *
  * @returns A list of events with the latest function_response rearranged.
  */

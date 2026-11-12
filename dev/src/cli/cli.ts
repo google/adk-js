@@ -145,13 +145,13 @@ const PORT_OPTION = new Option(
   'Optional. The port of the server. Default: 8000',
 ).default('8000');
 const ORIGINS_OPTION = new Option(
-  '--allow_origins <string>',
+  '--allow-origins, --allow_origins <string>',
   'Optional. Comma-separated list of origins allowed to send cross-origin ' +
     "requests to the server. Each origin's host is also accepted by the " +
     'DNS-rebinding guard.',
 ).default('');
 const ALLOWED_HOSTS_OPTION = new Option(
-  '--allowed_hosts <string>',
+  '--allowed-hosts, --allowed_hosts <string>',
   'Optional. Comma-separated list of additional Host header values the ' +
     'DNS-rebinding guard accepts, independent of --allow_origins. Use ' +
     'this to widen the guard for a reverse proxy in front of a ' +
@@ -162,19 +162,19 @@ const VERBOSE_OPTION = new Option(
   'Optional. Log at debug level. Shorthand for --log_level debug',
 ).default(false);
 const LOG_LEVEL_OPTION = new Option(
-  '--log_level <string>',
+  '--log-level, --log_level <string>',
   'Optional. The log level of the server',
 ).default('info');
 const SESSION_SERVICE_URI_OPTION = new Option(
-  '--session_service_uri <string>',
+  '--session-service-uri, --session_service_uri <string>',
   'Optional. The URI of the session service. Supported URIs: memory:// for in-memory session service.',
 );
 const ARTIFACT_SERVICE_URI_OPTION = new Option(
-  '--artifact_service_uri <string>',
+  '--artifact-service-uri, --artifact_service_uri <string>',
   'Optional. The URI of the artifact service. Supported URIs: gs://<bucket name> for GCS artifact service.',
 );
 const OTEL_TO_CLOUD_OPTION = new Option(
-  '--otel_to_cloud [boolean]',
+  '--otel-to-cloud, --otel_to_cloud [boolean]',
   'Optional. Whether to send otel traces to cloud.',
 ).default(false);
 const COMPILE_AGENT_FILE = new Option(
@@ -192,18 +192,21 @@ const A2A_OPTION = new Option(
   'Optional. Whether to enable A2A for web/api server. Default: false',
 ).default(false);
 const A2A_AUTH_TOKEN_OPTION = new Option(
-  '--a2a_auth_token <string>',
+  '--a2a-auth-token, --a2a_auth_token <string>',
   'Optional. Shared bearer token used to authenticate the A2A surface. Callers must send "Authorization: Bearer <token>". Can also be set via the ADK_A2A_AUTH_TOKEN environment variable. If unset, the A2A surface is served WITHOUT authentication.',
 );
 const A2A_AUTH_TOKEN_DEPLOY_OPTION = new Option(
-  '--a2a_auth_token <string>',
+  '--a2a-auth-token, --a2a_auth_token <string>',
   'Optional. Shared bearer token used to authenticate the deployed A2A surface. Callers must send "Authorization: Bearer <token>". It is sent to Cloud Run as the ADK_A2A_AUTH_TOKEN environment variable and is never written into the image. If unset, the deployed A2A surface is served WITHOUT authentication.',
 );
 const RELOAD_AGENTS_OPTION = new Option(
-  '--reload_agents [boolean]',
+  '--reload-agents, --reload_agents [boolean]',
   'Optional. Watch agent files for changes and automatically reload them. Default: false. To see any changes to your agent file, you need to initiate a new agent run.',
 ).default(false);
-const AGENT_FILE_MODULE_TYPE = new Option('--file_type <string>', 'Optional. ');
+const AGENT_FILE_MODULE_TYPE = new Option(
+  '--file-type, --file_type <string>',
+  'Optional. ',
+);
 AGENT_FILE_MODULE_TYPE.argChoices = [FileModuleType.CJS, FileModuleType.ESM];
 
 // Reusable deployment CLI option constants
@@ -216,15 +219,15 @@ export const REGION_DEPLOY_OPTION = new Option(
   'Optional. Google Cloud region to deploy the agent. If not set, default run/region from gcloud config is used',
 );
 export const ADK_VERSION_OPTION = new Option(
-  '--adk_version [string]',
+  '--adk-version, --adk_version [string]',
   'Optional. Version or dist-tag of @google/adk-devtools to install in the deployed image',
 ).default(version, `${version}, this CLI's version`);
 export const WITH_UI_OPTION = new Option(
-  '--with_ui [boolean]',
+  '--with-ui, --with_ui [boolean]',
   'Optional. Deploy ADK Web UI if set. (default: deploy ADK API server only)',
 ).default(false);
 export const DISPLAY_NAME_OPTION = new Option(
-  '--display_name [string]',
+  '--display-name, --display_name [string]',
   'Optional. The display name for the Reasoning Engine. Defaults to agent directory name.',
 );
 export const DESCRIPTION_OPTION = new Option(
@@ -236,19 +239,19 @@ export const REPOSITORY_DEPLOY_OPTION = new Option(
   'Optional. Artifact Registry repository name to push docker images. Required for agent_engine deploy.',
 );
 export const STAGING_BUCKET_DEPLOY_OPTION = new Option(
-  '--staging_bucket [string]',
+  '--staging-bucket, --staging_bucket [string]',
   'Optional. Google Cloud Storage bucket name (no gs:// prefix) used for deployment staging. Cloud Build logs are written to gs://<staging_bucket>/logs. If not set, gs://<project>_cloudbuild/logs is used.',
 );
 export const AGENT_ENGINE_ID_OPTION = new Option(
-  '--agent_engine_id [id]',
+  '--agent-engine-id, --agent_engine_id [id]',
   'Optional. ID of the Agent Engine instance to update if it exists (default: undefined, which means a new instance will be created). If project and region are set, this should be the resource ID or the full resource name (projects/.../locations/.../reasoningEngines/...).',
 );
 export const MIN_INSTANCES_OPTION = new Option(
-  '--min_instances [number]',
+  '--min-instances, --min_instances [number]',
   'Optional. The minimum number of application instances that will be kept running at all times. Default: 1.',
 );
 export const MAX_INSTANCES_OPTION = new Option(
-  '--max_instances [number]',
+  '--max-instances, --max_instances [number]',
   'Optional. The maximum number of application instances that can be launched to handle increased traffic. Default: 10.',
 );
 
@@ -324,6 +327,7 @@ export function createProgram(): Command {
 
   program
     .command('api_server')
+    .alias('api-server')
     .description('Start ADK API server')
     .addArgument(AGENT_DIR_ARGUMENT)
     .addOption(HOST_OPTION)
@@ -376,7 +380,7 @@ export function createProgram(): Command {
     .option('-y, --yes', 'Optional. Skip confirmation prompts.')
     .option('--model <string>', 'Optional. THe model used for the root_agent')
     .option(
-      '--api_key <string>',
+      '--api-key, --api_key <string>',
       'Optional. The API Key needed to access the model, e.g. Google AI API Key.',
     )
     .option(
@@ -413,12 +417,12 @@ export function createProgram(): Command {
     .description('Runs agent')
     .argument('<agent>', 'Agent file path (.js or .ts)')
     .option(
-      '--save_session [boolean]',
+      '--save-session, --save_session [boolean]',
       'Optional. Whether to save the session to a json file on exit.',
       false,
     )
     .option(
-      '--session_id <string>',
+      '--session-id, --session_id <string>',
       'Optional. The session ID to save the session to on exit when --save_session is set to true. User will be prompted to enter a session ID if not set.',
     )
     .option(
@@ -472,9 +476,12 @@ export function createProgram(): Command {
       '[eval_set_file_path...]',
       'Specify one or more eval set file paths, optionally followed by :eval_1,eval_2.',
     )
-    .option('--config_file_path <string>', 'Optional. The path to config file.')
     .option(
-      '--print_detailed_results [boolean]',
+      '--config-file-path, --config_file_path <string>',
+      'Optional. The path to config file.',
+    )
+    .option(
+      '--print-detailed-results, --print_detailed_results [boolean]',
       'Optional. Whether to print detailed results on console or not.',
       false,
     )
@@ -614,6 +621,7 @@ export function createProgram(): Command {
     .allowExcessArguments();
 
   DEPLOY_COMMAND.command('cloud_run')
+    .alias('cloud-run')
     .addArgument(AGENT_DIR_ARGUMENT)
     .allowUnknownOption()
     .allowExcessArguments()
@@ -621,17 +629,17 @@ export function createProgram(): Command {
     .addOption(PROJECT_DEPLOY_OPTION)
     .addOption(REGION_DEPLOY_OPTION)
     .option(
-      '--service_name [string]',
+      '--service-name, --service_name [string]',
       'Optional. The service name to use in Cloud Run. Default: "adk-default-service-name"',
       'adk-default-service-name',
     )
     .option(
-      '--app_name [string]',
+      '--app-name, --app_name [string]',
       'Optional. App name of the ADK API server. Default: folder or file name of the agent source.',
       '',
     )
     .option(
-      '--temp_folder [string]',
+      '--temp-folder, --temp_folder [string]',
       'Optional. Temp folder for the generated Cloud Run source files (default: a private directory created in the system temp directory).',
     )
     .addOption(ADK_VERSION_OPTION)
@@ -643,7 +651,7 @@ export function createProgram(): Command {
     .addOption(ARTIFACT_SERVICE_URI_OPTION)
     .addOption(OTEL_TO_CLOUD_OPTION)
     .option(
-      '--with_cloud_trace [boolean]',
+      '--with-cloud-trace, --with_cloud_trace [boolean]',
       'Optional. Whether to enable Cloud Trace for cloud_run.',
       false,
     )
@@ -659,7 +667,7 @@ export function createProgram(): Command {
         if (argName.includes('=')) {
           argName = argName.split('=')[0];
         }
-        if (argName in options) {
+        if (argName in options || argName.replace(/-/g, '_') in options) {
           continue;
         }
 
@@ -709,7 +717,7 @@ export function createProgram(): Command {
       .addOption(REPOSITORY_DEPLOY_OPTION)
       .addOption(STAGING_BUCKET_DEPLOY_OPTION)
       .option(
-        '--temp_folder [string]',
+        '--temp-folder, --temp_folder [string]',
         'Optional. Temp folder for the generated source files (default: a private directory created in the system temp directory).',
       )
       .addOption(ADK_VERSION_OPTION)
@@ -769,8 +777,12 @@ export function createProgram(): Command {
       });
   };
 
-  registerAgentEngineCommand(DEPLOY_COMMAND.command('agent_engine'));
-  registerAgentEngineCommand(DEPLOY_COMMAND.command('reasoning_engine'));
+  registerAgentEngineCommand(
+    DEPLOY_COMMAND.command('agent_engine').alias('agent-engine'),
+  );
+  registerAgentEngineCommand(
+    DEPLOY_COMMAND.command('reasoning_engine').alias('reasoning-engine'),
+  );
 
   const CONFORMANCE_COMMAND = program
     .command('integration')
@@ -781,12 +793,12 @@ export function createProgram(): Command {
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION)
     .option(
-      '--agents_dir [dir]',
+      '--agents-dir, --agents_dir [dir]',
       'Directory of conformance test agent definitions. Recursively searched for .yaml files with agent definitions.',
       process.cwd(),
     )
     .option(
-      '--tests_dir [dir]',
+      '--tests-dir, --tests_dir [dir]',
       'Directory of conformance test definitions. Recursively searched for .yaml files with test definitions.',
       process.cwd(),
     )
