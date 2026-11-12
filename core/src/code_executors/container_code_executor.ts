@@ -28,7 +28,7 @@ const DEFAULT_IMAGE_TAG = 'adk-code-executor:latest';
 const DEFAULT_TIMEOUT_SECONDS = 300;
 
 /**
- * coreutils prefix used to bound a run inside the shared container. It sends
+ * coreutils prefix used to bound a run inside the session container. It sends
  * SIGKILL after the deadline and exits {@link TIMEOUT_EXIT_CODE}.
  */
 const TIMEOUT_COMMAND = ['timeout', '-s', 'KILL'];
@@ -59,12 +59,20 @@ export interface ContainerCodeExecutorOptions {
   networkEnabled?: boolean;
   /**
    * Wall-clock timeout in seconds for a single execution. Must be greater than
-   * 0; defaults to 300. Every execution shares one long-lived container, so an
-   * unbounded run (e.g. a loop emitted by the model) would burn that
-   * container's CPU for every later caller. Raise it rather than remove it for
-   * a computation that legitimately runs longer.
+   * 0; defaults to 300. Each session runs in its own long-lived container, so
+   * an unbounded run (e.g. a loop emitted by the model) would burn that
+   * container's CPU for every later call in the same session. Raise it rather
+   * than remove it for a computation that legitimately runs longer.
    */
   timeoutSeconds?: number;
+  /**
+   * Maximum number of session containers to keep running concurrently.
+   * When exceeded, the least recently used idle session container is stopped
+   * and evicted. A container that is running code is never evicted, so the
+   * count can exceed the limit until that run ends. Must be a positive
+   * integer.
+   */
+  maxContainers?: number;
   /**
    * Injected Docker client, primarily for testing so unit tests never touch a
    * real Docker daemon. Defaults to a new client built from `baseUrl`.
@@ -112,7 +120,8 @@ const LANGUAGE_RUNTIME_COMMAND_MAP: Partial<
  * background processes persist into a later, unrelated session's execution.
  * A container is still reused across multiple calls *within* the same
  * session, so the per-call container-startup cost is paid once per session,
- * not once per call.
+ * not once per call. Set `maxContainers` to bound how many session containers
+ * run at once; beyond it, the least recently used idle one is stopped.
  *
  * Limitations: this executor runs a code string only. `inputFiles` and `args`
  * on the request are not copied into the container, and output files are not
@@ -126,8 +135,20 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
   private readonly dockerPath?: string;
   private readonly containerOptions: DockerContainerOptions;
   private readonly timeoutSeconds: number;
+  private readonly maxContainers?: number;
+  /** Started session containers, ordered from least to most recently used. */
   private readonly containers = new Map<string, DockerContainer>();
-  private readonly initPromises = new Map<string, Promise<void>>();
+  /** Container starts that are still in flight, keyed by session. */
+  private readonly initPromises = new Map<string, Promise<DockerContainer>>();
+  /**
+   * Number of `executeCode` calls in progress per session. A session with a
+   * call in progress is never evicted, so a run is not stopped midway.
+   */
+  private readonly activeExecutions = new Map<string, number>();
+  /** Shared image build, so the image is built at most once per executor. */
+  private buildPromise?: Promise<void>;
+  private closing = false;
+  private closePromise?: Promise<void>;
 
   constructor(options: ContainerCodeExecutorOptions = {}) {
     super();
@@ -140,6 +161,15 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
     if (this.timeoutSeconds <= 0) {
       throw new Error(
         'timeoutSeconds must be greater than 0 for ContainerCodeExecutor.',
+      );
+    }
+    this.maxContainers = options.maxContainers;
+    if (
+      this.maxContainers !== undefined &&
+      (!Number.isInteger(this.maxContainers) || this.maxContainers < 1)
+    ) {
+      throw new Error(
+        'maxContainers must be a positive integer for ContainerCodeExecutor.',
       );
     }
     this.dockerPath = options.dockerPath
@@ -172,21 +202,35 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
       );
     }
     const key = sessionKey(params.invocationContext);
-    const container = await this.ensureContainer(key);
-    // Bound the run inside the session's container. A process that detaches
-    // from it (e.g. via `setsid`) outlives the deadline until the container
-    // is torn down; this covers the common wedge (a `while True` from the
-    // model).
-    const {stdout, stderr, exitCode} = await container.execute(
-      [...TIMEOUT_COMMAND, String(this.timeoutSeconds), ...command, code],
-      this.timeoutSeconds,
-    );
-    logger.debug(`Executed ${language} code:\n\`\`\`\n${code}\n\`\`\``);
-    return {
-      stdout,
-      stderr: this.describeExit(stderr, exitCode),
-      outputFiles: [],
-    };
+    // Count the call before the container is resolved, so no eviction can
+    // stop this session's container between its start and the run.
+    this.activeExecutions.set(key, (this.activeExecutions.get(key) ?? 0) + 1);
+    try {
+      const container = await this.ensureContainer(key);
+      // Bound the run inside the session's container. A process that detaches
+      // from it (e.g. via `setsid`) outlives the deadline until the container
+      // is torn down; this covers the common wedge (a `while True` from the
+      // model).
+      const {stdout, stderr, exitCode} = await container.execute(
+        [...TIMEOUT_COMMAND, String(this.timeoutSeconds), ...command, code],
+        this.timeoutSeconds,
+      );
+      logger.debug(`Executed ${language} code:\n\`\`\`\n${code}\n\`\`\``);
+      return {
+        stdout,
+        stderr: this.describeExit(stderr, exitCode),
+        outputFiles: [],
+      };
+    } finally {
+      const remaining = (this.activeExecutions.get(key) ?? 1) - 1;
+      if (remaining > 0) {
+        this.activeExecutions.set(key, remaining);
+      } else {
+        this.activeExecutions.delete(key);
+      }
+      // Trim any overshoot that the run held back.
+      this.evictLeastRecentlyUsed();
+    }
   }
 
   /**
@@ -207,49 +251,155 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
   }
 
   /**
-   * Stops and removes every session's container. Safe to call when none has
-   * been started; provided for deterministic teardown in tests and app
+   * Stops and removes every session's container. Waits for container starts
+   * that are still in flight, so no container is left running after it
+   * resolves. Safe to call when none has been started, and concurrent calls
+   * share one teardown. Provided for deterministic teardown in tests and app
    * shutdown.
    */
-  async close(): Promise<void> {
-    const containers = [...this.containers.values()];
-    this.containers.clear();
-    this.initPromises.clear();
-    await Promise.all(containers.map((container) => container.stop()));
+  close(): Promise<void> {
+    this.closePromise ??= this.stopAll().finally(() => {
+      this.closePromise = undefined;
+    });
+    return this.closePromise;
   }
 
-  /** Lazily builds/starts the given session's container exactly once. */
+  private async stopAll(): Promise<void> {
+    this.closing = true;
+    try {
+      // Loop so a start that begins while an earlier one settles is also
+      // awaited; each such start sees `closing` and stops its own container.
+      while (this.initPromises.size > 0) {
+        await Promise.allSettled([...this.initPromises.values()]);
+      }
+      const containers = [...this.containers.values()];
+      this.containers.clear();
+      this.initPromises.clear();
+      await Promise.allSettled(containers.map((container) => container.stop()));
+    } finally {
+      this.closing = false;
+    }
+  }
+
+  /**
+   * Returns the given session's container, starting it if needed. Concurrent
+   * calls for one session share a single in-flight start, and reuse marks the
+   * container as the most recently used.
+   */
   private ensureContainer(key: string): Promise<DockerContainer> {
-    let initPromise = this.initPromises.get(key);
-    if (!initPromise) {
-      // Clear the memoized promise on failure so a transient init error does
-      // not poison this session's executor state until close().
-      initPromise = this.initContainer(key).catch((error) => {
+    const existing = this.containers.get(key);
+    if (existing) {
+      this.containers.delete(key);
+      this.containers.set(key, existing);
+      return Promise.resolve(existing);
+    }
+    const inFlight = this.initPromises.get(key);
+    if (inFlight) {
+      return inFlight;
+    }
+    // Only in-flight starts are kept, so a failed start is retried on the
+    // next call and an evicted session gets a fresh container. The identity
+    // check keeps this start from deleting a newer start for the same key.
+    const initPromise: Promise<DockerContainer> = this.initContainer(
+      key,
+    ).finally(() => {
+      if (this.initPromises.get(key) === initPromise) {
         this.initPromises.delete(key);
+      }
+    });
+    this.initPromises.set(key, initPromise);
+    return initPromise;
+  }
+
+  /**
+   * Builds the image from `dockerPath` once and shares the build across every
+   * session. A failed build is cleared so the next call retries it.
+   */
+  private ensureImageBuilt(): Promise<void> {
+    const dockerPath = this.dockerPath;
+    if (!dockerPath) {
+      return Promise.resolve();
+    }
+    // `build` uses only the client and creates no container, so this
+    // temporary instance owns nothing that needs to be stopped.
+    this.buildPromise ??= new DockerContainer(this.containerOptions)
+      .build(dockerPath)
+      .catch((error: unknown) => {
+        this.buildPromise = undefined;
         throw error;
       });
-      this.initPromises.set(key, initPromise);
-    }
-    return initPromise.then(() => this.containers.get(key)!);
+    return this.buildPromise;
   }
 
-  private async initContainer(key: string): Promise<void> {
-    const container = new DockerContainer(this.containerOptions);
-    if (this.dockerPath) {
-      await container.build(this.dockerPath);
+  private async initContainer(key: string): Promise<DockerContainer> {
+    await this.ensureImageBuilt();
+    if (this.closing) {
+      throw new Error(
+        'ContainerCodeExecutor closed during container initialization.',
+      );
     }
-    await container.start();
-    this.containers.set(key, container);
+    const container = new DockerContainer(this.containerOptions);
 
     // Probe python3 after start: it is the baseline the default image
-    // guarantees, and registering the container first means a failure here
-    // still leaves it tracked so `close()` can clean it up.
-    const {exitCode} = await container.execute(
-      ['which', 'python3'],
-      this.timeoutSeconds,
-    );
-    if (exitCode !== 0) {
-      throw new Error('python3 is not installed in the container.');
+    // guarantees. If the start or the probe fails, stop the container so a
+    // created container is not left behind.
+    try {
+      await container.start();
+      const {exitCode} = await container.execute(
+        ['which', 'python3'],
+        this.timeoutSeconds,
+      );
+      if (exitCode !== 0) {
+        throw new Error('python3 is not installed in the container.');
+      }
+    } catch (error) {
+      await container.stop().catch((stopError: unknown) => {
+        logger.debug(
+          `Failed to stop container after failed start: ${stopError}`,
+        );
+      });
+      throw error;
+    }
+
+    if (this.closing) {
+      await container.stop().catch((stopError: unknown) => {
+        logger.debug(`Failed to stop container during close: ${stopError}`);
+      });
+      throw new Error(
+        'ContainerCodeExecutor closed during container initialization.',
+      );
+    }
+
+    // Register and evict in one synchronous block so no other call can
+    // interleave between the two.
+    this.containers.set(key, container);
+    this.evictLeastRecentlyUsed();
+    return container;
+  }
+
+  /**
+   * Stops the least recently used idle session containers until the count is
+   * within `maxContainers`. A session with a call in progress is skipped, which
+   * includes the caller that just registered its container; if every session
+   * is busy, the overshoot stays until a call ends. The stop is not awaited so
+   * the caller is not delayed by another session's teardown.
+   */
+  private evictLeastRecentlyUsed(): void {
+    if (this.maxContainers === undefined) {
+      return;
+    }
+    // Deleting the current entry while iterating a Map is safe.
+    for (const [key, container] of this.containers) {
+      if (this.containers.size <= this.maxContainers) {
+        return;
+      }
+      if (this.activeExecutions.has(key)) {
+        continue;
+      }
+      this.containers.delete(key);
+      void container.stop().catch((error: unknown) => {
+        logger.debug(`Failed to stop evicted container: ${error}`);
+      });
     }
   }
 }
@@ -259,11 +409,15 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
  * gets its own container. Joined via JSON.stringify rather than a delimited
  * string so that no combination of appName/userId/session id values can
  * collide into the same key regardless of what characters they contain.
+ * Calls without a session identity share one default container.
  */
 function sessionKey(
-  invocationContext: ExecuteCodeParams['invocationContext'],
+  invocationContext?: ExecuteCodeParams['invocationContext'],
 ): string {
-  const session = invocationContext.session;
+  const session = invocationContext?.session;
+  if (!session) {
+    return 'default';
+  }
   return JSON.stringify([session.appName, session.userId, session.id]);
 }
 
