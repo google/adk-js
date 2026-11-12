@@ -9,7 +9,7 @@ The `tools` subsystem provides core abstractions, ecosystem adapters, built-in m
 - `AgentTool` - Wraps any `BaseAgent` as a callable tool, validating arguments and outputs against `inputSchema` and `outputSchema` when wrapping an `LlmAgent` and forwarding session state and artifacts.
 - `ToolContext` and `Context` - Provide tool callbacks with access to session `state`, `EventActions` mutations, `saveArtifact` and `loadArtifact`, `searchMemory`, credential exchange, and tool confirmation.
 - `ToolboxToolset` - Adapt Google GenAI Toolbox toolsets into ADK tools.
-- `GoogleSearchTool`, `VertexAiSearchTool`, `ExitLoopTool`, `ExampleTool`, `LoadArtifactsTool`, `LoadMemoryTool`, `PreloadMemoryTool`, `loadWebPage`, and `getUserChoiceTool` - Built-in and utility tools for grounding, loop control, few-shot prompting, artifact and memory injection, web page text extraction, and interactive user choice.
+- `GoogleSearchTool`, `VertexAiSearchTool`, `UrlContextTool`, `ExitLoopTool`, `ExampleTool`, `LoadArtifactsTool`, `LoadMemoryTool`, `PreloadMemoryTool`, `loadWebPage`, and `getUserChoiceTool` - Built-in and utility tools for search grounding, URL context retrieval, loop control, few-shot prompting, artifact and memory injection, web page text extraction, and interactive user choice.
 - [BaseRetrievalTool](retrieval/base_retrieval_tool/index.md) - Abstract base for client-side retrieval tools that return a single highest-scoring text chunk.
 - [LlamaIndexRetrieval](retrieval/llama_index_retrieval/index.md) - Client-side retrieval tool backed by any object implementing `retrieve(query)`.
 - [FilesRetrieval](retrieval/files_retrieval/index.md) - Client-side retrieval tool that indexes a local directory of documents.
@@ -19,7 +19,7 @@ The `tools` subsystem provides core abstractions, ecosystem adapters, built-in m
 
 ## Introduction
 
-An `LlmAgent` accepts a `tools` array whose entries can be `BaseTool` instances, `BaseToolset` providers, plain functions, or workflow nodes. Before each model call, the agent resolves its tools and invokes `tool.processLlmRequest({toolContext, llmRequest})` on each active tool. Standard function-based tools append their `@google/genai` `FunctionDeclaration` from `_getDeclaration()` into `llmRequest.config.tools` and register themselves in `llmRequest.toolsDict` by tool name. Request-mutating tools such as `ExampleTool`, `PreloadMemoryTool`, `GoogleSearchTool`, and `VertexAiSearchTool` customize system instructions or built-in retrieval configurations directly on `llmRequest`.
+An `LlmAgent` accepts a `tools` array whose entries can be `BaseTool` instances, `BaseToolset` providers, plain functions, or workflow nodes. Before each model call, the agent resolves its tools and invokes `tool.processLlmRequest({toolContext, llmRequest})` on each active tool. Standard function-based tools append their `@google/genai` `FunctionDeclaration` from `_getDeclaration()` into `llmRequest.config.tools` and register themselves in `llmRequest.toolsDict` by tool name. Request-mutating tools such as `ExampleTool`, `PreloadMemoryTool`, `GoogleSearchTool`, `VertexAiSearchTool`, and `UrlContextTool` customize system instructions or built-in retrieval configurations directly on `llmRequest`.
 
 When the model responds with a `FunctionCall` part, the ADK tool execution pipeline looks up the matching tool in `llmRequest.toolsDict`, constructs a `Context` aliased as `ToolContext` bound to the current `InvocationContext` and `functionCall.id`, and calls `tool.runAsync({args, toolContext})`. Any changes the tool makes to `toolContext.state` or `toolContext.actions` are packaged into the resulting `functionResponse` event and persisted by the runner.
 
@@ -74,6 +74,7 @@ export const currencyAgent = new LlmAgent({
 5. **Ecosystem adapters**: `ToolboxToolset` adapts Google GenAI Toolbox toolsets into ADK tools. To adapt tools from external ecosystems such as CrewAI and LangChain, see the [CrewAI guide](../integrations/crewai/index.md) and [LangChain guide](../integrations/langchain/index.md) in `@google/adk-integrations`.
 6. **Built-in model and control-flow tools**:
    - `GoogleSearchTool` and `GOOGLE_SEARCH` together with `VertexAiSearchTool` extend `BuiltInTool` and attach model-native grounding configurations to `llmRequest.config.tools`.
+   - `UrlContextTool` and `URL_CONTEXT` extend `BuiltInTool` and append `{urlContext: {}}` to `llmRequest.config.tools` so Gemini 2+ models can retrieve and ground responses on content from URLs referenced in the conversation without local code execution.
    - `ExitLoopTool` and `EXIT_LOOP` set `toolContext.actions.escalate = true` and `toolContext.actions.skipSummarization = true` so a surrounding `LoopAgent` stops iterating.
    - `ExampleTool` validates an array of `Example` items or a `BaseExampleProvider` at construction time and appends few-shot examples to `llmRequest` system instructions on each turn.
    - `LoadArtifactsTool` and `LOAD_ARTIFACTS` list available session and user artifacts in system instructions and inject requested artifact `Part` payloads into the current turn `llmRequest.contents`.
@@ -257,6 +258,7 @@ export const asyncToolboxToolset = new ToolboxToolset({
 
 - **Runtime reflection of plain TypeScript function types**: TypeScript erases type annotations at compile time. Pass a Zod object schema or `@google/genai` `Schema` to `FunctionTool` `parameters` and `response`, or pass a parameter schema map to `buildFunctionDeclarationUtil`, so the generated `FunctionDeclaration` carries typed properties.
 - **Single-tool constraints on Gemini 1.x built-in search tools**: `GoogleSearchTool` and `VertexAiSearchTool` throw an error if combined with other tools on a `gemini-1.*` model unless `bypassMultiToolsLimit: true` is configured on `VertexAiSearchTool` or a Gemini 2+ model is used.
+- **Model requirements for `UrlContextTool`**: `UrlContextTool` (`URL_CONTEXT`) requires Gemini 2.0 or above and throws an error when used with Gemini 1.x or non-Gemini models.
 - **DNS rebinding window in `loadWebPage`**: `loadWebPage` validates URL schemes, rejects localhost hostnames, resolves DNS addresses up front to block private, loopback, link-local, and reserved IPs, and disables HTTP redirects with `redirect: 'manual'`. Because global `fetch` performs its own DNS lookup when opening the socket, a time-of-check/time-of-use window remains between pre-flight resolution and connection establishment.
 
 ## Related samples
