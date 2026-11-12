@@ -18,8 +18,11 @@ import {
   SCHEMA_VERSION_1_JSON,
   SCHEMA_VERSION_KEY,
   STORAGE_KEY_COLUMN_LENGTH,
+  StorageAppState,
   StorageEvent,
   StorageMetadata,
+  StorageSession,
+  StorageUserState,
 } from '../../../src/sessions/db/schema.js';
 import {logger} from '../../../src/utils/logger.js';
 
@@ -79,6 +82,18 @@ describe('operations', () => {
 
       expect(
         orm.getMetadata().get(StorageEvent).properties.timestamp.length,
+      ).toBe(EVENT_TIMESTAMP_PRECISION);
+      expect(
+        orm.getMetadata().get(StorageSession).properties.createTime.length,
+      ).toBe(EVENT_TIMESTAMP_PRECISION);
+      expect(
+        orm.getMetadata().get(StorageSession).properties.updateTime.length,
+      ).toBe(EVENT_TIMESTAMP_PRECISION);
+      expect(
+        orm.getMetadata().get(StorageAppState).properties.updateTime.length,
+      ).toBe(EVENT_TIMESTAMP_PRECISION);
+      expect(
+        orm.getMetadata().get(StorageUserState).properties.updateTime.length,
       ).toBe(EVENT_TIMESTAMP_PRECISION);
     });
   });
@@ -675,6 +690,195 @@ describe('operations', () => {
 
       // Verify it runs without error
       await expect(ensureDatabaseCreated(orm)).resolves.not.toThrow();
+    });
+
+    it('creates all entity tables on a fresh database and is idempotent on repeat calls', async () => {
+      orm = await MikroORM.init({
+        dbName: ':memory:',
+        driver: SqliteDriver,
+        entities: ENTITIES,
+      });
+
+      await ensureDatabaseCreated(orm);
+
+      const connection = orm.em.getConnection();
+      const rows = (await connection.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+      )) as Array<{name: string}>;
+      expect(rows.map((row) => row.name)).toEqual([
+        'adk_internal_metadata',
+        'app_states',
+        'events',
+        'sessions',
+        'user_states',
+      ]);
+
+      const createSpy = vi.spyOn(orm.schema, 'create');
+      const updateSpy = vi.spyOn(orm.schema, 'update');
+
+      await expect(ensureDatabaseCreated(orm)).resolves.not.toThrow();
+      expect(createSpy).not.toHaveBeenCalled();
+      expect(updateSpy).not.toHaveBeenCalled();
+
+      createSpy.mockRestore();
+      updateSpy.mockRestore();
+    });
+
+    it('creates only missing tables without altering existing table definitions', async () => {
+      orm = await MikroORM.init({
+        dbName: ':memory:',
+        driver: SqliteDriver,
+        entities: ENTITIES,
+      });
+
+      const connection = orm.em.getConnection();
+      const customSessionsSql =
+        'CREATE TABLE `sessions` (`id` varchar(128) NOT NULL, `app_name` varchar(128) NOT NULL, `user_id` varchar(128) NOT NULL, `state` text NOT NULL, `create_time` datetime NOT NULL, `update_time` datetime NOT NULL, `legacy_extra` text NULL, PRIMARY KEY (`id`, `app_name`, `user_id`))';
+      await connection.execute(customSessionsSql);
+
+      const previousSkipTables = orm.config.get('schemaGenerator').skipTables;
+      const updateSpy = vi.spyOn(orm.schema, 'update');
+
+      await ensureDatabaseCreated(orm);
+
+      expect(updateSpy).not.toHaveBeenCalled();
+      expect(orm.config.get('schemaGenerator').skipTables).toEqual(
+        previousSkipTables,
+      );
+
+      const tables = (await connection.execute(
+        "SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+      )) as Array<{name: string; sql: string}>;
+      expect(tables.map((row) => row.name)).toEqual([
+        'adk_internal_metadata',
+        'app_states',
+        'events',
+        'sessions',
+        'user_states',
+      ]);
+      const sessionsTable = tables.find((row) => row.name === 'sessions');
+      expect(sessionsTable?.sql).toBe(customSessionsSql);
+
+      updateSpy.mockRestore();
+    });
+
+    describe('with MsSqlDriver and a custom schema', () => {
+      async function initMsSqlOrm(
+        listedTables: Array<{table_name: string; schema_name: string}>,
+      ) {
+        const {MsSqlDriver} =
+          await vi.importActual<typeof import('@mikro-orm/mssql')>(
+            '@mikro-orm/mssql',
+          );
+        orm = await MikroORM.init({
+          driver: MsSqlDriver,
+          dbName: 'adk',
+          schema: 'adk',
+          entities: ENTITIES,
+        });
+        vi.spyOn(orm.schema, 'ensureDatabase').mockResolvedValue(true);
+        const executeSpy = vi
+          .spyOn(orm.driver.getConnection(), 'execute')
+          .mockResolvedValue(listedTables as never);
+        return executeSpy;
+      }
+
+      it('lists tables in one query and skips create when all tables exist', async () => {
+        const executeSpy = await initMsSqlOrm(
+          [
+            'adk_internal_metadata',
+            'app_states',
+            'events',
+            'sessions',
+            'user_states',
+          ].map((name) => ({table_name: name, schema_name: 'adk'})),
+        );
+        const createSpy = vi.spyOn(orm.schema, 'create').mockResolvedValue();
+
+        await ensureDatabaseCreated(orm);
+
+        expect(createSpy).not.toHaveBeenCalled();
+        expect(executeSpy).toHaveBeenCalledTimes(1);
+        const listSql = String(executeSpy.mock.calls[0][0]);
+        expect(listSql).toContain('sys.tables');
+        expect(listSql).not.toContain('information_schema');
+      });
+
+      it('creates missing tables in the custom schema and skips only schema-qualified existing tables', async () => {
+        const executeSpy = await initMsSqlOrm([
+          {table_name: 'sessions', schema_name: 'adk'},
+          // The same table name in another schema does not count as existing.
+          {table_name: 'events', schema_name: 'dbo'},
+        ]);
+        let skipTablesDuringCreate: unknown[] | undefined;
+        let createSql = '';
+        const createSpy = vi
+          .spyOn(orm.schema, 'create')
+          .mockImplementation(async () => {
+            skipTablesDuringCreate = [
+              ...(orm.config.get('schemaGenerator').skipTables ?? []),
+            ];
+            createSql = await orm.schema.getCreateSchemaSQL();
+          });
+        const previousSkipTables = orm.config.get('schemaGenerator').skipTables;
+
+        await ensureDatabaseCreated(orm);
+
+        expect(createSpy).toHaveBeenCalledTimes(1);
+        expect(executeSpy).toHaveBeenCalledTimes(1);
+        expect(skipTablesDuringCreate).toEqual(['adk.sessions']);
+        expect(createSql).toContain('create table [adk].[events]');
+        expect(createSql).toContain('create table [adk].[app_states]');
+        expect(createSql).toContain('create table [adk].[user_states]');
+        expect(createSql).toContain(
+          'create table [adk].[adk_internal_metadata]',
+        );
+        expect(createSql).not.toContain('create table [adk].[sessions]');
+        expect(orm.config.get('schemaGenerator').skipTables).toEqual(
+          previousSkipTables,
+        );
+      });
+    });
+
+    it('checks tables in a MySQL schema outside the current database with tableExists', async () => {
+      const {MySqlDriver} =
+        await vi.importActual<typeof import('@mikro-orm/mysql')>(
+          '@mikro-orm/mysql',
+        );
+      orm = await MikroORM.init({
+        driver: MySqlDriver,
+        dbName: 'adk',
+        schema: 'other',
+        entities: ENTITIES,
+      });
+      vi.spyOn(orm.schema, 'ensureDatabase').mockResolvedValue(true);
+      const executeSpy = vi
+        .spyOn(orm.driver.getConnection(), 'execute')
+        .mockImplementation((async (sql: string) => {
+          // The table listing covers only the current database.
+          if (sql.includes('table_schema = schema()')) {
+            return [{table_name: 'sessions', schema_name: null}];
+          }
+          if (
+            sql.includes("table_schema = 'other'") &&
+            sql.includes("table_name = 'sessions'")
+          ) {
+            return [{1: 1}];
+          }
+          return [];
+        }) as never);
+      let skipTablesDuringCreate: unknown[] | undefined;
+      vi.spyOn(orm.schema, 'create').mockImplementation(async () => {
+        skipTablesDuringCreate = [
+          ...(orm.config.get('schemaGenerator').skipTables ?? []),
+        ];
+      });
+
+      await ensureDatabaseCreated(orm);
+
+      expect(skipTablesDuringCreate).toEqual(['other.sessions']);
+      // One listing query, then one `tableExists` query per entity table.
+      expect(executeSpy).toHaveBeenCalledTimes(1 + ENTITIES.length);
     });
   });
 

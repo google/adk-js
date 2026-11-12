@@ -10,8 +10,9 @@ MikroORM.init = async () => {
   return {
     schema: {
       ensureDatabase: async () => {},
-      update: async () => {},
+      create: async () => {},
     },
+    getMetadata: () => ({getAll: () => new Map()}),
     em: {
       fork: () => ({
         findOne: async () => null,
