@@ -156,6 +156,36 @@ function resolveDeploymentEnv(
 }
 
 export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
+  const isFileProvided = await isFile(options.agentPath);
+  const agentDir = isFileProvided
+    ? path.dirname(options.agentPath)
+    : options.agentPath;
+  const appName = isFileProvided
+    ? path.parse(options.agentPath).name
+    : path.basename(options.agentPath);
+
+  const displayName = options.displayName || appName;
+
+  const envFilePath = path.join(agentDir, '.env');
+  const dotenvVars = await readAgentDotenv(envFilePath);
+
+  if ('GOOGLE_CLOUD_PROJECT' in dotenvVars) {
+    const envProject = dotenvVars['GOOGLE_CLOUD_PROJECT'];
+    delete dotenvVars['GOOGLE_CLOUD_PROJECT'];
+    if (envProject) {
+      if (options.project) {
+        console.warn(
+          'Ignoring GOOGLE_CLOUD_PROJECT in .env as `--project` was explicitly passed and takes precedence',
+        );
+      } else {
+        options.project = envProject;
+        console.info(
+          `\`--project\` is set by GOOGLE_CLOUD_PROJECT in ${envFilePath}`,
+        );
+      }
+    }
+  }
+
   const project =
     options.project || (await resolveDefaultFromGcloudConfig('project'));
   if (!project || project === '(unset)') {
@@ -165,6 +195,23 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
   }
   if (!options.project) {
     options.project = project;
+  }
+
+  if ('GOOGLE_CLOUD_LOCATION' in dotenvVars) {
+    const envLocation = dotenvVars['GOOGLE_CLOUD_LOCATION'];
+    delete dotenvVars['GOOGLE_CLOUD_LOCATION'];
+    if (envLocation) {
+      if (options.region) {
+        console.warn(
+          'Ignoring GOOGLE_CLOUD_LOCATION in .env as `--region` was explicitly passed and takes precedence',
+        );
+      } else {
+        options.region = envLocation;
+        console.info(
+          `\`--region\` is set by GOOGLE_CLOUD_LOCATION in ${envFilePath}`,
+        );
+      }
+    }
   }
 
   const region =
@@ -192,19 +239,8 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
     options.agentFileLoadOptions,
   );
 
-  const isFileProvided = await isFile(options.agentPath);
-  const agentDir = isFileProvided
-    ? path.dirname(options.agentPath)
-    : options.agentPath;
-  const appName = isFileProvided
-    ? path.parse(options.agentPath).name
-    : path.basename(options.agentPath);
-
-  const displayName = options.displayName || appName;
-
-  const envFilePath = path.join(agentDir, '.env');
   const {env, otelToCloud} = resolveDeploymentEnv({
-    dotenvVars: await readAgentDotenv(envFilePath),
+    dotenvVars,
     callerEnv: options.env,
     otelToCloud: Boolean(options.otelToCloud),
     envFilePath,
@@ -239,6 +275,7 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
       allowOrigins: options.allowOrigins,
       sessionServiceUri: options.sessionServiceUri,
       artifactServiceUri: options.artifactServiceUri,
+      memoryServiceUri: options.memoryServiceUri,
       otelToCloud,
       a2a: options.a2a,
       agentFileLoadOptions: options.agentFileLoadOptions,

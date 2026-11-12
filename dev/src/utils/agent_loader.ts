@@ -883,13 +883,31 @@ export class AgentLoader {
       return;
     }
 
-    const error = e instanceof Error ? e : new Error(String(e));
+    const error = toLoadError(e);
     this.loadFailures[name] = {name, filePath, error};
     logger.error(
       `Failed to load agent '${name}' from ${filePath}: ${error.message}. ` +
         `Skipping it; the other agents are unaffected.`,
     );
   }
+}
+
+function toLoadError(e: unknown): Error {
+  if (e instanceof Error) {
+    return e;
+  }
+  if (typeof e === 'object' && e !== null) {
+    const record = e as Record<string, unknown>;
+    if (typeof record['message'] === 'string') {
+      return new Error(record['message']);
+    }
+    try {
+      return new Error(JSON.stringify(e));
+    } catch {
+      // Fall through to String(e) below
+    }
+  }
+  return new Error(typeof e === 'string' ? e : String(e));
 }
 
 function isJsFile(fileExt?: string): boolean {

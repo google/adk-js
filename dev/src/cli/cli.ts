@@ -7,13 +7,17 @@
 
 import {
   BaseArtifactService,
+  BaseMemoryService,
   BaseSessionService,
   EvalCase,
   EvalMetric,
   EvalResult,
   EvalStatus,
+  InMemoryMemoryService,
   LocalEvalSetResultsManager,
   LogLevel,
+  VertexAiMemoryBankService,
+  VertexAiRagMemoryService,
   getArtifactServiceFromUri,
   getEvaluationCriteriaOrDefault,
   getRootAgent,
@@ -26,6 +30,7 @@ import {
   setLogLevel as setAdkCoreLogLevel,
   setupAdkLogger,
   tryGetResetFunc,
+  walkToRootUntilFound,
 } from '@google/adk';
 import {Argument, Command, Option} from 'commander';
 import dotenv from 'dotenv';
@@ -36,6 +41,7 @@ import {AdkApiServer} from '../server/adk_api_server.js';
 import {FileModuleType} from '../utils/agent_loader.js';
 import {getAbsolutePath} from '../utils/file_utils.js';
 import {AdkLogger} from '../utils/logger.js';
+import {redactUriPassword} from '../utils/redact_uri.js';
 import {version} from '../version.js';
 import {createAgent} from './cli_create.js';
 import {runAgent} from './cli_run.js';
@@ -84,6 +90,123 @@ function getArtifactServiceFromOptions(options: {
   return getArtifactServiceFromUri(
     options['artifact_service_uri'] || 'memory://',
   );
+}
+
+function loadDotenvFromDirectory(dir: string): void {
+  try {
+    const dotenvFilePath = walkToRootUntilFound(path.resolve(dir));
+    if (dotenvFilePath && fs.existsSync(dotenvFilePath)) {
+      dotenv.config({path: dotenvFilePath, override: true, quiet: true});
+    }
+  } catch {
+    // Ignore error loading .env
+  }
+}
+
+export interface MemoryServiceOptions {
+  memoryServiceUri?: string;
+  baseDir?: string;
+}
+
+/**
+ * Resolves a memory service instance from command options or URI.
+ * @param optionsOrUri Command options containing `memoryServiceUri` or a URI string.
+ * @param baseDir Optional directory to load `.env` from before resolving GCP-backed services.
+ * @returns An instance of {@link BaseMemoryService}.
+ */
+export function getMemoryServiceFromOptions(
+  optionsOrUri?: MemoryServiceOptions | string,
+  baseDir?: string,
+): BaseMemoryService {
+  let uri: string | undefined;
+  let dir = baseDir;
+
+  if (typeof optionsOrUri === 'string') {
+    uri = optionsOrUri;
+  } else if (optionsOrUri) {
+    uri =
+      optionsOrUri.memoryServiceUri ??
+      ((optionsOrUri as Record<string, unknown>)['memory_service_uri'] as
+        string | undefined);
+    dir = optionsOrUri.baseDir ?? dir;
+  }
+
+  if (dir) {
+    loadDotenvFromDirectory(dir);
+  }
+
+  if (!uri || uri === 'memory://') {
+    return new InMemoryMemoryService();
+  }
+
+  if (uri.startsWith('rag://')) {
+    const uriPart = uri.slice('rag://'.length);
+    if (!uriPart || uriPart.trim() === '') {
+      throw new Error('Rag corpus can not be empty.');
+    }
+    if (uriPart.includes('/')) {
+      const parts = uriPart.split('/');
+      if (
+        parts.length !== 6 ||
+        parts[0] !== 'projects' ||
+        !parts[1] ||
+        parts[2] !== 'locations' ||
+        !parts[3] ||
+        parts[4] !== 'ragCorpora' ||
+        !parts[5]
+      ) {
+        throw new Error(
+          `Malformed RAG corpus resource name: ${redactUriPassword(uri)}. Expected a bare corpus ID or 'projects/{project}/locations/{location}/ragCorpora/{id}'.`,
+        );
+      }
+    }
+    return new VertexAiRagMemoryService({ragCorpus: uriPart});
+  }
+
+  if (uri.startsWith('agentengine://')) {
+    const uriPart = uri.slice('agentengine://'.length);
+    if (!uriPart || uriPart.trim() === '') {
+      throw new Error(
+        'Agent engine resource name or resource id cannot be empty.',
+      );
+    }
+    if (!uriPart.includes('/')) {
+      const projectId = process.env['GOOGLE_CLOUD_PROJECT'];
+      const location = process.env['GOOGLE_CLOUD_LOCATION'];
+      if (!projectId || !location) {
+        throw new Error(
+          'GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION not set.',
+        );
+      }
+      return new VertexAiMemoryBankService({
+        projectId,
+        location,
+        agentEngineId: uriPart,
+      });
+    }
+
+    const parts = uriPart.split('/');
+    if (
+      parts.length !== 6 ||
+      parts[0] !== 'projects' ||
+      !parts[1] ||
+      parts[2] !== 'locations' ||
+      !parts[3] ||
+      parts[4] !== 'reasoningEngines' ||
+      !parts[5]
+    ) {
+      throw new Error(
+        'Agent engine resource name is mal-formatted. It should be of format: projects/{project_id}/locations/{location}/reasoningEngines/{resource_id}',
+      );
+    }
+    return new VertexAiMemoryBankService({
+      projectId: parts[1],
+      location: parts[3],
+      agentEngineId: parts[5],
+    });
+  }
+
+  throw new Error(`Unsupported memory service URI: ${redactUriPassword(uri)}`);
 }
 
 function getAgentFileOptions(options: {
@@ -173,6 +296,22 @@ const ARTIFACT_SERVICE_URI_OPTION = new Option(
   '--artifact-service-uri, --artifact_service_uri <string>',
   'Optional. The URI of the artifact service. Supported URIs: gs://<bucket name> for GCS artifact service.',
 );
+const MEMORY_SERVICE_URI_OPTION = new Option(
+  '--memory-service-uri, --memory_service_uri <string>',
+  'Optional. The URI of the memory service. Supported URIs: rag://<rag_corpus_id> for Vertex AI RAG memory service, agentengine://<agent_engine> for Agent Engine memory service, memory:// for in-memory.',
+);
+
+/**
+ * Adds ADK services options (--session_service_uri, --artifact_service_uri, --memory_service_uri) to a command.
+ * @param cmd The command to configure.
+ * @returns The configured command.
+ */
+export function adkServicesOptions(cmd: Command): Command {
+  return cmd
+    .addOption(SESSION_SERVICE_URI_OPTION)
+    .addOption(ARTIFACT_SERVICE_URI_OPTION)
+    .addOption(MEMORY_SERVICE_URI_OPTION);
+}
 const OTEL_TO_CLOUD_OPTION = new Option(
   '--otel-to-cloud, --otel_to_cloud [boolean]',
   'Optional. Whether to send otel traces to cloud.',
@@ -217,6 +356,14 @@ export const PROJECT_DEPLOY_OPTION = new Option(
 export const REGION_DEPLOY_OPTION = new Option(
   '--region [string]',
   'Optional. Google Cloud region to deploy the agent. If not set, default run/region from gcloud config is used',
+);
+export const PROJECT_AGENT_ENGINE_DEPLOY_OPTION = new Option(
+  '--project [string]',
+  'Optional. Google Cloud project to deploy the agent. It will override GOOGLE_CLOUD_PROJECT in the .env file (if it exists). If not set, default project from gcloud config is used',
+);
+export const REGION_AGENT_ENGINE_DEPLOY_OPTION = new Option(
+  '--region [string]',
+  'Optional. Google Cloud region to deploy the agent. It will override GOOGLE_CLOUD_LOCATION in the .env file (if it exists). If not set, default run/region from gcloud config is used',
 );
 export const ADK_VERSION_OPTION = new Option(
   '--adk-version, --adk_version [string]',
@@ -277,7 +424,7 @@ export function createProgram(): Command {
       console.log(version);
     });
 
-  program
+  const webCommand = program
     .command('web')
     .description('Start ADK web server')
     .addArgument(AGENT_DIR_ARGUMENT)
@@ -286,9 +433,8 @@ export function createProgram(): Command {
     .addOption(ORIGINS_OPTION)
     .addOption(ALLOWED_HOSTS_OPTION)
     .addOption(VERBOSE_OPTION)
-    .addOption(LOG_LEVEL_OPTION)
-    .addOption(SESSION_SERVICE_URI_OPTION)
-    .addOption(ARTIFACT_SERVICE_URI_OPTION)
+    .addOption(LOG_LEVEL_OPTION);
+  adkServicesOptions(webCommand)
     .addOption(OTEL_TO_CLOUD_OPTION)
     .addOption(COMPILE_AGENT_FILE)
     .addOption(BUNDLE_AGENT_FILE)
@@ -301,9 +447,12 @@ export function createProgram(): Command {
       setupAdkLogger(logLevel);
 
       try {
+        const absAgentsDir = getAbsolutePath(agentsDir);
+        loadDotenvFromDirectory(absAgentsDir);
+
         const server = new AdkApiServer({
           logLevel,
-          agentsDir: getAbsolutePath(agentsDir),
+          agentsDir: absAgentsDir,
           host: options['host'],
           port: parseInt(options['port'], 10),
           serveDebugUI: true,
@@ -311,6 +460,7 @@ export function createProgram(): Command {
           allowedHosts: getAllowedHosts(options['allowed_hosts']),
           sessionService: getSessionServiceFromOptions(options),
           artifactService: getArtifactServiceFromOptions(options),
+          memoryService: getMemoryServiceFromOptions(options, absAgentsDir),
           otelToCloud: getBoolean(options['otel_to_cloud']),
           agentFileLoadOptions: getAgentFileOptions(options),
           a2a: getBoolean(options['a2a']),
@@ -325,7 +475,7 @@ export function createProgram(): Command {
       }
     });
 
-  program
+  const apiServerCommand = program
     .command('api_server')
     .alias('api-server')
     .description('Start ADK API server')
@@ -335,9 +485,8 @@ export function createProgram(): Command {
     .addOption(ORIGINS_OPTION)
     .addOption(ALLOWED_HOSTS_OPTION)
     .addOption(VERBOSE_OPTION)
-    .addOption(LOG_LEVEL_OPTION)
-    .addOption(SESSION_SERVICE_URI_OPTION)
-    .addOption(ARTIFACT_SERVICE_URI_OPTION)
+    .addOption(LOG_LEVEL_OPTION);
+  adkServicesOptions(apiServerCommand)
     .addOption(OTEL_TO_CLOUD_OPTION)
     .addOption(COMPILE_AGENT_FILE)
     .addOption(BUNDLE_AGENT_FILE)
@@ -350,9 +499,12 @@ export function createProgram(): Command {
       setupAdkLogger(logLevel);
 
       try {
+        const absAgentsDir = getAbsolutePath(agentsDir);
+        loadDotenvFromDirectory(absAgentsDir);
+
         const server = new AdkApiServer({
           logLevel,
-          agentsDir: getAbsolutePath(agentsDir),
+          agentsDir: absAgentsDir,
           host: options['host'],
           port: parseInt(options['port'], 10),
           serveDebugUI: false,
@@ -360,6 +512,7 @@ export function createProgram(): Command {
           allowedHosts: getAllowedHosts(options['allowed_hosts']),
           sessionService: getSessionServiceFromOptions(options),
           artifactService: getArtifactServiceFromOptions(options),
+          memoryService: getMemoryServiceFromOptions(options, absAgentsDir),
           otelToCloud: getBoolean(options['otel_to_cloud']),
           agentFileLoadOptions: getAgentFileOptions(options),
           a2a: getBoolean(options['a2a']),
@@ -412,7 +565,7 @@ export function createProgram(): Command {
       }
     });
 
-  program
+  const runCommand = program
     .command('run')
     .description('Runs agent')
     .argument('<agent>', 'Agent file path (.js or .ts)')
@@ -434,9 +587,8 @@ export function createProgram(): Command {
       'The json file that contains a previously saved session (by --save_session option). The previous session will be re-displayed. And user can continue to interact with the agent.',
     )
     .addOption(VERBOSE_OPTION)
-    .addOption(LOG_LEVEL_OPTION)
-    .addOption(SESSION_SERVICE_URI_OPTION)
-    .addOption(ARTIFACT_SERVICE_URI_OPTION)
+    .addOption(LOG_LEVEL_OPTION);
+  adkServicesOptions(runCommand)
     .addOption(OTEL_TO_CLOUD_OPTION)
     .addOption(COMPILE_AGENT_FILE)
     .addOption(BUNDLE_AGENT_FILE)
@@ -447,6 +599,8 @@ export function createProgram(): Command {
 
       try {
         logToTmpFolder({level: logLevel});
+        const absAgentPath = path.resolve(getAbsolutePath(agentPath));
+
         await runAgent({
           agentPath,
           inputFile: options['replay'],
@@ -455,6 +609,10 @@ export function createProgram(): Command {
           sessionId: options['session_id'],
           sessionService: getSessionServiceFromOptions(options),
           artifactService: getArtifactServiceFromOptions(options),
+          memoryService: getMemoryServiceFromOptions(
+            options,
+            path.dirname(absAgentPath),
+          ),
           otelToCloud: getBoolean(options['otel_to_cloud']),
           agentFileLoadOptions: getAgentFileOptions(options),
           reloadAgents: getBoolean(options['reload_agents']),
@@ -620,7 +778,7 @@ export function createProgram(): Command {
     .allowUnknownOption()
     .allowExcessArguments();
 
-  DEPLOY_COMMAND.command('cloud_run')
+  const deployCloudRunCommand = DEPLOY_COMMAND.command('cloud_run')
     .alias('cloud-run')
     .addArgument(AGENT_DIR_ARGUMENT)
     .allowUnknownOption()
@@ -646,9 +804,8 @@ export function createProgram(): Command {
     .addOption(WITH_UI_OPTION)
     .addOption(ORIGINS_OPTION)
     .addOption(VERBOSE_OPTION)
-    .addOption(LOG_LEVEL_OPTION)
-    .addOption(SESSION_SERVICE_URI_OPTION)
-    .addOption(ARTIFACT_SERVICE_URI_OPTION)
+    .addOption(LOG_LEVEL_OPTION);
+  adkServicesOptions(deployCloudRunCommand)
     .addOption(OTEL_TO_CLOUD_OPTION)
     .option(
       '--with-cloud-trace, --with_cloud_trace [boolean]',
@@ -693,6 +850,7 @@ export function createProgram(): Command {
           allowOrigins: options['allow_origins'],
           sessionServiceUri: options['session_service_uri'],
           artifactServiceUri: options['artifact_service_uri'],
+          memoryServiceUri: options['memory_service_uri'],
           ...(otelToCloud ? {otelToCloud: true} : {}),
           agentFileLoadOptions: getAgentFileOptions({...options, minify: true}),
           a2a: getBoolean(options['a2a']),
@@ -710,8 +868,8 @@ export function createProgram(): Command {
       .addArgument(AGENT_DIR_ARGUMENT)
       .allowUnknownOption()
       .allowExcessArguments()
-      .addOption(PROJECT_DEPLOY_OPTION)
-      .addOption(REGION_DEPLOY_OPTION)
+      .addOption(PROJECT_AGENT_ENGINE_DEPLOY_OPTION)
+      .addOption(REGION_AGENT_ENGINE_DEPLOY_OPTION)
       .addOption(DISPLAY_NAME_OPTION)
       .addOption(DESCRIPTION_OPTION)
       .addOption(REPOSITORY_DEPLOY_OPTION)
@@ -724,9 +882,8 @@ export function createProgram(): Command {
       .addOption(WITH_UI_OPTION)
       .addOption(ORIGINS_OPTION)
       .addOption(VERBOSE_OPTION)
-      .addOption(LOG_LEVEL_OPTION)
-      .addOption(SESSION_SERVICE_URI_OPTION)
-      .addOption(ARTIFACT_SERVICE_URI_OPTION)
+      .addOption(LOG_LEVEL_OPTION);
+    adkServicesOptions(cmd)
       .addOption(OTEL_TO_CLOUD_OPTION)
       .addOption(COMPILE_AGENT_FILE)
       .addOption(BUNDLE_AGENT_FILE)
@@ -754,6 +911,7 @@ export function createProgram(): Command {
             allowOrigins: options['allow_origins'],
             sessionServiceUri: options['session_service_uri'],
             artifactServiceUri: options['artifact_service_uri'],
+            memoryServiceUri: options['memory_service_uri'],
             ...(otelToCloud ? {otelToCloud: true} : {}),
             agentFileLoadOptions: getAgentFileOptions({
               ...options,

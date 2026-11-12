@@ -1097,6 +1097,78 @@ describe('deployToAgentEngine', () => {
       expect(getDockerfileContent()).not.toContain('--otel_to_cloud');
     });
 
+    it('populates project and region from .env when options are omitted', async () => {
+      await writeDotenv(
+        'GOOGLE_CLOUD_PROJECT=env-project-123\nGOOGLE_CLOUD_LOCATION=europe-west1\n',
+      );
+
+      const optionsWithoutProjectOrRegion = {
+        ...defaultOptions,
+        project: undefined,
+        region: undefined,
+      };
+
+      await deployToAgentEngine(optionsWithoutProjectOrRegion);
+
+      expect(spawnMock).toHaveBeenCalledWith(
+        'gcloud',
+        expect.arrayContaining([
+          'builds',
+          'submit',
+          '--tag',
+          expect.stringContaining(
+            'europe-west1-docker.pkg.dev/env-project-123/agent-engine-repo/agent-engine-',
+          ),
+          '--project',
+          'env-project-123',
+        ]),
+        expect.anything(),
+      );
+      expect(console.info).toHaveBeenCalledWith(
+        expect.stringContaining(
+          '`--project` is set by GOOGLE_CLOUD_PROJECT in',
+        ),
+      );
+      expect(console.info).toHaveBeenCalledWith(
+        expect.stringContaining(
+          '`--region` is set by GOOGLE_CLOUD_LOCATION in',
+        ),
+      );
+    });
+
+    it('warns and prefers CLI options when project and region are passed and .env defines them', async () => {
+      await writeDotenv(
+        'GOOGLE_CLOUD_PROJECT=env-project\nGOOGLE_CLOUD_LOCATION=env-location\n',
+      );
+
+      await deployToAgentEngine({
+        ...defaultOptions,
+        project: 'cli-project',
+        region: 'us-east4',
+      });
+
+      expect(console.warn).toHaveBeenCalledWith(
+        'Ignoring GOOGLE_CLOUD_PROJECT in .env as `--project` was explicitly passed and takes precedence',
+      );
+      expect(console.warn).toHaveBeenCalledWith(
+        'Ignoring GOOGLE_CLOUD_LOCATION in .env as `--region` was explicitly passed and takes precedence',
+      );
+      expect(spawnMock).toHaveBeenCalledWith(
+        'gcloud',
+        expect.arrayContaining([
+          'builds',
+          'submit',
+          '--tag',
+          expect.stringContaining(
+            'us-east4-docker.pkg.dev/cli-project/agent-engine-repo/agent-engine-',
+          ),
+          '--project',
+          'cli-project',
+        ]),
+        expect.anything(),
+      );
+    });
+
     it('should rethrow .env read errors other than a missing file', async () => {
       await fs.mkdir(path.join(agentDir, '.env'));
 
@@ -1104,6 +1176,29 @@ describe('deployToAgentEngine', () => {
         /EISDIR/,
       );
       expect(spawnMock).not.toHaveBeenCalled();
+    });
+
+    it('does not log runtime-injection warning when .env has empty GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION', async () => {
+      await writeDotenv(
+        'GOOGLE_CLOUD_PROJECT=\nGOOGLE_CLOUD_LOCATION=\nMY_VAR=hello\n',
+      );
+
+      await deployToAgentEngine(defaultOptions);
+
+      expect(console.warn).not.toHaveBeenCalledWith(
+        expect.stringContaining('Agent Engine runtime sets it'),
+      );
+    });
+
+    it('forwards memoryServiceUri into the generated Dockerfile CMD', async () => {
+      await deployToAgentEngine({
+        ...defaultOptions,
+        memoryServiceUri: 'rag://test-corpus',
+      });
+
+      expect(getDockerfileContent()).toContain(
+        "--memory_service_uri='rag://test-corpus'",
+      );
     });
 
     it('should accept caller env as a name-to-value map', async () => {

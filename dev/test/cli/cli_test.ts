@@ -5,17 +5,24 @@
  */
 
 import {
+  InMemoryMemoryService,
   LocalEvalSetResultsManager,
   LogLevel,
   logToTmpFolder,
   setupAdkLogger,
+  VertexAiMemoryBankService,
+  VertexAiRagMemoryService,
 } from '@google/adk';
 import {Command, CommanderError} from 'commander';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
-import {createProgram} from '../../src/cli/cli.js';
+import {
+  adkServicesOptions,
+  createProgram,
+  getMemoryServiceFromOptions,
+} from '../../src/cli/cli.js';
 import {createAgent} from '../../src/cli/cli_create.js';
 import {runAgent} from '../../src/cli/cli_run.js';
 import {deployToAgentEngine} from '../../src/cli/deploy/cli_deploy_agent_engine.js';
@@ -100,6 +107,7 @@ describe('CLI Entrypoint', () => {
   afterEach(() => {
     process.exitCode = originalExitCode;
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   const parse = async (args: string[]) => {
@@ -217,6 +225,22 @@ describe('CLI Entrypoint', () => {
       expect(args.artifactService).toBeDefined();
     });
 
+    it('should handle memory service uri in web command', async () => {
+      await parse(['web', '--memory_service_uri', 'memory://']);
+
+      const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+      expect(args.memoryService).toBeInstanceOf(InMemoryMemoryService);
+    });
+
+    it('should handle rag memory service uri in web command', async () => {
+      vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'test-project');
+      vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'us-central1');
+      await parse(['web', '--memory_service_uri', 'rag://test-corpus']);
+
+      const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+      expect(args.memoryService).toBeInstanceOf(VertexAiRagMemoryService);
+    });
+
     it('should start AdkApiServer with a2a: true when --a2a is set', async () => {
       await parse(['web', '--a2a']);
 
@@ -269,6 +293,13 @@ describe('CLI Entrypoint', () => {
 
       const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
       expect(args.a2aAuthToken).toBe('tok');
+    });
+
+    it('should handle memory service uri in api_server command', async () => {
+      await parse(['api_server', '--memory_service_uri', 'memory://']);
+
+      const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+      expect(args.memoryService).toBeInstanceOf(InMemoryMemoryService);
     });
   });
 
@@ -398,6 +429,27 @@ describe('CLI Entrypoint', () => {
         }),
       );
     });
+
+    it('should pass memoryService to runAgent when --memory_service_uri is set', async () => {
+      await parse(['run', 'agent.ts', '--memory_service_uri', 'memory://']);
+
+      const runCall = (runAgent as unknown as Mock).mock.calls[0][0];
+      expect(runCall.memoryService).toBeInstanceOf(InMemoryMemoryService);
+    });
+
+    it('should pass VertexAiRagMemoryService to runAgent when --memory_service_uri is rag://', async () => {
+      vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'test-project');
+      vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'us-central1');
+      await parse([
+        'run',
+        'agent.ts',
+        '--memory_service_uri',
+        'rag://test-corpus',
+      ]);
+
+      const runCall = (runAgent as unknown as Mock).mock.calls[0][0];
+      expect(runCall.memoryService).toBeInstanceOf(VertexAiRagMemoryService);
+    });
   });
 
   // Minification mangles identifiers and line numbers, so local commands must
@@ -508,6 +560,19 @@ describe('CLI Entrypoint', () => {
       // A recognised flag must not also be passed through as an unknown one,
       // which gcloud would reject.
       expect(args.extraGcloudArgs).toEqual([]);
+    });
+
+    it('should pass memoryServiceUri to deployToCloudRun when --memory_service_uri is set', async () => {
+      await parse([
+        'deploy',
+        'cloud_run',
+        './my-agent-path',
+        '--memory_service_uri=rag://my-corpus',
+      ]);
+
+      expect((deployToCloudRun as Mock).mock.calls[0][0]).toMatchObject({
+        memoryServiceUri: 'rag://my-corpus',
+      });
     });
   });
 
@@ -660,6 +725,19 @@ describe('CLI Entrypoint', () => {
       expect(
         (deployToAgentEngine as Mock).mock.calls[0][0].otelToCloud,
       ).toBeUndefined();
+    });
+
+    it('should pass memoryServiceUri to deployToAgentEngine when --memory_service_uri is set', async () => {
+      await parse([
+        'deploy',
+        'agent_engine',
+        './my-agent-path',
+        '--memory_service_uri=rag://my-corpus',
+      ]);
+
+      expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
+        memoryServiceUri: 'rag://my-corpus',
+      });
     });
   });
 
@@ -1194,6 +1272,8 @@ describe('CLI Entrypoint', () => {
           'http://example.com',
           '--session-service-uri',
           'memory://',
+          '--memory-service-uri',
+          'memory://',
           '--a2a-auth-token',
           'tok-web',
           '--otel-to-cloud',
@@ -1207,6 +1287,7 @@ describe('CLI Entrypoint', () => {
           otelToCloud: true,
         });
         expect(args.sessionService).toBeDefined();
+        expect(args.memoryService).toBeInstanceOf(InMemoryMemoryService);
       });
 
       it('parses kebab-case flags using =value format', async () => {
@@ -1674,5 +1755,154 @@ describe('usage errors', () => {
 
     expect(stderr).toContain('unknown option');
     expect(stderr).toContain('Usage: ADK CLI run');
+  });
+});
+
+describe('adkServicesOptions', () => {
+  it('attaches session, artifact, and memory service options to a command', () => {
+    const cmd = new Command('test');
+    adkServicesOptions(cmd);
+
+    const optionFlags = cmd.options.map((opt) => opt.flags);
+    expect(optionFlags).toContain(
+      '--session-service-uri, --session_service_uri <string>',
+    );
+    expect(optionFlags).toContain(
+      '--artifact-service-uri, --artifact_service_uri <string>',
+    );
+    expect(optionFlags).toContain(
+      '--memory-service-uri, --memory_service_uri <string>',
+    );
+  });
+});
+
+describe('getMemoryServiceFromOptions', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('returns InMemoryMemoryService when URI is empty or memory://', () => {
+    expect(getMemoryServiceFromOptions({})).toBeInstanceOf(
+      InMemoryMemoryService,
+    );
+    expect(
+      getMemoryServiceFromOptions({memoryServiceUri: 'memory://'}),
+    ).toBeInstanceOf(InMemoryMemoryService);
+  });
+
+  it('returns VertexAiRagMemoryService when URI starts with rag:// and bare corpus', () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'test-proj');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'us-central1');
+    const service = getMemoryServiceFromOptions({
+      memoryServiceUri: 'rag://test-corpus',
+    });
+    expect(service).toBeInstanceOf(VertexAiRagMemoryService);
+  });
+
+  it('returns VertexAiRagMemoryService when URI starts with rag:// and full resource name', () => {
+    const service = getMemoryServiceFromOptions({
+      memoryServiceUri:
+        'rag://projects/test-proj/locations/us-central1/ragCorpora/test-corpus',
+    });
+    expect(service).toBeInstanceOf(VertexAiRagMemoryService);
+  });
+
+  it('rejects empty or whitespace-only rag:// URIs', () => {
+    expect(() =>
+      getMemoryServiceFromOptions({
+        memoryServiceUri: 'rag://',
+      }),
+    ).toThrow('Rag corpus can not be empty.');
+  });
+
+  it('rejects malformed multi-segment rag:// URIs', () => {
+    expect(() =>
+      getMemoryServiceFromOptions({
+        memoryServiceUri: 'rag://projects/test-proj/invalid',
+      }),
+    ).toThrow(/Malformed RAG corpus resource name/);
+  });
+
+  it('returns VertexAiMemoryBankService when URI is agentengine:// with short ID', () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'test-proj');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'us-central1');
+    const service = getMemoryServiceFromOptions({
+      memoryServiceUri: 'agentengine://123',
+    });
+    expect(service).toBeInstanceOf(VertexAiMemoryBankService);
+  });
+
+  it('throws error when agentengine:// short ID has no GOOGLE_CLOUD_PROJECT in environment', () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', '');
+    expect(() =>
+      getMemoryServiceFromOptions({
+        memoryServiceUri: 'agentengine://123',
+      }),
+    ).toThrow('GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION not set.');
+  });
+
+  it('loads GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION from .env when baseDir is provided', () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', '');
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adk-cli-dotenv-'));
+    const childDir = path.join(tempDir, 'nested', 'sub');
+    fs.mkdirSync(childDir, {recursive: true});
+    fs.writeFileSync(
+      path.join(tempDir, '.env'),
+      'GOOGLE_CLOUD_PROJECT=dotenv-proj\nGOOGLE_CLOUD_LOCATION=us-west1\n',
+      'utf-8',
+    );
+    const originalCwd = process.cwd();
+    try {
+      process.chdir(childDir);
+      const service = getMemoryServiceFromOptions('agentengine://123', '.');
+      expect(service).toBeInstanceOf(VertexAiMemoryBankService);
+      expect(process.env['GOOGLE_CLOUD_PROJECT']).toBe('dotenv-proj');
+      expect(process.env['GOOGLE_CLOUD_LOCATION']).toBe('us-west1');
+    } finally {
+      process.chdir(originalCwd);
+      fs.rmSync(tempDir, {recursive: true, force: true});
+    }
+  });
+
+  it('returns VertexAiMemoryBankService when URI is agentengine:// with full resource name', () => {
+    const service = getMemoryServiceFromOptions({
+      memoryServiceUri:
+        'agentengine://projects/test-proj/locations/us-central1/reasoningEngines/123',
+    });
+    expect(service).toBeInstanceOf(VertexAiMemoryBankService);
+  });
+
+  it('rejects empty or whitespace-only agentengine:// URIs', () => {
+    expect(() =>
+      getMemoryServiceFromOptions({
+        memoryServiceUri: 'agentengine://',
+      }),
+    ).toThrow('Agent engine resource name or resource id cannot be empty.');
+  });
+
+  it('rejects malformed agentengine:// URIs', () => {
+    expect(() =>
+      getMemoryServiceFromOptions({
+        memoryServiceUri: 'agentengine://projects/test-proj/invalid',
+      }),
+    ).toThrow(/Agent engine resource name is mal-formatted/);
+  });
+
+  it('throws error for unsupported memory service URI and redacts credentials', () => {
+    expect(() =>
+      getMemoryServiceFromOptions({
+        memoryServiceUri: 'unsupported://user:secret@host/db',
+      }),
+    ).toThrow('Unsupported memory service URI: unsupported://user:***@host/db');
+
+    expect(() =>
+      getMemoryServiceFromOptions({
+        memoryServiceUri: 'unsupported://host/db?access_token=secret_tok',
+      }),
+    ).toThrow(
+      'Unsupported memory service URI: unsupported://host/db?access_token=***',
+    );
   });
 });

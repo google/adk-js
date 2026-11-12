@@ -52,7 +52,7 @@ const NODE_BASE_IMAGE = 'node:24-alpine';
 
 export interface CreateDockerFileContentOptions {
   appName?: string;
-  project: string;
+  project?: string;
   region?: string;
   port: number;
   withUi: boolean;
@@ -60,6 +60,7 @@ export interface CreateDockerFileContentOptions {
   allowOrigins?: string;
   sessionServiceUri?: string;
   artifactServiceUri?: string;
+  memoryServiceUri?: string;
   otelToCloud?: boolean;
   a2a?: boolean;
   agentFileLoadOptions?: AgentFileOptions;
@@ -131,7 +132,9 @@ function shellQuote(value: string): string {
 export function createDockerFileContent(
   options: CreateDockerFileContentOptions,
 ): string {
-  assertSafeDockerfileToken(options.project, 'project');
+  if (options.project) {
+    assertSafeDockerfileToken(options.project, 'project');
+  }
   if (options.region) {
     assertSafeDockerfileToken(options.region, 'region');
   }
@@ -182,6 +185,13 @@ export function createDockerFileContent(
     assertNoDockerfileNewline(options.sessionServiceUri, 'sessionServiceUri');
     adkServerOptions.push(
       `--session_service_uri=${shellQuote(options.sessionServiceUri)}`,
+    );
+  }
+
+  if (options.memoryServiceUri) {
+    assertNoDockerfileNewline(options.memoryServiceUri, 'memoryServiceUri');
+    adkServerOptions.push(
+      `--memory_service_uri=${shellQuote(options.memoryServiceUri)}`,
     );
   }
 

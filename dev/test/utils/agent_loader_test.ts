@@ -1621,6 +1621,60 @@ describe('AgentLoader', () => {
         );
         await loader.disposeAll();
       });
+
+      // reference: test_agent_internal_name_error
+      it('surfaces a runtime reference error thrown while evaluating an agent module', async () => {
+        const agentName = 'name_error_agent';
+        const badReferenceCode = `
+          export const rootAgent = non_existing_variable_name;
+        `;
+        await fs.writeFile(
+          path.join(tempAgentsDir, `${agentName}.js`),
+          badReferenceCode,
+        );
+
+        const loader = new AgentLoader(tempAgentsDir);
+        await expect(loader.getAgentFile(agentName)).rejects.toThrow(
+          /Agent 'name_error_agent' failed to load[\s\S]*non_existing_variable_name is not defined/,
+        );
+        await loader.disposeAll();
+      });
+
+      it('surfaces descriptive error message when evaluating an agent throws a non-Error object', async () => {
+        const agentName = 'custom_thrown_agent';
+        const throwObjectCode = `
+          throw {code: 'CUSTOM_FAIL', reason: 'failed initialization'};
+        `;
+        await fs.writeFile(
+          path.join(tempAgentsDir, `${agentName}.js`),
+          throwObjectCode,
+        );
+
+        const loader = new AgentLoader(tempAgentsDir);
+        await expect(loader.getAgentFile(agentName)).rejects.toThrow(
+          /Agent 'custom_thrown_agent' failed to load[\s\S]*CUSTOM_FAIL/,
+        );
+        await loader.disposeAll();
+      });
+
+      it('surfaces error message when evaluating an agent throws a circular non-serializable object', async () => {
+        const agentName = 'circular_thrown_agent';
+        const throwCircularCode = `
+          const circular = {name: 'circular'};
+          circular.self = circular;
+          throw circular;
+        `;
+        await fs.writeFile(
+          path.join(tempAgentsDir, `${agentName}.js`),
+          throwCircularCode,
+        );
+
+        const loader = new AgentLoader(tempAgentsDir);
+        await expect(loader.getAgentFile(agentName)).rejects.toThrow(
+          /Agent 'circular_thrown_agent' failed to load/,
+        );
+        await loader.disposeAll();
+      });
     });
   });
 
