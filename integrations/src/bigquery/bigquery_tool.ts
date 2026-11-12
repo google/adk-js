@@ -19,17 +19,23 @@ import {
   type BigQueryCredentialsConfig,
   GoogleCredentialsManager,
 } from './bigquery_credentials.js';
+import {
+  BigQueryToolConfig,
+  type BigQueryToolConfigOptions,
+  isBigQueryToolConfig,
+} from './config.js';
 import {toBigQueryToolErrorResult} from './tool_error.js';
 
 /**
  * Function wrapped by a {@link BigQueryTool}. It receives the validated model
- * arguments plus the resolved `credentials`, and the tool context.
+ * arguments plus the resolved `credentials`, `config`, and the tool context.
  */
 export type BigQueryToolExecuteFunction<
   TParameters extends ToolInputParameters,
 > = (
   input: ToolExecuteArgument<TParameters> & {
     credentials?: BigQueryCredentials;
+    config?: BigQueryToolConfig;
   },
   toolContext?: Context,
 ) => unknown;
@@ -52,7 +58,7 @@ export interface BigQueryToolOptions<
 
   /**
    * Zod object schema or `@google/genai` `Schema` describing the model-facing
-   * parameters. Do not declare `credentials`; the tool injects it.
+   * parameters. Do not declare `credentials` or `config`; the tool injects them.
    */
   parameters?: TParameters;
 
@@ -67,6 +73,11 @@ export interface BigQueryToolOptions<
    * Default Credentials.
    */
   credentialsConfig?: BigQueryCredentialsConfig;
+
+  /**
+   * BigQuery tool configuration (such as write mode).
+   */
+  toolConfig?: BigQueryToolConfig | BigQueryToolConfigOptions;
 
   /**
    * Whether the tool is a long-running operation.
@@ -110,9 +121,17 @@ export class BigQueryTool<
   readonly credentialsManager?: GoogleCredentialsManager;
 
   /**
+   * The configuration for BigQuery tools, or `undefined` when not configured.
+   */
+  readonly toolConfig?: BigQueryToolConfig;
+
+  /**
    * Parameter names omitted from the model's function declaration.
    */
-  readonly ignoreParams: readonly string[] = Object.freeze(['credentials']);
+  readonly ignoreParams: readonly string[] = Object.freeze([
+    'credentials',
+    'config',
+  ]);
 
   constructor(options: BigQueryToolOptions<TParameters>) {
     const name = options.name ?? options.execute.name;
@@ -123,6 +142,11 @@ export class BigQueryTool<
     }
     const credentialsManager = options.credentialsConfig
       ? new GoogleCredentialsManager(options.credentialsConfig)
+      : undefined;
+    const toolConfig = options.toolConfig
+      ? isBigQueryToolConfig(options.toolConfig)
+        ? options.toolConfig
+        : new BigQueryToolConfig(options.toolConfig)
       : undefined;
     const execute = options.execute;
 
@@ -146,10 +170,11 @@ export class BigQueryTool<
             }
           }
           // A parameterless tool's validated input is not an object; it
-          // receives only `credentials`.
+          // receives only `credentials` and `config`.
           const argsToCall = {
             ...(typeof input === 'object' ? input : {}),
             credentials,
+            config: toolConfig,
           } as Parameters<typeof execute>[0];
           return await execute(argsToCall, toolContext);
         } catch (error: unknown) {
@@ -159,10 +184,11 @@ export class BigQueryTool<
     });
 
     this.credentialsManager = credentialsManager;
+    this.toolConfig = toolConfig;
   }
 
   /**
-   * Builds the `FunctionDeclaration` with `credentials` stripped from `properties`
+   * Builds the `FunctionDeclaration` with `credentials` and `config` stripped from `properties`
    * and `required`.
    */
   override _getDeclaration(): FunctionDeclaration {

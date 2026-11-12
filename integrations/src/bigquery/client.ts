@@ -64,6 +64,20 @@ export interface BigQuerySdkTable {
 }
 
 /**
+ * Structural interface for a query job in `@google-cloud/bigquery`.
+ */
+export interface BigQuerySdkJob {
+  id?: string;
+  metadata?: {
+    statistics?: {
+      query?: {
+        statementType?: string;
+      };
+    };
+  };
+}
+
+/**
  * Structural interface for a dataset handle in `@google-cloud/bigquery`.
  */
 export interface BigQuerySdkDataset {
@@ -103,6 +117,9 @@ export interface BigQuerySdkClient {
     options: BigQueryQueryOptions,
     resultsOptions?: BigQueryQueryResultsOptions,
   ): Promise<[Array<Record<string, unknown>>]>;
+  createQueryJob(
+    options: Record<string, unknown>,
+  ): Promise<[BigQuerySdkJob, Record<string, unknown>?]>;
 }
 
 /**
@@ -221,7 +238,10 @@ export class BigQueryClient {
   readonly location?: string;
   readonly userAgent: string;
   private readonly sdkLoader: () => Promise<BigQuerySdkModule>;
-  private sdkClientPromise?: Promise<BigQuerySdkClient>;
+  private readonly sdkClientPromises = new Map<
+    string | undefined,
+    Promise<BigQuerySdkClient>
+  >();
 
   constructor(options: GetBigQueryClientOptions = {}) {
     this.projectId =
@@ -333,15 +353,45 @@ export class BigQueryClient {
     return rows;
   }
 
-  private getSdkClient(): Promise<BigQuerySdkClient> {
-    this.sdkClientPromise ??= this.createSdkClient().catch((err: unknown) => {
-      this.sdkClientPromise = undefined;
-      throw err;
-    });
-    return this.sdkClientPromise;
+  /**
+   * Performs a dry run of a query to determine its statement type and validate syntax.
+   */
+  async dryRun(
+    options: BigQueryQueryOptions,
+  ): Promise<{statementType?: string}> {
+    const effectiveProjectId = options.projectId || this.projectId;
+    const sdk = await this.getSdkClient(effectiveProjectId);
+    const jobOptions: Record<string, unknown> = {
+      query: options.query,
+      dryRun: true,
+    };
+    const effectiveLocation = options.location ?? this.location;
+    if (effectiveLocation !== undefined) {
+      jobOptions['location'] = effectiveLocation;
+    }
+    const response = await sdk.createQueryJob(jobOptions);
+    const job = response[0];
+    return {
+      statementType: job?.metadata?.statistics?.query?.statementType,
+    };
   }
 
-  private async createSdkClient(): Promise<BigQuerySdkClient> {
+  private getSdkClient(projectId?: string): Promise<BigQuerySdkClient> {
+    const key = projectId ?? this.projectId;
+    let promise = this.sdkClientPromises.get(key);
+    if (!promise) {
+      promise = this.createSdkClient(key).catch((err: unknown) => {
+        this.sdkClientPromises.delete(key);
+        throw err;
+      });
+      this.sdkClientPromises.set(key, promise);
+    }
+    return promise;
+  }
+
+  private async createSdkClient(
+    overrideProjectId?: string,
+  ): Promise<BigQuerySdkClient> {
     const mod = await this.sdkLoader();
     if (typeof mod?.BigQuery !== 'function') {
       throw new Error(
@@ -352,8 +402,9 @@ export class BigQueryClient {
     const clientOptions: Record<string, unknown> = {
       userAgent: this.userAgent,
     };
-    if (this.projectId !== undefined) {
-      clientOptions['projectId'] = this.projectId;
+    const effectiveProjectId = overrideProjectId ?? this.projectId;
+    if (effectiveProjectId !== undefined) {
+      clientOptions['projectId'] = effectiveProjectId;
     }
     if (this.location !== undefined) {
       clientOptions['location'] = this.location;

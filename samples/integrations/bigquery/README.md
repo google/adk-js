@@ -1,14 +1,15 @@
 # BigQuery Toolset Sample (`BigQueryToolset`)
 
-This sample demonstrates how to equip an `LlmAgent` with `BigQueryToolset`, `BigQueryTool`, and `BigQueryCredentialsConfig` from `@google/adk-integrations`.
+This sample demonstrates how to equip an `LlmAgent` with `BigQueryToolset`, `BigQueryTool`, `BigQueryCredentialsConfig`, and `BigQueryToolConfig` from `@google/adk-integrations`.
 
 ## Overview
 
 `bigquery_data_assistant` is an `LlmAgent` configured with:
 
 1. `BigQueryCredentialsConfig` for OAuth2 client credentials and default `BIGQUERY_SCOPES` (BigQuery and Dataplex read-write; `@google/adk-integrations` also exports `BIGQUERY_DEFAULT_SCOPE`, `['https://www.googleapis.com/auth/bigquery']`, for BigQuery-only access).
-2. `BigQueryToolset` exposing `list_dataset_ids`, `get_dataset_info`, `list_table_ids`, `get_table_info`, and `execute_sql` (note that `execute_sql` runs any SQL statement allowed by the credentials, including DML and DDL, so use read-only IAM roles or scopes when write access is not intended).
-3. A custom `BigQueryTool` (`summarize_bigquery_target`) that receives resolved credentials while stripping `credentials` from the model's `FunctionDeclaration`.
+2. `BigQueryToolConfig` specifying the write permissions for BigQuery tools. By default, or with `WriteMode.BLOCKED`, `execute_sql` enforces read-only mode via a dry-run check before query execution, rejecting statements that are not `SELECT`. To allow DML and DDL writes, set `writeMode: WriteMode.ALLOWED`.
+3. `BigQueryToolset` exposing `list_dataset_ids`, `get_dataset_info`, `list_table_ids`, `get_table_info`, and `execute_sql`.
+4. A custom `BigQueryTool` (`summarize_bigquery_target`) that receives resolved credentials and configuration while stripping internal parameters from the model's `FunctionDeclaration`.
 
 ## Prerequisites
 
@@ -26,7 +27,17 @@ export GOOGLE_OAUTH_CLIENT_ID="your-oauth-client-id"
 export GOOGLE_OAUTH_CLIENT_SECRET="your-oauth-client-secret"
 ```
 
-When write access is not intended, configure `BigQueryCredentialsConfig` with a read-only OAuth2 scope:
+To enable write queries (such as `CREATE TABLE` or `DROP TABLE`), configure `BigQueryToolConfig`:
+
+```ts
+import {BigQueryToolConfig, WriteMode} from '@google/adk-integrations';
+
+const writeAllowedConfig = new BigQueryToolConfig({
+  writeMode: WriteMode.ALLOWED,
+});
+```
+
+When write access is not intended, keep the default `WriteMode.BLOCKED` (or configure read-only OAuth2 scopes):
 
 ```ts
 const readOnlyCredentialsConfig = new BigQueryCredentialsConfig({
@@ -72,5 +83,5 @@ npm run ts:check:samples
 
 ## Related Guides
 
-- [BigQuery toolset](../../../docs/guides/integrations/bigquery/index.md) - `BigQueryToolset`, `BigQueryTool`, `BigQueryCredentialsConfig`, and `getBigQueryClient`.
+- [BigQuery toolset](../../../docs/guides/integrations/bigquery/index.md) - `BigQueryToolset`, `BigQueryTool`, `BigQueryCredentialsConfig`, `BigQueryToolConfig`, and `getBigQueryClient`.
 - [Tools](../../../docs/guides/tools/index.md) - `BaseTool`, `FunctionTool`, and `BaseToolset`.

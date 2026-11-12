@@ -42,6 +42,12 @@ export type {
   GetBigQueryClientOptions,
 } from './bigquery/client.js';
 export {
+  BigQueryToolConfig,
+  WriteMode,
+  isBigQueryToolConfig,
+} from './bigquery/config.js';
+export type {BigQueryToolConfigOptions} from './bigquery/config.js';
+export {
   getDatasetInfo,
   getDatasetInfoParameters,
   getTableInfo,
@@ -57,7 +63,12 @@ export type {
   ListDatasetIdsArgs,
   ListTableIdsArgs,
 } from './bigquery/metadata_tool.js';
-export {executeSql, executeSqlParameters} from './bigquery/query_tool.js';
+export {
+  executeSql,
+  executeSqlParameters,
+  getExecuteSql,
+  getExecuteSqlDescription,
+} from './bigquery/query_tool.js';
 export type {
   ExecuteSqlArgs,
   ExecuteSqlResult,

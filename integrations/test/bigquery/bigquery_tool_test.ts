@@ -9,8 +9,10 @@ import {
   type BigQueryCredentials,
   BigQueryCredentialsConfig,
   BigQueryTool,
+  BigQueryToolConfig,
   type GoogleOAuthCredentials,
   isBigQueryTool,
+  WriteMode,
 } from '@google/adk-integrations';
 import {describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
@@ -81,16 +83,15 @@ describe('BigQueryTool', () => {
     expect(isBigQueryTool(null)).toBe(false);
   });
 
-  // reference: test_tool_initialization_with_credentials
   it('creates a credentials manager when credentialsConfig is given', () => {
     const tool = createSampleTool(credentialsConfig);
 
     expect(tool.name).toBe('sampleFunction');
     expect(tool.credentialsManager).toBeInstanceOf(GoogleCredentialsManager);
     expect(tool.ignoreParams).toContain('credentials');
+    expect(tool.ignoreParams).toContain('config');
   });
 
-  // reference: test_tool_initialization_without_credentials
   it('has no credentials manager when credentialsConfig is omitted', () => {
     const tool = createSampleTool();
 
@@ -111,7 +112,6 @@ describe('BigQueryTool', () => {
     ).toThrow(/Tool name cannot be empty/);
   });
 
-  // reference: test_run_async_with_valid_credentials
   it('passes resolved credentials to execute', async () => {
     const tool = createSampleTool(credentialsConfig);
     const mockToolContext = createMockToolContext();
@@ -137,7 +137,6 @@ describe('BigQueryTool', () => {
     });
   });
 
-  // reference: test_run_async_oauth_flow_in_progress
   it('returns an authorization message while the OAuth2 flow is pending', async () => {
     const execute = vi.fn(sampleFunction);
     const tool = new BigQueryTool({
@@ -168,7 +167,6 @@ describe('BigQueryTool', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  // reference: test_run_async_without_credentials_manager
   it('passes undefined credentials when no credentials manager exists', async () => {
     const tool = createSampleTool();
 
@@ -197,7 +195,6 @@ describe('BigQueryTool', () => {
     });
   });
 
-  // reference: test_run_async_with_async_function
   it('awaits an async execute function', async () => {
     const tool = new BigQueryTool({
       description: 'Async sample tool',
@@ -222,7 +219,6 @@ describe('BigQueryTool', () => {
     });
   });
 
-  // reference: test_run_async_exception_handling
   it('returns a structured error when execute throws', async () => {
     function failingFunction(): never {
       throw new Error('Something went wrong');
@@ -328,15 +324,16 @@ describe('BigQueryTool', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  // reference: test_function_signature_analysis
-  it('omits credentials from the function declaration', () => {
+  it('omits credentials and config from the function declaration', () => {
     const tool = new BigQueryTool({
       name: 'complex_function',
-      description: 'A tool with required, optional, and credentials parameters',
+      description:
+        'A tool with required, optional, credentials, and config parameters',
       parameters: z.object({
         requiredParam: z.string(),
         optionalParam: z.string().optional(),
         credentials: z.unknown().optional(),
+        config: z.unknown().optional(),
       }),
       execute: () => ({success: true}),
       credentialsConfig,
@@ -348,9 +345,66 @@ describe('BigQueryTool', () => {
 
     expect(requiredArgs).toContain('requiredParam');
     expect(requiredArgs).not.toContain('credentials');
+    expect(requiredArgs).not.toContain('config');
     expect(requiredArgs).not.toContain('optionalParam');
     expect(properties['credentials']).toBeUndefined();
+    expect(properties['config']).toBeUndefined();
     expect(properties['requiredParam']).toBeDefined();
     expect(properties['optionalParam']).toBeDefined();
+  });
+
+  it('forwards toolConfig to the execute function', async () => {
+    const customConfig = new BigQueryToolConfig({
+      writeMode: WriteMode.ALLOWED,
+    });
+    let receivedConfig: BigQueryToolConfig | undefined;
+    const tool = new BigQueryTool({
+      name: 'config_tool',
+      description: 'Tool accepting config',
+      parameters: sampleParameters,
+      toolConfig: customConfig,
+      execute: ({param1, config}) => {
+        receivedConfig = config;
+        return {result: `Processed ${param1}`};
+      },
+    });
+
+    const result = await tool.runAsync({
+      args: {param1: 'val'},
+      toolContext: createMockToolContext(),
+    });
+
+    expect(result).toEqual({result: 'Processed val'});
+    expect(receivedConfig).toBe(customConfig);
+    expect(receivedConfig?.writeMode).toBe(WriteMode.ALLOWED);
+  });
+
+  it('ignores config supplied in the model arguments', async () => {
+    const customConfig = new BigQueryToolConfig({
+      writeMode: WriteMode.BLOCKED,
+    });
+    let receivedConfig: BigQueryToolConfig | undefined;
+    const tool = new BigQueryTool({
+      name: 'config_override_tool',
+      description: 'Tool testing model argument override protection',
+      parameters: sampleParameters,
+      toolConfig: customConfig,
+      execute: ({param1, config}) => {
+        receivedConfig = config;
+        return {result: `Processed ${param1}`};
+      },
+    });
+
+    const result = await tool.runAsync({
+      args: {
+        param1: 'val',
+        config: {writeMode: 'allowed'},
+      },
+      toolContext: createMockToolContext(),
+    });
+
+    expect(result).toEqual({result: 'Processed val'});
+    expect(receivedConfig).toBe(customConfig);
+    expect(receivedConfig?.writeMode).toBe(WriteMode.BLOCKED);
   });
 });
