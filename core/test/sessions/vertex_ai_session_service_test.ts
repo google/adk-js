@@ -658,6 +658,27 @@ describe('VertexAiSessionService', () => {
       loggerSpy.mockRestore();
     });
 
+    it('uses agentEngineId when configured and returns undefined if session does not exist', async () => {
+      const serviceWithEngineId = new VertexAiSessionService({
+        sessions: mockClient as unknown as Sessions,
+        agentEngineId: 'custom-engine-id',
+      });
+      mockClient.get.mockRejectedValueOnce(
+        new ApiError({message: 'Session not found', status: 404}),
+      );
+
+      const session = await serviceWithEngineId.getSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'my-session-id',
+      });
+
+      expect(session).toBeUndefined();
+      expect(mockClient.get).toHaveBeenCalledWith({
+        name: 'reasoningEngines/custom-engine-id/sessions/my-session-id',
+      });
+    });
+
     it('returns undefined when events.listInternal rejects with an ApiError 404', async () => {
       mockClient.events.listInternal.mockRejectedValueOnce(
         new ApiError({message: 'Session not found', status: 404}),
