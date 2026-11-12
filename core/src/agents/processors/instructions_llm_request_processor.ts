@@ -65,6 +65,7 @@ export class InstructionsLlmRequestProcessor extends BaseLlmRequestProcessor {
 
     if (
       agent.outputSchema &&
+      agent.mode !== 'task' &&
       agent.tools?.length &&
       !canUseOutputSchemaWithTools(agent.canonicalModel)
     ) {

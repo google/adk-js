@@ -198,9 +198,11 @@ describe('InstructionsLlmRequestProcessor', () => {
     async function runWithOutputSchema(options: {
       model: string | BaseLlm;
       withTools: boolean;
+      mode?: 'single_turn' | 'task';
     }): Promise<LlmRequest> {
       const agent = new LlmAgent({
         name: 'test_agent',
+        mode: options.mode,
         model:
           typeof options.model === 'string'
             ? new MockLlm({model: options.model})
@@ -324,6 +326,52 @@ describe('InstructionsLlmRequestProcessor', () => {
 
       expect(llmRequest.config?.systemInstruction).not.toContain(
         'set_model_response',
+      );
+    });
+
+    it('should not append set_model_response instruction in task mode when outputSchema and tools are present', async () => {
+      vi.stubEnv(VERTEX_ENV_VAR, undefined);
+
+      const llmRequestFlash = await runWithOutputSchema({
+        model: 'gemini-2.5-flash',
+        withTools: true,
+        mode: 'task',
+      });
+
+      expect(llmRequestFlash.config?.systemInstruction).not.toContain(
+        'set_model_response',
+      );
+      expect(llmRequestFlash.config?.systemInstruction).toContain(
+        'Base instruction',
+      );
+
+      vi.stubEnv(VERTEX_ENV_VAR, 'true');
+
+      const llmRequestPro = await runWithOutputSchema({
+        model: 'gemini-1.5-pro',
+        withTools: true,
+        mode: 'task',
+      });
+
+      expect(llmRequestPro.config?.systemInstruction).not.toContain(
+        'set_model_response',
+      );
+      expect(llmRequestPro.config?.systemInstruction).toContain(
+        'Base instruction',
+      );
+    });
+
+    it('should append set_model_response instruction in single_turn mode when outputSchema and tools are present', async () => {
+      vi.stubEnv(VERTEX_ENV_VAR, undefined);
+
+      const llmRequest = await runWithOutputSchema({
+        model: 'gemini-2.5-flash',
+        withTools: true,
+        mode: 'single_turn',
+      });
+
+      expect(llmRequest.config?.systemInstruction).toContain(
+        SET_MODEL_RESPONSE_INSTRUCTION,
       );
     });
   });
