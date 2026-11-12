@@ -6,7 +6,7 @@ This sample demonstrates how to equip an `LlmAgent` with `BigQueryToolset`, `Big
 
 `bigquery_data_assistant` is an `LlmAgent` configured with:
 
-1. `BigQueryCredentialsConfig` for OAuth2 client credentials and default BigQuery scopes.
+1. `BigQueryCredentialsConfig` for OAuth2 client credentials and default `BIGQUERY_SCOPES` (BigQuery and Dataplex read-write; `@google/adk-integrations` also exports `BIGQUERY_DEFAULT_SCOPE`, `['https://www.googleapis.com/auth/bigquery']`, for BigQuery-only access).
 2. `BigQueryToolset` exposing `list_dataset_ids`, `get_dataset_info`, `list_table_ids`, `get_table_info`, and `execute_sql` (note that `execute_sql` runs any SQL statement allowed by the credentials, including DML and DDL, so use read-only IAM roles or scopes when write access is not intended).
 3. A custom `BigQueryTool` (`summarize_bigquery_target`) that receives resolved credentials while stripping `credentials` from the model's `FunctionDeclaration`.
 
