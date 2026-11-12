@@ -86,6 +86,10 @@ With streaming on, `Gemini` yields each text chunk as a partial response, and th
 
 When the model is interrupted, the connection yields the text it has so far, and then always yields a response with `interrupted: true`.
 
+### Serving tiers (`RunConfig.serviceTier`)
+
+Set `serviceTier` on `RunConfig` (using `ServiceTier.FLEX`, `ServiceTier.STANDARD`, `ServiceTier.PRIORITY`, or `ServiceTier.DEFERRED`) when running a `Gemini` model configured with `useInteractionsApi: true`. `InteractionsRequestProcessor` copies `runConfig.serviceTier` onto `LlmRequest.serviceTier` and forwards it as `service_tier` on the interactions API call. `ServiceTier.DEFERRED` sets `background: true`, polls `queued` or `in_progress` interactions with exponential backoff until completion, and cannot be combined with `StreamingMode.SSE`.
+
 ## Related samples
 
 - [samples/models/](../../../samples/models/README.md) - A `BaseAgent` that builds an `LlmRequest`, calls `appendInstructions`, creates a custom `BaseLlm` with `LLMRegistry.newLlm`, and converts its response with `createLlmResponse`, with no API key.

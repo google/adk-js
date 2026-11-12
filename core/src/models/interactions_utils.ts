@@ -17,6 +17,7 @@ import {
 import {logger} from '../utils/logger.js';
 import {LlmRequest} from './llm_request.js';
 import {LlmResponse} from './llm_response.js';
+import {ServiceTier} from './service_tier.js';
 
 // --- Helper Interfaces for Strong Typing ---
 
@@ -864,13 +865,130 @@ function extractStreamInteractionId(
 }
 
 /**
+ * Statuses that mean the API accepted the work but has not produced a result
+ * yet. A deferred request sits in 'queued' until off-peak capacity frees up.
+ */
+const PENDING_INTERACTION_STATUSES = new Set(['queued', 'in_progress']);
+
+const POLL_INITIAL_DELAY_MS = 5000;
+const POLL_MAX_DELAY_MS = 30000;
+const POLL_MAX_CONSECUTIVE_ERRORS = 5;
+
+/**
+ * Options for {@link generateContentViaInteractions}.
+ */
+export interface GenerateContentViaInteractionsOptions {
+  /**
+   * Optional serving tier (`flex`, `standard`, `priority`, `deferred`, or a
+   * custom tier string). Defaults to `llmRequest.serviceTier`.
+   */
+  serviceTier?: ServiceTier | string;
+  /**
+   * Optional abort signal to cancel waiting on a pending interaction.
+   */
+  abortSignal?: AbortSignal;
+  /**
+   * Optional sleep override for testing poll backoff without real timers.
+   * @internal
+   */
+  sleepFn?: (ms: number, abortSignal?: AbortSignal) => Promise<void>;
+}
+
+async function defaultSleep(
+  ms: number,
+  abortSignal?: AbortSignal,
+): Promise<void> {
+  if (abortSignal?.aborted) {
+    throw abortSignal.reason ?? new Error('The operation was aborted.');
+  }
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      abortSignal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(abortSignal?.reason ?? new Error('The operation was aborted.'));
+    };
+    abortSignal?.addEventListener('abort', onAbort, {once: true});
+  });
+}
+
+async function waitForInteraction(
+  apiClient: GoogleGenAI,
+  interaction: ExtendedInteraction,
+  options?: GenerateContentViaInteractionsOptions,
+): Promise<ExtendedInteraction> {
+  logger.debug(
+    `Interaction ${interaction.id} is ${interaction.status}; waiting for the result.`,
+  );
+  const interactionId = interaction.id;
+  if (!interactionId) {
+    throw new Error(
+      `Interaction is ${interaction.status} but has no id to poll.`,
+    );
+  }
+  const sleep = options?.sleepFn ?? defaultSleep;
+  const requestOptions = options?.abortSignal
+    ? {signal: options.abortSignal}
+    : undefined;
+  let delay = POLL_INITIAL_DELAY_MS;
+  let consecutiveErrors = 0;
+  let current = interaction;
+
+  while (current.status && PENDING_INTERACTION_STATUSES.has(current.status)) {
+    await sleep(delay, options?.abortSignal);
+    delay = Math.min(delay * 2, POLL_MAX_DELAY_MS);
+    try {
+      current = requestOptions
+        ? await apiClient.interactions.get(
+            interactionId,
+            undefined,
+            requestOptions,
+          )
+        : await apiClient.interactions.get(interactionId);
+    } catch (e: unknown) {
+      if (options?.abortSignal?.aborted) {
+        throw e;
+      }
+      consecutiveErrors += 1;
+      if (consecutiveErrors >= POLL_MAX_CONSECUTIVE_ERRORS) {
+        logger.error(
+          `Giving up on interaction ${interactionId} after ${consecutiveErrors} consecutive failed reads.`,
+        );
+        throw e;
+      }
+      logger.warn(
+        `Failed to read interaction ${interactionId} (${consecutiveErrors}/${POLL_MAX_CONSECUTIVE_ERRORS} consecutive); retrying: ${e}`,
+      );
+      continue;
+    }
+    consecutiveErrors = 0;
+    logger.debug(`Interaction ${interactionId} is ${current.status}.`);
+  }
+
+  logger.debug(
+    `Interaction ${interactionId} reached status ${current.status}.`,
+  );
+  return current;
+}
+
+/**
  * Generate content using the interactions API.
  */
 export async function* generateContentViaInteractions(
   apiClient: GoogleGenAI,
   llmRequest: LlmRequest,
   stream: boolean,
+  options?: GenerateContentViaInteractionsOptions,
 ): AsyncGenerator<LlmResponse, void, void> {
+  const effectiveServiceTier = options?.serviceTier ?? llmRequest.serviceTier;
+  if (effectiveServiceTier === ServiceTier.DEFERRED && stream) {
+    throw new Error(
+      "serviceTier='deferred' cannot be used with streaming. A deferred request is queued to run on off-peak capacity and returns an interaction id instead of a result, so there is nothing to stream. Use StreamingMode.NONE.",
+    );
+  }
+
   let contents = llmRequest.contents;
   if (llmRequest.previousInteractionId && contents) {
     contents = getLatestUserContents(contents);
@@ -894,18 +1012,37 @@ export async function* generateContentViaInteractions(
   );
 
   let currentInteractionId = previousInteractionId;
+  const serviceTierParams: Record<string, unknown> = {};
+  if (effectiveServiceTier) {
+    serviceTierParams['service_tier'] = effectiveServiceTier;
+    if (effectiveServiceTier === ServiceTier.DEFERRED) {
+      serviceTierParams['background'] = true;
+    }
+  }
+  const requestOptions = options?.abortSignal
+    ? {signal: options.abortSignal}
+    : undefined;
 
   if (stream) {
-    const responses = (await apiClient.interactions.create({
+    const createStreamingParams = {
       model: (llmRequest.model || 'gemini-2.5-flash') as 'gemini-2.5-flash',
       input: inputSteps,
-      stream: true,
+      stream: true as const,
       system_instruction: systemInstruction,
       tools: interactionTools.length > 0 ? interactionTools : undefined,
       generation_config:
         Object.keys(generationConfig).length > 0 ? generationConfig : undefined,
       previous_interaction_id: previousInteractionId,
-    })) as AsyncIterable<ExtendedInteractionSSEEvent>;
+      ...serviceTierParams,
+    };
+    const responses = (
+      requestOptions
+        ? await apiClient.interactions.create(
+            createStreamingParams,
+            requestOptions,
+          )
+        : await apiClient.interactions.create(createStreamingParams)
+    ) as AsyncIterable<ExtendedInteractionSSEEvent>;
 
     const aggregatedParts: Part[] = [];
     for await (const event of responses) {
@@ -933,18 +1070,33 @@ export async function* generateContentViaInteractions(
       };
     }
   } else {
-    const interaction = (await apiClient.interactions.create({
+    const createNonStreamingParams = {
       model: (llmRequest.model || 'gemini-2.5-flash') as 'gemini-2.5-flash',
       input: inputSteps,
-      stream: false,
+      stream: false as const,
       system_instruction: systemInstruction,
       tools: interactionTools.length > 0 ? interactionTools : undefined,
       generation_config:
         Object.keys(generationConfig).length > 0 ? generationConfig : undefined,
       previous_interaction_id: previousInteractionId,
-    })) as ExtendedInteraction;
+      ...serviceTierParams,
+    };
+    let interaction = (
+      requestOptions
+        ? await apiClient.interactions.create(
+            createNonStreamingParams,
+            requestOptions,
+          )
+        : await apiClient.interactions.create(createNonStreamingParams)
+    ) as ExtendedInteraction;
 
     logger.info('Interaction response received from the model.');
+    if (
+      interaction.status &&
+      PENDING_INTERACTION_STATUSES.has(interaction.status)
+    ) {
+      interaction = await waitForInteraction(apiClient, interaction, options);
+    }
     yield convertInteractionToLlmResponse(interaction);
   }
 }

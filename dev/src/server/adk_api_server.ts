@@ -14,6 +14,7 @@ import {
   closeRunners,
   convertSessionToEvalFormat,
   createEmptyState,
+  createRunConfig,
   EVAL_SESSION_ID_PREFIX,
   EvalCaseResult,
   EvalEntry,
@@ -41,6 +42,7 @@ import {
   runEvals,
   RunnableRoot,
   Runner,
+  ServiceTier,
   StreamingMode,
   toA2a,
   tryGetResetFunc,
@@ -1328,7 +1330,24 @@ export class AdkApiServer {
         newMessage,
         stateDelta,
         customMetadata,
+        serviceTier,
+        service_tier,
       } = req.body;
+      const resolvedServiceTier = serviceTier ?? service_tier;
+      if (
+        resolvedServiceTier !== undefined &&
+        resolvedServiceTier !== null &&
+        (typeof resolvedServiceTier !== 'string' ||
+          !Object.values<string>(ServiceTier).includes(resolvedServiceTier))
+      ) {
+        const error = `Invalid serviceTier: expected one of ${Object.values(ServiceTier).join(', ')}.`;
+        res.status(400).json({error});
+        this.logger.error(error);
+        return;
+      }
+      const runConfig: RunConfig | undefined = resolvedServiceTier
+        ? {serviceTier: resolvedServiceTier}
+        : undefined;
       const session = await this.sessionService.getSession({
         appName,
         userId,
@@ -1361,6 +1380,7 @@ export class AdkApiServer {
           newMessage,
           stateDelta,
           customMetadata,
+          runConfig,
           abortSignal: abortController.signal,
         })) {
           events.push(e);
@@ -1455,7 +1475,34 @@ export class AdkApiServer {
         streaming,
         stateDelta,
         customMetadata,
+        serviceTier,
+        service_tier,
       } = req.body;
+      const resolvedServiceTier = serviceTier ?? service_tier;
+      if (
+        resolvedServiceTier !== undefined &&
+        resolvedServiceTier !== null &&
+        (typeof resolvedServiceTier !== 'string' ||
+          !Object.values<string>(ServiceTier).includes(resolvedServiceTier))
+      ) {
+        const error = `Invalid serviceTier: expected one of ${Object.values(ServiceTier).join(', ')}.`;
+        res.status(400).json({error});
+        this.logger.error(error);
+        return;
+      }
+
+      let runConfig: RunConfig;
+      try {
+        runConfig = createRunConfig({
+          streamingMode: streaming ? StreamingMode.SSE : StreamingMode.NONE,
+          ...(resolvedServiceTier ? {serviceTier: resolvedServiceTier} : {}),
+        });
+      } catch (e: unknown) {
+        const error = (e as Error).message;
+        res.status(422).json({error});
+        this.logger.error(error);
+        return;
+      }
 
       const session = await this.sessionService.getSession({
         appName,
@@ -1496,9 +1543,7 @@ export class AdkApiServer {
           newMessage,
           stateDelta,
           customMetadata,
-          runConfig: {
-            streamingMode: streaming ? StreamingMode.SSE : StreamingMode.NONE,
-          },
+          runConfig,
           abortSignal: abortController.signal,
         })) {
           res.write(`data: ${JSON.stringify(event)}\n\n`);

@@ -169,7 +169,15 @@ export class Gemini extends BaseLlm {
   ): AsyncGenerator<LlmResponse, void> {
     await adaptComputerUseRequest(llmRequest);
     if (this.useInteractionsApi) {
-      yield* generateContentViaInteractions(this.apiClient, llmRequest, stream);
+      yield* generateContentViaInteractions(
+        this.apiClient,
+        llmRequest,
+        stream,
+        {
+          serviceTier: llmRequest.serviceTier,
+          abortSignal,
+        },
+      );
       return;
     }
     this.preprocessRequest(llmRequest);

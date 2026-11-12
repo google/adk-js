@@ -1208,6 +1208,96 @@ describe('AdkWebServer', () => {
 
       spy.mockRestore();
     });
+
+    it('should forward serviceTier to Runner.runAsync in /run', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const spy = vi.spyOn(Runner.prototype, 'runAsync');
+
+      const response = await client.post('/run', {
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        serviceTier: 'priority',
+        newMessage: {
+          parts: [{text: 'Hello test agent!'}],
+          role: 'user',
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(spy).toHaveBeenCalled();
+      const runAsyncParams = spy.mock.calls[0][0];
+      expect(runAsyncParams.runConfig?.serviceTier).toBe('priority');
+
+      spy.mockRestore();
+    });
+
+    it('should return 422 in /run_sse when serviceTier=deferred is combined with streaming=true', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      try {
+        await client.post('/run_sse', {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'sessionId',
+          streaming: true,
+          serviceTier: 'deferred',
+          newMessage: {
+            parts: [{text: 'Hello test agent!'}],
+            role: 'user',
+          },
+        });
+        expect.fail('Expected /run_sse to reject with 422');
+      } catch (e: unknown) {
+        expect((e as {response: {status: number}}).response.status).toBe(422);
+      }
+    });
+
+    it.each(['/run', '/run_sse'])(
+      'should return 400 in %s when serviceTier is invalid',
+      async (endpoint) => {
+        await sessionService.createSession({
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'sessionId',
+        });
+
+        await expect(
+          client.post(endpoint, {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'sessionId',
+            serviceTier: 12345,
+            newMessage: {
+              parts: [{text: 'Hello test agent!'}],
+              role: 'user',
+            },
+          }),
+        ).rejects.toMatchObject({response: {status: 400}});
+
+        await expect(
+          client.post(endpoint, {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'sessionId',
+            service_tier: 'invalid_tier',
+            newMessage: {
+              parts: [{text: 'Hello test agent!'}],
+              role: 'user',
+            },
+          }),
+        ).rejects.toMatchObject({response: {status: 400}});
+      },
+    );
   });
 
   describe('List Apps', () => {
