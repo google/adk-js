@@ -112,16 +112,19 @@ unprefixed `originalName` for the wire call. `MCPToolset` then applies
 **3. Declarations are translated to Gemini schemas.** When the agent builds its
 `LlmRequest`, each `MCPTool` converts `inputSchema` and `outputSchema` into
 `@google/genai` `Schema` objects through `toGeminiSchema`. JSON Schema type
-strings become Gemini `Type` enum values, and nullable unions such as
+strings become Gemini `Type` enum values, nullable unions such as
 `['string', 'null']` or `anyOf` branches containing `{type: 'null'}` become
-`nullable: true`.
+`nullable: true`, and supported `format` values (`'int32'` and `'int64'` on
+`integer` or `number`, `'date-time'` and `'enum'` on `string`) are preserved
+while unsupported formats are dropped.
 
 **4. Each tool call runs in its own session.** When the model invokes an
 `MCPTool`, `runAsync` opens a session through `MCPSessionManager.createSession()`,
 calls `session.callTool` with the unprefixed `originalName`, the model's
-arguments, and `toolContext.abortSignal`, returns the `CallToolResult`, and
-closes the session in `finally`. Calling `mcpToolset.close()` closes any sessions
-that are still active on the session manager.
+arguments, and `this.mcpSessionManager.getRequestOptions(toolContext.abortSignal)`,
+returns the `CallToolResult`, and closes the session in `finally`. Calling
+`mcpToolset.close()` closes any sessions that are still active on the session
+manager.
 
 ## Configuration options
 
@@ -149,16 +152,17 @@ the prefixed names in `toolFilter` when you combine both options.
 
 Use `StdioConnectionParams` when the MCP server runs as a local subprocess.
 
-| Option         | Type                      | Default     | Description                                                                                   |
-| :------------- | :------------------------ | :---------- | :-------------------------------------------------------------------------------------------- |
-| `type`         | `'StdioConnectionParams'` | required    | Selects `StdioClientTransport`.                                                               |
-| `serverParams` | `StdioServerParameters`   | required    | Command, arguments, environment, and working directory passed to the MCP SDK stdio transport. |
-| `timeout`      | `number`                  | `undefined` | Optional connection timeout value carried on the parameter object.                            |
+| Option         | Type                      | Default     | Description                                                                                                                                                    |
+| :------------- | :------------------------ | :---------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `type`         | `'StdioConnectionParams'` | required    | Selects `StdioClientTransport`.                                                                                                                                |
+| `serverParams` | `StdioServerParameters`   | required    | Command, arguments, environment, and working directory passed to the MCP SDK stdio transport.                                                                  |
+| `timeout`      | `number`                  | `undefined` | Request timeout in seconds for stdio session initialization, tool discovery, resource operations, and tool execution. When unset, the MCP SDK default applies. |
 
 `serverParams` is passed straight to `StdioClientTransport` from
 `@modelcontextprotocol/sdk/client/stdio.js`, so any field supported by the MCP
 SDK's `StdioServerParameters`, such as `command`, `args`, `env`, or `cwd`, works
-without wrapper translation.
+without wrapper translation. `MCPSessionManager.getRequestOptions()` converts
+`timeout` from seconds into milliseconds on the MCP SDK `RequestOptions`.
 
 ### StreamableHTTPConnectionParams
 
@@ -315,13 +319,16 @@ hosted externally over Streamable HTTP or SSE.
 `toolFilter` evaluates the predicate for every discovered tool. When `getTools()` is called without
 a context argument, the predicate receives `undefined` for its second parameter.
 
-**Timeout fields on connection parameters.** `timeout`, `sseReadTimeout`, and
-`terminateOnClose` on `StdioConnectionParams`,
-`StreamableHTTPConnectionParams`, and `SseConnectionParams` are accepted on the
-parameter interfaces for configuration compatibility, while
-`MCPSessionManager.createSession()` constructs the underlying MCP SDK transports
-with `serverParams` or with `new URL(url)` and `transportOptions`. Configure
-transport-level request options through `transportOptions` when the MCP SDK
+**Timeout fields on connection parameters.**
+`StdioConnectionParams.timeout` is in seconds. When it is set,
+`MCPSessionManager.getRequestOptions()` applies it to the stdio `connect`,
+`listTools`, `listResources`, `readResource`, and `callTool` requests. When it
+is unset, the MCP SDK default request timeout applies. The `timeout`,
+`sseReadTimeout`, and `terminateOnClose` fields on
+`StreamableHTTPConnectionParams` and `SseConnectionParams` are accepted on the
+parameter interfaces for configuration compatibility. They are not forwarded to
+the HTTP and SSE transports. Configure
+HTTP/SSE transport-level options through `transportOptions` when the MCP SDK
 transport requires them.
 
 ## Related samples

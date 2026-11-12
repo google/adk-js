@@ -497,6 +497,99 @@ describe('handleFunctionCallList', () => {
     expect(executionSpan.ended).toBe(true);
   });
 
+  it('records name, arguments, and result on a single execute_tool span per call when content capture is SPAN_ONLY', async () => {
+    const simpleFn = new FunctionTool({
+      name: 'simple_fn',
+      description: 'simple function',
+      parameters: z.object({a: z.number(), b: z.number()}),
+      execute: async () => ({result: 'test'}),
+    });
+    const spanOnlyContext = new InvocationContext({
+      invocationId: 'inv_span_only',
+      session: {} as Session,
+      agent: new LlmAgent({name: 'test_agent', model: 'test_model'}),
+      pluginManager,
+      runConfig: {
+        telemetry: {
+          captureMessageContent: 'SPAN_ONLY',
+        },
+      },
+    });
+
+    await handleFunctionCallList({
+      invocationContext: spanOnlyContext,
+      functionCalls: [{id: 'call-1', name: 'simple_fn', args: {a: 1, b: 2}}],
+      toolsDict: {simple_fn: simpleFn},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    await handleFunctionCallList({
+      invocationContext: spanOnlyContext,
+      functionCalls: [{id: 'call-2', name: 'simple_fn', args: {a: 1, b: 2}}],
+      toolsDict: {simple_fn: simpleFn},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const spans = spanExporter
+      .getFinishedSpans()
+      .filter((s) => s.name === 'execute_tool simple_fn');
+    expect(spans).toHaveLength(2);
+    for (const span of spans) {
+      expect(span.attributes['gen_ai.tool.name']).toBe('simple_fn');
+      expect(span.attributes['gen_ai.tool.call.arguments']).toBe(
+        JSON.stringify({a: 1, b: 2}),
+      );
+      expect(span.attributes['gen_ai.tool.call.result']).toBe(
+        JSON.stringify({result: 'test'}),
+      );
+    }
+  });
+
+  it('preserves unescaped non-ASCII characters in tool call arguments', async () => {
+    const unicodeTool = new FunctionTool({
+      name: 'unicodeTool',
+      description: 'handles non-ASCII input',
+      parameters: z.object({greeting: z.string()}),
+      execute: async ({greeting}) => ({echo: greeting}),
+    });
+    const spanOnlyContext = new InvocationContext({
+      invocationId: 'inv_unicode',
+      session: {} as Session,
+      agent: new LlmAgent({name: 'test_agent', model: 'test_model'}),
+      pluginManager,
+      runConfig: {
+        telemetry: {
+          captureMessageContent: 'SPAN_ONLY',
+        },
+      },
+    });
+
+    await handleFunctionCallList({
+      invocationContext: spanOnlyContext,
+      functionCalls: [
+        {
+          id: 'call-unicode',
+          name: 'unicodeTool',
+          args: {greeting: 'こんにちは世界 🌍 café'},
+        },
+      ],
+      toolsDict: {unicodeTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const spans = spanExporter
+      .getFinishedSpans()
+      .filter((s) => s.name === 'execute_tool unicodeTool');
+    expect(spans).toHaveLength(1);
+    const serializedArgs = String(
+      spans[0].attributes['gen_ai.tool.call.arguments'],
+    );
+    expect(serializedArgs).toContain('こんにちは世界 🌍 café');
+    expect(serializedArgs).not.toContain('\\u3053');
+  });
+
   it('should return error message when error is thrown during tool execution, when no plugin onToolErrorCallback is provided', async () => {
     const errorFunctionCall: FunctionCall = {
       id: randomIdForTestingOnly(),

@@ -476,10 +476,13 @@ attributes form the contract.
 Google Cloud export uses built-in OTLP HTTP exporters. You do not need separate
 Cloud Trace or Cloud Monitoring exporter packages.
 
-A trace call never throws. A payload that `JSON.stringify` rejects, such as one
-holding a cycle, is recorded as `'<not serializable>'`. An unserializable tool
-result costs one attribute rather than the run. A trace call made with no active
-span does nothing.
+A trace call never throws. Serialized tool call arguments and payloads use
+`JSON.stringify`, which preserves non-ASCII Unicode characters directly without
+`\uXXXX` escaping. A payload that `JSON.stringify` rejects, such as one holding
+a cycle, is recorded as `'<not serializable>'`. An unserializable tool result
+costs one attribute rather than the run. A `BigInt` value does not reject the
+payload: it is replaced inline with `'<not serializable>'` and the rest of the
+payload is kept. A trace call made with no active span does nothing.
 
 `maybeSetOtelProviders` and `agentRuntimeRequestHooks` are marked experimental
 in their documentation, so their signatures may change.

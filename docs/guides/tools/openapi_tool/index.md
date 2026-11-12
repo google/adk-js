@@ -135,6 +135,9 @@ and the properties of an object body one level deeper — and a model needs one
 list. `OperationParser` flattens them. An object body contributes one parameter
 per property, so the model fills in named fields rather than a nested JSON
 blob; an array or primitive body contributes a single parameter named `body`.
+An object body with no properties contributes no parameters, unless
+`unconstrainedObjectBodyAsParameter` is `true`; then it contributes one `body`
+parameter that holds the whole payload.
 Every parameter records `paramLocation`, which is how `RestApiTool` puts the
 value back where the request wants it, and `originalName`, which is what goes
 on the wire.
@@ -182,11 +185,20 @@ a mismatch renames a parameter between the two SDKs.
 
 The declaration the model receives is a Gemini `Schema`, not the raw OpenAPI
 schema, and the two are not the same language. The conversion keeps the fields
-Gemini declares, and drops `title`, `default` and `format` because the backend
-refuses them. A schema whose `type` is outside Gemini's set — `array`,
-`boolean`, `integer`, `null`, `number`, `object`, `string` — has its type
-dropped rather than mapped to a near equivalent, because a schema with no type
-is valid and a schema Gemini rejects fails the whole declaration.
+Gemini declares, drops `title` and `default`, and retains `format` only when it
+is `'int32'` or `'int64'` on an `integer` or `number` schema or `'date-time'` or
+`'enum'` on a `string` schema (dropping unsupported formats such as `'date'`,
+`'email'`, `'uuid'`, `'float'`, and `'double'`, as well as formats on untyped
+or array-typed schemas). A nullable type such as `['string', 'null']` becomes
+the non-null type with `nullable: true`, and keeps a supported `format`.
+
+`oneOf` becomes `anyOf`, because Gemini has no `oneOf`. A `{type: 'null'}`
+branch is removed and sets `nullable: true`. When only one branch remains, it
+is merged into the parent schema. A schema with no `type` and no
+`anyOf`/`oneOf` becomes an `object`, because Gemini rejects an untyped schema.
+A `type` outside Gemini's set — `array`, `boolean`, `integer`, `null`,
+`number`, `object`, `string` — becomes `TYPE_UNSPECIFIED`. The conversion does
+not map it to a near equivalent.
 
 `_getDeclaration()` on a `RestApiTool` returns what the model will see, which
 is the fastest way to confirm a parameter survived parsing under the name you
@@ -437,18 +449,19 @@ retry-catch warning above still holds for that case.
 
 One options object; nothing is positional.
 
-| Option                  | Type                                                   | Default     | Description                                       |
-| :---------------------- | :----------------------------------------------------- | :---------- | :------------------------------------------------ |
-| `specDict`              | `OpenAPIV3.Document`                                   | `undefined` | The spec as an already-parsed object.             |
-| `specStr`               | `string`                                               | `undefined` | The spec as JSON or YAML text.                    |
-| `specType`              | `'json' \| 'yaml'`                                     | inferred    | The format of `specStr`.                          |
-| `toolFilter`            | `ToolPredicate \| string[]`                            | `[]`        | Which tools `getTools()` exposes.                 |
-| `prefix`                | `string`                                               | `undefined` | Prepended to every tool name.                     |
-| `preservePropertyNames` | `boolean`                                              | `false`     | Keep spec property names instead of snake_casing. |
-| `authScheme`            | `OpenAPIV3.SecuritySchemeObject`                       | `undefined` | Security scheme applied to every tool.            |
-| `authCredential`        | `AuthCredential`                                       | `undefined` | Credential applied to every tool.                 |
-| `credentialKey`         | `string`                                               | `undefined` | Names the auth request the client answers.        |
-| `headerProvider`        | `(context: ReadonlyContext) => Record<string, string>` | `undefined` | Extra headers computed per call.                  |
+| Option                               | Type                                                   | Default     | Description                                                                   |
+| :----------------------------------- | :----------------------------------------------------- | :---------- | :---------------------------------------------------------------------------- |
+| `specDict`                           | `OpenAPIV3.Document`                                   | `undefined` | The spec as an already-parsed object.                                         |
+| `specStr`                            | `string`                                               | `undefined` | The spec as JSON or YAML text.                                                |
+| `specType`                           | `'json' \| 'yaml'`                                     | inferred    | The format of `specStr`.                                                      |
+| `toolFilter`                         | `ToolPredicate \| string[]`                            | `[]`        | Which tools `getTools()` exposes.                                             |
+| `prefix`                             | `string`                                               | `undefined` | Prepended to every tool name.                                                 |
+| `preservePropertyNames`              | `boolean`                                              | `false`     | Keep spec property names instead of snake_casing.                             |
+| `authScheme`                         | `OpenAPIV3.SecuritySchemeObject`                       | `undefined` | Security scheme applied to every tool.                                        |
+| `authCredential`                     | `AuthCredential`                                       | `undefined` | Credential applied to every tool.                                             |
+| `credentialKey`                      | `string`                                               | `undefined` | Names the auth request the client answers.                                    |
+| `headerProvider`                     | `(context: ReadonlyContext) => Record<string, string>` | `undefined` | Extra headers computed per call.                                              |
+| `unconstrainedObjectBodyAsParameter` | `boolean`                                              | `false`     | Deprecated. Emits one `body` parameter for an object body with no properties. |
 
 Supply `specDict` or `specStr`. `specDict` skips parsing and wins when both are
 present; neither throws `Either specDict or specStr must be provided.`
@@ -486,12 +499,13 @@ from session state, a trace id — which a static credential cannot express.
 The first six constructor arguments are the name, description, endpoint,
 operation, auth scheme and auth credential. The seventh is options.
 
-| Option                  | Type                                                   | Default     | Description                                                             |
-| :---------------------- | :----------------------------------------------------- | :---------- | :---------------------------------------------------------------------- |
-| `preservePropertyNames` | `boolean`                                              | `false`     | Offers OpenAPI names to the model unchanged, instead of `snake_case`.   |
-| `headerProvider`        | `(context: ReadonlyContext) => Record<string, string>` | `undefined` | Supplies extra headers per call, from the invocation context.           |
-| `credentialKey`         | `string`                                               | `undefined` | Names the credential this tool asks the client for.                     |
-| `operationParser`       | `OperationParser`                                      | `undefined` | Uses a parser the caller built, instead of parsing the operation again. |
+| Option                               | Type                                                   | Default     | Description                                                                   |
+| :----------------------------------- | :----------------------------------------------------- | :---------- | :---------------------------------------------------------------------------- |
+| `preservePropertyNames`              | `boolean`                                              | `false`     | Offers OpenAPI names to the model unchanged, instead of `snake_case`.         |
+| `headerProvider`                     | `(context: ReadonlyContext) => Record<string, string>` | `undefined` | Supplies extra headers per call, from the invocation context.                 |
+| `credentialKey`                      | `string`                                               | `undefined` | Names the credential this tool asks the client for.                           |
+| `operationParser`                    | `OperationParser`                                      | `undefined` | Uses a parser the caller built, instead of parsing the operation again.       |
+| `unconstrainedObjectBodyAsParameter` | `boolean`                                              | `false`     | Deprecated. Emits one `body` parameter for an object body with no properties. |
 
 `operationParser` exists for a caller that has already parsed the operation.
 `createRestApiTool` sets it when its input carries `parameters`, and
