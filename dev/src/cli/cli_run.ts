@@ -36,6 +36,7 @@ import {
   loadFileData,
   saveToFile,
 } from '../utils/file_utils.js';
+import {setupTelemetry} from '../utils/telemetry_utils.js';
 
 const HOW_TO_ANSWER: Record<UserInputKind, string> = {
   input: 'Type your reply at the next prompt to continue.',
@@ -402,6 +403,11 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
   try {
     const absAgentPath = getAbsolutePath(options.agentPath);
     loadDotenvForAgent(path.basename(absAgentPath), path.dirname(absAgentPath));
+
+    // Telemetry reads credentials and project settings from the agent's .env.
+    if (options.otelToCloud) {
+      await setupTelemetry(true);
+    }
 
     const inputFileContent = options.inputFile
       ? await loadInputFile(options.inputFile)
