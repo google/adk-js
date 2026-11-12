@@ -36,8 +36,8 @@ const [tool] = await new adk.ToolboxToolset({
 }).getTools({});
 process.stdout.write(
   JSON.stringify({
-    sameInstance: tool === clientTool,
     toolboxTool: builds[checker].isToolboxTool(tool),
+    clientToolMarked: builds[checker].isToolboxTool(clientTool),
   }),
 );
 `;
@@ -50,8 +50,8 @@ function provenance(loader: string, checker: string) {
   );
   expect(result.status, result.stderr).toBe(0);
   return JSON.parse(result.stdout) as {
-    sameInstance: boolean;
     toolboxTool: boolean;
+    clientToolMarked: boolean;
   };
 }
 
@@ -72,8 +72,8 @@ describe('Toolbox tool provenance across the ESM and CommonJS builds', () => {
     ['cjs', 'cjs'],
   ])('recognizes a tool loaded by %s in %s', (loader, checker) => {
     expect(provenance(loader, checker)).toEqual({
-      sameInstance: true,
       toolboxTool: true,
+      clientToolMarked: false,
     });
   });
 });

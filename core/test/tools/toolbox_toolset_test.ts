@@ -332,7 +332,13 @@ describe('ToolboxToolset', () => {
       },
     });
     const [unprefixedTool] = await unprefixedToolset.getTools(readonlyContext);
-    expect(unprefixedTool).toBe(rawInstance);
+    expect(unprefixedTool.name).toBe('private_tool');
+    expect(
+      await unprefixedTool.runAsync({
+        args: {value: 'x'},
+        toolContext: emptyContext,
+      }),
+    ).toBe('secret:x');
 
     const prefixedToolset = new ToolboxToolset({
       toolsetName: 'prefixed',
@@ -484,23 +490,21 @@ describe('ToolboxToolset', () => {
         true,
         true,
       ]);
-      if (prefix) {
-        expect(tools[0]).not.toBe(clientTool);
-      } else {
-        expect(tools[0]).toBe(clientTool);
-      }
+      expect(tools[0]).not.toBe(clientTool);
+      expect(tools[0].name).toBe(prefix ? 'tbx_pre_wrapped' : 'pre_wrapped');
       expect(
         await tools[0].runAsync({args: {}, toolContext: emptyContext}),
       ).toBe('wrapped_ok');
     }
 
     expect(clientTool.name).toBe('pre_wrapped');
+    expect(isToolboxTool(clientTool)).toBe(false);
     expect(isToolboxTool(null)).toBe(false);
     expect(isToolboxTool(undefined)).toBe(false);
     expect(isToolboxTool({})).toBe(false);
   });
 
-  it('returns an unprefixed client BaseTool as is, keeping private and accumulated state', async () => {
+  it('wraps a frozen client BaseTool, keeping its private and accumulated state', async () => {
     class StatefulTool extends BaseTool {
       #calls = 0;
       constructor() {
@@ -511,7 +515,7 @@ describe('ToolboxToolset', () => {
         return this.#calls;
       }
     }
-    const clientTool = new StatefulTool();
+    const clientTool = Object.freeze(new StatefulTool());
     const toolset = new ToolboxToolset({
       serverUrl: 'http://127.0.0.1:5000',
       toolNames: ['stateful'],
@@ -523,13 +527,15 @@ describe('ToolboxToolset', () => {
 
     const run = async () => {
       const [tool] = await toolset.getTools(readonlyContext);
-      expect(tool).toBe(clientTool);
+      expect(tool).not.toBe(clientTool);
+      expect(tool).toBeInstanceOf(StatefulTool);
       expect(isToolboxTool(tool)).toBe(true);
       return tool.runAsync({args: {}, toolContext: emptyContext});
     };
 
     expect(await run()).toBe(1);
     expect(await run()).toBe(2);
+    expect(isToolboxTool(clientTool)).toBe(false);
   });
 
   // reference: test_toolbox_toolset_delegates_typed_lifecycle
@@ -562,7 +568,7 @@ describe('ToolboxToolset', () => {
     const tools = await toolset.getTools(readonlyContext);
     await toolset.close();
 
-    expect(tools).toEqual([toolsetTool, dummyTool]);
+    expect(tools.map((tool) => tool.name)).toEqual(['lookup', 'search']);
     expect(loadToolset).toHaveBeenCalledWith('travel', {}, {});
     expect(loadTool).toHaveBeenCalledWith('search', {}, {});
     expect(close).toHaveBeenCalledTimes(1);
