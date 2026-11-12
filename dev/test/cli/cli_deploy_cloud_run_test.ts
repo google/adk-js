@@ -118,6 +118,15 @@ describe('createDockerFileContent', () => {
     expect(content).not.toContain('--bundle=');
   });
 
+  it('should skip container compile/bundle when staging only compiled', () => {
+    const content = createDockerFileContent({
+      ...defaultOptions,
+      agentFileLoadOptions: {compile: true, bundle: false},
+    });
+    expect(content).toContain('--compile=false');
+    expect(content).toContain('--bundle=false');
+  });
+
   it('should use web command when withUi is true', () => {
     const content = createDockerFileContent({
       ...defaultOptions,
@@ -340,8 +349,11 @@ describe('deployToCloudRun', () => {
     withUi: false,
     logLevel: 'info',
   };
+  let originalExitCode: typeof process.exitCode;
 
   beforeEach(() => {
+    originalExitCode = process.exitCode;
+    process.exitCode = undefined;
     vi.clearAllMocks();
     vi.spyOn(console, 'info').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -389,8 +401,21 @@ describe('deployToCloudRun', () => {
   });
 
   afterEach(() => {
+    process.exitCode = originalExitCode;
     vi.restoreAllMocks();
   });
+
+  function mockAgentFiles(filePaths: Record<string, string>) {
+    (AgentLoader as Mock).mockImplementation(function () {
+      return {
+        listAgents: vi.fn().mockResolvedValue(Object.keys(filePaths)),
+        getAgentFile: vi.fn().mockImplementation(async (name: string) => ({
+          getFilePath: () => filePaths[name],
+        })),
+        disposeAll: vi.fn().mockResolvedValue(undefined),
+      };
+    });
+  }
 
   it('should deploy successfully with explicit options', async () => {
     await deployToCloudRun(defaultOptions);
@@ -412,6 +437,79 @@ describe('deployToCloudRun', () => {
       recursive: true,
       force: true,
     });
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it('should copy a single agent file directly into the app folder', async () => {
+    await deployToCloudRun(defaultOptions);
+
+    expect(fs.cp).toHaveBeenCalledWith(
+      'path/to/agent1.ts',
+      path.join('/tmp/test-deploy', 'agents', 'agent', 'agent1.ts'),
+    );
+  });
+
+  it('should copy each agent of a multi-agent directory into its own folder', async () => {
+    mockAgentFiles({
+      agent1: 'path/to/agent1/agent.cjs',
+      agent2: 'path/to/agent2/agent.cjs',
+    });
+
+    await deployToCloudRun(defaultOptions);
+
+    const appFolder = path.join('/tmp/test-deploy', 'agents', 'agent');
+    expect(fs.mkdir).toHaveBeenCalledWith(path.join(appFolder, 'agent1'), {
+      recursive: true,
+    });
+    expect(fs.mkdir).toHaveBeenCalledWith(path.join(appFolder, 'agent2'), {
+      recursive: true,
+    });
+    expect(fs.cp).toHaveBeenCalledWith(
+      'path/to/agent1/agent.cjs',
+      path.join(appFolder, 'agent1', 'agent.cjs'),
+    );
+    expect(fs.cp).toHaveBeenCalledWith(
+      'path/to/agent2/agent.cjs',
+      path.join(appFolder, 'agent2', 'agent.cjs'),
+    );
+  });
+
+  it('should rename flat multi-agent files to an agent entry file', async () => {
+    mockAgentFiles({
+      agent1: 'path/to/agent1.cjs',
+      agent2: 'path/to/agent2.cjs',
+    });
+
+    await deployToCloudRun(defaultOptions);
+
+    const appFolder = path.join('/tmp/test-deploy', 'agents', 'agent');
+    expect(fs.cp).toHaveBeenCalledWith(
+      'path/to/agent1.cjs',
+      path.join(appFolder, 'agent1', 'agent.cjs'),
+    );
+    expect(fs.cp).toHaveBeenCalledWith(
+      'path/to/agent2.cjs',
+      path.join(appFolder, 'agent2', 'agent.cjs'),
+    );
+  });
+
+  it('should keep app and index entry file names for multi-agent directories', async () => {
+    mockAgentFiles({
+      agent1: 'path/to/agent1/app.cjs',
+      agent2: 'path/to/agent2/index.mjs',
+    });
+
+    await deployToCloudRun(defaultOptions);
+
+    const appFolder = path.join('/tmp/test-deploy', 'agents', 'agent');
+    expect(fs.cp).toHaveBeenCalledWith(
+      'path/to/agent1/app.cjs',
+      path.join(appFolder, 'agent1', 'app.cjs'),
+    );
+    expect(fs.cp).toHaveBeenCalledWith(
+      'path/to/agent2/index.mjs',
+      path.join(appFolder, 'agent2', 'index.mjs'),
+    );
   });
 
   it('should resolve default project and region from gcloud if not provided', async () => {
@@ -501,6 +599,7 @@ describe('deployToCloudRun', () => {
       expect.stringContaining('No dependencies found in package.json'),
       expect.stringContaining('\x1b[0m'),
     );
+    expect(process.exitCode).toBe(1);
   });
 
   it('should throw error if required npm packages are missing in package.json', async () => {
@@ -520,6 +619,7 @@ describe('deployToCloudRun', () => {
       ),
       expect.stringContaining('\x1b[0m'),
     );
+    expect(process.exitCode).toBe(1);
   });
 
   it('should forward the A2A token to Cloud Run as an environment variable', async () => {
@@ -643,6 +743,7 @@ describe('deployToCloudRun', () => {
       expect.stringContaining('Command failed with exit code 1'),
       expect.stringContaining('\x1b[0m'),
     );
+    expect(process.exitCode).toBe(1);
   });
 
   describe('appName option', () => {
