@@ -174,17 +174,17 @@ export function mergeTrackingHeaders(
     }
   }
 
-  const normalizedEntries: Array<[string, string]> = [];
+  const mergedEntries = new Map<string, string>();
   otherHeaders.forEach((value, name) => {
-    normalizedEntries.push([name, value]);
+    const key = originalNames.get(name) ?? name;
+    const existing = mergedEntries.get(key);
+    mergedEntries.set(
+      key,
+      existing !== undefined ? `${existing}, ${value}` : value,
+    );
   });
 
-  const merged = Object.fromEntries(
-    normalizedEntries.map(([name, value]) => [
-      originalNames.get(name) ?? name,
-      value,
-    ]),
-  ) as Record<string, string>;
+  const merged = Object.fromEntries(mergedEntries) as Record<string, string>;
 
   for (const [name, trackingValue] of Object.entries(getTrackingHeaders())) {
     const tokens = trackingValue.split(' ');

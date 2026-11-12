@@ -322,6 +322,51 @@ describe('client_labels', () => {
       ).toHaveLength(1);
     });
 
+    it('preserves repeated mixed-case Set-Cookie headers from header pairs', () => {
+      const callerHeaders: Array<[string, string]> = [
+        ['Set-Cookie', 'a=1'],
+        ['set-cookie', 'b=2'],
+      ];
+
+      const merged = mergeTrackingHeaders(callerHeaders);
+
+      expect(merged['Set-Cookie']).toBe('a=1, b=2');
+      expect(
+        Object.keys(merged).filter(
+          (name) => name.toLowerCase() === 'set-cookie',
+        ),
+      ).toHaveLength(1);
+    });
+
+    it('preserves repeated Set-Cookie headers from a Headers instance', () => {
+      const headers = new Headers();
+      headers.append('Set-Cookie', 'a=1');
+      headers.append('Set-Cookie', 'b=2');
+
+      const merged = mergeTrackingHeaders(headers);
+
+      expect(merged['set-cookie']).toBe('a=1, b=2');
+      expect(
+        Object.keys(merged).filter(
+          (name) => name.toLowerCase() === 'set-cookie',
+        ),
+      ).toHaveLength(1);
+    });
+
+    it('combines case-insensitive duplicate headers from a plain object record', () => {
+      const callerHeaders = {
+        'X-Custom': 'first',
+        'x-custom': 'second',
+      };
+
+      const merged = mergeTrackingHeaders(callerHeaders);
+
+      expect(merged['X-Custom']).toBe('first, second');
+      expect(
+        Object.keys(merged).filter((name) => name.toLowerCase() === 'x-custom'),
+      ).toHaveLength(1);
+    });
+
     it('does not mutate the input', () => {
       const input = {'User-Agent': 'my-app/1.0', 'X-Custom': 'value'};
       const pairs: Array<[string, string]> = [['User-Agent', 'my-app/1.0']];
