@@ -14,6 +14,7 @@ const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 /** The fields of a published manifest this suite reads. */
 interface PackageManifest {
   browser: string;
+  exports?: Record<string, unknown>;
 }
 
 /** A published package and the workspace directory `node_modules` links to. */
@@ -127,6 +128,64 @@ describe.each(PACKAGES)('$specifier resolution', ({specifier, dir}) => {
 
     expect(resolved).toBe(distPath(dir, './dist/web/index_web.js'));
     expect(existsSync(resolved)).toBe(true);
+  });
+});
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+/** Returns the conditions of `exports["."]`, failing if it is not an object. */
+function rootConditions(manifest: PackageManifest): Record<string, unknown> {
+  const conditions = manifest.exports?.['.'];
+  if (!isRecord(conditions)) {
+    throw new Error('exports["."] is not a conditions object');
+  }
+  return conditions;
+}
+
+describe('@google/adk-integrations export conditions', () => {
+  const manifest = readManifest('integrations');
+  const browserTypesPath = distPath(
+    'integrations',
+    './dist/types/index_web.d.ts',
+  );
+
+  beforeAll(() => {
+    expect(
+      existsSync(browserTypesPath),
+      'integrations is not built; run "npm run build" before this suite',
+    ).toBe(true);
+  });
+
+  it('orders the browser condition before root types in exports["."]', () => {
+    // Resolvers take the first matching condition in declaration order, so a
+    // root `types` listed first hides the browser declarations from TypeScript.
+    const keys = Object.keys(rootConditions(manifest));
+
+    expect(keys.indexOf('browser')).not.toBe(-1);
+    expect(keys.indexOf('browser')).toBeLessThan(keys.indexOf('types'));
+  });
+
+  it('declares browser types and default entry under exports["."].browser', () => {
+    expect(rootConditions(manifest)['browser']).toEqual({
+      types: './dist/types/index_web.d.ts',
+      default: './dist/web/index_web.js',
+    });
+    expect(existsSync(browserTypesPath)).toBe(true);
+    expect(
+      existsSync(distPath('integrations', './dist/web/index_web.js')),
+    ).toBe(true);
+  });
+
+  it('keeps Node-only modules out of browser types', () => {
+    const browserTypes = readFileSync(browserTypesPath, 'utf8');
+
+    expect(browserTypes).toContain('CrewaiTool');
+    expect(browserTypes).toContain('LangchainTool');
+    expect(browserTypes).not.toContain('BigQuery');
+    expect(browserTypes).not.toContain('Claude');
+    expect(browserTypes).not.toContain('AnthropicLlm');
   });
 });
 
