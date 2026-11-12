@@ -21,10 +21,7 @@ import {BaseToolset, ToolPredicate} from '../base_toolset.js';
 import {MCPConnectionParams, MCPSessionManager} from './mcp_session_manager.js';
 import {MCPTool} from './mcp_tool.js';
 
-export type {
-  SseConnectionParams,
-  SseServerParams,
-} from './mcp_session_manager.js';
+export type {SseConnectionParams} from './mcp_session_manager.js';
 
 /**
  * A toolset that dynamically discovers and provides tools from a Model Context

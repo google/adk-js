@@ -86,26 +86,10 @@ export interface StreamableHTTPConnectionParams {
 export interface SseConnectionParams {
   type: 'SseConnectionParams';
   url: string;
-  /**
-   * @deprecated
-   * Use transportOptions.requestInit.headers instead.
-   * This field will be ignored if transportOptions is provided even if no headers are specified in transportOptions.
-   */
-  header?: Record<string, unknown>;
-  /**
-   * HTTP headers to send with the SSE and POST requests when
-   * `transportOptions.requestInit` is not provided.
-   */
-  headers?: Record<string, unknown>;
   timeout?: number;
   sseReadTimeout?: number;
   transportOptions?: SSEClientTransportOptions;
 }
-
-/**
- * Alias for {@link SseConnectionParams}.
- */
-export type SseServerParams = SseConnectionParams;
 
 /**
  * A union of all supported MCP connection parameter types.
@@ -141,21 +125,18 @@ function buildTransportOptions(
 
 /**
  * Builds the options for an SSE transport, with the ADK tracking headers
- * merged into `requestInit.headers`.
+ * merged into `requestInit.headers`. The result is a new object, so the
+ * caller's `transportOptions` is never modified.
  */
 function buildSseTransportOptions(
   params: SseConnectionParams,
 ): SSEClientTransportOptions {
-  const {transportOptions, header, headers} = params;
-  const callerHeaders =
-    transportOptions?.requestInit === undefined
-      ? ((header ?? headers) as Record<string, string> | undefined)
-      : transportOptions.requestInit.headers;
+  const {transportOptions} = params;
   return {
     ...transportOptions,
     requestInit: {
       ...transportOptions?.requestInit,
-      headers: mergeTrackingHeaders(callerHeaders),
+      headers: mergeTrackingHeaders(transportOptions?.requestInit?.headers),
     },
     fetch: instrumentMcpFetch(transportOptions?.fetch),
   };

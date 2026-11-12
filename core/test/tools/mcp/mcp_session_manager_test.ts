@@ -10,7 +10,6 @@ import {
   MCPSessionManager,
   runWithClientLabel,
   SseConnectionParams,
-  SseServerParams,
 } from '@google/adk';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {SSEClientTransport} from '@modelcontextprotocol/sdk/client/sse.js';
@@ -556,12 +555,16 @@ describe('MCPSessionManager', () => {
   });
 
   describe('SseConnectionParams', () => {
-    it('creates an SSE client with headers merged into requestInit', async () => {
-      const params: SseServerParams = {
+    it('creates an SSE client with transportOptions headers merged into requestInit', async () => {
+      const params: SseConnectionParams = {
         type: 'SseConnectionParams',
         url: 'http://test-sse-url/sse',
-        headers: {
-          'x-sse-header': 'sse-value',
+        transportOptions: {
+          requestInit: {
+            headers: {
+              'x-sse-header': 'sse-value',
+            },
+          },
         },
         timeout: 10,
         sseReadTimeout: 60,
@@ -581,45 +584,10 @@ describe('MCPSessionManager', () => {
       expect(client.connect).toHaveBeenCalled();
     });
 
-    it('creates an SSE client with deprecated header param', async () => {
-      const params: SseConnectionParams = {
-        type: 'SseConnectionParams',
-        url: 'http://test-sse-url/sse',
-        header: {
-          'x-legacy-header': 'legacy-value',
-        },
-      };
-      const manager = new MCPSessionManager(params);
-
-      await manager.createSession();
-
-      expect(SSEClientTransport).toHaveBeenLastCalledWith(
-        new URL('http://test-sse-url/sse'),
-        {
-          requestInit: {
-            headers: {'x-legacy-header': 'legacy-value', ...trackingHeaders()},
-          },
-        },
-      );
-    });
-
-    it('prioritizes transportOptions.requestInit.headers over header and headers', async () => {
+    it('sends tracking headers when transportOptions is omitted', async () => {
       const manager = new MCPSessionManager({
         type: 'SseConnectionParams',
         url: 'http://test-sse-url/sse',
-        transportOptions: {
-          requestInit: {
-            headers: {
-              'x-priority': 'transport-options',
-            },
-          },
-        },
-        header: {
-          'x-priority': 'header',
-        },
-        headers: {
-          'x-priority': 'headers',
-        },
       });
 
       await manager.createSession();
@@ -628,10 +596,44 @@ describe('MCPSessionManager', () => {
         new URL('http://test-sse-url/sse'),
         {
           requestInit: {
-            headers: {'x-priority': 'transport-options', ...trackingHeaders()},
+            headers: trackingHeaders(),
           },
         },
       );
+    });
+
+    it('preserves other transportOptions and requestInit fields without mutating caller options', async () => {
+      const transportOptions = {
+        requestInit: {
+          credentials: 'include' as const,
+          headers: {'User-Agent': 'my-sse-app/1.0', 'x-sse-header': 'value'},
+        },
+      };
+      const transportOptionsClone = structuredClone(transportOptions);
+
+      const manager = new MCPSessionManager({
+        type: 'SseConnectionParams',
+        url: 'http://test-sse-url/sse',
+        transportOptions,
+      });
+
+      await manager.createSession();
+
+      const adk = getClientLabels().join(' ');
+      expect(SSEClientTransport).toHaveBeenLastCalledWith(
+        new URL('http://test-sse-url/sse'),
+        {
+          requestInit: {
+            credentials: 'include',
+            headers: {
+              'x-sse-header': 'value',
+              'x-goog-api-client': adk,
+              'user-agent': `${adk} my-sse-app/1.0`,
+            },
+          },
+        },
+      );
+      expect(transportOptions).toEqual(transportOptionsClone);
     });
 
     it('logs a formatted message for a background SSE transport error', async () => {
