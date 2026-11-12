@@ -46,6 +46,10 @@ vi.mock('../../src/cli/deploy/cli_deploy_cloud_run', () => ({
   deployToCloudRun: vi.fn(),
 }));
 
+vi.mock('../../src/integration/run_integration_tests', () => ({
+  runIntegrationTests: vi.fn(),
+}));
+
 vi.mock('../../src/cli/cli_run', () => ({
   runAgent: vi.fn(),
 }));
@@ -199,6 +203,13 @@ describe('CLI Entrypoint', () => {
       });
     });
 
+    it('reads --otel_to_cloud false as false', async () => {
+      await parse(['web', '--otel_to_cloud', 'false']);
+
+      const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+      expect(args.otelToCloud).toBe(false);
+    });
+
     it('should handle artifact service uri', async () => {
       await parse(['web', '--artifact_service_uri', 'gs://my-bucket']);
 
@@ -315,6 +326,27 @@ describe('CLI Entrypoint', () => {
 
       expect(process.exitCode).toBe(1);
       process.exitCode = originalExitCode;
+    });
+
+    it('exits non-zero without running the agent when the log file cannot be created', async () => {
+      (logToTmpFolder as Mock).mockImplementationOnce(() => {
+        throw new Error('EACCES: permission denied');
+      });
+      const originalExitCode = process.exitCode;
+
+      await parse(['run', 'agent.ts']);
+
+      expect(process.exitCode).toBe(1);
+      expect(runAgent).not.toHaveBeenCalled();
+      process.exitCode = originalExitCode;
+    });
+
+    it('reads --otel_to_cloud=false as false', async () => {
+      await parse(['run', 'agent.ts', '--otel_to_cloud=false']);
+
+      expect(runAgent).toHaveBeenCalledWith(
+        expect.objectContaining({otelToCloud: false}),
+      );
     });
 
     it('should call runAgent with required args', async () => {
@@ -631,6 +663,45 @@ describe('CLI Entrypoint', () => {
     });
   });
 
+  describe('deploy failures', () => {
+    it.each([
+      ['deploy cloud_run', ['deploy', 'cloud_run'], () => deployToCloudRun],
+      [
+        'deploy agent_engine',
+        ['deploy', 'agent_engine'],
+        () => deployToAgentEngine,
+      ],
+    ])(
+      '%s exits non-zero when the deployment fails',
+      async (_name, args, target) => {
+        (target() as Mock).mockRejectedValueOnce(new Error('gcloud failed'));
+        const originalExitCode = process.exitCode;
+
+        await parse(args);
+
+        expect(process.exitCode).toBe(1);
+        process.exitCode = originalExitCode;
+      },
+    );
+  });
+
+  describe('command: integration conformance', () => {
+    it('waits for the integration tests to finish', async () => {
+      let finished = false;
+      (runIntegrationTests as Mock).mockImplementationOnce(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        finished = true;
+      });
+
+      await parse(['integration', 'conformance', '--force']);
+
+      expect(runIntegrationTests).toHaveBeenCalledWith(
+        expect.objectContaining({forceRunAll: true}),
+      );
+      expect(finished).toBe(true);
+    });
+  });
+
   describe('command: deploy reasoning_engine', () => {
     it('should call deployToAgentEngine for reasoning_engine', async () => {
       await parse(['deploy', 'reasoning_engine']);
@@ -801,6 +872,181 @@ describe('CLI Entrypoint', () => {
         expect(storedResult.evalSetId).toBe('sample_set');
         expect(storedResult.evalCaseResults).toHaveLength(2);
         expect(storedResult.evalCaseResults[0].sessionDetails).toBeDefined();
+      } finally {
+        stdoutSpy.mockRestore();
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
+    });
+
+    it('stubs tool calls with mock_tool_output from a legacy eval set file', async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-cli-eval-mock-'),
+      );
+      const agentDir = path.join(tempDir, 'mock_eval_app');
+      fs.mkdirSync(agentDir, {recursive: true});
+
+      // The agent reports what the tool callback returns. Only a stubbed call
+      // returns the mock output, so the case passes only when the stub works.
+      fs.writeFileSync(
+        path.join(agentDir, 'agent.js'),
+        [
+          `import {BaseAgent, LlmAgent, createEvent} from '@google/adk';`,
+          `const toolAgent = new LlmAgent({name: 'tool_agent', model: 'gemini-2.5-flash'});`,
+          `class MockCheckingAgent extends BaseAgent {`,
+          `  constructor() { super({name: 'mock_checking_agent', subAgents: [toolAgent]}); }`,
+          `  async *runAsyncImpl(ctx) {`,
+          `    const cb = toolAgent.beforeToolCallback;`,
+          `    const output = typeof cb === 'function' ? await cb({tool: {name: 'lookup_item'}, args: {id: 42}, context: {}}) : undefined;`,
+          `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{functionCall: {name: 'lookup_item', args: {id: 42}}}]}});`,
+          `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'Result: ' + JSON.stringify(output)}]}});`,
+          `  }`,
+          `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+          `}`,
+          `export const rootAgent = new MockCheckingAgent();`,
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const evalSetFile = path.join(tempDir, 'mock_set.evalset.json');
+      fs.writeFileSync(
+        evalSetFile,
+        JSON.stringify([
+          {
+            name: 'mocked_case',
+            data: [
+              {
+                query: 'check item',
+                expected_tool_use: [
+                  {
+                    tool_name: 'lookup_item',
+                    tool_input: {id: 42},
+                    mock_tool_output: 'mocked_value_42',
+                  },
+                ],
+                expected_intermediate_agent_responses: [],
+                reference: 'Result: {"result":"mocked_value_42"}',
+              },
+            ],
+          },
+        ]),
+        'utf-8',
+      );
+
+      const stdoutChunks: string[] = [];
+      const stdoutSpy = vi
+        .spyOn(process.stdout, 'write')
+        .mockImplementation((chunk: string | Uint8Array) => {
+          stdoutChunks.push(String(chunk));
+          return true;
+        });
+
+      try {
+        await parse(['eval', agentDir, evalSetFile]);
+
+        const output = stdoutChunks.join('');
+        expect(output).toContain('Tests passed: 1');
+        expect(output).toContain('Tests failed: 0');
+      } finally {
+        stdoutSpy.mockRestore();
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
+    });
+
+    it('runs the eval command against a structured EvalSet file with case filtering', async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-cli-eval-structured-'),
+      );
+      const agentDir = path.join(tempDir, 'my_eval_app');
+      fs.mkdirSync(agentDir, {recursive: true});
+
+      const agentFile = path.join(agentDir, 'agent.js');
+      fs.writeFileSync(
+        agentFile,
+        [
+          `import {BaseAgent, createEvent} from '@google/adk';`,
+          `class EvalAgent extends BaseAgent {`,
+          `  constructor() { super({name: 'my_eval_agent'}); }`,
+          `  async *runAsyncImpl(ctx) {`,
+          `    const text = ctx.userContent?.parts?.[0]?.text ?? '';`,
+          `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'Echo: ' + text}]}});`,
+          `  }`,
+          `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+          `}`,
+          `export const rootAgent = new EvalAgent();`,
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const evalSetFile = path.join(tempDir, 'structured_set.evalset.json');
+      fs.writeFileSync(
+        evalSetFile,
+        JSON.stringify({
+          evalSetId: 'structured_set',
+          name: 'structured_set',
+          evalCases: [
+            {
+              evalId: 'selected_case',
+              conversation: [
+                {
+                  invocationId: 'inv-1',
+                  userContent: {role: 'user', parts: [{text: 'ping'}]},
+                  finalResponse: {
+                    role: 'model',
+                    parts: [{text: 'Echo: ping'}],
+                  },
+                },
+              ],
+              sessionInput: {
+                appName: 'my_eval_app',
+                userId: 'user_1',
+                state: {},
+              },
+            },
+            {
+              evalId: 'skipped_case',
+              conversation: [
+                {
+                  invocationId: 'inv-2',
+                  userContent: {role: 'user', parts: [{text: 'other'}]},
+                  finalResponse: {
+                    role: 'model',
+                    parts: [{text: 'wrong'}],
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+        'utf-8',
+      );
+
+      const stdoutChunks: string[] = [];
+      const stdoutSpy = vi
+        .spyOn(process.stdout, 'write')
+        .mockImplementation((chunk: string | Uint8Array) => {
+          stdoutChunks.push(String(chunk));
+          return true;
+        });
+
+      try {
+        await parse(['eval', agentDir, `${evalSetFile}:selected_case`]);
+
+        const output = stdoutChunks.join('');
+        expect(output).toContain('Eval Run Summary');
+        expect(output).toContain('Tests passed: 1');
+        expect(output).toContain('Tests failed: 0');
+
+        const manager = new LocalEvalSetResultsManager(tempDir);
+        const resultIds = manager.listEvalSetResults('my_eval_app');
+        expect(resultIds).toHaveLength(1);
+
+        const storedResult = manager.getEvalSetResult(
+          'my_eval_app',
+          resultIds[0],
+        );
+        expect(storedResult.evalSetId).toBe('structured_set');
+        expect(storedResult.evalCaseResults).toHaveLength(1);
+        expect(storedResult.evalCaseResults[0].evalId).toBe('selected_case');
       } finally {
         stdoutSpy.mockRestore();
         fs.rmSync(tempDir, {recursive: true, force: true});

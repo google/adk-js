@@ -1502,6 +1502,113 @@ describe('AgentLoader', () => {
         );
         await loader.disposeAll();
       });
+
+      it('prefers a top-level module file over a subdirectory with the same name', async () => {
+        const agentName = 'order_test_agent';
+        const moduleCode = `
+          const {BaseAgent} = require('@google/adk');
+          class ModuleAgent extends BaseAgent {
+            constructor() {
+              super({name: '${agentName}_module_version'});
+            }
+          }
+          exports.rootAgent = new ModuleAgent();
+        `;
+        const submoduleCode = `
+          const {BaseAgent} = require('@google/adk');
+          class SubmoduleAgent extends BaseAgent {
+            constructor() {
+              super({name: '${agentName}_submodule_version'});
+            }
+          }
+          exports.rootAgent = new SubmoduleAgent();
+        `;
+
+        const subDir = path.join(tempAgentsDir, agentName);
+        await fs.mkdir(subDir, {recursive: true});
+        await fs.writeFile(path.join(subDir, 'agent.js'), submoduleCode);
+        await fs.writeFile(
+          path.join(tempAgentsDir, `${agentName}.js`),
+          moduleCode,
+        );
+        mockCompiledPackageFixture(
+          subDir,
+          'order_test_agent_submodule_file.cjs',
+        );
+
+        const loader = new AgentLoader(tempAgentsDir);
+        const agentFile = await loader.getAgentFile(agentName);
+        await using _lease = agentFile.retain();
+        const agent = await agentFile.load();
+
+        expect(agent.name).toBe(`${agentName}_module_version`);
+        await loader.disposeAll();
+      });
+
+      it('falls back to the subdirectory when a same-named top-level file exports no root agent', async () => {
+        const agentName = 'fallback_order_agent';
+        const helperFileCode = `exports.helperValue = 123;`;
+        const submoduleCode = `
+          const {BaseAgent} = require('@google/adk');
+          class FallbackSubmoduleAgent extends BaseAgent {
+            constructor() {
+              super({name: '${agentName}_from_subdir'});
+            }
+          }
+          exports.rootAgent = new FallbackSubmoduleAgent();
+        `;
+
+        await fs.writeFile(
+          path.join(tempAgentsDir, `${agentName}.js`),
+          helperFileCode,
+        );
+        const subDir = path.join(tempAgentsDir, agentName);
+        await fs.mkdir(subDir, {recursive: true});
+        await fs.writeFile(path.join(subDir, 'agent.js'), submoduleCode);
+        mockCompiledPackageFixture(subDir, 'fallback_order_agent_subdir.cjs');
+
+        const loader = new AgentLoader(tempAgentsDir);
+        const agentFile = await loader.getAgentFile(agentName);
+        await using _lease = agentFile.retain();
+        const agent = await agentFile.load();
+
+        expect(agent.name).toBe(`${agentName}_from_subdir`);
+        await loader.disposeAll();
+      });
+
+      it('surfaces an internal module not found error when an agent imports a missing dependency', async () => {
+        const agentName = 'importer_agent';
+        const importerCode = `
+          require('non_existent_internal_module_xyz');
+        `;
+        await fs.writeFile(
+          path.join(tempAgentsDir, `${agentName}.js`),
+          importerCode,
+        );
+
+        const loader = new AgentLoader(tempAgentsDir);
+        await expect(loader.getAgentFile(agentName)).rejects.toThrow(
+          /Agent 'importer_agent' failed to load[\s\S]*Cannot find module 'non_existent_internal_module_xyz'/,
+        );
+        await loader.disposeAll();
+      });
+
+      it('surfaces a syntax error thrown while evaluating an agent module', async () => {
+        const agentName = 'syntax_error_agent';
+        const badSyntaxCode = `
+          this is not valid javascript syntax {{{
+        `;
+        await fs.writeFile(
+          path.join(tempAgentsDir, `${agentName}.js`),
+          badSyntaxCode,
+        );
+
+        const loader = new AgentLoader(tempAgentsDir);
+        await expect(loader.getAgentFile(agentName)).rejects.toThrow(
+          /Agent 'syntax_error_agent' failed to load/,
+        );
+        await loader.disposeAll();
+      });
     });
   });
 

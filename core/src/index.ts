@@ -200,13 +200,17 @@ export * from './tools/google_api_tool/index.js';
 // Also available as `@google/adk/tools/mcp`, which does not evaluate the rest
 // of this barrel.
 export {
+  convertEvalSetToSchema,
   DEFAULT_CRITERIA,
   EVAL_SESSION_ID_PREFIX,
   EvalStatus,
   getEvaluationCriteriaOrDefault,
   getRootAgent,
+  loadEvalSetFromFile,
   LocalEvalSetResultsManager,
+  LocalEvalSetsManager,
   MISSING_EVAL_DEPENDENCIES_MESSAGE,
+  normalizeEvalCase,
   parseAndGetEvalsToRun,
   RESPONSE_EVALUATION_SCORE_KEY,
   RESPONSE_MATCH_SCORE_KEY,

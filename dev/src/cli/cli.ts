@@ -8,7 +8,7 @@
 import {
   BaseArtifactService,
   BaseSessionService,
-  EvalEntry,
+  EvalCase,
   EvalMetric,
   EvalResult,
   EvalStatus,
@@ -19,6 +19,7 @@ import {
   getRootAgent,
   getSessionServiceFromUri,
   loadDotenvForAgent,
+  loadEvalSetFromFile,
   logToTmpFolder,
   parseAndGetEvalsToRun,
   runEvals,
@@ -183,7 +184,8 @@ const COMPILE_AGENT_FILE = new Option(
 const BUNDLE_AGENT_FILE = new Option(
   '--bundle [boolean]',
   'Optional. Whether to inline the agent file dependencies into a single ' +
-    'bundle before execution.',
+    'bundle before execution. Deploy commands also minify the bundle; ' +
+    'local commands keep readable output.',
 ).default(true);
 const A2A_OPTION = new Option(
   '--a2a [boolean]',
@@ -510,19 +512,19 @@ export function createProgram(): Command {
           const resetFunc = await tryGetResetFunc(absAgentPath);
 
           const evalSetToEvals = parseAndGetEvalsToRun(evalSetFilePaths);
-          const evalCasesByEvalSetId: Record<string, EvalEntry[]> = {};
+          const evalCasesByEvalSetId: Record<string, EvalCase[]> = {};
 
           for (const [evalSetFile, evalsToRun] of Object.entries(
             evalSetToEvals,
           )) {
-            const evalSetContent = JSON.parse(
-              fs.readFileSync(getAbsolutePath(evalSetFile), 'utf-8'),
-            ) as EvalEntry[];
-
-            evalCasesByEvalSetId[evalSetFile] =
+            const evalSet = loadEvalSetFromFile(
+              getAbsolutePath(evalSetFile),
+              evalSetFile,
+            );
+            evalCasesByEvalSetId[evalSet.evalSetId] =
               evalsToRun.length > 0
-                ? evalSetContent.filter((e) => evalsToRun.includes(e.name))
-                : evalSetContent;
+                ? evalSet.evalCases.filter((e) => evalsToRun.includes(e.evalId))
+                : evalSet.evalCases;
           }
 
           const evalResults: EvalResult[] = [];

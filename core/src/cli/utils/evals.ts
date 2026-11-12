@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Part} from '@google/genai';
+import {Content, FunctionCall, FunctionResponse, Part} from '@google/genai';
 
 import {BaseAgent} from '../../agents/base_agent.js';
 import {isLlmAgent} from '../../agents/llm_agent.js';
@@ -35,9 +35,68 @@ export interface EvaluationItem {
 }
 
 /**
+ * Intermediate tool uses and sub-agent responses recorded during an evaluation
+ * invocation.
+ */
+export interface EvalIntermediateData {
+  toolUses: FunctionCall[];
+  /**
+   * Expected responses for entries in {@link toolUses}, matched by `id`. When
+   * an eval runs, a matching response replaces the real tool call, so the
+   * response acts as a mock tool output.
+   */
+  toolResponses?: FunctionResponse[];
+  intermediateResponses: IntermediateAgentResponseItem[];
+}
+
+/**
+ * Represents a single user-to-agent invocation in an evaluation case.
+ */
+export interface EvalInvocation {
+  invocationId?: string;
+  userContent: Content;
+  finalResponse?: Content;
+  intermediateData?: EvalIntermediateData;
+  creationTimestamp?: number;
+}
+
+/**
+ * Initial session metadata for an {@link EvalCase}.
+ */
+export interface EvalSessionInput {
+  appName: string;
+  userId: string;
+  state: Record<string, unknown>;
+}
+
+/**
+ * A structured evaluation case containing a multi-turn conversation and
+ * optional initial session state.
+ */
+export interface EvalCase {
+  evalId: string;
+  conversation: EvalInvocation[];
+  sessionInput?: EvalSessionInput;
+  creationTimestamp?: number;
+}
+
+/**
+ * A named collection of {@link EvalCase} items stored in an `.evalset.json`
+ * file.
+ */
+export interface EvalSet {
+  evalSetId: string;
+  name?: string;
+  description?: string;
+  evalCases: EvalCase[];
+  creationTimestamp?: number;
+}
+
+/**
  * Converts a session into a list of evaluation items suitable for saving into
  * an evalset or running through `runEvals`.
  *
+ * @deprecated Use {@link convertSessionToEvalInvocations} instead.
  * @param session The session whose events should be converted.
  * @returns An array of `EvaluationItem` records, one per user turn.
  */
@@ -51,13 +110,20 @@ export function convertSessionToEvalFormat(
   while (i < events.length) {
     const event = events[i];
     if (event.author === 'user') {
+      if (
+        !event.content ||
+        !event.content.parts ||
+        event.content.parts.length === 0
+      ) {
+        i += 1;
+        continue;
+      }
+
       let userQuery = '';
-      if (event.content && event.content.parts) {
-        for (const part of event.content.parts) {
-          if (part.text) {
-            userQuery = part.text;
-            break;
-          }
+      for (const part of event.content.parts) {
+        if (part.text) {
+          userQuery = part.text;
+          break;
         }
       }
 
@@ -75,6 +141,7 @@ export function convertSessionToEvalFormat(
 
         if (subsequentEvent.content && subsequentEvent.content.parts) {
           let hasToolAction = false;
+          const textParts: Part[] = [];
           for (const part of subsequentEvent.content.parts) {
             if (part.functionCall) {
               expectedToolUse.push({
@@ -87,13 +154,20 @@ export function convertSessionToEvalFormat(
               hasToolAction = true;
             } else if (part.functionResponse) {
               hasToolAction = true;
+            } else if (part.text) {
+              textParts.push(part);
             }
           }
 
-          if (!hasToolAction) {
+          if (!hasToolAction && textParts.length > 0) {
             expectedIntermediateAgentResponses.push([
               subsequentEvent.author ?? '',
               subsequentEvent.content.parts,
+            ]);
+          } else if (hasToolAction && textParts.length > 0) {
+            expectedIntermediateAgentResponses.push([
+              subsequentEvent.author ?? '',
+              textParts,
             ]);
           }
         }
@@ -126,6 +200,95 @@ export function convertSessionToEvalFormat(
   }
 
   return evalCases;
+}
+
+/**
+ * Converts a session into a list of {@link EvalInvocation} items, grouping each
+ * user turn with its subsequent agent tool calls, intermediate responses, and
+ * final response.
+ *
+ * @param session The session whose events should be converted.
+ * @returns An array of {@link EvalInvocation} records, one per user turn.
+ */
+export function convertSessionToEvalInvocations(
+  session?: Session,
+): EvalInvocation[] {
+  const invocations: EvalInvocation[] = [];
+  const events = session && session.events ? session.events : [];
+
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i];
+    if (event.author !== 'user') {
+      continue;
+    }
+    if (
+      !event.content ||
+      !event.content.parts ||
+      event.content.parts.length === 0
+    ) {
+      continue;
+    }
+
+    const userContent = event.content;
+    const invocationId = event.invocationId || undefined;
+    // `Event.timestamp` is in milliseconds; eval sets store seconds.
+    const creationTimestamp =
+      event.timestamp !== undefined ? event.timestamp / 1000 : undefined;
+    const toolUses: FunctionCall[] = [];
+    const intermediateResponses: IntermediateAgentResponseItem[] = [];
+
+    for (let j = i + 1; j < events.length; j++) {
+      const subsequentEvent = events[j];
+      const eventAuthor = subsequentEvent.author || 'agent';
+      if (eventAuthor === 'user') {
+        break;
+      }
+      if (
+        !subsequentEvent.content ||
+        !subsequentEvent.content.parts ||
+        subsequentEvent.content.parts.length === 0
+      ) {
+        continue;
+      }
+
+      const intermediateResponseParts: Part[] = [];
+      for (const subsequentPart of subsequentEvent.content.parts) {
+        if (subsequentPart.functionCall) {
+          toolUses.push(subsequentPart.functionCall);
+        } else if (subsequentPart.text) {
+          intermediateResponseParts.push(subsequentPart);
+        }
+      }
+
+      if (intermediateResponseParts.length > 0) {
+        intermediateResponses.push([eventAuthor, intermediateResponseParts]);
+      }
+    }
+
+    const finalResponse: Content | undefined =
+      intermediateResponses.length > 0
+        ? {
+            parts: intermediateResponses[intermediateResponses.length - 1][1],
+            role: 'model',
+          }
+        : undefined;
+
+    invocations.push({
+      ...(invocationId !== undefined ? {invocationId} : {}),
+      userContent,
+      ...(finalResponse !== undefined ? {finalResponse} : {}),
+      intermediateData: {
+        toolUses,
+        intermediateResponses:
+          intermediateResponses.length > 0
+            ? intermediateResponses.slice(0, -1)
+            : [],
+      },
+      ...(creationTimestamp !== undefined ? {creationTimestamp} : {}),
+    });
+  }
+
+  return invocations;
 }
 
 function populateEmptyState(
