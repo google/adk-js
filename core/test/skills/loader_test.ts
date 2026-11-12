@@ -62,9 +62,17 @@ description: A test skill`;
 - item2
 ---
 Body`;
-      expect(() => parseSkillMdContent(content)).toThrow(
-        'Invalid YAML in frontmatter:',
+      let error: unknown;
+      try {
+        parseSkillMdContent(content);
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(InputValidationError);
+      expect((error as InputValidationError).message).toBe(
+        'Invalid YAML in frontmatter: SKILL.md frontmatter must be a YAML mapping',
       );
+      expect((error as Error).cause).toBeUndefined();
     });
 
     it('throws error on invalid YAML', () => {
@@ -193,11 +201,54 @@ ${body}
 
       it('reports empty frontmatter as a non-mapping, not as unclosed', () => {
         expect(() => parseSkillMdContent('---\n---\nBody')).toThrow(
-          'Invalid YAML in frontmatter:',
+          'Invalid YAML in frontmatter: SKILL.md frontmatter must be a YAML mapping',
         );
         expect(() => parseSkillMdContent('---\n---\nBody')).toThrow(
           InputValidationError,
         );
+      });
+
+      it.each([
+        ['empty', '---\n---\nBody'],
+        ['whitespace-only', '---\n   \n---\nBody'],
+        ['comment-only', '---\n# just a comment\n---\nBody'],
+      ])(
+        'reports %s frontmatter as a non-mapping without cause wrapping',
+        (_label, content) => {
+          let error: unknown;
+          try {
+            parseSkillMdContent(content);
+          } catch (e) {
+            error = e;
+          }
+          expect(error).toBeInstanceOf(InputValidationError);
+          expect((error as InputValidationError).message).toBe(
+            'Invalid YAML in frontmatter: SKILL.md frontmatter must be a YAML mapping',
+          );
+          expect((error as Error).cause).toBeUndefined();
+        },
+      );
+
+      it.each([
+        [
+          'four dashes',
+          '----\nname: test-skill\ndescription: A test skill\n---\nBody',
+        ],
+        ['extra suffix', '---extra\nname: test-skill\n---\nBody'],
+      ])('rejects invalid opening delimiter with %s', (_label, content) => {
+        expect(() => parseSkillMdContent(content)).toThrow(
+          'SKILL.md must start with YAML frontmatter (---)',
+        );
+        expect(() => parseSkillMdContent(content)).toThrow(
+          InputValidationError,
+        );
+      });
+
+      it('throws unclosed error when content is only an opening delimiter', () => {
+        expect(() => parseSkillMdContent('---')).toThrow(
+          'SKILL.md frontmatter not properly closed with ---',
+        );
+        expect(() => parseSkillMdContent('---')).toThrow(InputValidationError);
       });
     });
   });
@@ -890,9 +941,17 @@ Instruction body`;
       const zipBuffer = createZipWithSkillMd(
         '---\n- item1\n- item2\n---\nBody',
       );
-      expect(() => loadSkillFromZipBuffer(zipBuffer)).toThrow(
+      let error: unknown;
+      try {
+        loadSkillFromZipBuffer(zipBuffer);
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(InputValidationError);
+      expect((error as InputValidationError).message).toBe(
         'Invalid YAML in frontmatter: SKILL.md frontmatter must be a YAML mapping',
       );
+      expect((error as Error).cause).toBeUndefined();
     });
 
     it('still reports a missing SKILL.md in a benign archive', () => {
@@ -901,6 +960,16 @@ Instruction body`;
 
       expect(() => loadSkillFromZipBuffer(zip.toBuffer())).toThrow(
         'SKILL.md not found in zipped filesystem.',
+      );
+    });
+
+    it('reports a 0-byte SKILL.md as invalid frontmatter instead of missing', () => {
+      const zipBuffer = createZipWithSkillMd('');
+      expect(() => loadSkillFromZipBuffer(zipBuffer)).toThrow(
+        'SKILL.md must start with YAML frontmatter (---)',
+      );
+      expect(() => loadSkillFromZipBuffer(zipBuffer)).toThrow(
+        InputValidationError,
       );
     });
 
