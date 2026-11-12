@@ -13,7 +13,7 @@ The paths look like the session routes of the ADK dev servers, but this is a sep
 - The client URL-encodes the path segments `appName`, `userId` and `sessionId`.
 - The client sends the headers it is configured with on every request. The contract defines no authentication scheme. The server decides which headers it needs, such as `Authorization` or a tenant header.
 - Error bodies are `{"error": "<message>"}`. The client includes the message, truncated, in the error it throws, so the message must not contain secrets.
-- **Timestamps are epoch seconds, as JSON numbers that may have a fraction.** This is the unit adk-python uses. The JS client converts to and from the epoch milliseconds that ADK-JS uses.
+- **Timestamps are epoch seconds, as JSON numbers that may have a fraction.** This is the unit adk-python uses. The JS client converts to and from the epoch milliseconds that ADK-JS uses. This applies to the event fields `timestamp`, and `startTime` and `endTime` of a compacted event (`"isCompacted": true`), and to `lastUpdateTime`.
 
 ## Data shapes
 
@@ -33,17 +33,19 @@ The paths look like the session routes of the ADK dev servers, but this is a sep
 - `state` is the merged view. Keys with the `app:` prefix are shared by every session of the app, keys with the `user:` prefix are shared by every session of the user, and all other keys belong to this session. The server stores each scope separately and returns them merged, with the prefixes in the key names.
 - The client never sends `temp:` keys.
 - `events` is ordered by append time, oldest first.
-- `lastUpdateTime` is set by the server. The client sends it back unchanged as the precondition of an append. See [Append an event](#append-an-event).
+- `lastUpdateTime` is set by the server and is required. It must be a whole number of milliseconds, expressed in seconds (for example `1730000000.123`, not `1730000000.123456`), and must strictly increase with every append. The client sends it back as the precondition of an append. See [Append an event](#append-an-event).
+
+The millisecond precision is what lets a client echo the value exactly: `millis / 1000` reproduces the number the server sent, whichever copy of the session or client instance sends it. A client rejects a response that breaks this rule.
 
 ### Event
 
 The serialized ADK `Event`, with field names in camelCase. The server should store it as-is and return it unchanged, so that fields the server does not understand round-trip. This includes `customMetadata` keys that start with `__adk_internal_`, which a storage backend must not remove. The server needs to read only these fields:
 
-| Field                | Use                                                                            |
-| :------------------- | :----------------------------------------------------------------------------- |
-| `id`                 | Idempotency key. See [Append an event](#append-an-event).                      |
-| `timestamp`          | Filtering with `afterTimestamp`.                                               |
-| `actions.stateDelta` | Applied to the stored state. `app:` and `user:` keys go to the matching scope. |
+| Field                | Use                                                                               |
+| :------------------- | :-------------------------------------------------------------------------------- |
+| `id`                 | Identifies the event within the session. See [Append an event](#append-an-event). |
+| `timestamp`          | Filtering with `afterTimestamp`.                                                  |
+| `actions.stateDelta` | Applied to the stored state. `app:` and `user:` keys go to the matching scope.    |
 
 ## Endpoints
 
@@ -79,7 +81,7 @@ Query parameters, both optional:
 | Parameter         | Meaning                                                                           |
 | :---------------- | :-------------------------------------------------------------------------------- |
 | `afterTimestamp`  | Return only events whose `timestamp` is at or after this value, in epoch seconds. |
-| `numRecentEvents` | Return only the last N events.                                                    |
+| `numRecentEvents` | Return only the last N events. `0` returns no events.                             |
 
 If both are given, the server applies `afterTimestamp` first, then keeps the last `numRecentEvents`.
 
@@ -95,7 +97,7 @@ GET /apps/{appName}/users/{userId}/sessions
 GET /apps/{appName}/sessions
 ```
 
-The second form lists the sessions of every user of the app. The client uses it when `listSessions` is called without `userId`. A server that does not want to offer it can answer with an error status, and the client throws.
+The second form lists the sessions of every user of the app. The client uses it when `listSessions` is called without `userId`, and requires every session in the response to carry `userId`. A server that does not offer this form answers `404`, `405` or `501`, and the client throws without retrying.
 
 Query parameters, all optional:
 
@@ -130,18 +132,20 @@ Request body:
 
 ```json
 {
+  "requestId": "string",
   "event": {"id": "...", "timestamp": 1730000000.5},
   "lastUpdateTime": 1730000000.123
 }
 ```
 
-`lastUpdateTime` is the value the client last received for this session, sent back unchanged.
+- `requestId` identifies this call. The client generates a new one for every `appendEvent` call and sends the same one on each retry of it.
+- `lastUpdateTime` is the value the client last received for this session.
 
 The server handles the request in this order:
 
-1. **Replay.** If an event with this `event.id` is already stored, the server replaces the stored event, does **not** apply its `stateDelta` again and does **not** check `lastUpdateTime`. It answers `200` with the session's current `lastUpdateTime`. This makes retries safe. Replacement is also the general rule for an event that ADK rewrites in place.
-2. **Staleness (optional).** If the stored `lastUpdateTime` is greater than the one in the request, the session was changed by another writer since the client read it. The server answers `409` and stores nothing.
-3. **Append.** The server stores the event, applies `actions.stateDelta` scoped by key prefix, sets a new `lastUpdateTime` that is greater than or equal to the previous one, and answers `200`.
+1. **Retry.** If the stored event with this `event.id` was written by a request with this `requestId`, this is a retry of a call the server already applied. The server changes nothing and answers `200` with the `lastUpdateTime` that the original request produced, **not** the session's current one. Returning the current value would hand the client the update time of writes it has never seen, and its next append would pass the staleness check.
+2. **Staleness.** If the stored `lastUpdateTime` differs from the one in the request, another writer changed the session since the client read it. The server answers `409` and stores nothing.
+3. **Write.** The server applies `actions.stateDelta` scoped by key prefix, sets a new `lastUpdateTime` greater than the previous one, and stores the event together with the `requestId` and the new `lastUpdateTime`. If an event with this `event.id` is already stored (ADK rewrote it in place), the server replaces it. Either way it answers `200`.
 
 Response `200`:
 
@@ -155,13 +159,13 @@ Response `200`:
 | `404`  | No such session.      | Throws `SessionNotFoundError`.                                           |
 | `409`  | The session is stale. | Throws `StaleSessionError`. The caller re-reads the session and retries. |
 
-Steps 1 to 3 must be atomic for one session. A server that does not need optimistic concurrency can skip step 2 and never return `409`.
+Steps 1 to 3 must be atomic for one session. A server that does not need optimistic concurrency can skip step 2 and never return `409`, but it must still handle retries as in step 1.
 
 Other rules:
 
 - The client sends the writes for one session one at a time, in the order they were made. The server applies state deltas in arrival order.
 - The client never sends partial (streaming) events.
-- The server must compare `lastUpdateTime` with the exact number it issued. The client never sends a value converted from its own clock in place of one the server sent.
+- The server compares `lastUpdateTime` with the number it issued, by exact equality.
 
 ### Delete a session
 
@@ -171,19 +175,20 @@ DELETE /apps/{appName}/users/{userId}/sessions/{sessionId}
 
 | Status         | Meaning                                             |
 | :------------- | :-------------------------------------------------- |
-| `204` or `200` | Deleted.                                            |
+| `204` or `200` | Deleted. The client ignores the body.               |
 | `404`          | No such session. The client treats this as success. |
 
 ## Client behavior on errors
 
-| Condition                                   | Behavior                                                                                               |
-| :------------------------------------------ | :----------------------------------------------------------------------------------------------------- |
-| `408`, `429`, `5xx`, network error, timeout | Retried with exponential backoff and jitter, honoring `Retry-After` up to a cap, then the call throws. |
-| Other `4xx`                                 | The call throws right away, with no retry.                                                             |
-| `404` on get                                | Returns `undefined`.                                                                                   |
-| `404` on delete                             | Succeeds.                                                                                              |
+| Condition                                                                          | Behavior                                                                                               |
+| :--------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------- |
+| `408`, `429`, `5xx` except `501` and `505`, network error, timeout                 | Retried with exponential backoff and jitter, honoring `Retry-After` up to a cap, then the call throws. |
+| `501`, `505` and other `4xx`                                                       | The call throws right away, with no retry.                                                             |
+| `404` on get                                                                       | Returns `undefined`.                                                                                   |
+| `404` on delete                                                                    | Succeeds.                                                                                              |
+| A `2xx` body that is not valid JSON, or a session without a valid `lastUpdateTime` | The call throws.                                                                                       |
 
-Every call is safe to retry: create because the client chooses the id, append because it is idempotent by `event.id`, and get, list and delete because they are idempotent by definition.
+Every call is safe to retry: create because the client chooses the id, append because of its `requestId`, and get, list and delete because they are idempotent by definition.
 
 ## Security
 

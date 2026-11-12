@@ -20,6 +20,8 @@ import {
 } from '@google/adk';
 import {beforeEach, describe, expect, it} from 'vitest';
 
+import {createCompactedEvent} from '../../src/events/compacted_event.js';
+
 const BASE_URL = 'https://sessions.example.com/v1';
 
 type Json = Record<string, unknown>;
@@ -29,7 +31,14 @@ interface StoredSession {
   appName: string;
   userId: string;
   state: Json;
-  events: Json[];
+  events: StoredEvent[];
+  lastUpdateTime: number;
+}
+
+/** An event as the contract asks a server to keep it. */
+interface StoredEvent {
+  event: Json;
+  requestId: string;
   lastUpdateTime: number;
 }
 
@@ -47,14 +56,18 @@ interface RecordedRequest {
  * - `'network'`: fail as if the connection dropped, without touching storage;
  * - `'lost-response'`: serve the request, then fail as if the response was
  *   lost on the way back;
- * - `'hang'`: never answer until the request is aborted.
+ * - `'hang'`: never answer until the request is aborted;
+ * - `'hang-body'`: send the status, then stall the body until aborted;
+ * - `{body}`: answer 200 with this raw body without touching storage.
  */
 type Fault =
   | number
   | {status: number; retryAfter?: string}
+  | {body: string}
   | 'network'
   | 'lost-response'
-  | 'hang';
+  | 'hang'
+  | 'hang-body';
 
 /**
  * An in-process backend that implements the REST session contract, used as
@@ -68,8 +81,10 @@ class FakeBackend {
   readonly faults: Fault[] = [];
   /** Delay applied to the request with this index, to test ordering. */
   readonly delays = new Map<number, number>();
-  /** Epoch seconds; advanced by an amount that is not exact in binary. */
-  private clock = 1_730_000_000.123456;
+  /** Work run before the request with this index is served. */
+  readonly beforeServe = new Map<number, () => Promise<unknown>>();
+  /** Epoch milliseconds; sent as seconds, which are not exact in binary. */
+  private clockMillis = 1_730_000_000_123;
 
   readonly fetch = async (
     input: string | URL | Request,
@@ -91,6 +106,7 @@ class FakeBackend {
     if (delay) {
       await new Promise((r) => setTimeout(r, delay));
     }
+    await this.beforeServe.get(index)?.();
 
     const fault = this.faults.shift();
     if (fault === 'network') {
@@ -103,8 +119,22 @@ class FakeBackend {
         );
       });
     }
+    if (fault === 'hang-body') {
+      const signal = init?.signal;
+      const stream = new ReadableStream({
+        start(controller) {
+          signal?.addEventListener('abort', () =>
+            controller.error(new DOMException('aborted', 'AbortError')),
+          );
+        },
+      });
+      return new Response(stream, {status: 200});
+    }
     if (typeof fault === 'number') {
       return json(fault, {error: `injected ${fault}`});
+    }
+    if (typeof fault === 'object' && 'body' in fault) {
+      return new Response(fault.body, {status: 200});
     }
     if (typeof fault === 'object') {
       return json(
@@ -136,9 +166,10 @@ class FakeBackend {
     return session;
   }
 
+  /** A strictly increasing `lastUpdateTime`, in seconds at 1 ms precision. */
   private tick(): number {
-    this.clock += 1.000001;
-    return this.clock;
+    this.clockMillis += 1_001;
+    return this.clockMillis / 1000;
   }
 
   private handle(method: string, url: URL, body?: Json): Response {
@@ -197,19 +228,27 @@ class FakeBackend {
 
   private append(session: StoredSession, body: Json): Response {
     const event = body['event'] as Json;
-    const index = session.events.findIndex((e) => e['id'] === event['id']);
-    if (index >= 0) {
-      // A replay: replace the event, do not apply its delta again.
-      session.events[index] = event;
-      return json(200, {lastUpdateTime: session.lastUpdateTime});
+    const requestId = body['requestId'] as string;
+    const index = session.events.findIndex(
+      (e) => e.event['id'] === event['id'],
+    );
+    const existing = index >= 0 ? session.events[index] : undefined;
+    if (existing?.requestId === requestId) {
+      // A retry: answer as the original append did.
+      return json(200, {lastUpdateTime: existing.lastUpdateTime});
     }
-    if (session.lastUpdateTime > (body['lastUpdateTime'] as number)) {
+    if (session.lastUpdateTime !== body['lastUpdateTime']) {
       return json(409, {error: 'stale'});
     }
     const actions = event['actions'] as Json | undefined;
     this.applyDelta(session, (actions?.['stateDelta'] ?? {}) as Json);
-    session.events.push(event);
     session.lastUpdateTime = this.tick();
+    const stored = {event, requestId, lastUpdateTime: session.lastUpdateTime};
+    if (existing) {
+      session.events[index] = stored;
+    } else {
+      session.events.push(stored);
+    }
     return json(200, {lastUpdateTime: session.lastUpdateTime});
   }
 
@@ -242,7 +281,7 @@ class FakeBackend {
     )) {
       state[`user:${k}`] = v;
     }
-    let events = session.events;
+    let events = session.events.map((e) => e.event);
     const after = params?.get('afterTimestamp');
     if (after) {
       events = events.filter(
@@ -250,8 +289,8 @@ class FakeBackend {
       );
     }
     const recent = params?.get('numRecentEvents');
-    if (recent) {
-      events = events.slice(-Number(recent));
+    if (recent !== null && recent !== undefined) {
+      events = Number(recent) === 0 ? [] : events.slice(-Number(recent));
     }
     return {
       id: session.id,
@@ -316,6 +355,20 @@ describe('RestSessionService', () => {
     expect(() => new RestSessionService({baseUrl: ''})).toThrow(/baseUrl/);
   });
 
+  it.each([
+    {timeoutMs: 0},
+    {timeoutMs: NaN},
+    {maxRetries: -1},
+    {maxRetries: 1.5},
+    {maxRetries: NaN},
+    {retryBaseDelayMs: -1},
+    {retryMaxDelayMs: Infinity},
+  ])('rejects the invalid option %o', (options) => {
+    expect(() => makeService(options)).toThrow(
+      new RegExp(`option ${Object.keys(options)[0]}`),
+    );
+  });
+
   describe('createSession', () => {
     it('sends a client-generated id and the state without temp: keys', async () => {
       const session = await service.createSession({
@@ -335,10 +388,11 @@ describe('RestSessionService', () => {
       expect(session.id).toMatch(/^[0-9a-f-]{36}$/);
       expect(session.state).toEqual({'topic': 'billing', 'user:lang': 'en'});
       expect(session.events).toEqual([]);
-      // Epoch seconds on the wire, epoch milliseconds in ADK-JS.
-      expect(session.lastUpdateTime).toBeCloseTo(
-        backend.stored('app', 'user', session.id).lastUpdateTime * 1000,
-        3,
+      // Epoch seconds on the wire, whole epoch milliseconds in ADK-JS.
+      expect(session.lastUpdateTime).toBe(
+        Math.round(
+          backend.stored('app', 'user', session.id).lastUpdateTime * 1000,
+        ),
       );
     });
 
@@ -376,6 +430,40 @@ describe('RestSessionService', () => {
       expect(session.id).toBe('s');
       expect(session.state).toEqual({a: 1});
       expect(backend.sessions.size).toBe(1);
+    });
+
+    it('returns the session its own attempt created before a 5xx', async () => {
+      await service.createSession({
+        appName: 'app',
+        userId: 'u',
+        sessionId: 's',
+      });
+      backend.faults.push(503);
+
+      const session = await service.createSession({
+        appName: 'app',
+        userId: 'u',
+        sessionId: 's',
+      });
+
+      expect(session.id).toBe('s');
+      expect(backend.sessions.size).toBe(1);
+    });
+
+    it('rejects a response without lastUpdateTime', async () => {
+      backend.faults.push({body: JSON.stringify({id: 's', state: {}})});
+      await expect(
+        service.createSession({appName: 'app', userId: 'u', sessionId: 's'}),
+      ).rejects.toThrow(/lastUpdateTime/);
+    });
+
+    it('rejects a lastUpdateTime finer than a millisecond', async () => {
+      backend.faults.push({
+        body: JSON.stringify({id: 's', lastUpdateTime: 1_730_000_000.1234}),
+      });
+      await expect(
+        service.createSession({appName: 'app', userId: 'u', sessionId: 's'}),
+      ).rejects.toThrow(/whole number of milliseconds/);
     });
 
     it('encodes path segments', async () => {
@@ -430,6 +518,90 @@ describe('RestSessionService', () => {
       expect(request.url.searchParams.get('afterTimestamp')).toBe('2');
       expect(request.url.searchParams.get('numRecentEvents')).toBe('5');
       expect(read!.events.map((e) => e.timestamp)).toEqual([2_000, 3_000]);
+    });
+
+    it('sends numRecentEvents=0 and returns no events', async () => {
+      const session = await service.createSession({
+        appName: 'app',
+        userId: 'u',
+        sessionId: 's',
+      });
+      await service.appendEvent({session, event: createEvent({author: 'a'})});
+
+      const read = await service.getSession({
+        appName: 'app',
+        userId: 'u',
+        sessionId: 's',
+        config: {numRecentEvents: 0},
+      });
+
+      expect(
+        backend.requests.at(-1)!.url.searchParams.get('numRecentEvents'),
+      ).toBe('0');
+      expect(read!.events).toEqual([]);
+    });
+
+    it('round-trips every field of an event', async () => {
+      const session = await service.createSession({
+        appName: 'app',
+        userId: 'u',
+        sessionId: 's',
+      });
+      const event = createEvent({
+        invocationId: 'inv-1',
+        author: 'agent',
+        branch: 'root.child',
+        timestamp: 1_730_000_000_250,
+        content: {
+          role: 'model',
+          parts: [{text: 'hi'}, {functionCall: {name: 'f', args: {x: 1}}}],
+        },
+        customMetadata: {'__adk_internal_marker': 'kept', 'mine': [1, 2]},
+        actions: createEventActions({
+          stateDelta: {k: 'v'},
+          artifactDelta: {'file.txt': 2},
+          transferToAgent: 'other',
+          escalate: true,
+        }),
+      });
+      await service.appendEvent({session, event});
+
+      const read = await service.getSession({
+        appName: 'app',
+        userId: 'u',
+        sessionId: 's',
+      });
+
+      expect(read!.events).toEqual([event]);
+    });
+
+    it('converts the times of a compacted event to seconds and back', async () => {
+      const session = await service.createSession({
+        appName: 'app',
+        userId: 'u',
+        sessionId: 's',
+      });
+      const event = createCompactedEvent({
+        author: 'agent',
+        timestamp: 1_730_000_003_000,
+        startTime: 1_730_000_001_000,
+        endTime: 1_730_000_002_500,
+        compactedContent: 'summary',
+      });
+      await service.appendEvent({session, event});
+
+      const sent = backend.requestsTo('POST', '/events')[0].body!['event'];
+      expect(sent).toMatchObject({
+        timestamp: 1_730_000_003,
+        startTime: 1_730_000_001,
+        endTime: 1_730_000_002.5,
+      });
+      const read = await service.getSession({
+        appName: 'app',
+        userId: 'u',
+        sessionId: 's',
+      });
+      expect(read!.events).toEqual([event]);
     });
 
     it('throws RestSessionServiceError on other errors', async () => {
@@ -497,6 +669,43 @@ describe('RestSessionService', () => {
         'c',
       ]);
     });
+
+    it('rejects a session without userId from the app-level route', async () => {
+      backend.faults.push({
+        body: JSON.stringify({
+          sessions: [{id: 'a', lastUpdateTime: 1_730_000_000}],
+        }),
+      });
+      await expect(service.listSessions({appName: 'app'})).rejects.toThrow(
+        /userId/,
+      );
+    });
+
+    it('fills in pagination fields the server omits', async () => {
+      backend.faults.push({
+        body: JSON.stringify({
+          sessions: [{id: 'a', lastUpdateTime: 1_730_000_000}],
+        }),
+      });
+      const response = await service.listSessions({
+        appName: 'app',
+        userId: 'u1',
+      });
+      expect(response).toMatchObject({
+        page: 1,
+        limit: 1,
+        totalItems: 1,
+        totalPages: 1,
+      });
+    });
+
+    it('does not retry a server that does not implement the route', async () => {
+      backend.faults.push(501);
+      await expect(
+        service.listSessions({appName: 'app'}),
+      ).rejects.toMatchObject({status: 501});
+      expect(backend.requestsTo('GET', '/apps/app/sessions')).toHaveLength(1);
+    });
   });
 
   describe('deleteSession', () => {
@@ -515,6 +724,33 @@ describe('RestSessionService', () => {
       await expect(
         service.deleteSession({appName: 'app', userId: 'u', sessionId: 's'}),
       ).resolves.toBeUndefined();
+    });
+
+    it('ignores a non-JSON body on success', async () => {
+      backend.faults.push({body: 'OK'});
+      await expect(
+        service.deleteSession({appName: 'app', userId: 'u', sessionId: 's'}),
+      ).resolves.toBeUndefined();
+    });
+
+    it('waits for appends in flight', async () => {
+      const session = await service.createSession({
+        appName: 'app',
+        userId: 'u',
+        sessionId: 's',
+      });
+      backend.delays.set(backend.requests.length, 30);
+
+      await Promise.all([
+        service.appendEvent({session, event: createEvent({author: 'a'})}),
+        service.deleteSession({appName: 'app', userId: 'u', sessionId: 's'}),
+      ]);
+
+      expect(backend.requests.slice(1).map((r) => r.method)).toEqual([
+        'POST',
+        'DELETE',
+      ]);
+      expect(backend.sessions.size).toBe(0);
     });
   });
 
@@ -574,24 +810,108 @@ describe('RestSessionService', () => {
       expect(backend.requestsTo('POST', '/events')).toHaveLength(0);
     });
 
-    it('keeps the stale check exact across many appends', async () => {
+    it('keeps the stale check exact for copies and other instances', async () => {
       const session = await service.createSession({
         appName: 'app',
         userId: 'u',
       });
-      // Some of the server's timestamps do not survive seconds -> ms ->
-      // seconds (the 35th tick is the first), which would read as stale if
-      // the client sent back a converted value instead of the one it got.
+      const other = makeService();
+      // Most of the server's times in seconds, like 1730000001.124, are not
+      // exact in binary. Whatever object or instance sends the session back,
+      // it must send the very number the server issued.
+      let current = session;
       for (let i = 0; i < 50; i++) {
-        await service.appendEvent({
-          session,
+        current = structuredClone(current);
+        await (i % 2 ? service : other).appendEvent({
+          session: current,
           event: createEvent({
             author: 'agent',
             actions: createEventActions({stateDelta: {i}}),
           }),
         });
       }
-      expect(session.state['i']).toBe(49);
+      expect(current.state['i']).toBe(49);
+    });
+
+    it('does not let a retry adopt another writer’s update time', async () => {
+      await service.createSession({
+        appName: 'app',
+        userId: 'u',
+        sessionId: 's',
+      });
+      const key = {appName: 'app', userId: 'u', sessionId: 's'};
+      const mine = (await service.getSession(key))!;
+      const myEvent = createEvent({
+        author: 'agent',
+        actions: createEventActions({stateDelta: {owner: 'me'}}),
+      });
+
+      // My append is stored but its response is lost; another writer reads
+      // the session and appends before my retry gets through.
+      const firstAttempt = backend.requests.length;
+      backend.faults.push('lost-response');
+      backend.beforeServe.set(firstAttempt + 1, async () => {
+        const other = makeService();
+        const theirs = (await other.getSession(key))!;
+        await other.appendEvent({
+          session: theirs,
+          event: createEvent({
+            author: 'agent',
+            actions: createEventActions({stateDelta: {owner: 'them'}}),
+          }),
+        });
+      });
+      await service.appendEvent({session: mine, event: myEvent});
+      expect(backend.stored('app', 'u', 's').state['owner']).toBe('them');
+
+      const error = await service
+        .appendEvent({
+          session: mine,
+          event: createEvent({
+            author: 'agent',
+            actions: createEventActions({stateDelta: {owner: 'me again'}}),
+          }),
+        })
+        .catch((e: unknown) => e);
+
+      expect(isStaleSessionError(error)).toBe(true);
+      expect(backend.stored('app', 'u', 's').state['owner']).toBe('them');
+    });
+
+    it('rejects a stale rewrite of a stored event and applies a current one', async () => {
+      await service.createSession({
+        appName: 'app',
+        userId: 'u',
+        sessionId: 's',
+      });
+      const key = {appName: 'app', userId: 'u', sessionId: 's'};
+      const stale = (await service.getSession(key))!;
+      const session = (await service.getSession(key))!;
+      const event = createEvent({
+        author: 'agent',
+        actions: createEventActions({stateDelta: {step: 1}}),
+      });
+      await service.appendEvent({session, event});
+
+      const staleRewrite = {
+        ...event,
+        actions: createEventActions({stateDelta: {step: 'stale'}}),
+      };
+      const error = await service
+        .appendEvent({session: stale, event: staleRewrite})
+        .catch((e: unknown) => e);
+      expect(isStaleSessionError(error)).toBe(true);
+
+      const rewrite = {
+        ...event,
+        actions: createEventActions({stateDelta: {step: 2}}),
+      };
+      await service.appendEvent({session, event: rewrite});
+
+      const stored = backend.stored('app', 'u', 's');
+      expect(stored.state['step']).toBe(2);
+      expect(stored.events).toHaveLength(1);
+      expect(session.events).toEqual([rewrite]);
     });
 
     it('throws StaleSessionError when another writer got there first', async () => {
@@ -679,7 +999,7 @@ describe('RestSessionService', () => {
       ]);
 
       const stored = backend.stored('app', 'u', session.id);
-      expect(stored.events.map((e) => e['invocationId'])).toEqual([
+      expect(stored.events.map((e) => e.event['invocationId'])).toEqual([
         'first',
         'second',
       ]);
@@ -747,6 +1067,43 @@ describe('RestSessionService', () => {
       });
       expect(session).toBeDefined();
       expect(backend.requests).toHaveLength(2);
+    });
+
+    it('times out an attempt whose body stalls', async () => {
+      service = makeService({timeoutMs: 10, maxRetries: 0});
+      backend.faults.push('hang-body');
+      await expect(
+        service.getSession({appName: 'app', userId: 'u', sessionId: 's'}),
+      ).rejects.toThrow(/timed out after 10 ms/);
+    });
+
+    it('treats an Infinity timeout as no timeout', async () => {
+      service = makeService({timeoutMs: Infinity});
+      backend.delays.set(0, 20);
+      await expect(
+        service.createSession({appName: 'app', userId: 'u'}),
+      ).resolves.toBeDefined();
+      expect(backend.requests).toHaveLength(1);
+    });
+
+    it('waits for a Retry-After date, capped by retryMaxDelayMs', async () => {
+      service = makeService({retryMaxDelayMs: 40});
+      backend.faults.push({
+        status: 503,
+        retryAfter: new Date(Date.now() + 60_000).toUTCString(),
+      });
+      const started = Date.now();
+      await service.createSession({appName: 'app', userId: 'u'});
+      const elapsed = Date.now() - started;
+      expect(elapsed).toBeGreaterThanOrEqual(35);
+      expect(elapsed).toBeLessThan(1_000);
+    });
+
+    it('throws on invalid JSON in a 2xx response', async () => {
+      backend.faults.push({body: '<html>'});
+      await expect(
+        service.getSession({appName: 'app', userId: 'u', sessionId: 's'}),
+      ).rejects.toThrow(/Invalid JSON in response with status 200/);
     });
 
     it('sends static headers', async () => {
@@ -823,7 +1180,7 @@ describe('RestSessionService', () => {
       }
 
       const stored = backend.stored('app', 'u', session.id);
-      expect(stored.events.map((e) => e['author'])).toEqual([
+      expect(stored.events.map((e) => e.event['author'])).toEqual([
         'user',
         'counter',
         'user',

@@ -6,7 +6,8 @@
 
 import {AlreadyExistsError} from '../errors/already_exists_error.js';
 import {SessionNotFoundError} from '../errors/session_not_found_error.js';
-import {Event} from '../events/event.js';
+import {isCompactedEvent} from '../events/compacted_event.js';
+import {createEvent, CreateEventParams, Event} from '../events/event.js';
 import {experimental} from '../utils/experimental.js';
 import {newId} from '../utils/id_provider.js';
 import {logger} from '../utils/logger.js';
@@ -50,11 +51,14 @@ export interface RestSessionServiceOptions {
   headers?: RestSessionServiceHeaders;
   /** The `fetch` implementation to use. Defaults to the global `fetch`. */
   fetch?: typeof globalThis.fetch;
-  /** Timeout of a single attempt, in milliseconds. Defaults to 30000. */
+  /**
+   * Timeout of a single attempt, in milliseconds. `Infinity` disables it.
+   * Defaults to 30000.
+   */
   timeoutMs?: number;
   /**
    * How many times a request is retried after a network error, a timeout, or
-   * a `408`, `429` or `5xx` response. Defaults to 3.
+   * a `408`, `429` or retryable `5xx` response. Defaults to 3.
    */
   maxRetries?: number;
   /**
@@ -102,6 +106,8 @@ interface RestResponse {
 interface SendOptions {
   query?: Record<string, string | number | undefined>;
   body?: unknown;
+  /** Skip parsing the response body, for calls that only need the status. */
+  ignoreBody?: boolean;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -109,6 +115,8 @@ const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_RETRY_BASE_DELAY_MS = 250;
 const DEFAULT_RETRY_MAX_DELAY_MS = 5_000;
 const MAX_ERROR_MESSAGE_LENGTH = 300;
+/** The longest delay `setTimeout` accepts; longer ones fire immediately. */
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 
 /**
  * A session service backed by a user-hosted HTTP API.
@@ -123,8 +131,8 @@ const MAX_ERROR_MESSAGE_LENGTH = 300;
  * - `temp:` state keys are never sent.
  * - Writes for one session are sent one at a time, in the order they were
  *   made, so state deltas reach the server in order.
- * - Appending an event is idempotent by `event.id`, so every call is retried
- *   on `408`, `429`, `5xx`, network errors and timeouts.
+ * - Each append carries a `requestId` that stays the same across retries, so
+ *   every call is retried on `408`, `429`, `5xx`, network errors and timeouts.
  * - A `409` on append surfaces as {@link StaleSessionError}, the same error
  *   `DatabaseSessionService` throws. Re-read the session and retry.
  */
@@ -141,17 +149,6 @@ export class RestSessionService extends BaseSessionService {
   /** The tail of the write queue of each session, keyed by session key. */
   private readonly writeQueues = new Map<string, Promise<unknown>>();
 
-  /**
-   * The `lastUpdateTime` exactly as the server sent it, for each session
-   * object. Sending it back verbatim keeps the stale-session check exact,
-   * where converting seconds to milliseconds and back could be off by a
-   * rounding error.
-   */
-  private readonly wireUpdateTimes = new WeakMap<
-    Session,
-    {millis: number; wire: number}
-  >();
-
   constructor(options: RestSessionServiceOptions) {
     super();
     if (!options?.baseUrl) {
@@ -161,12 +158,26 @@ export class RestSessionService extends BaseSessionService {
     this.headers = options.headers;
     this.fetchImpl =
       options.fetch ?? ((input, init) => globalThis.fetch(input, init));
-    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    this.maxRetries = Math.max(0, options.maxRetries ?? DEFAULT_MAX_RETRIES);
-    this.retryBaseDelayMs =
-      options.retryBaseDelayMs ?? DEFAULT_RETRY_BASE_DELAY_MS;
-    this.retryMaxDelayMs =
-      options.retryMaxDelayMs ?? DEFAULT_RETRY_MAX_DELAY_MS;
+    this.timeoutMs = validateOption(
+      'timeoutMs',
+      options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      {min: 1, allowInfinity: true},
+    );
+    this.maxRetries = validateOption(
+      'maxRetries',
+      options.maxRetries ?? DEFAULT_MAX_RETRIES,
+      {min: 0, integer: true},
+    );
+    this.retryBaseDelayMs = validateOption(
+      'retryBaseDelayMs',
+      options.retryBaseDelayMs ?? DEFAULT_RETRY_BASE_DELAY_MS,
+      {min: 0},
+    );
+    this.retryMaxDelayMs = validateOption(
+      'retryMaxDelayMs',
+      options.retryMaxDelayMs ?? DEFAULT_RETRY_MAX_DELAY_MS,
+      {min: 0},
+    );
   }
 
   override async createSession({
@@ -259,7 +270,7 @@ export class RestSessionService extends BaseSessionService {
       );
     }
     const sessions = (body['sessions'] as unknown[]).map((s) =>
-      this.toSession(s, {appName, userId: userId ?? ''}),
+      this.toSession(s, {appName, userId}),
     );
     const totalItems = numberOr(body['totalItems'], sessions.length);
     return {
@@ -281,6 +292,7 @@ export class RestSessionService extends BaseSessionService {
       const response = await this.send(
         'DELETE',
         sessionPath(appName, userId, sessionId),
+        {ignoreBody: true},
       );
       if (isSuccess(response.status) || response.status === 404) {
         return;
@@ -305,8 +317,11 @@ export class RestSessionService extends BaseSessionService {
           `${sessionPath(session.appName, session.userId, session.id)}/events`,
           {
             body: {
+              // One id per call, reused by every retry of it, so the server
+              // can tell a retry from a new write of the same event.
+              requestId: newId(),
               event: eventToWire(event),
-              lastUpdateTime: this.wireUpdateTime(session),
+              lastUpdateTime: millisToWire(session.lastUpdateTime),
             },
           },
         );
@@ -326,6 +341,10 @@ export class RestSessionService extends BaseSessionService {
         if (!isSuccess(response.status)) {
           throw requestError('append event', response);
         }
+        const lastUpdateTime = updateTimeFromWire(
+          asRecord(response.body)?.['lastUpdateTime'],
+          'append event',
+        );
 
         // Applied locally only once the server has stored the event, so a
         // failed append leaves the session object as it was. The base class
@@ -334,11 +353,7 @@ export class RestSessionService extends BaseSessionService {
         // keeps `temp:` keys in the session for the rest of the invocation
         // before trimming them from the event.
         await super.appendEvent({session, event});
-
-        const wire = asRecord(response.body)?.['lastUpdateTime'];
-        if (typeof wire === 'number') {
-          this.setUpdateTime(session, wire);
-        }
+        session.lastUpdateTime = lastUpdateTime;
         return event;
       },
     );
@@ -368,7 +383,7 @@ export class RestSessionService extends BaseSessionService {
   private async send(
     method: 'GET' | 'POST' | 'DELETE',
     path: string,
-    {query, body}: SendOptions = {},
+    {query, body, ignoreBody = false}: SendOptions = {},
   ): Promise<RestResponse> {
     const url = buildUrl(this.baseUrl, path, query);
     const payload = body === undefined ? undefined : JSON.stringify(body);
@@ -388,7 +403,12 @@ export class RestSessionService extends BaseSessionService {
         ...(await this.resolveHeaders()),
       };
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+      const timer = Number.isFinite(this.timeoutMs)
+        ? setTimeout(
+            () => controller.abort(),
+            Math.min(this.timeoutMs, MAX_TIMER_DELAY_MS),
+          )
+        : undefined;
       let status: number;
       let text: string;
       let retryAfterHeader: string | null;
@@ -429,7 +449,11 @@ export class RestSessionService extends BaseSessionService {
         continue;
       }
 
-      return {status, body: parseBody(text, status), maybeAppliedEarlier};
+      return {
+        status,
+        body: ignoreBody ? undefined : parseBody(text, status),
+        maybeAppliedEarlier,
+      };
     }
 
     throw new RestSessionServiceError(
@@ -458,13 +482,19 @@ export class RestSessionService extends BaseSessionService {
   /** Builds a session from a response body, filling gaps from the request. */
   private toSession(
     body: unknown,
-    fallback: {appName: string; userId: string; sessionId?: string},
+    fallback: {appName: string; userId?: string; sessionId?: string},
   ): Session {
     const record = asRecord(body);
     const id = record?.['id'] ?? fallback.sessionId;
     if (!record || typeof id !== 'string' || !id) {
       throw new RestSessionServiceError(
         'Invalid session in response: expected an object with a string `id`.',
+      );
+    }
+    const userId = record['userId'] ?? fallback.userId;
+    if (typeof userId !== 'string') {
+      throw new RestSessionServiceError(
+        `Invalid session ${id} in response: expected a string \`userId\`.`,
       );
     }
     const state = asRecord(record['state']);
@@ -474,26 +504,15 @@ export class RestSessionService extends BaseSessionService {
     const session = createSession({
       id,
       appName: stringOr(record['appName'], fallback.appName),
-      userId: stringOr(record['userId'], fallback.userId),
+      userId,
       state: trimTempState(state ?? {}),
       events,
     });
-    if (typeof record['lastUpdateTime'] === 'number') {
-      this.setUpdateTime(session, record['lastUpdateTime']);
-    }
+    session.lastUpdateTime = updateTimeFromWire(
+      record['lastUpdateTime'],
+      `session ${id}`,
+    );
     return session;
-  }
-
-  private setUpdateTime(session: Session, wire: number): void {
-    session.lastUpdateTime = wireToMillis(wire);
-    this.wireUpdateTimes.set(session, {millis: session.lastUpdateTime, wire});
-  }
-
-  private wireUpdateTime(session: Session): number {
-    const recorded = this.wireUpdateTimes.get(session);
-    return recorded && recorded.millis === session.lastUpdateTime
-      ? recorded.wire
-      : millisToWire(session.lastUpdateTime);
   }
 }
 
@@ -537,7 +556,13 @@ function isSuccess(status: number): boolean {
 }
 
 function isRetryable(status: number): boolean {
-  return status === 408 || status === 429 || status >= 500;
+  // 501 and 505 say the server will never handle the request, so a retry
+  // cannot succeed.
+  return (
+    status === 408 ||
+    status === 429 ||
+    (status >= 500 && status !== 501 && status !== 505)
+  );
 }
 
 function parseRetryAfter(header: string | null): number | undefined {
@@ -600,6 +625,32 @@ function stringOr(value: unknown, fallback: string): string {
   return typeof value === 'string' ? value : fallback;
 }
 
+/** Checks a numeric option and returns it, naming the option if it is bad. */
+function validateOption(
+  name: string,
+  value: number,
+  {
+    min,
+    integer = false,
+    allowInfinity = false,
+  }: {min: number; integer?: boolean; allowInfinity?: boolean},
+): number {
+  const valid =
+    value === Infinity
+      ? allowInfinity
+      : Number.isFinite(value) &&
+        value >= min &&
+        (!integer || Number.isInteger(value));
+  if (!valid) {
+    throw new Error(
+      `RestSessionService option ${name} must be ${
+        integer ? 'an integer' : 'a number'
+      } of at least ${min}${allowInfinity ? ' or Infinity' : ''}, got ${value}.`,
+    );
+  }
+  return value;
+}
+
 function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -620,6 +671,36 @@ function wireToMillis(seconds: number): number {
 }
 
 /**
+ * Most a whole number of milliseconds can drift when multiplied back from
+ * seconds, far below the 1 ms step the contract requires.
+ */
+const MILLIS_ROUNDING_TOLERANCE = 1e-3;
+
+/**
+ * Reads a `lastUpdateTime` from a response.
+ *
+ * The contract requires a whole number of milliseconds, expressed in seconds.
+ * Then `millis / 1000` reproduces the exact number the server sent, so the
+ * client can echo it back for the stale check without keeping the original.
+ */
+function updateTimeFromWire(value: unknown, context: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new RestSessionServiceError(
+      `Invalid ${context} response: expected a numeric \`lastUpdateTime\`.`,
+    );
+  }
+  const millis = wireToMillis(value);
+  const rounded = Math.round(millis);
+  if (Math.abs(millis - rounded) > MILLIS_ROUNDING_TOLERANCE) {
+    throw new RestSessionServiceError(
+      `Invalid ${context} response: \`lastUpdateTime\` ${value} is not a ` +
+        `whole number of milliseconds.`,
+    );
+  }
+  return rounded;
+}
+
+/**
  * Serializes an event for the wire, without its `temp:` state delta keys. The
  * event itself is left untouched, so its `temp:` keys can still be applied to
  * the local session.
@@ -629,6 +710,10 @@ function eventToWire(event: Event): Record<string, unknown> {
     ...event,
     timestamp: millisToWire(event.timestamp),
   };
+  if (isCompactedEvent(event)) {
+    wire['startTime'] = millisToWire(event.startTime);
+    wire['endTime'] = millisToWire(event.endTime);
+  }
   if (event.actions?.stateDelta) {
     wire['actions'] = {
       ...event.actions,
@@ -640,16 +725,21 @@ function eventToWire(event: Event): Record<string, unknown> {
 
 function eventFromWire(value: unknown): Event {
   const record = asRecord(value);
-  if (!record) {
+  if (!record || typeof record['id'] !== 'string') {
     throw new RestSessionServiceError(
-      'Invalid event in response: expected an object.',
+      'Invalid event in response: expected an object with a string `id`.',
     );
   }
-  return {
-    ...record,
-    timestamp:
-      typeof record['timestamp'] === 'number'
-        ? wireToMillis(record['timestamp'])
-        : 0,
-  } as unknown as Event;
+  const params: Record<string, unknown> = {...record};
+  for (const field of ['timestamp', 'startTime', 'endTime']) {
+    if (
+      typeof record[field] === 'number' &&
+      (field === 'timestamp' || record['isCompacted'] === true)
+    ) {
+      params[field] = wireToMillis(record[field]);
+    }
+  }
+  // The body is an event this client serialized, which the contract asks the
+  // server to return unchanged. `createEvent` restores its brand and defaults.
+  return createEvent(params as CreateEventParams);
 }

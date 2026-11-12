@@ -173,8 +173,8 @@ The Agent Engine client cannot send an API key, so the constructor throws when i
 | `baseUrl`          | `string`                                             | none           | The root of the backend, such as `https://sessions.example.com/v1`. Required.            |
 | `headers`          | `Record<string, string>` or a function returning one | none           | Sent with every request. A function, which can be async, is called before every attempt. |
 | `fetch`            | `typeof fetch`                                       | global `fetch` | The `fetch` implementation, for example a mock in tests.                                 |
-| `timeoutMs`        | `number`                                             | `30000`        | The timeout of one attempt.                                                              |
-| `maxRetries`       | `number`                                             | `3`            | Retries after a network error, a timeout, or a `408`, `429` or `5xx` response.           |
+| `timeoutMs`        | `number`                                             | `30000`        | The timeout of one attempt. `Infinity` disables it.                                      |
+| `maxRetries`       | `number`                                             | `3`            | Retries after a network error, a timeout, or a `408`, `429` or retryable `5xx` response. |
 | `retryBaseDelayMs` | `number`                                             | `250`          | The delay before the first retry. It doubles on every further retry, with jitter.        |
 | `retryMaxDelayMs`  | `number`                                             | `5000`         | The longest single delay, including one asked for by a `Retry-After` header.             |
 
@@ -187,7 +187,7 @@ const sessionService = new RestSessionService({
 });
 ```
 
-Writes for one session are sent one at a time, in the order they were made, so state deltas reach the backend in order. Appending an event is idempotent by `event.id`, and `createSession` generates the session id on the client when you omit it, so every call is safe to retry. `createSession` throws `AlreadyExistsError` for an id that already exists. `appendEvent` throws `SessionNotFoundError` when the backend no longer has the session, and `StaleSessionError` when another writer has appended since your copy was read. In both cases nothing is applied to your session object. Any other failure throws `RestSessionServiceError`, which carries the HTTP `status` when there was a response.
+Writes for one session are sent one at a time, in the order they were made, so state deltas reach the backend in order. Each append carries a request id that its retries reuse, and `createSession` generates the session id on the client when you omit it, so every call is safe to retry. The constructor throws for an invalid numeric option. `createSession` throws `AlreadyExistsError` for an id that already exists. `appendEvent` throws `SessionNotFoundError` when the backend no longer has the session, and `StaleSessionError` when another writer has appended since your copy was read. In both cases nothing is applied to your session object. Any other failure throws `RestSessionServiceError`, which carries the HTTP `status` when there was a response.
 
 ### getSessionServiceFromUri
 
