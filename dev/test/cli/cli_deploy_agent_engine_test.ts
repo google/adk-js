@@ -698,18 +698,9 @@ describe('deployToAgentEngine', () => {
             imageUri:
               'us-central1-docker.pkg.dev/test-project/agent-engine-repo/agent-engine-agent:latest',
           },
-          deploymentSpec: {
-            containerConcurrency: 9,
-            minInstances: 1,
-            maxInstances: 10,
-            resourceLimits: {
-              cpu: '1',
-              memory: '2Gi',
-            },
-          },
+          deploymentSpec: {},
         },
-        updateMask:
-          'display_name,spec.container_spec,spec.deployment_spec.container_concurrency,spec.deployment_spec.min_instances,spec.deployment_spec.max_instances,spec.deployment_spec.resource_limits',
+        updateMask: 'display_name,spec.container_spec',
       },
     });
     expect(mockCreateInternal).not.toHaveBeenCalled();
@@ -746,18 +737,9 @@ describe('deployToAgentEngine', () => {
             imageUri:
               'us-central1-docker.pkg.dev/test-project/agent-engine-repo/agent-engine-agent:latest',
           },
-          deploymentSpec: {
-            containerConcurrency: 9,
-            minInstances: 1,
-            maxInstances: 10,
-            resourceLimits: {
-              cpu: '1',
-              memory: '2Gi',
-            },
-          },
+          deploymentSpec: {},
         },
-        updateMask:
-          'display_name,spec.container_spec,spec.deployment_spec.container_concurrency,spec.deployment_spec.min_instances,spec.deployment_spec.max_instances,spec.deployment_spec.resource_limits',
+        updateMask: 'display_name,spec.container_spec',
       },
     });
     expect(mockCreateInternal).not.toHaveBeenCalled();
@@ -774,9 +756,102 @@ describe('deployToAgentEngine', () => {
       name: 'projects/test-project/locations/us-central1/reasoningEngines/12345',
       config: expect.objectContaining({
         description: 'new-description',
-        updateMask:
-          'display_name,description,spec.container_spec,spec.deployment_spec.container_concurrency,spec.deployment_spec.min_instances,spec.deployment_spec.max_instances,spec.deployment_spec.resource_limits',
+        updateMask: 'display_name,description,spec.container_spec',
       }),
+    });
+  });
+
+  it('should keep the display name on update when none is provided', async () => {
+    await deployToAgentEngine({
+      ...defaultOptions,
+      agentEngineId: '12345',
+      displayName: undefined,
+    });
+
+    const {config} = mockUpdateInternal.mock.calls[0][0];
+    expect(config).not.toHaveProperty('displayName');
+    expect(config.updateMask).toBe('spec.container_spec');
+  });
+
+  it('should send the display name on create when none is provided', async () => {
+    await deployToAgentEngine({...defaultOptions, displayName: undefined});
+
+    expect(mockCreateInternal.mock.calls[0][0].config.displayName).toBe(
+      'agent',
+    );
+  });
+
+  it('should update minInstances when it is 0', async () => {
+    await deployToAgentEngine({
+      ...defaultOptions,
+      agentEngineId: '12345',
+      minInstances: 0,
+    });
+
+    const {config} = mockUpdateInternal.mock.calls[0][0];
+    expect(config.spec.deploymentSpec).toEqual({minInstances: 0});
+    expect(config.updateMask).toBe(
+      'display_name,spec.container_spec,spec.deployment_spec.min_instances',
+    );
+  });
+
+  it('should update only minInstances when it is the only scaling option', async () => {
+    await deployToAgentEngine({
+      ...defaultOptions,
+      agentEngineId: '12345',
+      minInstances: 3,
+    });
+
+    const {config} = mockUpdateInternal.mock.calls[0][0];
+    expect(config.spec.deploymentSpec).toEqual({minInstances: 3});
+    expect(config.updateMask).toBe(
+      'display_name,spec.container_spec,spec.deployment_spec.min_instances',
+    );
+  });
+
+  it('should update only maxInstances when it is the only scaling option', async () => {
+    await deployToAgentEngine({
+      ...defaultOptions,
+      agentEngineId: '12345',
+      maxInstances: 8,
+    });
+
+    const {config} = mockUpdateInternal.mock.calls[0][0];
+    expect(config.spec.deploymentSpec).toEqual({maxInstances: 8});
+    expect(config.updateMask).toBe(
+      'display_name,spec.container_spec,spec.deployment_spec.max_instances',
+    );
+  });
+
+  it('should mask description, minInstances and maxInstances together on update', async () => {
+    await deployToAgentEngine({
+      ...defaultOptions,
+      agentEngineId: '12345',
+      description: 'new-description',
+      minInstances: 2,
+      maxInstances: 5,
+    });
+
+    const {config} = mockUpdateInternal.mock.calls[0][0];
+    expect(config.spec.deploymentSpec).toEqual({
+      minInstances: 2,
+      maxInstances: 5,
+    });
+    expect(config.updateMask).toBe(
+      'display_name,description,spec.container_spec,spec.deployment_spec.min_instances,spec.deployment_spec.max_instances',
+    );
+  });
+
+  it('should send default scaling and resource limits on create', async () => {
+    await deployToAgentEngine(defaultOptions);
+
+    expect(
+      mockCreateInternal.mock.calls[0][0].config.spec.deploymentSpec,
+    ).toEqual({
+      containerConcurrency: 9,
+      minInstances: 1,
+      maxInstances: 10,
+      resourceLimits: {cpu: '1', memory: '2Gi'},
     });
   });
 
@@ -1087,6 +1162,13 @@ describe('deployToAgentEngine', () => {
           }),
         }),
       });
+      const {config} = mockUpdateInternal.mock.calls[0][0];
+      expect(config.updateMask.split(',')).toContain(
+        'spec.deployment_spec.env',
+      );
+      expect(config.updateMask.split(',')).not.toContain(
+        'spec.deployment_spec.secret_env',
+      );
       expect(getDockerfileContent()).toContain('--otel_to_cloud');
     });
   });

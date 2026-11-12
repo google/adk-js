@@ -275,25 +275,40 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
       location: options.region,
     });
 
+    const isUpdate = Boolean(options.agentEngineId);
     const config = {
-      displayName,
+      // On update, the display name is sent only when the caller sets it, so
+      // a name chosen at create time is kept.
+      ...(!isUpdate || options.displayName !== undefined ? {displayName} : {}),
       description: options.description,
       spec: {
         containerSpec: {
           imageUri: imageTag,
         },
-        deploymentSpec: {
-          containerConcurrency: 9,
-          minInstances: options.minInstances ?? 1,
-          maxInstances: options.maxInstances ?? 10,
-          resourceLimits: {
-            cpu: '1',
-            memory: '2Gi',
-          },
-          // Omitted when empty so a deployment without variables sends the
-          // same request as before.
-          ...(env.length > 0 ? {env} : {}),
-        },
+        // On update, only the scaling fields the caller set are sent, so
+        // values tuned outside the CLI are kept.
+        deploymentSpec: isUpdate
+          ? {
+              ...(options.minInstances !== undefined
+                ? {minInstances: options.minInstances}
+                : {}),
+              ...(options.maxInstances !== undefined
+                ? {maxInstances: options.maxInstances}
+                : {}),
+              ...(env.length > 0 ? {env} : {}),
+            }
+          : {
+              containerConcurrency: 9,
+              minInstances: options.minInstances ?? 1,
+              maxInstances: options.maxInstances ?? 10,
+              resourceLimits: {
+                cpu: '1',
+                memory: '2Gi',
+              },
+              // Omitted when empty so a deployment without variables sends the
+              // same request as before.
+              ...(env.length > 0 ? {env} : {}),
+            },
       },
     };
 
@@ -305,14 +320,20 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
         : `projects/${options.project}/locations/${options.region}/reasoningEngines/${options.agentEngineId}`;
       // Without a mask the PATCH replaces the whole spec and drops fields the
       // server manages, such as the telemetry flag in deploymentSpec.env.
+      // The display name, description and scaling fields go into the mask
+      // only when the caller sets them, so values set outside the CLI survive
+      // an update. The env list goes into the mask only when it is not empty.
       const updateMask = [
-        'display_name',
+        ...(options.displayName !== undefined ? ['display_name'] : []),
         ...(options.description !== undefined ? ['description'] : []),
         'spec.container_spec',
-        'spec.deployment_spec.container_concurrency',
-        'spec.deployment_spec.min_instances',
-        'spec.deployment_spec.max_instances',
-        'spec.deployment_spec.resource_limits',
+        ...(options.minInstances !== undefined
+          ? ['spec.deployment_spec.min_instances']
+          : []),
+        ...(options.maxInstances !== undefined
+          ? ['spec.deployment_spec.max_instances']
+          : []),
+        ...(env.length > 0 ? ['spec.deployment_spec.env'] : []),
       ].join(',');
       apiResponse = await client.agentEnginesInternal.updateInternal({
         name,

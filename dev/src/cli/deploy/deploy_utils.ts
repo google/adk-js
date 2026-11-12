@@ -148,8 +148,9 @@ export function createDockerFileContent(
   const adkCommand = options.withUi ? 'web' : 'api_server';
   const adkServerOptions = [`--port=${options.port}`, '--host=0.0.0.0'];
 
-  // Only skip the container's own compile/bundle when the agent file was
-  // already compiled/bundled before being copied into the image.
+  // Skip the container's own compile and bundle when the staged agent file
+  // was already compiled or bundled. The host build injects the shim banner,
+  // and a second esbuild pass in the container declares it again.
   const stagedFileIsBundleOutput = options.agentFileLoadOptions
     ? Boolean(options.agentFileLoadOptions.compile) ||
       Boolean(options.agentFileLoadOptions.bundle)
@@ -239,17 +240,46 @@ export async function createDockerFile(
   console.info('Creating Dockerfile complete:', dockerFilePath);
 }
 
+const AGENT_ENTRY_FILE_NAMES = ['app', 'agent', 'index'];
+
+/**
+ * Copies the agent files into `targetPath`.
+ *
+ * A single agent is copied to `<targetPath>/<fileName>`. With more than one
+ * agent, each one is copied to `<targetPath>/<agentName>/<entry>`, where
+ * `<entry>` is an `app`, `agent` or `index` file name. This is the layout that
+ * `AgentLoader` scans for, and it keeps agents with the same file name from
+ * overwriting each other.
+ */
 export async function copyAgentFiles(
   agentLoader: AgentLoader,
   targetPath: string,
 ): Promise<void> {
   const agentNames = await agentLoader.listAgents();
 
+  if (agentNames.length <= 1) {
+    for (const agentName of agentNames) {
+      const agentFile = await agentLoader.getAgentFile(agentName);
+      const fileName = path.parse(agentFile.getFilePath()).base;
+
+      await fs.cp(agentFile.getFilePath(), path.join(targetPath, fileName));
+    }
+    return;
+  }
+
   for (const agentName of agentNames) {
     const agentFile = await agentLoader.getAgentFile(agentName);
-    const fileName = path.parse(agentFile.getFilePath()).base;
+    const parsed = path.parse(agentFile.getFilePath());
+    const entryFileName = AGENT_ENTRY_FILE_NAMES.includes(parsed.name)
+      ? parsed.base
+      : `agent${parsed.ext}`;
+    const agentTargetDir = path.join(targetPath, agentName);
 
-    await fs.cp(agentFile.getFilePath(), path.join(targetPath, fileName));
+    await fs.mkdir(agentTargetDir, {recursive: true});
+    await fs.cp(
+      agentFile.getFilePath(),
+      path.join(agentTargetDir, entryFileName),
+    );
   }
 }
 
