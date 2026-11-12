@@ -100,19 +100,22 @@ export class LoadSkillResourceTool extends BaseTool {
     skillActivity.recordSkill(skill);
 
     let content: string | Buffer | undefined;
-    const skillResources = skill.resources || {};
+    const {references = {}, assets = {}, scripts = {}} = skill.resources || {};
 
     if (resourcePath.startsWith('references/')) {
       const refName = resourcePath.substring('references/'.length);
-      content = skillResources.references?.[refName];
+      if (Object.hasOwn(references, refName)) {
+        content = references[refName];
+      }
     } else if (resourcePath.startsWith('assets/')) {
       const assetName = resourcePath.substring('assets/'.length);
-      content = skillResources.assets?.[assetName];
+      if (Object.hasOwn(assets, assetName)) {
+        content = assets[assetName];
+      }
     } else if (resourcePath.startsWith('scripts/')) {
       const scriptName = resourcePath.substring('scripts/'.length);
-      const script = skillResources.scripts?.[scriptName];
-      if (script) {
-        content = script.src;
+      if (Object.hasOwn(scripts, scriptName)) {
+        content = scripts[scriptName].src;
       }
     } else {
       return {

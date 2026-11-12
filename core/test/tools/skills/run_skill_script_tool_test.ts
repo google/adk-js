@@ -367,4 +367,39 @@ describe('RunSkillScriptTool', () => {
     expect(materializeFiles).toHaveBeenLastCalledWith([], outputDir);
     expect(result.outputDirectory).toBe(outputDir);
   });
+
+  it.each(['constructor', 'toString', '__proto__', 'hasOwnProperty'])(
+    'returns SKILL_NOT_FOUND for skill name %s',
+    async (name) => {
+      const toolset = new SkillToolset([mockSkill]);
+      const tool = new RunSkillScriptTool(toolset);
+      const result = (await tool.runAsync({
+        args: {skill_name: name, script_path: 'scripts/setup.js'},
+        toolContext: createMockContext(),
+      })) as ToolErrorResponse;
+
+      expect(result).toEqual({
+        error: `Skill '${name}' not found.`,
+        errorCode: 'SKILL_NOT_FOUND',
+      });
+    },
+  );
+
+  it.each(
+    ['constructor', 'toString', '__proto__', 'hasOwnProperty'].flatMap(
+      (name) => [name, `scripts/${name}`],
+    ),
+  )('returns SCRIPT_NOT_FOUND for script path %s', async (scriptPath) => {
+    const toolset = new SkillToolset([mockSkill]);
+    const tool = new RunSkillScriptTool(toolset);
+    const result = (await tool.runAsync({
+      args: {skill_name: 'test-skill', script_path: scriptPath},
+      toolContext: createMockContext(),
+    })) as ToolErrorResponse;
+
+    expect(result).toEqual({
+      error: `Script '${scriptPath}' not found in skill 'test-skill'.`,
+      errorCode: 'SCRIPT_NOT_FOUND',
+    });
+  });
 });

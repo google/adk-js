@@ -106,16 +106,15 @@ export class RunSkillScriptTool extends BaseTool {
     }
     skillActivity.recordSkill(skill);
 
+    const scripts = skill.resources?.scripts || {};
     let relScriptPath = scriptPath.startsWith('scripts/')
       ? scriptPath.substring('scripts/'.length)
       : scriptPath;
-    let script = skill.resources?.scripts?.[relScriptPath];
-    if (!script) {
+    if (!Object.hasOwn(scripts, relScriptPath)) {
       relScriptPath = scriptPath;
-      script = skill.resources?.scripts?.[scriptPath];
     }
 
-    if (!script) {
+    if (!Object.hasOwn(scripts, relScriptPath)) {
       return {
         error: `Script '${scriptPath}' not found in skill '${skillName}'.`,
         errorCode: 'SCRIPT_NOT_FOUND',

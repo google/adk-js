@@ -77,4 +77,26 @@ describe('LoadSkillTool', () => {
       error_code: 'SKILL_NOT_FOUND',
     });
   });
+
+  it.each(['constructor', 'toString', '__proto__', 'hasOwnProperty'])(
+    'returns SKILL_NOT_FOUND for %s and leaves state untouched',
+    async (name) => {
+      const toolset = new SkillToolset([mockSkill]);
+      const tool = new LoadSkillTool(toolset);
+      const toolContext = createMockContext('test-agent');
+
+      const result = await tool.runAsync({args: {name}, toolContext});
+
+      expect(result).toEqual({
+        error: `Skill '${name}' not found.`,
+        error_code: 'SKILL_NOT_FOUND',
+      });
+      expect(
+        toolContext.state.get('_adk_activated_skill_test-agent'),
+      ).toBeUndefined();
+      expect(await toolset.getTools(toolContext)).toEqual(
+        await toolset.getTools(),
+      );
+    },
+  );
 });
