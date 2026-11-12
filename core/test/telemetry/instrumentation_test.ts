@@ -15,11 +15,14 @@ import {
   type Attributes,
   context,
   metrics,
+  propagation,
+  ROOT_CONTEXT,
   SpanStatusCode,
   trace,
 } from '@opentelemetry/api';
 import {type Logger, logs, SeverityNumber} from '@opentelemetry/api-logs';
 import {AsyncLocalStorageContextManager} from '@opentelemetry/context-async-hooks';
+import {W3CTraceContextPropagator} from '@opentelemetry/core';
 import {
   InMemoryLogRecordExporter,
   LoggerProvider,
@@ -73,8 +76,10 @@ import {
 import {createCompactedEvent} from '../../src/events/compacted_event.js';
 import {ContextCompactionTrigger} from '../../src/plugins/base_plugin.js';
 import {
+  type FetchFunction,
   instrumentMcpFetch,
   type McpFetch,
+  propagateTraceContext,
   recordAgentInvocation,
   recordCompaction,
   recordInference,
@@ -85,6 +90,7 @@ import {
   recordSkillActivity,
   recordToolExecution,
   recordWorkflowInvocation,
+  runWithRemoteTraceContext,
   type ToolExecutionScope,
 } from '../../src/telemetry/api/instrumentation.js';
 import {logger} from '../../src/utils/logger.js';
@@ -3062,6 +3068,233 @@ describe('instrumentMcpFetch', () => {
       expect(record.attributes).toMatchObject({
         'http.request.header.x-trace': ['a'],
       });
+    });
+  });
+});
+
+describe('trace context propagation', () => {
+  const PEER_URL = 'https://peer.example.com/rpc';
+  const REMOTE_TRACE_ID = '0af7651916cd43dd8448eb211c80319c';
+  const REMOTE_SPAN_ID = 'b7ad6b7169203331';
+  const REMOTE_TRACEPARENT = `00-${REMOTE_TRACE_ID}-${REMOTE_SPAN_ID}-01`;
+  const ROOT_SPAN = 'invoke_workflow root_agent';
+  const agent = new LlmAgent({name: 'root_agent', description: 'Root.'});
+  const failingPropagator = {
+    inject(): void {
+      throw new Error('inject failed');
+    },
+    extract(): never {
+      throw new Error('extract failed');
+    },
+    fields: (): string[] => [],
+  };
+
+  beforeAll(() => {
+    propagation.setGlobalPropagator(new W3CTraceContextPropagator());
+  });
+
+  afterAll(() => {
+    propagation.disable();
+  });
+
+  /** Runs `fn` with the given propagator registered in place of W3C. */
+  async function withPropagator(
+    propagator: typeof failingPropagator,
+    fn: () => Promise<unknown>,
+  ): Promise<void> {
+    propagation.disable();
+    propagation.setGlobalPropagator(propagator);
+    try {
+      await fn();
+    } finally {
+      propagation.disable();
+      propagation.setGlobalPropagator(new W3CTraceContextPropagator());
+    }
+  }
+
+  function createSpyFetch() {
+    return vi.fn<FetchFunction>(async () => new Response('ok'));
+  }
+
+  function sentHeaders(send: ReturnType<typeof createSpyFetch>): Headers {
+    expect(send).toHaveBeenCalledTimes(1);
+    return new Headers(send.mock.calls[0][1]?.headers);
+  }
+
+  /** Sends one request through `fetch` inside an active `caller` span. */
+  async function sendInSpan(
+    fetch: FetchFunction,
+    input: Parameters<FetchFunction>[0],
+    init?: Parameters<FetchFunction>[1],
+  ): Promise<string> {
+    return trace.getTracer('test').startActiveSpan('caller', async (span) => {
+      await fetch(input, init);
+      span.end();
+      const {traceId, spanId} = span.spanContext();
+      return `00-${traceId}-${spanId}-01`;
+    });
+  }
+
+  function runInvocation(): Promise<void[]> {
+    return drain(
+      recordInvocation(
+        {entrypoint: agent, sessionId: SESSION_ID},
+        async function* () {
+          yield* [];
+        },
+      ),
+    );
+  }
+
+  describe('propagateTraceContext', () => {
+    it('sends the active span as traceparent', async () => {
+      const send = createSpyFetch();
+
+      const expected = await sendInSpan(propagateTraceContext(send), PEER_URL, {
+        method: 'POST',
+      });
+
+      expect(sentHeaders(send).get('traceparent')).toBe(expected);
+      expect(send.mock.calls[0][0]).toBe(PEER_URL);
+      expect(send.mock.calls[0][1]?.method).toBe('POST');
+    });
+
+    it('keeps a traceparent the caller sets, whatever its case', async () => {
+      const send = createSpyFetch();
+
+      await sendInSpan(propagateTraceContext(send), PEER_URL, {
+        headers: {TraceParent: REMOTE_TRACEPARENT},
+      });
+
+      expect(sentHeaders(send).get('traceparent')).toBe(REMOTE_TRACEPARENT);
+    });
+
+    it('keeps the headers of a Request input', async () => {
+      const send = createSpyFetch();
+      const request = new Request(PEER_URL, {headers: {'x-api-key': 'key-1'}});
+
+      const expected = await sendInSpan(propagateTraceContext(send), request);
+
+      const headers = sentHeaders(send);
+      expect(send.mock.calls[0][0]).toBe(request);
+      expect(headers.get('x-api-key')).toBe('key-1');
+      expect(headers.get('traceparent')).toBe(expected);
+    });
+
+    it.each([
+      {kind: 'an array', headers: [['x-api-key', 'key-1']]},
+      {kind: 'a plain object', headers: {'x-api-key': 'key-1'}},
+      {kind: 'a Headers object', headers: new Headers({'x-api-key': 'key-1'})},
+    ] satisfies Array<{
+      kind: string;
+      headers: ConstructorParameters<typeof Headers>[0];
+    }>)('merges init headers given as $kind', async ({headers}) => {
+      const send = createSpyFetch();
+
+      const expected = await sendInSpan(propagateTraceContext(send), PEER_URL, {
+        headers,
+      });
+
+      const sent = sentHeaders(send);
+      expect(sent.get('x-api-key')).toBe('key-1');
+      expect(sent.get('traceparent')).toBe(expected);
+    });
+
+    it('passes the arguments through unchanged with no active trace', async () => {
+      const send = createSpyFetch();
+      const init = {method: 'POST', headers: {'x-api-key': 'key-1'}};
+
+      await context.with(ROOT_CONTEXT, () =>
+        propagateTraceContext(send)(PEER_URL, init),
+      );
+
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send.mock.calls[0][0]).toBe(PEER_URL);
+      expect(send.mock.calls[0][1]).toBe(init);
+    });
+
+    it('logs a propagator error and sends the request unchanged', async () => {
+      const send = createSpyFetch();
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const init = {method: 'POST'};
+
+      await withPropagator(failingPropagator, () =>
+        sendInSpan(propagateTraceContext(send), PEER_URL, init),
+      );
+
+      expect(send.mock.calls[0][1]).toBe(init);
+      expect(warn).toHaveBeenCalledTimes(1);
+      warn.mockRestore();
+    });
+  });
+
+  describe('runWithRemoteTraceContext', () => {
+    it.each([
+      {kind: 'a lowercase name', headers: {traceparent: REMOTE_TRACEPARENT}},
+      {kind: 'an uppercase name', headers: {TRACEPARENT: REMOTE_TRACEPARENT}},
+      {
+        kind: 'an array value',
+        headers: {traceparent: [REMOTE_TRACEPARENT, 'second']},
+      },
+    ])(
+      'parents the root span on a valid traceparent with $kind',
+      async ({headers}) => {
+        await runWithRemoteTraceContext(headers, runInvocation);
+
+        const span = onlySpan(ROOT_SPAN);
+        expect(span.spanContext().traceId).toBe(REMOTE_TRACE_ID);
+        expect(span.parentSpanContext?.spanId).toBe(REMOTE_SPAN_ID);
+        expect(span.parentSpanContext?.isRemote).toBe(true);
+        expect(span.attributes).not.toHaveProperty('supportID');
+      },
+    );
+
+    it.each([
+      {kind: 'free text', value: 'garbage'},
+      {
+        kind: 'an all-zero trace id',
+        value: `00-${'0'.repeat(32)}-${REMOTE_SPAN_ID}-01`,
+      },
+      {kind: 'version ff', value: `ff-${REMOTE_TRACE_ID}-${REMOTE_SPAN_ID}-01`},
+    ])('starts a new trace for a traceparent with $kind', async ({value}) => {
+      await runWithRemoteTraceContext({traceparent: value}, runInvocation);
+
+      const span = onlySpan(ROOT_SPAN);
+      expect(span.parentSpanContext).toBeUndefined();
+      expect(span.spanContext().traceId).not.toBe(REMOTE_TRACE_ID);
+      expect(span.attributes).not.toHaveProperty('supportID');
+    });
+
+    it('keeps an active local span as the parent', async () => {
+      await trace
+        .getTracer('test')
+        .startActiveSpan('application', async (appSpan) => {
+          await runWithRemoteTraceContext(
+            {traceparent: REMOTE_TRACEPARENT},
+            runInvocation,
+          );
+          appSpan.end();
+        });
+
+      const app = onlySpan('application');
+      const span = onlySpan(ROOT_SPAN);
+      expect(span.parentSpanContext?.spanId).toBe(app.spanContext().spanId);
+      expect(span.spanContext().traceId).toBe(app.spanContext().traceId);
+      expect(span.spanContext().traceId).not.toBe(REMOTE_TRACE_ID);
+    });
+
+    it('logs a propagator error and runs the handler once in the active context', async () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const handler = vi.fn(runInvocation);
+
+      await withPropagator(failingPropagator, () =>
+        runWithRemoteTraceContext({traceparent: REMOTE_TRACEPARENT}, handler),
+      );
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(onlySpan(ROOT_SPAN).parentSpanContext).toBeUndefined();
+      warn.mockRestore();
     });
   });
 });

@@ -13,6 +13,7 @@ import {isLlmAgent, LlmAgent} from '../agents/llm_agent.js';
 import {isLoopAgent, LoopAgent} from '../agents/loop_agent.js';
 import {isParallelAgent} from '../agents/parallel_agent.js';
 import {isSequentialAgent} from '../agents/sequential_agent.js';
+import {propagateTraceContext} from '../telemetry/api/instrumentation.js';
 import {BaseTool, isBaseTool} from '../tools/base_tool.js';
 import {isBaseToolset} from '../tools/base_toolset.js';
 import {logger} from '../utils/logger.js';
@@ -93,7 +94,7 @@ export async function resolveAgentCard(
   if (source.startsWith('http://') || source.startsWith('https://')) {
     await refuseLinkLocalHost(source);
     const resolver = new DefaultAgentCardResolver({
-      fetchImpl: refuseRedirectFetch,
+      fetchImpl: tracePropagatingRefuseRedirectFetch,
     });
     const card = await resolver.resolve(source);
     validateCardRpcTargets(card, source, options);
@@ -172,6 +173,13 @@ async function refuseRedirectFetch(
   }
   return response;
 }
+
+/**
+ * {@link refuseRedirectFetch} that also sends the active trace context, so the
+ * card fetch joins the caller's trace.
+ */
+const tracePropagatingRefuseRedirectFetch =
+  propagateTraceContext(refuseRedirectFetch);
 
 /**
  * Parses an absolute URL out of a card source, or returns `null` when the
