@@ -7,6 +7,26 @@
 import {ApiError} from '@google/genai';
 
 /**
+ * Normalizes a candidate error classification by trimming strings and
+ * stringifying finite numbers.
+ *
+ * @param value The candidate classification value.
+ * @returns The non-empty trimmed classification string, or undefined if invalid.
+ */
+export function normalizeErrorClassification(
+  value: unknown,
+): string | undefined {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
+  }
+  return undefined;
+}
+
+/**
  * Resolves a stable error classification suitable for the OpenTelemetry
  * `error.type` attribute without using the potentially sensitive error message.
  *
@@ -24,18 +44,22 @@ export function resolveErrorType(error: unknown): string {
         error_type?: unknown;
         constructor?: {name?: unknown};
       };
-      const customErrorType = errorObject.errorType ?? errorObject.error_type;
-      if (
-        typeof customErrorType === 'string' ||
-        typeof customErrorType === 'number'
-      ) {
-        return String(customErrorType);
+      const customErrorType =
+        normalizeErrorClassification(errorObject.errorType) ??
+        normalizeErrorClassification(errorObject.error_type);
+      if (customErrorType !== undefined) {
+        return customErrorType;
       }
       if (error instanceof ApiError) {
-        return String(error.status);
+        const apiStatus = normalizeErrorClassification(error.status);
+        if (apiStatus !== undefined) {
+          return apiStatus;
+        }
       }
-      const constructorName = errorObject.constructor?.name;
-      if (typeof constructorName === 'string' && constructorName.length > 0) {
+      const constructorName = normalizeErrorClassification(
+        errorObject.constructor?.name,
+      );
+      if (constructorName !== undefined) {
         return constructorName;
       }
     } catch {
@@ -64,12 +88,12 @@ export function getToolResponseErrorType(result: unknown): string | undefined {
       return undefined;
     }
     const response = result as Record<string, unknown>;
-    const errorType =
-      response.errorType ??
-      response.error_type ??
-      response.errorCode ??
-      response.error_code;
-    return typeof errorType === 'string' ? errorType : undefined;
+    return (
+      normalizeErrorClassification(response.errorType) ??
+      normalizeErrorClassification(response.error_type) ??
+      normalizeErrorClassification(response.errorCode) ??
+      normalizeErrorClassification(response.error_code)
+    );
   } catch {
     // Telemetry should not change tool behavior if a custom response object
     // throws when its fields are inspected.

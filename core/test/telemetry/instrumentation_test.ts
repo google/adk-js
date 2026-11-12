@@ -93,6 +93,10 @@ import {
   runWithRemoteTraceContext,
   type ToolExecutionScope,
 } from '../../src/telemetry/api/instrumentation.js';
+import {
+  getToolResponseErrorType,
+  resolveErrorType,
+} from '../../src/telemetry/api/internal/common/error.js';
 import {logger} from '../../src/utils/logger.js';
 import {version} from '../../src/version.js';
 
@@ -948,6 +952,16 @@ describe('recordToolExecution', () => {
       error: new TypeError('sensitive details'),
       errorType: 'TypeError',
     },
+    {
+      name: 'an error with whitespace errorType falling back to class name',
+      error: Object.assign(new TypeError('bad'), {errorType: '   '}),
+      errorType: 'TypeError',
+    },
+    {
+      name: 'an error with NaN errorType falling back to class name',
+      error: Object.assign(new TypeError('bad'), {errorType: NaN}),
+      errorType: 'TypeError',
+    },
   ])('records a thrown error: $name', async ({error, errorType}) => {
     await expect(
       recordToolExecution(
@@ -984,6 +998,92 @@ describe('recordToolExecution', () => {
       expect(span.attributes['error.type']).toBe(value);
       expect(span.status).toEqual({code: SpanStatusCode.ERROR, message: value});
       expect(span.events).toEqual([]);
+    },
+  );
+
+  it.each([
+    {field: 'errorCode', value: 404, expected: '404'},
+    {field: 'error_code', value: 500, expected: '500'},
+    {field: 'errorType', value: 400, expected: '400'},
+    {field: 'error_type', value: 503, expected: '503'},
+    {field: 'errorCode', value: 0, expected: '0'},
+  ])(
+    'records numeric $field in a tool response as a string error type',
+    async ({field, value, expected}) => {
+      const response = {error: 'sensitive details', [field]: value};
+
+      expect(getToolResponseErrorType(response)).toBe(expected);
+
+      const span = await runTool(response);
+
+      expect(span.attributes['error.type']).toBe(expected);
+      expect(span.status).toEqual({
+        code: SpanStatusCode.ERROR,
+        message: expected,
+      });
+      expect(span.events).toEqual([]);
+    },
+  );
+
+  it.each([
+    {response: {error: 'details', errorType: ''}},
+    {response: {error: 'details', error_type: '   '}},
+    {response: {error: 'details', errorCode: ''}},
+    {response: {error: 'details', error_code: '   '}},
+    {response: {error: null, errorType: ''}},
+    {response: {error: '', errorType: '   '}},
+  ])(
+    'ignores empty or whitespace error types in a tool response ($#)',
+    async ({response}) => {
+      expect(getToolResponseErrorType(response)).toBeUndefined();
+
+      const span = await runTool(response);
+
+      expect(span.attributes['error.type']).toBeUndefined();
+      expect(span.status.code).toBe(SpanStatusCode.UNSET);
+      expect(span.events).toEqual([]);
+    },
+  );
+
+  it('falls through to a later error field when an earlier field is empty', async () => {
+    const response = {
+      error: 'details',
+      errorType: '',
+      errorCode: 429,
+    };
+
+    expect(getToolResponseErrorType(response)).toBe('429');
+
+    const span = await runTool(response);
+
+    expect(span.attributes['error.type']).toBe('429');
+    expect(span.status).toEqual({
+      code: SpanStatusCode.ERROR,
+      message: '429',
+    });
+    expect(span.events).toEqual([]);
+  });
+
+  it.each([
+    {
+      description: 'whitespace errorType',
+      error: Object.assign(new TypeError('bad'), {errorType: '   '}),
+      expected: 'TypeError',
+    },
+    {
+      description: 'empty errorType',
+      error: Object.assign(new TypeError('bad'), {errorType: ''}),
+      expected: 'TypeError',
+    },
+    {
+      description: 'NaN errorType',
+      error: Object.assign(new TypeError('bad'), {errorType: NaN}),
+      expected: 'TypeError',
+    },
+  ])(
+    'ignores invalid errorType and falls back to constructor name ($description)',
+    ({error, expected}) => {
+      expect(resolveErrorType(error)).toBe(expected);
     },
   );
 });
