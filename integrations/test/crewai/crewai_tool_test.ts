@@ -4,10 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Context, FunctionTool} from '@google/adk';
+import {Context, FunctionTool, GoogleLLMVariant} from '@google/adk';
 import {CrewaiTool, isCrewaiTool} from '@google/adk-integrations';
 import {Type} from '@google/genai';
-import {describe, expect, it, vi} from 'vitest';
+import {afterEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod/v4';
 
 describe('CrewaiTool', () => {
@@ -166,5 +166,125 @@ describe('CrewaiTool', () => {
 
     expect(response).toBe('searched:search query');
     expect(runSpy).toHaveBeenCalledWith({query: 'search query'}, emptyContext);
+  });
+
+  it('builds no parameters for schemas without properties', () => {
+    const schemas = [z.object({}), {type: 'object'}];
+    for (const argsSchema of schemas) {
+      const tool = new CrewaiTool({
+        tool: {
+          name: 'No Params Tool',
+          description: 'Has no parameters',
+          argsSchema,
+          run: () => 'ok',
+        },
+      });
+
+      expect(tool._getDeclaration()).toEqual({
+        name: 'no_params_tool',
+        description: 'Has no parameters',
+      });
+    }
+  });
+
+  it('does not mark fields as required when every schema field is optional', () => {
+    const jsonSchema = {
+      type: 'object',
+      properties: {opt: {type: 'string'}},
+    };
+    const schemas = [
+      z.object({opt: z.string().optional()}),
+      jsonSchema,
+      {jsonSchema: () => jsonSchema},
+    ];
+    for (const argsSchema of schemas) {
+      const tool = new CrewaiTool({
+        tool: {
+          name: 'Optional Tool',
+          description: 'All fields are optional',
+          argsSchema,
+          run: () => 'ok',
+        },
+      });
+
+      expect(tool._getDeclaration()).toEqual({
+        name: 'optional_tool',
+        description: 'All fields are optional',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {opt: {type: Type.STRING}},
+        },
+      });
+    }
+    expect(jsonSchema).toEqual({
+      type: 'object',
+      properties: {opt: {type: 'string'}},
+    });
+  });
+
+  describe('with the Vertex AI variant', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('builds the same normalized declaration as the Gemini API variant', () => {
+      vi.stubEnv('GOOGLE_GENAI_USE_ENTERPRISE', 'true');
+      vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
+      const tool = new CrewaiTool({
+        tool: {
+          name: 'Vertex Tool',
+          description: 'Runs under Vertex AI',
+          argsSchema: z.object({
+            search_query: z.string().describe('Search query'),
+            country: z.string().optional(),
+          }),
+          run: () => 'ok',
+        },
+      });
+
+      expect(tool.apiVariant).toBe(GoogleLLMVariant.VERTEX_AI);
+      expect(tool._getDeclaration()).toEqual({
+        name: 'vertex_tool',
+        description: 'Runs under Vertex AI',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            search_query: {type: Type.STRING, description: 'Search query'},
+            country: {type: Type.STRING},
+          },
+          required: ['search_query'],
+        },
+      });
+    });
+  });
+
+  it('builds a function declaration from an argsSchema with toJsonSchema', () => {
+    const tool = new CrewaiTool({
+      tool: {
+        name: 'Json Schema Tool',
+        description: 'Uses toJsonSchema',
+        argsSchema: {
+          toJsonSchema: () => ({
+            type: 'object',
+            properties: {q: {type: 'string'}, n: {type: 'integer'}},
+            required: ['q'],
+          }),
+        },
+        run: () => 'ok',
+      },
+    });
+
+    expect(tool._getDeclaration()).toEqual({
+      name: 'json_schema_tool',
+      description: 'Uses toJsonSchema',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          q: {type: Type.STRING},
+          n: {type: Type.INTEGER},
+        },
+        required: ['q'],
+      },
+    });
   });
 });
