@@ -5,6 +5,7 @@
  */
 
 import {AGENT_CARD_PATH, AgentCard} from '@a2a-js/sdk';
+import * as adk from '@google/adk';
 import {
   App,
   BaseArtifactService,
@@ -29,7 +30,8 @@ import {
   StreamingMode,
   Workflow,
 } from '@google/adk';
-import {ReadableSpan} from '@opentelemetry/sdk-trace-base';
+import {emptyResource} from '@opentelemetry/resources';
+import {ReadableSpan, SpanProcessor} from '@opentelemetry/sdk-trace-base';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as os from 'node:os';
@@ -2125,6 +2127,219 @@ describe('AdkWebServer', () => {
       } finally {
         await specificServer.stop();
       }
+    });
+  });
+
+  describe('Agent Runtime telemetry', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      vi.restoreAllMocks();
+    });
+
+    /** Starts a server, sends one request, and counts telemetry flushes. */
+    async function countFlushesForOneRequest({
+      agentEngineId,
+      otelToCloud,
+    }: {
+      agentEngineId?: string;
+      otelToCloud: boolean;
+    }): Promise<number> {
+      vi.stubEnv('GOOGLE_CLOUD_AGENT_ENGINE_ID', agentEngineId);
+      const forceFlush = vi.fn().mockResolvedValue(undefined);
+      vi.spyOn(adk, 'getGcpProjectId').mockResolvedValue('test-project');
+      vi.spyOn(adk, 'getGcpExporters').mockResolvedValue({
+        spanProcessors: [{forceFlush} as unknown as SpanProcessor],
+      });
+      vi.spyOn(adk, 'getGcpResource').mockResolvedValue(emptyResource());
+      vi.spyOn(adk, 'maybeSetOtelProviders').mockReturnValue(undefined);
+      const telemetryServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+        otelToCloud,
+      });
+      await telemetryServer.start();
+      try {
+        const response = await fetch(`${telemetryServer.url}/version`);
+        expect(response.status).toBe(200);
+      } finally {
+        await telemetryServer.stop();
+      }
+      return forceFlush.mock.calls.length;
+    }
+
+    it('flushes telemetry on each request on Agent Runtime with cloud export', async () => {
+      await expect(
+        countFlushesForOneRequest({
+          agentEngineId: 'agent-123',
+          otelToCloud: true,
+        }),
+      ).resolves.toBe(1);
+    });
+
+    it('installs no request hooks off Agent Runtime', async () => {
+      await expect(
+        countFlushesForOneRequest({otelToCloud: true}),
+      ).resolves.toBe(0);
+    });
+
+    it('installs no request hooks without cloud export', async () => {
+      await expect(
+        countFlushesForOneRequest({
+          agentEngineId: 'agent-123',
+          otelToCloud: false,
+        }),
+      ).resolves.toBe(0);
+    });
+
+    it('flushes telemetry when a /run_live WebSocket upgrade session ends', async () => {
+      vi.stubEnv('GOOGLE_CLOUD_AGENT_ENGINE_ID', 'agent-123');
+      const forceFlush = vi.fn().mockResolvedValue(undefined);
+      vi.spyOn(adk, 'getGcpProjectId').mockResolvedValue('test-project');
+      vi.spyOn(adk, 'getGcpExporters').mockResolvedValue({
+        spanProcessors: [{forceFlush} as unknown as SpanProcessor],
+      });
+      vi.spyOn(adk, 'getGcpResource').mockResolvedValue(emptyResource());
+      vi.spyOn(adk, 'maybeSetOtelProviders').mockReturnValue(undefined);
+      const telemetryServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+        otelToCloud: true,
+      });
+      await telemetryServer.start();
+      try {
+        const target = new URL(
+          `${telemetryServer.url}/run_live?app_name=testApp&user_id=testUser&session_id=missing`,
+        );
+        await new Promise<void>((resolve, reject) => {
+          const req = http.request({
+            host: target.hostname,
+            port: target.port,
+            path: `${target.pathname}${target.search}`,
+            method: 'GET',
+            headers: {
+              Connection: 'Upgrade',
+              Upgrade: 'websocket',
+              'Sec-WebSocket-Key':
+                Buffer.from('1234567890123456').toString('base64'),
+              'Sec-WebSocket-Version': '13',
+            },
+          });
+          req.on('upgrade', (_res, socket) => {
+            socket.on('close', () => resolve());
+            socket.resume();
+          });
+          req.on('error', reject);
+          req.end();
+        });
+      } finally {
+        await telemetryServer.stop();
+      }
+      expect(forceFlush).toHaveBeenCalledTimes(1);
+    });
+
+    it('answers a client WebSocket close frame only after telemetry is flushed', async () => {
+      vi.stubEnv('GOOGLE_CLOUD_AGENT_ENGINE_ID', 'agent-123');
+      const events: string[] = [];
+      const forceFlush = vi.fn(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        events.push('flushed');
+      });
+      vi.spyOn(adk, 'getGcpProjectId').mockResolvedValue('test-project');
+      vi.spyOn(adk, 'getGcpExporters').mockResolvedValue({
+        spanProcessors: [{forceFlush} as unknown as SpanProcessor],
+      });
+      vi.spyOn(adk, 'getGcpResource').mockResolvedValue(emptyResource());
+      vi.spyOn(adk, 'maybeSetOtelProviders').mockReturnValue(undefined);
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'liveCloseSessionId',
+      });
+      const telemetryServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+        otelToCloud: true,
+      });
+      await telemetryServer.start();
+      try {
+        const target = new URL(
+          `${telemetryServer.url}/run_live?app_name=testApp&user_id=testUser&session_id=liveCloseSessionId`,
+        );
+        await new Promise<void>((resolve, reject) => {
+          const req = http.request({
+            host: target.hostname,
+            port: target.port,
+            path: `${target.pathname}${target.search}`,
+            method: 'GET',
+            headers: {
+              Connection: 'Upgrade',
+              Upgrade: 'websocket',
+              'Sec-WebSocket-Key':
+                Buffer.from('1234567890123456').toString('base64'),
+              'Sec-WebSocket-Version': '13',
+            },
+          });
+          req.on('upgrade', (_res, socket, head) => {
+            let buf = head.length > 0 ? Buffer.from(head) : Buffer.alloc(0);
+            const checkForCloseFrame = () => {
+              // Skip any text frames the server sends before its close frame.
+              while (buf.length >= 2) {
+                const opcode = buf[0] & 0x0f;
+                let len = buf[1] & 0x7f;
+                let offset = 2;
+                if (len === 126) {
+                  if (buf.length < 4) {
+                    return;
+                  }
+                  len = buf.readUInt16BE(2);
+                  offset = 4;
+                }
+                if (buf.length < offset + len) {
+                  return;
+                }
+                buf = buf.subarray(offset + len);
+                if (opcode === 0x08) {
+                  events.push('closeFrame');
+                  return;
+                }
+              }
+            };
+            socket.on('data', (chunk: Buffer) => {
+              buf = Buffer.concat([buf, Buffer.from(chunk)]);
+              checkForCloseFrame();
+            });
+            socket.on('close', () => resolve());
+            socket.on('error', reject);
+            checkForCloseFrame();
+
+            // Send a masked client close frame with status code 1000.
+            const payload = Buffer.from([0x03, 0xe8]);
+            const mask = Buffer.from([1, 2, 3, 4]);
+            const masked = Buffer.from(
+              payload.map((byte, i) => byte ^ mask[i % 4]),
+            );
+            socket.write(
+              Buffer.concat([
+                Buffer.from([0x88, 0x80 | payload.length]),
+                mask,
+                masked,
+              ]),
+            );
+          });
+          req.on('error', reject);
+          req.end();
+        });
+      } finally {
+        await telemetryServer.stop();
+      }
+      expect(events).toEqual(['flushed', 'closeFrame']);
+      expect(forceFlush).toHaveBeenCalledTimes(1);
     });
   });
 

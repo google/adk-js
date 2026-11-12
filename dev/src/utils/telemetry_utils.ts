@@ -5,6 +5,8 @@
  */
 
 import {
+  agentRuntimeRequestHooks,
+  type AgentRuntimeRequestHooks,
   getGcpExporters,
   getGcpProjectId,
   getGcpResource,
@@ -137,13 +139,21 @@ function otelEnvVarsEnabled(): boolean {
   return endpointVars.some((varName) => process.env[varName]);
 }
 
+/**
+ * Sets up the OTel providers for the API server.
+ *
+ * @returns The hooks the server must run around every request, when it
+ *     exports to Google Cloud on Agent Runtime (`GOOGLE_CLOUD_AGENT_ENGINE_ID`
+ *     set); otherwise `undefined`.
+ */
 export async function setupTelemetry(
   otelToCloud: boolean = false,
   internalExporters: SpanProcessor[] = [],
-): Promise<void> {
+): Promise<AgentRuntimeRequestHooks | undefined> {
   if (otelToCloud) {
-    await setupGcpTelemetryExperimental(internalExporters);
-  } else if (otelEnvVarsEnabled()) {
+    return setupGcpTelemetryExperimental(internalExporters);
+  }
+  if (otelEnvVarsEnabled()) {
     await setupTelemetryFromEnvExperimental(internalExporters);
   } else {
     const otelHooks: OTelHooks = {
@@ -151,11 +161,12 @@ export async function setupTelemetry(
     };
     maybeSetOtelProviders([otelHooks]);
   }
+  return undefined;
 }
 
 async function setupGcpTelemetryExperimental(
   internalExporters: SpanProcessor[] = [],
-): Promise<void> {
+): Promise<AgentRuntimeRequestHooks | undefined> {
   const otelHooksToAdd: OTelHooks[] = [];
 
   if (internalExporters.length > 0) {
@@ -177,6 +188,10 @@ async function setupGcpTelemetryExperimental(
   const otelResource = await getGcpResource(projectId);
 
   maybeSetOtelProviders(otelHooksToAdd, otelResource);
+
+  return process.env.GOOGLE_CLOUD_AGENT_ENGINE_ID
+    ? agentRuntimeRequestHooks(gcpExporters)
+    : undefined;
 }
 
 async function setupTelemetryFromEnvExperimental(

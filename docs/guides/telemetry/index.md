@@ -370,16 +370,52 @@ const gcpResource = await getGcpResource();
 maybeSetOtelProviders([gcpHooks], gcpResource);
 ```
 
-| `OtelExportersConfig` field | Default     | Effect in `getGcpExporters`                          |
-| :-------------------------- | :---------- | :--------------------------------------------------- |
-| `enableTracing`             | `false`     | Sends traces via OTLP to `telemetry.googleapis.com`. |
-| `enableMetrics`             | `false`     | Sends metrics via OTLP every 5 seconds.              |
-| `enableLogging`             | `false`     | Sends logs via `GCPBatchLogRecordProcessor`.         |
-| `projectId`                 | `undefined` | Project ID override for export.                      |
+| `OtelExportersConfig` field | Default     | Effect in `getGcpExporters`                                                                    |
+| :-------------------------- | :---------- | :--------------------------------------------------------------------------------------------- |
+| `enableTracing`             | `false`     | Sends traces via OTLP to `telemetry.googleapis.com`.                                           |
+| `enableMetrics`             | `false`     | Sends metrics via OTLP every 5 seconds, or from the request path on Vertex AI Agent Engine.    |
+| `enableLogging`             | `false`     | Sends logs via `GCPBatchLogRecordProcessor`.                                                   |
+| `projectId`                 | `undefined` | Project ID override for export.                                                                |
 
 `getGcpExporters` authenticates requests using `google-auth-library` with the
 `https://www.googleapis.com/auth/cloud-platform` scope. When project resolution
 fails, it logs a warning and returns empty hooks.
+
+### Request-driven export on Agent Runtime
+
+On Vertex AI Agent Engine (`GOOGLE_CLOUD_AGENT_ENGINE_ID` set), CPU is throttled
+between requests, so background export timers can be delayed or dropped. When no
+SDK `MeterProvider` is already installed, `getGcpExporters({enableMetrics: true})`
+returns a request-driven metric reader with no background timer (respecting a
+minimum spacing floor from
+`GOOGLE_CLOUD_AGENT_ENGINE_METRICS_COLLECTION_INTERVAL_FLOOR_MS`, default
+`5000` ms, and a guidepost interval from `OTEL_METRIC_EXPORT_INTERVAL`, default
+`60000` ms).
+
+The ADK API server installs request hooks automatically when cloud export is
+enabled on Agent Engine. Custom servers using `getGcpExporters` and
+`maybeSetOtelProviders` on Agent Engine must wrap each request with
+`agentRuntimeRequestHooks(gcpHooks)`—calling `onRequestStart()` when a request
+arrives and awaiting `onRequestEnd()` before completing the response—to drive
+metric collection and flush span and log processors while the request holds CPU:
+
+```ts
+import {
+  agentRuntimeRequestHooks,
+  getGcpExporters,
+  getGcpResource,
+  maybeSetOtelProviders,
+} from '@google/adk';
+
+const gcpHooks = await getGcpExporters({
+  enableTracing: true,
+  enableMetrics: true,
+  enableLogging: true,
+});
+const gcpResource = await getGcpResource();
+maybeSetOtelProviders([gcpHooks], gcpResource);
+const requestHooks = agentRuntimeRequestHooks(gcpHooks);
+```
 
 ### Cloud Logging and log names
 
@@ -439,8 +475,8 @@ holding a cycle, is recorded as `'<not serializable>'`. An unserializable tool
 result costs one attribute rather than the run. A trace call made with no active
 span does nothing.
 
-`maybeSetOtelProviders` is marked experimental in its documentation, so its
-signature may change.
+`maybeSetOtelProviders` and `agentRuntimeRequestHooks` are marked experimental
+in their documentation, so their signatures may change.
 
 ## Related samples
 

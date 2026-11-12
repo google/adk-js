@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {metrics} from '@opentelemetry/api';
 import type {LogAttributes} from '@opentelemetry/api-logs';
 import {OTLPLogExporter} from '@opentelemetry/exporter-logs-otlp-http';
 import {OTLPMetricExporter} from '@opentelemetry/exporter-metrics-otlp-http';
@@ -26,6 +27,8 @@ import {
 import {
   AggregationTemporality,
   InstrumentType,
+  MeterProvider,
+  MetricReader,
   PeriodicExportingMetricReader,
   PushMetricExporter,
   ResourceMetrics,
@@ -42,7 +45,17 @@ import * as fs from 'node:fs';
 import {logger} from '../../utils/logger.js';
 import {version} from '../../version.js';
 
+import {
+  agentRuntimeRequestHooks,
+  type AgentRuntimeRequestHooks,
+} from './agent_runtime.js';
+import {
+  MIN_EXPORT_INTERVAL_MS,
+  RequestDrivenMetricReader,
+} from './request_driven_metric_reader.js';
 import {OtelExportersConfig, OTelHooks} from './setup.js';
+
+export {agentRuntimeRequestHooks, type AgentRuntimeRequestHooks};
 
 const CLOUD_PLATFORM_SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
 
@@ -869,9 +882,43 @@ export async function getGcpResource(projectId?: string): Promise<Resource> {
 }
 
 /**
+ * Returns the metric reader for `exporter`.
+ *
+ * On Agent Runtime the CPU is throttled between requests, so a timer-driven
+ * reader would drop points; there the reader is a
+ * {@link RequestDrivenMetricReader}, which {@link agentRuntimeRequestHooks}
+ * must drive on every request (without those hooks it never collects except on
+ * `forceFlush()` or `shutdown()`). It is used only when no SDK `MeterProvider`
+ * is installed yet: otherwise ADK's provider, and with it this reader, would
+ * not be the active one. The check only sees a provider from the same copy of
+ * `@opentelemetry/sdk-metrics`.
+ */
+function createMetricReader(exporter: PushMetricExporter): MetricReader {
+  if (process.env.GOOGLE_CLOUD_AGENT_ENGINE_ID) {
+    if (!(metrics.getMeterProvider() instanceof MeterProvider)) {
+      return new RequestDrivenMetricReader({exporter});
+    }
+    logger.warn(
+      'A MeterProvider is already installed; skipping request-driven metric ' +
+        'export. On Agent Runtime metrics may be dropped between requests.',
+    );
+  }
+  return new PeriodicExportingMetricReader({
+    exporter,
+    exportIntervalMillis: MIN_EXPORT_INTERVAL_MS,
+  });
+}
+
+/**
  * Returns OTel processors and readers configured for export to Google Cloud.
  *
  * Sends traces, metrics, and logs via OTLP over HTTP to telemetry.googleapis.com.
+ * On Agent Runtime (`GOOGLE_CLOUD_AGENT_ENGINE_ID` set) the metric reader is
+ * request-driven and starts no background timer. Custom servers calling
+ * `getGcpExporters` with {@link maybeSetOtelProviders} on Agent Runtime must
+ * wrap each request with {@link agentRuntimeRequestHooks} to drive the metric
+ * reader and flush the span and log processors; without those hooks, the reader
+ * never collects except on `forceFlush()` or `shutdown()`.
  *
  * @param config Configuration options for enabled signals and project.
  * @returns OTelHooks containing configured processors and readers.
@@ -926,8 +973,8 @@ export async function getGcpExporters(
 
   const metricReaders = enableMetrics
     ? [
-        new PeriodicExportingMetricReader({
-          exporter: new AuthenticatedMetricExporter(
+        createMetricReader(
+          new AuthenticatedMetricExporter(
             auth,
             getTelemetryEndpoint(
               DEFAULT_TELEMETRY_METRICS_ENDPOINT,
@@ -935,8 +982,7 @@ export async function getGcpExporters(
             ),
             userAgentHeaders,
           ),
-          exportIntervalMillis: 5000,
-        }),
+        ),
       ]
     : [];
 

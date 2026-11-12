@@ -6,6 +6,7 @@
 
 import {
   AddSessionToEvalSetRequest,
+  type AgentRuntimeRequestHooks,
   App,
   BaseArtifactService,
   BaseMemoryService,
@@ -64,6 +65,7 @@ import {
   setupTelemetry,
 } from '../utils/telemetry_utils.js';
 import {getAgentGraphAsDot, getWorkflowHighlights} from './agent_graph.js';
+import {createAgentRuntimeMiddleware} from './agent_runtime_middleware.js';
 import {
   collectSubWorkflows,
   GraphTarget,
@@ -178,6 +180,7 @@ export class AdkApiServer {
   private readonly logger: Logger;
   private readonly a2a: boolean;
   private readonly a2aAuthToken?: string;
+  private requestHooks?: AgentRuntimeRequestHooks;
 
   constructor(options: ServerOptions) {
     this.host = options.host ?? 'localhost';
@@ -234,18 +237,25 @@ export class AdkApiServer {
     this.app = express();
   }
 
-  private async setupTelemetry(): Promise<void> {
+  private async setupTelemetry(): Promise<
+    AgentRuntimeRequestHooks | undefined
+  > {
     const internalExporters = [
       new SimpleSpanProcessor(new ApiServerSpanExporter(this.traceDict)),
       new SimpleSpanProcessor(this.memoryExporter),
     ];
 
-    await setupTelemetry(this.otelToCloud, internalExporters);
+    const requestHooks = await setupTelemetry(
+      this.otelToCloud,
+      internalExporters,
+    );
 
     if (this.registerProcessors) {
       const tracerProvider = trace.getTracerProvider();
       this.registerProcessors(tracerProvider);
     }
+
+    return requestHooks;
   }
 
   private async initA2A() {
@@ -283,7 +293,20 @@ export class AdkApiServer {
 
   private async init() {
     const app = this.app;
-    await this.setupTelemetry();
+    const requestHooks = await this.setupTelemetry();
+    this.requestHooks = requestHooks;
+
+    // On Agent Runtime the CPU is throttled once a request ends, so telemetry
+    // is exported from the request path. Registered first, so every route,
+    // including /health, A2A and rejected requests, is covered.
+    if (requestHooks) {
+      app.use(
+        createAgentRuntimeMiddleware({
+          hooks: requestHooks,
+          logger: this.logger,
+        }),
+      );
+    }
 
     // Registered before any route (including /health, /, /version) so the
     // DNS-rebinding guard applies to every endpoint, not just the ones
@@ -1479,12 +1502,39 @@ export class AdkApiServer {
     socket: Duplex,
     head: Buffer,
   ): Promise<void> {
+    const requestHooks = this.requestHooks;
+    let endRequestPromise: Promise<void> | undefined;
+    const endRequest = (): Promise<void> => {
+      if (!requestHooks) {
+        return Promise.resolve();
+      }
+      endRequestPromise ??= (async () => {
+        try {
+          await requestHooks.onRequestEnd();
+        } catch (error: unknown) {
+          this.logger.warn('Telemetry request-end hook failed.', error);
+        }
+      })();
+      return endRequestPromise;
+    };
+    if (requestHooks) {
+      try {
+        requestHooks.onRequestStart();
+      } catch (error: unknown) {
+        this.logger.warn('Telemetry request-start hook failed.', error);
+      }
+      socket.once('close', () => {
+        void endRequest();
+      });
+    }
+
     const reqUrl = new URL(
       req.url ?? '/',
       `http://${req.headers.host ?? 'localhost'}`,
     );
     if (reqUrl.pathname !== '/run_live') {
       socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+      await endRequest();
       socket.destroy();
       return;
     }
@@ -1492,6 +1542,7 @@ export class AdkApiServer {
     const wsKey = req.headers['sec-websocket-key'];
     if (typeof wsKey !== 'string' || !wsKey) {
       socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+      await endRequest();
       socket.destroy();
       return;
     }
@@ -1540,7 +1591,8 @@ export class AdkApiServer {
       reasonBuf.copy(payload, 2);
       const header = Buffer.from([0x88, payload.length]);
       socket.write(Buffer.concat([header, payload]));
-      socket.end();
+      // Destroy the socket only once the close frame has been flushed.
+      socket.end(() => socket.destroy());
     };
 
     const appName =
@@ -1563,6 +1615,7 @@ export class AdkApiServer {
       sessionId,
     });
     if (!session) {
+      await endRequest();
       sendWsClose(1002, 'Session not found');
       return;
     }
@@ -1572,6 +1625,7 @@ export class AdkApiServer {
     }
 
     const liveRequestQueue = new LiveRequestQueue();
+    let clientRequestedClose = false;
     let buffer = head.length > 0 ? Buffer.from(head) : Buffer.alloc(0);
 
     const parseIncomingFrames = () => {
@@ -1619,7 +1673,10 @@ export class AdkApiServer {
 
         if (opcode === 0x08) {
           liveRequestQueue.close();
-          sendWsClose(1000);
+          // The close frame is answered in the `finally` block below, after
+          // the request-end hook finishes, so telemetry is flushed while the
+          // connection still holds the CPU.
+          clientRequestedClose = true;
           return;
         } else if (opcode === 0x09) {
           if (!socket.destroyed && socket.writable) {
@@ -1677,10 +1734,15 @@ export class AdkApiServer {
       }
     } catch (e: unknown) {
       this.logger.error(`Error in run_live WebSocket: ${e}`);
+      await endRequest();
       sendWsClose(1011, String((e as Error)?.message ?? e).slice(0, 120));
     } finally {
       liveRequestQueue.close();
-      if (!socket.destroyed) {
+      await endRequest();
+      if (clientRequestedClose) {
+        sendWsClose(1000);
+      }
+      if (!socket.destroyed && !socket.writableEnded) {
         socket.destroy();
       }
     }

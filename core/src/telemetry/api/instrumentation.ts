@@ -70,6 +70,7 @@ import {
   recordAgentDuration,
   recordAgentTotals,
 } from './internal/metrics/agent.js';
+import {notifyInferenceStart} from './internal/metrics/inference_start_hook.js';
 import {
   recordSkillLoad,
   recordSkillScriptExecution,
@@ -343,6 +344,7 @@ function startInference({
     [GenAiAttr.PROVIDER_NAME]: resolveProviderName(llmRequest.model),
   };
   const span = startInferenceSpan({llmRequest, commonAttributes});
+  notifyInferenceStart();
   const requestDetails = buildRequestOperationDetails(llmRequest);
   const outputMessages: AnyValueMap[] = [];
   let responseAttributes: Attributes = {};
