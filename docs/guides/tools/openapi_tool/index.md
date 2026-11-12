@@ -209,11 +209,13 @@ const declaration = toolset.getTool('get_pet')?._getDeclaration();
 const parameterNames = Object.keys(declaration?.parameters?.properties ?? {});
 ```
 
-The prose the model reads alongside it is generated in adk-python's format, by
-`OperationParser.getPydocString()` and the helpers in `common/common.ts`. The
-type tokens in that text are Python's — `str`, `int`, `List[str]`,
-`Dict[str, Any]`, `Any` — in a TypeScript SDK, deliberately: identical text
-across the two SDKs is what gives identical model behaviour for the same spec.
+`RestApiTool` sends the operation description and Gemini schema to the model.
+It uses `OperationParser.getDescription()`, which prefers
+`operation.description` over `operation.summary`. The parameters use
+`openApiSchemaToGeminiSchema(OperationParser.getJsonSchema())`.
+`OperationParser.getPydocString()`, `OperationParser.getReturnTypeHint()`, and
+the helpers in `common/common.ts` produce Python-style docstrings and type hints
+for offline inspection and compatibility.
 
 ### What a failed call returns
 
@@ -585,15 +587,16 @@ tool.configureAuthCredential({authType: AuthCredentialTypes.API_KEY, apiKey});
 
 ### Reading one operation on its own
 
-`OperationParser` produces the four artifacts a declaration is built from:
+`OperationParser` produces the artifacts for tool declarations and inspection:
 
 ```ts
 const parser = new OperationParser(operation);
 
 parser.getFunctionName(); // 'find_pets_by_status'
+parser.getDescription(); // 'Find pets by status' (the description the model reads)
 parser.getReturnTypeHint(); // 'List[Dict[str, Any]]'
 parser.getJsonSchema(); // {type: 'object', properties: {status: …}, …}
-parser.getPydocString(); // the docstring the model reads
+parser.getPydocString(); // Python-style docstring for inspection
 ```
 
 It accepts the operation as a typed object, a plain object, or a JSON string, so
@@ -603,11 +606,12 @@ given rather than reprocessing them — the point being that a caller who cached
 parsed operation gets the names it cached, not names generated a second time
 under a possibly different policy.
 
-`createApiParameter`, `generateParamDoc`, `generateReturnDoc` and `getTypeHint`
+`createApiParameter`, `generateParamDoc`, `generateReturnDoc`, and `getTypeHint`
 in `common/common.ts` are the same rendering as free functions, for a caller
-assembling a tool description by hand. `OperationParser` does not call them — it
-derives its own names and uses the operation's `description` verbatim — so they
-changed nothing about the tools `OpenAPIToolset` builds.
+assembling a tool description by hand. `OperationParser.getPydocString()` and
+`OperationParser.getReturnTypeHint()` delegate to them to produce Python-style
+docstrings and type hints. `RestApiTool` uses `OperationParser.getDescription()`
+and `OperationParser.getJsonSchema()` for model declarations.
 
 ### Substituting the exchanger in a test
 
