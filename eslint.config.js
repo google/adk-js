@@ -88,7 +88,7 @@ export default defineConfig([
             },
             {
               group: [
-                '**/telemetry/api/internal/**',
+                '**/telemetry/api/**',
                 '**/telemetry/tracing*',
                 '**/telemetry/setup*',
                 '**/telemetry/google_cloud*',

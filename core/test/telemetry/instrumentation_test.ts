@@ -64,6 +64,7 @@ import {
   LlmRequest,
   LlmResponse,
   PluginManager,
+  runWithAgentEngineContext,
   type TelemetryConfig,
   ToolErrorType,
   ToolExecutionError,
@@ -1167,6 +1168,207 @@ describe('invocation, agent and workflow spans', () => {
     const span = onlySpan('invoke_workflow other_workflow');
     expect(span.status.code).toBe(SpanStatusCode.ERROR);
     expect(span.attributes).not.toHaveProperty('gen_ai.workflow.nested');
+  });
+});
+
+describe('runWithAgentEngineContext', () => {
+  const agent = new LlmAgent({name: 'root_agent', description: 'Root.'});
+  const AGENT_ENGINE_TRACE_ID = '0af7651916cd43dd8448eb211c80319c';
+  const AGENT_ENGINE_SPAN_ID = 'b7ad6b7169203331';
+  const AGENT_ENGINE_TRACEPARENT = `00-${AGENT_ENGINE_TRACE_ID}-${AGENT_ENGINE_SPAN_ID}-01`;
+  const SUPPORT_ID = '00-11111111111111111111111111111111-2222222222222222-01';
+  const ROOT_SPAN = 'invoke_workflow root_agent';
+
+  function runInvocation(): Promise<void[]> {
+    return drain(
+      recordInvocation(
+        {entrypoint: agent, sessionId: SESSION_ID},
+        async function* () {
+          yield* [];
+        },
+      ),
+    );
+  }
+
+  it('parents the root span on the Agent Engine span and records supportID', async () => {
+    await runWithAgentEngineContext(
+      {
+        'google-agent-engine-traceparent': AGENT_ENGINE_TRACEPARENT,
+        'traceparent': SUPPORT_ID,
+      },
+      runInvocation,
+    );
+
+    const span = onlySpan(ROOT_SPAN);
+    expect(span.spanContext().traceId).toBe(AGENT_ENGINE_TRACE_ID);
+    expect(span.parentSpanContext?.spanId).toBe(AGENT_ENGINE_SPAN_ID);
+    expect(span.parentSpanContext?.isRemote).toBe(true);
+    expect(span.attributes['supportID']).toBe(SUPPORT_ID);
+  });
+
+  it('reads header names case-insensitively and takes the first array value', async () => {
+    await runWithAgentEngineContext(
+      {
+        'Google-Agent-Engine-Traceparent': [
+          AGENT_ENGINE_TRACEPARENT,
+          `00-${'3'.repeat(32)}-${'4'.repeat(16)}-01`,
+        ],
+        'TraceParent': [SUPPORT_ID, 'second'],
+      },
+      runInvocation,
+    );
+
+    const span = onlySpan(ROOT_SPAN);
+    expect(span.parentSpanContext?.spanId).toBe(AGENT_ENGINE_SPAN_ID);
+    expect(span.attributes['supportID']).toBe(SUPPORT_ID);
+  });
+
+  it.each([
+    {
+      kind: 'an all-zero trace id',
+      value: `00-${'0'.repeat(32)}-${AGENT_ENGINE_SPAN_ID}-01`,
+    },
+    {
+      kind: 'an all-zero span id',
+      value: `00-${AGENT_ENGINE_TRACE_ID}-${'0'.repeat(16)}-01`,
+    },
+    {
+      kind: 'version ff',
+      value: `ff-${AGENT_ENGINE_TRACE_ID}-${AGENT_ENGINE_SPAN_ID}-01`,
+    },
+    {kind: 'uppercase hex', value: AGENT_ENGINE_TRACEPARENT.toUpperCase()},
+    {
+      kind: 'non-hex characters',
+      value: `00-${'g'.repeat(32)}-${AGENT_ENGINE_SPAN_ID}-01`,
+    },
+    {
+      kind: 'an extra field on version 00',
+      value: `${AGENT_ENGINE_TRACEPARENT}-extra`,
+    },
+    {kind: 'missing fields', value: `00-${AGENT_ENGINE_TRACE_ID}`},
+    {kind: 'free text', value: 'not a traceparent'},
+  ])('ignores a header with $kind', async ({value}) => {
+    await runWithAgentEngineContext(
+      {
+        'google-agent-engine-traceparent': value,
+        'traceparent': SUPPORT_ID,
+      },
+      runInvocation,
+    );
+
+    const span = onlySpan(ROOT_SPAN);
+    expect(span.parentSpanContext).toBeUndefined();
+    expect(span.spanContext().traceId).not.toBe(AGENT_ENGINE_TRACE_ID);
+    expect(span.attributes['supportID']).toBe(SUPPORT_ID);
+  });
+
+  it('accepts extra fields on a later version', async () => {
+    await runWithAgentEngineContext(
+      {
+        'google-agent-engine-traceparent': `01-${AGENT_ENGINE_TRACE_ID}-${AGENT_ENGINE_SPAN_ID}-01-extra`,
+      },
+      runInvocation,
+    );
+
+    const span = onlySpan(ROOT_SPAN);
+    expect(span.parentSpanContext?.spanId).toBe(AGENT_ENGINE_SPAN_ID);
+    expect(span.attributes).not.toHaveProperty('supportID');
+  });
+
+  it('does not record a traceparent longer than 256 characters', async () => {
+    await runWithAgentEngineContext(
+      {
+        'google-agent-engine-traceparent': AGENT_ENGINE_TRACEPARENT,
+        'traceparent': 'a'.repeat(257),
+      },
+      runInvocation,
+    );
+
+    expect(onlySpan(ROOT_SPAN).attributes).not.toHaveProperty('supportID');
+  });
+
+  it('changes nothing without the headers', async () => {
+    await runWithAgentEngineContext({}, runInvocation);
+
+    const span = onlySpan(ROOT_SPAN);
+    expect(span.parentSpanContext).toBeUndefined();
+    expect(span.attributes).toEqual({
+      'gen_ai.operation.name': 'invoke_workflow',
+      'gen_ai.conversation.id': SESSION_ID,
+      'gen_ai.workflow.name': 'root_agent',
+    });
+  });
+
+  it('records supportID only on the root span of nested invocations', async () => {
+    const child = new LlmAgent({name: 'child_agent'});
+    await runWithAgentEngineContext(
+      {
+        'google-agent-engine-traceparent': AGENT_ENGINE_TRACEPARENT,
+        'traceparent': SUPPORT_ID,
+      },
+      () =>
+        drain(
+          recordInvocation(
+            {entrypoint: agent, sessionId: SESSION_ID},
+            async function* () {
+              yield* recordInvocation(
+                {entrypoint: child, sessionId: SESSION_ID},
+                async function* () {
+                  yield* [];
+                },
+              );
+            },
+          ),
+        ),
+    );
+
+    const root = onlySpan(ROOT_SPAN);
+    const nested = onlySpan('invoke_workflow child_agent');
+    expect(root.attributes['supportID']).toBe(SUPPORT_ID);
+    expect(nested.attributes).not.toHaveProperty('supportID');
+    expect(nested.parentSpanContext?.spanId).toBe(root.spanContext().spanId);
+    expect(nested.spanContext().traceId).toBe(AGENT_ENGINE_TRACE_ID);
+  });
+
+  it('keeps an active local span as the parent and records no supportID', async () => {
+    const tracer = trace.getTracer('test');
+    await tracer.startActiveSpan('application', async (appSpan) => {
+      await runWithAgentEngineContext(
+        {
+          'google-agent-engine-traceparent': AGENT_ENGINE_TRACEPARENT,
+          'traceparent': SUPPORT_ID,
+        },
+        runInvocation,
+      );
+      appSpan.end();
+    });
+
+    const app = onlySpan('application');
+    const span = onlySpan(ROOT_SPAN);
+    expect(span.parentSpanContext?.spanId).toBe(app.spanContext().spanId);
+    expect(span.spanContext().traceId).not.toBe(AGENT_ENGINE_TRACE_ID);
+    expect(span.attributes).not.toHaveProperty('supportID');
+  });
+
+  it('records no supportID when a local span starts inside the context', async () => {
+    const tracer = trace.getTracer('test');
+    await runWithAgentEngineContext(
+      {
+        'google-agent-engine-traceparent': AGENT_ENGINE_TRACEPARENT,
+        'traceparent': SUPPORT_ID,
+      },
+      () =>
+        tracer.startActiveSpan('application', async (appSpan) => {
+          await runInvocation();
+          appSpan.end();
+        }),
+    );
+
+    const app = onlySpan('application');
+    const span = onlySpan(ROOT_SPAN);
+    expect(app.parentSpanContext?.spanId).toBe(AGENT_ENGINE_SPAN_ID);
+    expect(span.parentSpanContext?.spanId).toBe(app.spanContext().spanId);
+    expect(span.attributes).not.toHaveProperty('supportID');
   });
 });
 

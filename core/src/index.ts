@@ -189,6 +189,7 @@ export {SkillToolset} from './tools/skill/skill_toolset.js';
 export type {JsonObject} from './utils/json_utils.js';
 
 export * from './integrations/agent_registry/agent_registry.js';
+export {runWithAgentEngineContext} from './telemetry/export/agent_engine.js';
 export {
   agentRuntimeRequestHooks,
   type AgentRuntimeRequestHooks,

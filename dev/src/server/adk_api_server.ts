@@ -42,6 +42,7 @@ import {
   runEvals,
   RunnableRoot,
   Runner,
+  runWithAgentEngineContext,
   StreamingMode,
   toA2a,
   tryGetResetFunc,
@@ -431,6 +432,12 @@ export class AdkApiServer {
         limit: '50mb',
       }),
     );
+
+    // Continues the Agent Engine request trace, when the request carries one,
+    // for every route registered after this point, including A2A.
+    app.use((req: Request, res: Response, next: express.NextFunction) => {
+      runWithAgentEngineContext(req.headers, next);
+    });
 
     app.use((req: Request, res: Response, next: express.NextFunction) => {
       this.logger.info(`${req.method} ${req.originalUrl}`);
@@ -1577,7 +1584,9 @@ export class AdkApiServer {
       this.server.on(
         'upgrade',
         (req: http.IncomingMessage, socket: Duplex, head: Buffer) => {
-          void this.handleWebSocketUpgrade(req, socket, head);
+          void runWithAgentEngineContext(req.headers, () =>
+            this.handleWebSocketUpgrade(req, socket, head),
+          );
         },
       );
 
