@@ -594,6 +594,151 @@ describe('GoogleLlm', () => {
         }),
       );
     });
+
+    it('should strip displayName from fileData and inlineData when calling the Gemini API backend', async () => {
+      const llm = new TestGemini({apiKey: 'test-key'});
+      const generateContentMock = vi.fn().mockResolvedValue({
+        candidates: [{content: {parts: [{text: 'response'}]}}],
+      });
+      llm.apiClient.models.generateContent = generateContentMock;
+
+      const originalFileData = {
+        fileUri: 'gs://bucket/file.pdf',
+        mimeType: 'application/pdf',
+        displayName: 'My Test PDF',
+      };
+      const originalInlineData = {
+        data: 'c29tZV9ieXRlcw==',
+        mimeType: 'image/png',
+        displayName: 'My Test Image',
+      };
+
+      const llmRequest: LlmRequest = {
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                fileData: originalFileData,
+              },
+              {
+                inlineData: originalInlineData,
+              },
+            ],
+          },
+        ],
+        config: {labels: {env: 'prod'}},
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      for await (const _ of llm.generateContentAsync(llmRequest, false)) {
+        // consume response
+      }
+
+      expect(llm.apiBackend).toBe(GoogleLLMVariant.GEMINI_API);
+      const parts = llmRequest.contents?.[0]?.parts;
+      expect(parts?.[0]?.fileData?.displayName).toBeUndefined();
+      expect(parts?.[1]?.inlineData?.displayName).toBeUndefined();
+      expect(originalFileData.displayName).toBe('My Test PDF');
+      expect(originalInlineData.displayName).toBe('My Test Image');
+      expect(parts?.[0]?.fileData).not.toBe(originalFileData);
+      expect(parts?.[1]?.inlineData).not.toBe(originalInlineData);
+      expect(llmRequest.config?.labels).toBeUndefined();
+      expect(generateContentMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          contents: expect.arrayContaining([
+            expect.objectContaining({
+              parts: expect.arrayContaining([
+                expect.objectContaining({
+                  fileData: expect.objectContaining({
+                    fileUri: 'gs://bucket/file.pdf',
+                    mimeType: 'application/pdf',
+                    displayName: undefined,
+                  }),
+                }),
+                expect.objectContaining({
+                  inlineData: expect.objectContaining({
+                    data: 'c29tZV9ieXRlcw==',
+                    mimeType: 'image/png',
+                    displayName: undefined,
+                  }),
+                }),
+              ]),
+            }),
+          ]),
+        }),
+      );
+    });
+
+    it('should preserve displayName on fileData and inlineData when calling the Vertex AI backend', async () => {
+      const llm = new TestGemini({
+        vertexai: true,
+        project: 'test-project',
+        location: 'us-central1',
+      });
+      const generateContentMock = vi.fn().mockResolvedValue({
+        candidates: [{content: {parts: [{text: 'response'}]}}],
+      });
+      llm.apiClient.models.generateContent = generateContentMock;
+
+      const llmRequest: LlmRequest = {
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                fileData: {
+                  fileUri: 'gs://bucket/file.pdf',
+                  mimeType: 'application/pdf',
+                  displayName: 'My Test PDF',
+                },
+              },
+              {
+                inlineData: {
+                  data: 'c29tZV9ieXRlcw==',
+                  mimeType: 'image/png',
+                  displayName: 'My Test Image',
+                },
+              },
+            ],
+          },
+        ],
+        config: {labels: {env: 'prod'}},
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      for await (const _ of llm.generateContentAsync(llmRequest, false)) {
+        // consume response
+      }
+
+      expect(llm.apiBackend).toBe(GoogleLLMVariant.VERTEX_AI);
+      const parts = llmRequest.contents?.[0]?.parts;
+      expect(parts?.[0]?.fileData?.displayName).toBe('My Test PDF');
+      expect(parts?.[1]?.inlineData?.displayName).toBe('My Test Image');
+      expect(llmRequest.config?.labels).toEqual({env: 'prod'});
+      expect(generateContentMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          contents: expect.arrayContaining([
+            expect.objectContaining({
+              parts: expect.arrayContaining([
+                expect.objectContaining({
+                  fileData: expect.objectContaining({
+                    displayName: 'My Test PDF',
+                  }),
+                }),
+                expect.objectContaining({
+                  inlineData: expect.objectContaining({
+                    displayName: 'My Test Image',
+                  }),
+                }),
+              ]),
+            }),
+          ]),
+        }),
+      );
+    });
   });
 
   describe('generateContentAsync streaming', () => {
@@ -1083,6 +1228,34 @@ describe('GoogleLlm', () => {
         model: 'gemini-3.1-flash-live-preview',
       });
       expect(llm.liveApiVersion).toBe('v1alpha');
+    });
+  });
+
+  describe('supportedModels', () => {
+    it('defines regex patterns matching supported Gemini model names and Vertex endpoints', () => {
+      expect(Gemini.supportedModels).toHaveLength(3);
+      expect(Gemini.supportedModels[0]).toEqual(/gemini-.*/);
+      expect(Gemini.supportedModels[1]).toEqual(
+        /projects\/.+\/locations\/.+\/endpoints\/.+/,
+      );
+      expect(Gemini.supportedModels[2]).toEqual(
+        /projects\/.+\/locations\/.+\/publishers\/google\/models\/gemini.+/,
+      );
+
+      const isSupported = (model: string) =>
+        Gemini.supportedModels.some((pattern) =>
+          typeof pattern === 'string' ? pattern === model : pattern.test(model),
+        );
+
+      expect(isSupported('gemini-1.5-flash')).toBe(true);
+      expect(isSupported('gemini-1.5-pro')).toBe(true);
+      expect(isSupported('projects/p/locations/l/endpoints/e')).toBe(true);
+      expect(
+        isSupported(
+          'projects/p/locations/l/publishers/google/models/gemini-1.5-pro',
+        ),
+      ).toBe(true);
+      expect(isSupported('unsupported-model')).toBe(false);
     });
   });
 });
