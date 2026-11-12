@@ -183,7 +183,7 @@ const COMPILE_AGENT_FILE = new Option(
 const BUNDLE_AGENT_FILE = new Option(
   '--bundle [boolean]',
   'Optional. Whether to inline the agent file dependencies into a single ' +
-    'bundle before execution. Bundling also minifies the result.',
+    'bundle before execution.',
 ).default(true);
 const A2A_OPTION = new Option(
   '--a2a [boolean]',
@@ -306,7 +306,7 @@ export function createProgram(): Command {
           allowedHosts: getAllowedHosts(options['allowed_hosts']),
           sessionService: getSessionServiceFromOptions(options),
           artifactService: getArtifactServiceFromOptions(options),
-          otelToCloud: options['otel_to_cloud'] ? true : false,
+          otelToCloud: getBoolean(options['otel_to_cloud']),
           agentFileLoadOptions: getAgentFileOptions(options),
           a2a: getBoolean(options['a2a']),
           a2aAuthToken: options['a2a_auth_token'],
@@ -354,7 +354,7 @@ export function createProgram(): Command {
           allowedHosts: getAllowedHosts(options['allowed_hosts']),
           sessionService: getSessionServiceFromOptions(options),
           artifactService: getArtifactServiceFromOptions(options),
-          otelToCloud: options['otel_to_cloud'] ? true : false,
+          otelToCloud: getBoolean(options['otel_to_cloud']),
           agentFileLoadOptions: getAgentFileOptions(options),
           a2a: getBoolean(options['a2a']),
           a2aAuthToken: options['a2a_auth_token'],
@@ -402,6 +402,7 @@ export function createProgram(): Command {
         });
       } catch (error) {
         logger.error('Error creating agent:', (error as Error).message);
+        process.exitCode = 1;
       }
     });
 
@@ -437,9 +438,9 @@ export function createProgram(): Command {
     .addOption(RELOAD_AGENTS_OPTION)
     .action(async (agentPath: string, options: Record<string, string>) => {
       const logLevel = getLogLevelFromOptions(options);
-      logToTmpFolder({level: logLevel});
 
       try {
+        logToTmpFolder({level: logLevel});
         await runAgent({
           agentPath,
           inputFile: options['replay'],
@@ -448,7 +449,7 @@ export function createProgram(): Command {
           sessionId: options['session_id'],
           sessionService: getSessionServiceFromOptions(options),
           artifactService: getArtifactServiceFromOptions(options),
-          otelToCloud: options['otel_to_cloud'] ? true : false,
+          otelToCloud: getBoolean(options['otel_to_cloud']),
           agentFileLoadOptions: getAgentFileOptions(options),
           reloadAgents: getBoolean(options['reload_agents']),
         });
@@ -690,6 +691,7 @@ export function createProgram(): Command {
         });
       } catch (error) {
         logger.error('Error deploying agent:', (error as Error).message);
+        process.exitCode = 1;
       }
     });
 
@@ -760,6 +762,7 @@ export function createProgram(): Command {
           });
         } catch (error) {
           logger.error('Error deploying agent:', (error as Error).message);
+          process.exitCode = 1;
         }
       });
   };
@@ -787,11 +790,19 @@ export function createProgram(): Command {
     )
     .option('--force', 'Force run skipped tests.')
     .action(async (options: Record<string, string>) => {
-      runIntegrationTests({
-        agentsDir: options['agents_dir'],
-        testsDir: options['tests_dir'],
-        forceRunAll: getBoolean(options['force']),
-      });
+      try {
+        await runIntegrationTests({
+          agentsDir: options['agents_dir'],
+          testsDir: options['tests_dir'],
+          forceRunAll: getBoolean(options['force']),
+        });
+      } catch (error) {
+        logger.error(
+          'Error running conformance tests:',
+          (error as Error).message,
+        );
+        process.exitCode = 1;
+      }
     });
 
   return program;

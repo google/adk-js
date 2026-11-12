@@ -20,6 +20,7 @@ import {createAgent} from '../../src/cli/cli_create.js';
 import {runAgent} from '../../src/cli/cli_run.js';
 import {deployToAgentEngine} from '../../src/cli/deploy/cli_deploy_agent_engine.js';
 import {deployToCloudRun} from '../../src/cli/deploy/cli_deploy_cloud_run.js';
+import {runIntegrationTests} from '../../src/integration/run_integration_tests.js';
 import {AdkApiServer} from '../../src/server/adk_api_server.js';
 import {version} from '../../src/version.js';
 
@@ -47,6 +48,10 @@ vi.mock('../../src/cli/deploy/cli_deploy_cloud_run', () => ({
 
 vi.mock('../../src/cli/cli_run', () => ({
   runAgent: vi.fn(),
+}));
+
+vi.mock('../../src/integration/run_integration_tests', () => ({
+  runIntegrationTests: vi.fn(),
 }));
 
 vi.mock('../../src/version', () => ({
@@ -79,14 +84,17 @@ function isCleanCommanderExit(error: unknown): boolean {
 
 describe('CLI Entrypoint', () => {
   let program: ReturnType<typeof createProgram>;
+  let originalExitCode: typeof process.exitCode;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    originalExitCode = process.exitCode;
     program = createProgram();
     program.exitOverride();
   });
 
   afterEach(() => {
+    process.exitCode = originalExitCode;
     vi.restoreAllMocks();
   });
 
@@ -797,6 +805,135 @@ describe('CLI Entrypoint', () => {
         stdoutSpy.mockRestore();
         fs.rmSync(tempDir, {recursive: true, force: true});
       }
+    });
+  });
+
+  describe('--otel_to_cloud parsing', () => {
+    it.each([
+      ['run', ['run', 'agent.ts'], () => runAgent],
+      ['web', ['web'], () => AdkApiServer],
+      ['api_server', ['api_server'], () => AdkApiServer],
+    ])(
+      'passes otelToCloud: false for %s with =false',
+      async (_name, args, target) => {
+        await parse([...args, '--otel_to_cloud=false']);
+
+        const call = (target() as unknown as Mock).mock.calls[0][0];
+        expect(call.otelToCloud).toBe(false);
+      },
+    );
+
+    it.each([
+      ['run', ['run', 'agent.ts'], () => runAgent],
+      ['web', ['web'], () => AdkApiServer],
+      ['api_server', ['api_server'], () => AdkApiServer],
+    ])(
+      'passes otelToCloud: true for %s with =true',
+      async (_name, args, target) => {
+        await parse([...args, '--otel_to_cloud=true']);
+
+        const call = (target() as unknown as Mock).mock.calls[0][0];
+        expect(call.otelToCloud).toBe(true);
+      },
+    );
+  });
+
+  describe('failure exit codes', () => {
+    beforeEach(() => {
+      process.exitCode = undefined;
+    });
+
+    it('run reports a log setup failure and does not run the agent', async () => {
+      (logToTmpFolder as Mock).mockImplementationOnce(() => {
+        throw new Error('EACCES');
+      });
+
+      await expect(parse(['run', 'agent.ts'])).resolves.toBeUndefined();
+
+      expect(process.exitCode).toBe(1);
+      expect(runAgent).not.toHaveBeenCalled();
+    });
+
+    it('create sets exitCode 1 when createAgent fails', async () => {
+      (createAgent as Mock).mockRejectedValueOnce(new Error('create failed'));
+
+      await parse(['create', 'my-agent', '--yes']);
+
+      expect(process.exitCode).toBe(1);
+    });
+
+    it('deploy cloud_run sets exitCode 1 when the deployment fails', async () => {
+      (deployToCloudRun as Mock).mockRejectedValueOnce(
+        new Error('deploy failed'),
+      );
+
+      await parse(['deploy', 'cloud_run']);
+
+      expect(process.exitCode).toBe(1);
+    });
+
+    it.each([['agent_engine'], ['reasoning_engine']])(
+      'deploy %s sets exitCode 1 when the deployment fails',
+      async (command) => {
+        (deployToAgentEngine as Mock).mockRejectedValueOnce(
+          new Error('deploy failed'),
+        );
+
+        await parse(['deploy', command]);
+
+        expect(process.exitCode).toBe(1);
+      },
+    );
+  });
+
+  describe('command: integration conformance', () => {
+    beforeEach(() => {
+      process.exitCode = undefined;
+    });
+
+    it('awaits runIntegrationTests with the parsed options', async () => {
+      await parse([
+        'integration',
+        'conformance',
+        '--agents_dir',
+        'agents',
+        '--tests_dir',
+        'tests',
+      ]);
+
+      expect(runIntegrationTests).toHaveBeenCalledWith({
+        agentsDir: 'agents',
+        testsDir: 'tests',
+        forceRunAll: false,
+      });
+      expect(process.exitCode).toBeUndefined();
+    });
+
+    it('sets exitCode 1 when runIntegrationTests rejects', async () => {
+      (runIntegrationTests as Mock).mockRejectedValueOnce(
+        new Error('conformance failed'),
+      );
+
+      await expect(
+        parse(['integration', 'conformance']),
+      ).resolves.toBeUndefined();
+
+      expect(process.exitCode).toBe(1);
+    });
+  });
+
+  describe('--bundle help text', () => {
+    it('does not claim that bundling minifies', () => {
+      const runCommand = program.commands.find((c) => c.name() === 'run');
+      const bundleOption = runCommand?.options.find(
+        (o) => o.long === '--bundle',
+      );
+
+      expect(bundleOption).toBeDefined();
+      expect(bundleOption?.description).not.toContain(
+        'Bundling also minifies the result.',
+      );
+      expect(runCommand?.helpInformation()).not.toContain('minifies');
     });
   });
 });

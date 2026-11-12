@@ -22,9 +22,14 @@ import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 import {runAgent} from '../../src/cli/cli_run.js';
 import {AgentFile} from '../../src/utils/agent_loader.js';
 import {loadFileData, saveToFile} from '../../src/utils/file_utils.js';
+import {setupTelemetry} from '../../src/utils/telemetry_utils.js';
 
 vi.mock('../../src/utils/agent_loader.js', () => ({
   AgentFile: vi.fn(),
+}));
+
+vi.mock('../../src/utils/telemetry_utils.js', () => ({
+  setupTelemetry: vi.fn(),
 }));
 
 // Only the I/O is faked; getAbsolutePath is the real resolver under test.
@@ -468,6 +473,46 @@ describe('cli_run', () => {
     });
 
     expect(AgentFile).toHaveBeenCalledWith(absolute, undefined);
+  });
+
+  describe('cloud telemetry', () => {
+    beforeEach(() => {
+      (setupTelemetry as Mock).mockResolvedValue(undefined);
+    });
+
+    it('sets up cloud telemetry before loading the agent when otelToCloud is true', async () => {
+      await runAgent({agentPath: 'agent.ts', otelToCloud: true});
+
+      expect(setupTelemetry).toHaveBeenCalledTimes(1);
+      expect(setupTelemetry).toHaveBeenCalledWith(true);
+      expect((setupTelemetry as Mock).mock.invocationCallOrder[0]).toBeLessThan(
+        (AgentFile as unknown as Mock).mock.invocationCallOrder[0],
+      );
+    });
+
+    it.each([
+      ['omitted', undefined],
+      ['false', false],
+    ])(
+      'does not set up telemetry when otelToCloud is %s',
+      async (_name, otelToCloud) => {
+        await runAgent({agentPath: 'agent.ts', otelToCloud});
+
+        expect(setupTelemetry).not.toHaveBeenCalled();
+        expect(mockAgentFile.load).toHaveBeenCalled();
+      },
+    );
+
+    it('reports a telemetry setup failure and exits non-zero', async () => {
+      (setupTelemetry as Mock).mockRejectedValueOnce(
+        new Error('no GCP project'),
+      );
+
+      await runAgent({agentPath: 'agent.ts', otelToCloud: true});
+
+      expect(process.exitCode).toBe(1);
+      expect(AgentFile).not.toHaveBeenCalled();
+    });
   });
 
   it('resolves a relative path against the working directory', async () => {
