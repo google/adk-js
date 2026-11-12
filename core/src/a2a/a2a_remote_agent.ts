@@ -15,10 +15,17 @@ import {
   TaskArtifactUpdateEvent,
   TaskStatusUpdateEvent,
 } from '@a2a-js/sdk';
-import {Client, ClientFactory} from '@a2a-js/sdk/client';
+import {
+  Client,
+  ClientFactory,
+  ClientFactoryOptions,
+  JsonRpcTransportFactory,
+  RestTransportFactory,
+} from '@a2a-js/sdk/client';
 import {BaseAgent, BaseAgentConfig} from '../agents/base_agent.js';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {Event as AdkEvent, createEvent} from '../events/event.js';
+import {propagateTraceContext} from '../telemetry/api/instrumentation.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 import {MessageRole} from './a2a_event.js';
@@ -93,11 +100,17 @@ export interface RemoteA2AAgentConfig extends BaseAgentConfig {
 
   /**
    * Optional pre-initialized Client for connection pooling.
+   *
+   * A provided client sends requests as it is configured, so the default
+   * trace context propagation does not apply to it.
    */
   client?: Client;
 
   /**
    * Optional ClientFactory for creating the A2A Client.
+   *
+   * Clients from a provided factory send requests as it is configured, so the
+   * default trace context propagation does not apply to them.
    */
   clientFactory?: ClientFactory;
   /**
@@ -117,6 +130,22 @@ export interface RemoteA2AAgentConfig extends BaseAgentConfig {
    * If omitted, defaults to `context.a2aMetadata` from the current invocation context.
    */
   metadata?: Record<string, unknown>;
+}
+
+/**
+ * Creates the default client factory, whose JSON-RPC and REST transports send
+ * the active trace context with each request, streaming ones included.
+ */
+function createTracePropagatingClientFactory(): ClientFactory {
+  const fetchImpl = propagateTraceContext();
+  return new ClientFactory(
+    ClientFactoryOptions.createFrom(ClientFactoryOptions.default, {
+      transports: [
+        new JsonRpcTransportFactory({fetchImpl}),
+        new RestTransportFactory({fetchImpl}),
+      ],
+    }),
+  );
 }
 
 /**
@@ -154,7 +183,8 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
       );
 
       if (!this.client) {
-        const factory = this.a2aConfig.clientFactory || new ClientFactory();
+        const factory =
+          this.a2aConfig.clientFactory ?? createTracePropagatingClientFactory();
         this.client = await factory.createFromAgentCard(this.card);
       }
     }

@@ -13,6 +13,7 @@ import {
   context,
   type Context,
   createContextKey,
+  propagation,
   type Span,
   SpanStatusCode,
   trace,
@@ -98,6 +99,11 @@ import {
   startNodeSpan,
 } from './internal/trace/node.js';
 import {
+  addMissingHeaders,
+  INCOMING_HEADERS_GETTER,
+  type IncomingHeaders,
+} from './internal/trace/propagation.js';
+import {
   buildMergedToolCallsAttributes,
   buildToolCallAttributes,
   setSkillSpanAttributes,
@@ -116,6 +122,7 @@ export type {
   ExperimentalFeature,
   TelemetryConfig,
 } from './internal/common/config.js';
+export type {IncomingHeaders} from './internal/trace/propagation.js';
 
 function nowMillis(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -914,4 +921,80 @@ export function instrumentMcpFetch(
     });
     return response;
   };
+}
+
+/** A `fetch`-compatible function. */
+export type FetchFunction = (
+  input: Parameters<typeof globalThis.fetch>[0],
+  init?: Parameters<typeof globalThis.fetch>[1],
+) => Promise<Response>;
+
+/**
+ * Returns a `fetch` that sends the active trace context with each request.
+ *
+ * At each call, the globally registered propagator writes the active context
+ * into the request headers: W3C `traceparent` and `tracestate` by default. A
+ * header the caller already sets is kept. When the propagator writes nothing,
+ * for example with no active trace, the request is sent with its arguments
+ * unchanged. A propagator error is logged, never thrown.
+ *
+ * @param fetchImpl The `fetch` that sends the request. Defaults to the global
+ *     `fetch`, read at each call.
+ */
+export function propagateTraceContext(
+  fetchImpl?: FetchFunction,
+): FetchFunction {
+  return (input, init) => {
+    const send = fetchImpl ?? globalThis.fetch;
+    const injected: Record<string, string> = {};
+    try {
+      propagation.inject(context.active(), injected);
+    } catch (error: unknown) {
+      logger.warn(
+        `Failed to inject trace context into a request: ${resolveErrorType(error)}`,
+      );
+      return send(input, init);
+    }
+    if (Object.keys(injected).length === 0) {
+      return send(input, init);
+    }
+    return send(input, {
+      ...init,
+      headers: addMissingHeaders(input, init, injected),
+    });
+  };
+}
+
+/**
+ * Runs `fn` in the trace context that an incoming request carries.
+ *
+ * When no span is active, the globally registered propagator reads the
+ * headers (W3C `traceparent` and `tracestate` by default), and a valid remote
+ * span becomes the parent of the invocation spans `fn` starts. An already
+ * active span, such as an HTTP server span or a remote parent set earlier,
+ * stays the parent, and the headers are ignored. Missing or malformed headers
+ * leave the context unchanged; a propagator error is logged, never thrown.
+ *
+ * @param headers The incoming request headers, such as Node's
+ *     `IncomingMessage.headers`.
+ * @param fn The request handler to run.
+ * @returns What `fn` returns.
+ */
+export function runWithRemoteTraceContext<T>(
+  headers: IncomingHeaders,
+  fn: () => T,
+): T {
+  const active = context.active();
+  if (trace.getSpan(active)) {
+    return fn();
+  }
+  let remote = active;
+  try {
+    remote = propagation.extract(active, headers, INCOMING_HEADERS_GETTER);
+  } catch (error: unknown) {
+    logger.warn(
+      `Failed to extract trace context from a request: ${resolveErrorType(error)}`,
+    );
+  }
+  return context.with(remote, fn);
 }

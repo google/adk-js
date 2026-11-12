@@ -131,8 +131,16 @@ describe('toA2a', () => {
       expect.stringContaining('agent-card.json'),
       'agentCardHandler',
     );
-    expect(app.use).toHaveBeenCalledWith('/rest', 'restHandler');
-    expect(app.use).toHaveBeenCalledWith('/jsonrpc', 'jsonRpcHandler');
+    expect(app.use).toHaveBeenCalledWith(
+      '/rest',
+      expect.any(Function),
+      'restHandler',
+    );
+    expect(app.use).toHaveBeenCalledWith(
+      '/jsonrpc',
+      expect.any(Function),
+      'jsonRpcHandler',
+    );
   });
 
   it('should use custom options when provided', async () => {
@@ -167,9 +175,14 @@ describe('toA2a', () => {
       'api/v1/.well-known/agent-card.json',
       'agentCardHandler',
     );
-    expect(customApp.use).toHaveBeenCalledWith('api/v1/rest', 'restHandler');
+    expect(customApp.use).toHaveBeenCalledWith(
+      'api/v1/rest',
+      expect.any(Function),
+      'restHandler',
+    );
     expect(customApp.use).toHaveBeenCalledWith(
       'api/v1/jsonrpc',
+      expect.any(Function),
       'jsonRpcHandler',
     );
   });

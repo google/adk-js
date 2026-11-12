@@ -14,6 +14,7 @@ import {BaseMemoryService} from '../memory/base_memory_service.js';
 import {Runner} from '../runner/runner.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {InMemorySessionService} from '../sessions/in_memory_session_service.js';
+import {runWithRemoteTraceContext} from '../telemetry/api/instrumentation.js';
 import {logger} from '../utils/logger.js';
 import {loadOptionalPeer} from '../utils/optional_peer.js';
 import {RunnableRoot} from '../workflow/run_node_as_invocation.js';
@@ -53,6 +54,19 @@ async function loadExpressBindings(): Promise<{
   // this import can no longer fail for a missing package.
   const a2aExpress = await import('@a2a-js/sdk/server/express');
   return {express: expressModule.default, a2aExpress};
+}
+
+/**
+ * Express middleware that runs the rest of an A2A request in the trace
+ * context its headers carry, so the agent invocation continues the caller's
+ * trace.
+ */
+function continueRemoteTrace(
+  req: express.Request,
+  _res: express.Response,
+  next: express.NextFunction,
+): void {
+  runWithRemoteTraceContext(req.headers, () => next());
 }
 
 /**
@@ -239,6 +253,7 @@ export async function toA2a(
   );
   app.use(
     `${basePath}/rest`,
+    continueRemoteTrace,
     a2aExpress.restHandler({
       requestHandler,
       userBuilder,
@@ -246,6 +261,7 @@ export async function toA2a(
   );
   app.use(
     `${basePath}/jsonrpc`,
+    continueRemoteTrace,
     a2aExpress.jsonRpcHandler({
       requestHandler,
       userBuilder,
