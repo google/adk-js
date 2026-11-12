@@ -65,7 +65,10 @@ async function resolveKey(
     }
     // Same conversion as the load_artifacts tool, so text-like inline data is
     // injected as text instead of base64 JSON.
-    return formatValue(asSafePartForLlm(artifact, fileName), true);
+    return formatValue(
+      asSafePartForLlm(artifact, fileName, {inlineMediaAsPlaceholder: true}),
+      true,
+    );
   }
 
   // Step 3: Handle state variable injection.
@@ -261,13 +264,9 @@ export async function injectSessionState(
 }
 
 /**
- * An IIFE that checks if the JavaScript runtime supports Unicode property
- * escapes (`\p{...}`) in regular expressions and returns a RegExp object that
- * is used for all subsequent calls to isIdentifier().
+ * Matches a valid ASCII identifier (`[a-zA-Z_][a-zA-Z0-9_]*`).
  */
-const isIdentifierPattern = (() => {
-  return /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-})();
+const IDENTIFIER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
 /**
  * Checks if a string is a valid identifier.
@@ -277,7 +276,7 @@ function isIdentifier(s: string): boolean {
     return false;
   }
 
-  return isIdentifierPattern.test(s);
+  return IDENTIFIER_PATTERN.test(s);
 }
 
 const VALID_PREFIXES = [State.APP_PREFIX, State.USER_PREFIX, State.TEMP_PREFIX];
