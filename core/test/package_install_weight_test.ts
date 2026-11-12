@@ -42,6 +42,7 @@ const pkg: CorePackageJson = JSON.parse(
  * that subsystem.
  */
 const OPTIONAL_SUBSYSTEM_PEERS = [
+  '@google-cloud/aiplatform',
   '@google-cloud/secret-manager',
   '@google-cloud/storage',
   '@mikro-orm/mariadb',
@@ -71,6 +72,7 @@ describe('core/package.json install weight', () => {
   );
 
   it.each([
+    '@google-cloud/aiplatform',
     '@google-cloud/storage',
     '@mikro-orm/sqlite',
     '@modelcontextprotocol/sdk',
