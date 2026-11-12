@@ -21,8 +21,11 @@
   "browser": "./dist/web/index_web.js",
   "exports": {
     ".": {
+      "browser": {
+        "types": "./dist/types/index_web.d.ts",
+        "default": "./dist/web/index_web.js"
+      },
       "types": "./dist/types/index.d.ts",
-      "browser": "./dist/web/index_web.js",
       "import": "./dist/esm/index.js",
       "require": "./dist/cjs/index.js",
       "default": "./dist/esm/index.js"
