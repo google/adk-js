@@ -6,7 +6,11 @@
 
 import {OpenAPIV3} from 'openapi-types';
 import {experimental} from '../../../utils/experimental.js';
-import {JsonObject, toJsonObject} from '../../../utils/json_utils.js';
+import {
+  isJsonObject,
+  JsonObject,
+  toJsonObject,
+} from '../../../utils/json_utils.js';
 import {CloudPlatformTokenSource, sendCloudRequest} from './cloud_request.js';
 
 /** Base URL of the Integration Connectors API. */
@@ -14,6 +18,9 @@ const CONNECTOR_URL = 'https://connectors.googleapis.com';
 
 /** Wait between two polls of a long-running operation, in milliseconds. */
 const OPERATION_POLL_INTERVAL_MS = 1000;
+
+/** Maximum number of polls for a long-running operation before timing out. */
+const MAX_OPERATION_POLL_ATTEMPTS = 60;
 
 /** Options for {@link ConnectionsClient}. */
 export interface ConnectionsClientOptions {
@@ -139,6 +146,20 @@ function toStringValue(value: unknown): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatOperationError(error: unknown): string {
+  if (typeof error === 'string' && error.length > 0) {
+    return error;
+  }
+  if (
+    isJsonObject(error) &&
+    typeof error['message'] === 'string' &&
+    error['message'].length > 0
+  ) {
+    return error['message'];
+  }
+  return JSON.stringify(error);
 }
 
 function schemaRef(name: string): {$ref: string} {
@@ -748,7 +769,8 @@ export class ConnectionsClient {
    * Reads the JSON schema of an entity and the operations it supports.
    *
    * @param entity The entity name.
-   * @throws Error When the API starts no operation for the entity.
+   * @throws Error When the API starts no operation for the entity, or the
+   *   operation fails or times out.
    */
   async getEntitySchemaAndOperations(
     entity: string,
@@ -779,7 +801,8 @@ export class ConnectionsClient {
    * Reads the input and output JSON schemas of an action.
    *
    * @param action The action name.
-   * @throws Error When the API starts no operation for the action.
+   * @throws Error When the API starts no operation for the action, or the
+   *   operation fails or times out.
    */
   async getActionSchema(action: string): Promise<ActionSchema> {
     const url = `${CONNECTOR_URL}/v1/projects/${this.project}/locations/${this.location}/connections/${this.connection}/connectionSchemaMetadata:getAction?actionId=${action}`;
@@ -818,14 +841,30 @@ export class ConnectionsClient {
     });
   }
 
-  /** Polls a long-running operation until it reports `done`. */
+  /**
+   * Polls a long-running operation until it reports `done`.
+   *
+   * @throws Error When the operation reports an `error` or does not finish
+   *   within `MAX_OPERATION_POLL_ATTEMPTS` polls.
+   */
   private async pollOperation(operationId: string): Promise<JsonObject> {
     const url = `${CONNECTOR_URL}/v1/${operationId}`;
-    let operation = toJsonObject(await this.executeApiCall(url));
-    while (operation['done'] !== true) {
-      await sleep(OPERATION_POLL_INTERVAL_MS);
-      operation = toJsonObject(await this.executeApiCall(url));
+    for (let attempt = 0; attempt < MAX_OPERATION_POLL_ATTEMPTS; attempt++) {
+      if (attempt > 0) {
+        await sleep(OPERATION_POLL_INTERVAL_MS);
+      }
+      const operation = toJsonObject(await this.executeApiCall(url));
+      if (operation['error']) {
+        throw new Error(
+          `Operation ${operationId} failed: ${formatOperationError(operation['error'])}`,
+        );
+      }
+      if (operation['done'] === true) {
+        return operation;
+      }
     }
-    return operation;
+    throw new Error(
+      `Operation ${operationId} timed out after ${MAX_OPERATION_POLL_ATTEMPTS} poll attempts.`,
+    );
   }
 }

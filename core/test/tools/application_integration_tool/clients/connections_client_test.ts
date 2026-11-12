@@ -318,6 +318,55 @@ describe('ConnectionsClient', () => {
       );
     });
 
+    it('throws when the polled operation reports an error message', async () => {
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({name: 'operations/test_op'}))
+        .mockResolvedValueOnce(
+          jsonResponse({
+            done: true,
+            error: {code: 13, message: 'Entity schema fetch failed'},
+          }),
+        );
+
+      await expect(
+        client().getEntitySchemaAndOperations('entity1'),
+      ).rejects.toThrow(
+        'Operation operations/test_op failed: Entity schema fetch failed',
+      );
+    });
+
+    it('throws serialized error details when the operation error has no message', async () => {
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({name: 'operations/test_op'}))
+        .mockResolvedValueOnce(
+          jsonResponse({
+            done: true,
+            error: {code: 13},
+          }),
+        );
+
+      await expect(
+        client().getEntitySchemaAndOperations('entity1'),
+      ).rejects.toThrow('Operation operations/test_op failed: {"code":13}');
+    });
+
+    it('throws when polling the operation exceeds the maximum attempts', async () => {
+      vi.useFakeTimers();
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({name: 'operations/test_op'}))
+        .mockImplementation(async () => jsonResponse({done: false}));
+
+      const assertion = expect(
+        client().getEntitySchemaAndOperations('entity1'),
+      ).rejects.toThrow(
+        'Operation operations/test_op timed out after 60 poll attempts.',
+      );
+      await vi.runAllTimersAsync();
+
+      await assertion;
+      expect(fetchMock).toHaveBeenCalledTimes(61);
+    });
+
     it('propagates a request error', async () => {
       fetchMock.mockResolvedValue(new Response('', {status: 503}));
 
@@ -379,6 +428,21 @@ describe('ConnectionsClient', () => {
 
       await expect(client().getActionSchema('action1')).rejects.toThrow(
         'Failed to get action schema for action: action1',
+      );
+    });
+
+    it('throws when the polled action operation reports an error', async () => {
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({name: 'operations/test_op'}))
+        .mockResolvedValueOnce(
+          jsonResponse({
+            done: true,
+            error: {code: 13, message: 'Action schema fetch failed'},
+          }),
+        );
+
+      await expect(client().getActionSchema('action1')).rejects.toThrow(
+        'Operation operations/test_op failed: Action schema fetch failed',
       );
     });
 
