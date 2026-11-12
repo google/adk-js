@@ -355,6 +355,10 @@ export type {
 export {InMemorySessionService} from './sessions/in_memory_session_service.js';
 export {createSession} from './sessions/session.js';
 export type {CompositeSessionKey, Session} from './sessions/session.js';
+export {
+  StaleSessionError,
+  isStaleSessionError,
+} from './sessions/stale_session_error.js';
 export {State, StateSchemaError, isStateSchemaError} from './sessions/state.js';
 export type {
   ContentCapturingMode,

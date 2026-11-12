@@ -74,4 +74,19 @@ describe('web build output', () => {
     }
     expect(unparseable).toEqual([]);
   });
+
+  it('exports StaleSessionError and isStaleSessionError without bundling @mikro-orm', async () => {
+    const pkg = JSON.parse(
+      await fs.readFile(
+        path.join(process.cwd(), 'core', 'package.json'),
+        'utf8',
+      ),
+    ) as {browser?: string};
+    const target = path.join(process.cwd(), 'core', pkg.browser!);
+    const source = await fs.readFile(target, 'utf8');
+
+    expect(source).toContain('StaleSessionError');
+    expect(source).toContain('isStaleSessionError');
+    expect(source).not.toContain('@mikro-orm');
+  });
 });

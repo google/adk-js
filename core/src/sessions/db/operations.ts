@@ -400,17 +400,133 @@ export async function getConnectionOptionsFromUri(
 }
 
 /**
- * Creates a database and tables if they don't exist.
+ * The subset of a MikroORM SQL schema helper that `ensureDatabaseCreated`
+ * uses. It is declared here so `core` does not import `@mikro-orm/sql`.
+ */
+interface TableListingSchemaHelper {
+  getAllTables?: (
+    connection: unknown,
+  ) => Promise<Array<{table_name: string; schema_name?: string | null}>>;
+  tableExists?: (
+    connection: unknown,
+    tableName: string,
+    schemaName?: string,
+  ) => Promise<boolean>;
+}
+
+/**
+ * Creates a database and any missing entity tables without altering existing
+ * tables.
  *
  * @param orm The MikroORM instance.
  * @returns Promise<void>
  */
 export async function ensureDatabaseCreated(orm: MikroORM): Promise<void> {
-  // creates database if it doesn't exist
   await orm.schema.ensureDatabase();
 
-  // creates tables if they don't exist. Safe mode prevents dropping columns or tables.
-  await orm.schema.update({safe: true});
+  const entityMetadata = [...orm.getMetadata().getAll().values()].filter(
+    (meta) => !meta.embeddable && !meta.virtual && !meta.view,
+  );
+  if (entityMetadata.length === 0) {
+    return;
+  }
+
+  const platform = orm.driver.getPlatform();
+  const schemaHelper = platform.getSchemaHelper() as
+    TableListingSchemaHelper | undefined;
+  if (typeof schemaHelper?.getAllTables !== 'function') {
+    await orm.schema.create();
+    return;
+  }
+
+  const connection = orm.driver.getConnection();
+  const defaultSchema = platform.getDefaultSchemaName();
+  const configSchema = orm.config.get('schema');
+  const dbName = orm.config.get('dbName');
+
+  // A listed table with no schema name is in the connection's current schema.
+  // Dialects without a default schema (MySQL, MariaDB) use the database name
+  // as the schema name.
+  const isCurrentSchema = (schemaName?: string | null): boolean =>
+    !schemaName ||
+    schemaName === defaultSchema ||
+    (defaultSchema === undefined && schemaName === dbName);
+  const tableKey = (tableName: string, schemaName?: string | null): string => {
+    const schemaPart =
+      !schemaName || isCurrentSchema(schemaName) ? '' : schemaName;
+    return `${schemaPart}.${tableName}`.toLowerCase();
+  };
+
+  // Each SQL dialect implements `getAllTables` with its own catalog query, so
+  // one query replaces a `tableExists` round trip per entity.
+  const listedTables = await schemaHelper.getAllTables(connection);
+  const listedTableKeys = new Set(
+    listedTables.map((table) => tableKey(table.table_name, table.schema_name)),
+  );
+
+  const seenTableKeys = new Set<string>();
+  const existingTableNames: string[] = [];
+  let missingCount = 0;
+
+  for (const meta of entityMetadata) {
+    const schemaName = meta.schema ?? configSchema;
+    const key = tableKey(meta.tableName, schemaName);
+    if (seenTableKeys.has(key)) {
+      continue;
+    }
+    seenTableKeys.add(key);
+
+    let exists = listedTableKeys.has(key);
+    if (
+      !exists &&
+      defaultSchema === undefined &&
+      !isCurrentSchema(schemaName) &&
+      typeof schemaHelper.tableExists === 'function'
+    ) {
+      // On MySQL and MariaDB a schema is a separate database, and the table
+      // listing covers only the current database.
+      exists = await schemaHelper.tableExists(
+        connection,
+        meta.tableName,
+        schemaName,
+      );
+    }
+
+    if (exists) {
+      // A bare name in `skipTables` matches the table in every schema, so
+      // qualify names outside the default schema.
+      existingTableNames.push(
+        schemaName && schemaName !== defaultSchema
+          ? `${schemaName}.${meta.tableName}`
+          : meta.tableName,
+      );
+    } else {
+      missingCount++;
+    }
+  }
+
+  if (missingCount === 0) {
+    return;
+  }
+
+  if (existingTableNames.length === 0) {
+    await orm.schema.create();
+    return;
+  }
+
+  // Mutate `skipTables` in place because `SqlSchemaGenerator` caches the
+  // `schemaGenerator` config object reference at construction time.
+  const schemaGenConfig = orm.config.get('schemaGenerator');
+  const previousSkipTables = schemaGenConfig.skipTables;
+  schemaGenConfig.skipTables = [
+    ...(previousSkipTables ?? []),
+    ...existingTableNames,
+  ];
+  try {
+    await orm.schema.create();
+  } finally {
+    schemaGenConfig.skipTables = previousSkipTables;
+  }
 }
 
 /**

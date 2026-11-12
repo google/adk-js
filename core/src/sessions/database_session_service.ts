@@ -5,6 +5,7 @@
  */
 
 import type {
+  EntityManager,
   FilterQuery,
   LockMode as LockModeEnum,
   MikroORM as MikroORMClass,
@@ -80,13 +81,137 @@ async function importMikroOrm(): Promise<void> {
 
 export {isStaleSessionError, StaleSessionError} from './stale_session_error.js';
 
+const STORAGE_UPDATE_MARKER_SYMBOL = Symbol.for(
+  'google.adk.session.storageUpdateMarker',
+);
+
 /**
- * Formats a Date or timestamp into 'YYYY-MM-DD HH:mm:ss' in UTC.
+ * The stored `update_time` that a session object was last synced with.
+ *
+ * `unverifiedWrite` is true when the value came from a write this service made,
+ * not from a read. The database can round such a value after the write.
+ *
+ * `eventsComplete` is true when `session.events` holds every stored event of
+ * the session, and false when it can hold only the most recent events.
+ *
+ * `totalEventCount` is the total number of stored events for this session at the
+ * time the marker was recorded, when known.
+ */
+interface StorageRevisionRecord {
+  marker: string;
+  recordedLastUpdateTime: number;
+  unverifiedWrite: boolean;
+  eventsComplete: boolean;
+  totalEventCount?: number;
+}
+
+function setStorageRevisionMarker(
+  session: Session,
+  revision: StorageRevisionRecord,
+): void {
+  Object.defineProperty(session, STORAGE_UPDATE_MARKER_SYMBOL, {
+    value: revision,
+    writable: true,
+    configurable: true,
+    enumerable: false,
+  });
+}
+
+function getStorageRevisionMarker(
+  session: Session,
+): StorageRevisionRecord | undefined {
+  return (session as {[STORAGE_UPDATE_MARKER_SYMBOL]?: StorageRevisionRecord})[
+    STORAGE_UPDATE_MARKER_SYMBOL
+  ];
+}
+
+/**
+ * Maximum number of IDs to include in a single SQL `$nin` filter query.
+ * Keeps the parameter count safely below driver bind-parameter limits.
+ */
+const MAX_IN_QUERY_IDS = 500;
+
+/**
+ * Returns true when storage holds no event that the session object does not
+ * know, and the newest stored event is the last event of the session object.
+ *
+ * When `eventsComplete` is false, the session object can hold only its most
+ * recent events. Then only stored events at or after the timestamp of its first
+ * event count as unknown.
+ *
+ * When `totalEventCount` is provided, storage must hold exactly that many
+ * events for the session.
+ */
+async function sessionMatchesStorageRevision(
+  txEm: EntityManager,
+  session: Session,
+  eventsComplete: boolean,
+  totalEventCount?: number,
+): Promise<boolean> {
+  const sessionWhere = {
+    appName: session.appName,
+    userId: session.userId,
+    sessionId: session.id,
+  };
+  const latestStorageEvent = await txEm.findOne(StorageEvent, sessionWhere, {
+    orderBy: {timestamp: 'DESC', id: 'DESC'},
+  });
+  if (session.events.length === 0) {
+    if (latestStorageEvent !== null) {
+      return false;
+    }
+    if (totalEventCount !== undefined && totalEventCount !== 0) {
+      return false;
+    }
+    return true;
+  }
+  if (latestStorageEvent?.id !== session.events[session.events.length - 1].id) {
+    return false;
+  }
+  if (totalEventCount !== undefined) {
+    const totalStored = await txEm.count(StorageEvent, sessionWhere);
+    if (totalStored !== totalEventCount) {
+      return false;
+    }
+  }
+
+  const knownIds = session.events.map((e) => e.id);
+  if (knownIds.length <= MAX_IN_QUERY_IDS) {
+    const unknownEventWhere: FilterQuery<StorageEventEntity> = {
+      ...sessionWhere,
+      id: {$nin: knownIds},
+    };
+    if (!eventsComplete) {
+      unknownEventWhere.timestamp = {
+        $gte: new Date(session.events[0].timestamp),
+      };
+    }
+    return (await txEm.count(StorageEvent, unknownEventWhere)) === 0;
+  }
+
+  const filter: FilterQuery<StorageEventEntity> = {...sessionWhere};
+  if (!eventsComplete) {
+    filter.timestamp = {$gte: new Date(session.events[0].timestamp)};
+  }
+  const storedEvents = await txEm.find(StorageEvent, filter, {
+    fields: ['id'],
+  });
+  const knownSet = new Set(knownIds);
+  for (const stored of storedEvents) {
+    if (!knownSet.has(stored.id)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Formats a Date or timestamp into 'YYYY-MM-DD HH:mm:ss.sss' in UTC.
  */
 function formatDateTime(dateOrEpochMs: Date | number): string {
   const date =
     typeof dateOrEpochMs === 'number' ? new Date(dateOrEpochMs) : dateOrEpochMs;
-  return date.toISOString().replace('T', ' ').slice(0, 19);
+  return date.toISOString().replace('T', ' ').replace('Z', '');
 }
 
 /**
@@ -150,13 +275,20 @@ export class DatabaseSessionService extends BaseSessionService {
         this.staleSession = 'reject';
       }
     } else {
-      if (!connectionStringOrOptions.driver) {
+      const {staleSession: firstStaleSession, ...firstMikroOptions} =
+        connectionStringOrOptions;
+      const {staleSession: secondStaleSession, ...secondMikroOptions} =
+        options ?? {};
+      const mergedMikroOptions = {
+        ...firstMikroOptions,
+        ...secondMikroOptions,
+      };
+      if (!mergedMikroOptions.driver) {
         throw new Error('Driver is required when passing options object.');
       }
 
-      const {staleSession, ...mikroOptions} = connectionStringOrOptions;
-      this.options = mikroOptions;
-      this.staleSession = staleSession ?? 'reject';
+      this.options = mergedMikroOptions;
+      this.staleSession = secondStaleSession ?? firstStaleSession ?? 'reject';
     }
   }
 
@@ -265,14 +397,22 @@ export class DatabaseSessionService extends BaseSessionService {
       sessionState,
     );
 
-    return createSession({
+    const session = createSession({
       id,
       appName,
       userId,
       state: mergedState,
       events: [],
-      lastUpdateTime: storageSession.createTime.getTime(),
+      lastUpdateTime: storageSession.updateTime.getTime(),
     });
+    setStorageRevisionMarker(session, {
+      marker: storageSession.updateTime.toISOString(),
+      recordedLastUpdateTime: session.lastUpdateTime,
+      unverifiedWrite: true,
+      eventsComplete: true,
+      totalEventCount: 0,
+    });
+    return session;
   }
 
   async getSession({
@@ -325,7 +465,7 @@ export class DatabaseSessionService extends BaseSessionService {
       storageSession.state,
     );
 
-    return createSession({
+    const session = createSession({
       id: sessionId,
       appName,
       userId,
@@ -333,6 +473,21 @@ export class DatabaseSessionService extends BaseSessionService {
       events: storageEvents.map((se) => se.eventData),
       lastUpdateTime: storageSession.updateTime.getTime(),
     });
+    const eventsComplete =
+      config?.numRecentEvents === undefined &&
+      config?.afterTimestamp === undefined;
+    const totalEventCount = eventsComplete
+      ? session.events.length
+      : await em.count(StorageEvent, {appName, userId, sessionId});
+
+    setStorageRevisionMarker(session, {
+      marker: storageSession.updateTime.toISOString(),
+      recordedLastUpdateTime: session.lastUpdateTime,
+      unverifiedWrite: false,
+      eventsComplete,
+      totalEventCount,
+    });
+    return session;
   }
 
   async listSessions({
@@ -425,7 +580,7 @@ export class DatabaseSessionService extends BaseSessionService {
     const sessions = storageSessions.map((ss) => {
       const uState = userStateMap[ss.userId] || {};
       const merged = mergeStates(appState, uState, ss.state);
-      return createSession({
+      const session = createSession({
         id: ss.id,
         appName: ss.appName,
         userId: ss.userId,
@@ -433,6 +588,13 @@ export class DatabaseSessionService extends BaseSessionService {
         events: [],
         lastUpdateTime: ss.updateTime.getTime(),
       });
+      setStorageRevisionMarker(session, {
+        marker: ss.updateTime.toISOString(),
+        recordedLastUpdateTime: session.lastUpdateTime,
+        unverifiedWrite: false,
+        eventsComplete: false,
+      });
+      return session;
     });
 
     return {sessions, ...paginationMeta};
@@ -480,11 +642,49 @@ export class DatabaseSessionService extends BaseSessionService {
         throw new Error(`Session ${session.id} not found for appendEvent`);
       }
 
-      if (storageSession.updateTime.getTime() > session.lastUpdateTime) {
+      const storageUpdateTime = storageSession.updateTime.getTime();
+      const storageUpdateMarker = storageSession.updateTime.toISOString();
+      const rev = getStorageRevisionMarker(session);
+      const callerMutatedLastUpdateTime =
+        rev !== undefined &&
+        rev.recordedLastUpdateTime !== session.lastUpdateTime;
+      let isStale = false;
+
+      if (rev !== undefined && !callerMutatedLastUpdateTime) {
+        if (rev.marker === storageUpdateMarker) {
+          session.lastUpdateTime = storageUpdateTime;
+        } else if (
+          rev.unverifiedWrite &&
+          storageUpdateTime % 1000 === 0 &&
+          Math.abs(storageUpdateTime - rev.recordedLastUpdateTime) < 1000 &&
+          (await sessionMatchesStorageRevision(
+            txEm,
+            session,
+            rev.eventsComplete,
+            rev.totalEventCount,
+          ))
+        ) {
+          session.lastUpdateTime = storageUpdateTime;
+        } else {
+          isStale = true;
+        }
+      } else if (rev !== undefined) {
+        isStale = storageUpdateTime > session.lastUpdateTime;
+      } else if (storageUpdateTime > session.lastUpdateTime) {
+        if (await sessionMatchesStorageRevision(txEm, session, false)) {
+          session.lastUpdateTime = storageUpdateTime;
+        } else {
+          isStale = true;
+        }
+      }
+
+      if (isStale) {
         if (this.staleSession === 'reject') {
-          throw new StaleSessionError(
-            `The last_update_time provided in the session object ${formatDateTime(session.lastUpdateTime)} is earlier than the update_time in the storage_session ${formatDateTime(storageSession.updateTime)}. Please check if it is a stale session.`,
-          );
+          const message =
+            storageUpdateTime > session.lastUpdateTime
+              ? `The last_update_time provided in the session object ${formatDateTime(session.lastUpdateTime)} is earlier than the update_time in the storage_session ${formatDateTime(storageSession.updateTime)}. Please check if it is a stale session.`
+              : `The session object with last_update_time ${formatDateTime(session.lastUpdateTime)} does not match the storage_session revision with update_time ${formatDateTime(storageSession.updateTime)}. Please check if it is a stale session.`;
+          throw new StaleSessionError(message);
         }
         sessionWasStale = true;
       }
@@ -588,8 +788,29 @@ export class DatabaseSessionService extends BaseSessionService {
       }
       session.state = newMergedState;
 
+      const isNewEvent = !existingStorageEvent;
       upsertSessionEvent(session, event);
       session.lastUpdateTime = storageSession.updateTime.getTime();
+
+      let nextTotalEventCount: number | undefined;
+      if (!callerMutatedLastUpdateTime && !isStale) {
+        if (rev?.totalEventCount !== undefined) {
+          nextTotalEventCount = rev.totalEventCount + (isNewEvent ? 1 : 0);
+        } else if (rev?.eventsComplete === true) {
+          nextTotalEventCount = session.events.length;
+        }
+      }
+
+      setStorageRevisionMarker(session, {
+        marker: storageSession.updateTime.toISOString(),
+        recordedLastUpdateTime: session.lastUpdateTime,
+        unverifiedWrite: true,
+        eventsComplete:
+          !callerMutatedLastUpdateTime &&
+          rev?.eventsComplete === true &&
+          !isStale,
+        totalEventCount: nextTotalEventCount,
+      });
     });
 
     if (sessionWasStale) {
@@ -605,6 +826,14 @@ export class DatabaseSessionService extends BaseSessionService {
         );
         session.events = storageEvents.map((se) => se.eventData);
         upsertSessionEvent(session, event);
+        const lastRev = getStorageRevisionMarker(session);
+        if (lastRev) {
+          setStorageRevisionMarker(session, {
+            ...lastRev,
+            eventsComplete: true,
+            totalEventCount: session.events.length,
+          });
+        }
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         logger.warn(
