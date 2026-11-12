@@ -87,6 +87,12 @@ export const ERROR_TYPE_ATTR = 'error.type';
 /** Standard OpenTelemetry end-user identifier attribute key. */
 export const USER_ID_ATTR = 'user.id';
 
+/**
+ * Attribute on the top span of a trace that holds the caller's `traceparent`
+ * header, so a support request can be matched to the trace.
+ */
+export const SUPPORT_ID_ATTR = 'supportID';
+
 /** Instrumentation scope name identifying ADK as the emitter. */
 export const GEN_AI_SYSTEM_VALUE = 'gcp.vertex.agent';
 

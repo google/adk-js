@@ -31,13 +31,25 @@ import {
   StreamingMode,
   Workflow,
 } from '@google/adk';
+import {context, type SpanContext, trace} from '@opentelemetry/api';
+import {AsyncLocalStorageContextManager} from '@opentelemetry/context-async-hooks';
 import {emptyResource} from '@opentelemetry/resources';
 import {ReadableSpan, SpanProcessor} from '@opentelemetry/sdk-trace-base';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from 'vitest';
 import {z} from 'zod';
 
 import {
@@ -55,18 +67,20 @@ interface JsonRpcResponse {
 
 /**
  * Sends a genuine A2A `message/send` JSON-RPC call, optionally with an
- * `Authorization` header, and reports the raw HTTP status so authentication
- * failures can be told apart from agent responses.
+ * `Authorization` header and extra headers, and reports the raw HTTP status so
+ * authentication failures can be told apart from agent responses.
  */
 async function sendA2aMessage(
   baseUrl: string,
   authorization?: string,
+  headers: Record<string, string> = {},
 ): Promise<{status: number; body: JsonRpcResponse}> {
   const response = await fetch(`${baseUrl}/a2a/testApp/jsonrpc`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...(authorization ? {Authorization: authorization} : {}),
+      ...headers,
     },
     body: JSON.stringify({
       jsonrpc: '2.0',
@@ -100,8 +114,8 @@ class HttpClient {
     return this.request<T>(url, {method: 'GET'});
   }
 
-  post<T>(url: string, body?: unknown) {
-    return this.request<T>(url, {method: 'POST', body});
+  post<T>(url: string, body?: unknown, headers?: Record<string, string>) {
+    return this.request<T>(url, {method: 'POST', body, headers});
   }
 
   put<T>(url: string, body?: unknown) {
@@ -114,11 +128,17 @@ class HttpClient {
 
   private async request<T = unknown>(
     url: string,
-    {method, body}: {method: string; body?: unknown},
+    {
+      method,
+      body,
+      headers,
+    }: {method: string; body?: unknown; headers?: Record<string, string>},
   ): Promise<{status: number; data?: T; text?: string}> {
     const options = {
       method,
-      headers: body ? {'Content-Type': 'application/json'} : undefined,
+      headers: body
+        ? {'Content-Type': 'application/json', ...headers}
+        : headers,
       body: body ? JSON.stringify(body) : undefined,
       redirect: 'manual' as const,
     };
@@ -2398,6 +2418,232 @@ describe('AdkWebServer', () => {
       }
       expect(events).toEqual(['flushed', 'closeFrame']);
       expect(forceFlush).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('Agent Engine trace context', () => {
+    const AGENT_ENGINE_TRACE_ID = '0af7651916cd43dd8448eb211c80319c';
+    const AGENT_ENGINE_SPAN_ID = 'b7ad6b7169203331';
+    const AGENT_ENGINE_HEADERS = {
+      'Google-Agent-Engine-Traceparent': `00-${AGENT_ENGINE_TRACE_ID}-${AGENT_ENGINE_SPAN_ID}-01`,
+      'traceparent': '00-11111111111111111111111111111111-2222222222222222-01',
+    };
+    const INVALID_HEADERS = {
+      'Google-Agent-Engine-Traceparent': 'not a traceparent',
+      'traceparent': '00-11111111111111111111111111111111-2222222222222222-01',
+    };
+    const AGENT_ENGINE_SPAN_CONTEXT: SpanContext = {
+      traceId: AGENT_ENGINE_TRACE_ID,
+      spanId: AGENT_ENGINE_SPAN_ID,
+      traceFlags: 1,
+      isRemote: true,
+    };
+    const NEW_MESSAGE = {parts: [{text: 'Hello'}], role: 'user'};
+    const contextManager = new AsyncLocalStorageContextManager();
+
+    beforeAll(() => {
+      context.setGlobalContextManager(contextManager.enable());
+    });
+
+    afterAll(() => {
+      context.disable();
+      contextManager.disable();
+    });
+
+    beforeEach(async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+    });
+
+    /** Records the span context active each time the runner starts a run. */
+    function recordRunSpanContexts(
+      method: 'runAsync' | 'runLive',
+    ): Array<SpanContext | undefined> {
+      const recorded: Array<SpanContext | undefined> = [];
+      const record = () => {
+        recorded.push(trace.getSpanContext(context.active()));
+      };
+      const {runAsync, runLive} = Runner.prototype;
+      const spy =
+        method === 'runAsync'
+          ? vi.spyOn(Runner.prototype, 'runAsync').mockImplementation(function (
+              this: Runner,
+              params,
+            ) {
+              record();
+              return runAsync.call(this, params);
+            })
+          : vi.spyOn(Runner.prototype, 'runLive').mockImplementation(function (
+              this: Runner,
+              params,
+            ) {
+              record();
+              return runLive.call(this, params);
+            });
+      onTestFinished(() => {
+        spy.mockRestore();
+      });
+      return recorded;
+    }
+
+    /** Opens a /run_live session and waits for the first server frame. */
+    async function openLiveSession(
+      headers: Record<string, string>,
+    ): Promise<void> {
+      const target = new URL(
+        `${server.url}/run_live?app_name=testApp&user_id=testUser&session_id=sessionId&modalities=TEXT`,
+      );
+      await new Promise<void>((resolve, reject) => {
+        const req = http.request({
+          host: target.hostname,
+          port: target.port,
+          path: `${target.pathname}${target.search}`,
+          method: 'GET',
+          headers: {
+            ...headers,
+            Connection: 'Upgrade',
+            Upgrade: 'websocket',
+            'Sec-WebSocket-Key':
+              Buffer.from('1234567890123456').toString('base64'),
+            'Sec-WebSocket-Version': '13',
+          },
+        });
+        req.on('upgrade', (_res, socket) => {
+          socket.on('data', () => {
+            socket.destroy();
+          });
+          socket.on('close', () => {
+            resolve();
+          });
+          socket.on('error', reject);
+        });
+        req.on('error', reject);
+        req.end();
+      });
+    }
+
+    it.each(['/run', '/run_sse'])(
+      'continues the Agent Engine trace on %s',
+      async (route) => {
+        const recorded = recordRunSpanContexts('runAsync');
+
+        const response = await client.post(
+          route,
+          {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'sessionId',
+            newMessage: NEW_MESSAGE,
+          },
+          AGENT_ENGINE_HEADERS,
+        );
+
+        expect(response.status).toBe(200);
+        expect(recorded).toEqual([AGENT_ENGINE_SPAN_CONTEXT]);
+      },
+    );
+
+    it('continues the Agent Engine trace on /api/reasoning_engine', async () => {
+      const recorded = recordRunSpanContexts('runAsync');
+
+      const response = await client.post(
+        '/api/reasoning_engine',
+        {
+          input: {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'sessionId',
+            newMessage: NEW_MESSAGE,
+          },
+        },
+        AGENT_ENGINE_HEADERS,
+      );
+
+      expect(response.status).toBe(200);
+      expect(recorded).toEqual([AGENT_ENGINE_SPAN_CONTEXT]);
+    });
+
+    it('continues the Agent Engine trace on A2A', async () => {
+      vi.stubEnv(A2A_AUTH_TOKEN_ENV_VAR, undefined);
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const a2aServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+        a2a: true,
+      });
+      await a2aServer.start();
+      onTestFinished(async () => {
+        await a2aServer.stop();
+        vi.unstubAllEnvs();
+        vi.restoreAllMocks();
+      });
+      const recorded = recordRunSpanContexts('runAsync');
+
+      const response = await sendA2aMessage(
+        a2aServer.url,
+        undefined,
+        AGENT_ENGINE_HEADERS,
+      );
+
+      expect(response.status).toBe(200);
+      expect(recorded).toEqual([AGENT_ENGINE_SPAN_CONTEXT]);
+    });
+
+    it('continues the Agent Engine trace on /run_live', async () => {
+      const recorded = recordRunSpanContexts('runLive');
+
+      await openLiveSession(AGENT_ENGINE_HEADERS);
+
+      expect(recorded).toEqual([AGENT_ENGINE_SPAN_CONTEXT]);
+    });
+
+    it.each([
+      {
+        route: '/run',
+        body: {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'sessionId',
+          newMessage: NEW_MESSAGE,
+        },
+      },
+      {
+        route: '/api/reasoning_engine',
+        body: {
+          input: {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'sessionId',
+            newMessage: NEW_MESSAGE,
+          },
+        },
+      },
+    ])('ignores an invalid header on $route', async ({route, body}) => {
+      const recorded = recordRunSpanContexts('runAsync');
+
+      const response = await client.post(route, body, INVALID_HEADERS);
+
+      expect(response.status).toBe(200);
+      expect(recorded).toEqual([undefined]);
+    });
+
+    it('sets no parent without the headers', async () => {
+      const recorded = recordRunSpanContexts('runAsync');
+
+      const response = await client.post('/run', {
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        newMessage: NEW_MESSAGE,
+      });
+
+      expect(response.status).toBe(200);
+      expect(recorded).toEqual([undefined]);
     });
   });
 
