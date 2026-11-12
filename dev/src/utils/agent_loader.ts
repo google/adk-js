@@ -783,13 +783,25 @@ export class AgentLoader {
       }
       if (fileOrDir.isFile && isJsFile(fileOrDir.ext)) {
         await this.loadAgentFromFile(fileOrDir, generation);
-        continue;
       }
+    }
 
+    for (const fileOrDir of files) {
+      if (this.invalidationGeneration !== generation) {
+        return;
+      }
       if (fileOrDir.isDirectory) {
         if (
           fileOrDir.name === 'node_modules' ||
-          fileOrDir.name.startsWith('.')
+          fileOrDir.name.startsWith('.') ||
+          Object.prototype.hasOwnProperty.call(
+            this.preloadedAgents,
+            fileOrDir.name,
+          ) ||
+          Object.prototype.hasOwnProperty.call(
+            this.loadFailures,
+            fileOrDir.name,
+          )
         ) {
           continue;
         }

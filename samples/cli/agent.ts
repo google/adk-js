@@ -5,21 +5,21 @@
  */
 
 /**
- * CLI and Evaluation Utilities (`createEmptyState`, `convertSessionToEvalFormat`, `runEvals`)
+ * CLI and Evaluation Utilities (`createEmptyState`, `convertSessionToEvalInvocations`, `runEvals`)
  * ../../docs/guides/cli/index.md
  *
  * A deterministic `BaseAgent` with a child `LlmAgent` whose instruction
  * contains `{department}` and `{locale}` placeholders. The `main()` driver
  * builds initial state via `createEmptyState`, runs a two-turn conversation
  * with `InMemoryRunner` (including a simulated tool call), converts the
- * recorded session into `EvaluationItem` records via
- * `convertSessionToEvalFormat`, and evaluates the agent against the captured
- * dataset with `runEvals`.
+ * recorded session into `EvalInvocation` records via
+ * `convertSessionToEvalInvocations`, and evaluates the agent against the
+ * captured `EvalCase` with `runEvals`.
  *
  * This sample exports `rootAgent` for `adk web` and `npm run sample`, and
  * includes a self-contained `main()` driver because `scripts/run_sample.ts`
  * only runs a single agent turn and does not invoke `createEmptyState`,
- * `convertSessionToEvalFormat`, `parseAndGetEvalsToRun`, or `runEvals`.
+ * `convertSessionToEvalInvocations`, `parseAndGetEvalsToRun`, or `runEvals`.
  *
  * Run (offline, no API key):
  *   npx tsx samples/cli/agent.ts
@@ -29,9 +29,10 @@
 import {
   BaseAgent,
   closeRunners,
-  convertSessionToEvalFormat,
+  convertSessionToEvalInvocations,
   createEmptyState,
   createEvent,
+  EvalCase,
   EvalResult,
   EvalStatus,
   Event,
@@ -39,6 +40,7 @@ import {
   InvocationContext,
   LlmAgent,
   LocalEvalSetResultsManager,
+  LocalEvalSetsManager,
   parseAndGetEvalsToRun,
   runEvals,
   stringifyContent,
@@ -172,10 +174,19 @@ async function main() {
     userId,
     sessionId: session.id,
   });
-  const evalItems = convertSessionToEvalFormat(storedSession);
+  const evalInvocations = convertSessionToEvalInvocations(storedSession);
   process.stdout.write(
-    `Converted session turns: ${evalItems.length} (first tool: ${evalItems[0]?.expected_tool_use[0]?.tool_name})\n`,
+    `Converted session turns: ${evalInvocations.length} (first tool: ${evalInvocations[0]?.intermediateData?.toolUses[0]?.name})\n`,
   );
+  const orderFlowCase: EvalCase = {
+    evalId: 'order_flow',
+    conversation: evalInvocations,
+    sessionInput: {
+      appName,
+      userId,
+      state: initialState,
+    },
+  };
 
   const parsedSpecs = parseAndGetEvalsToRun([
     'support.evalset.json:order_flow',
@@ -185,17 +196,7 @@ async function main() {
   const evalResults: EvalResult[] = [];
   for await (const result of runEvals({
     evalCasesByEvalSetId: {
-      'support.evalset.json': [
-        {
-          name: 'order_flow',
-          data: evalItems,
-          initial_session: {
-            app_name: appName,
-            user_id: userId,
-            state: initialState,
-          },
-        },
-      ],
+      'support.evalset.json': [orderFlowCase],
     },
     rootAgent,
   })) {
@@ -214,6 +215,22 @@ async function main() {
     path.join(os.tmpdir(), 'adk-cli-sample-'),
   );
   try {
+    const setsManager = new LocalEvalSetsManager(tempAgentsDir);
+    setsManager.createEvalSet(appName, 'support');
+    setsManager.addEvalCase(appName, 'support', orderFlowCase);
+    const storedCase = setsManager.getEvalCase(
+      appName,
+      'support',
+      'order_flow',
+    );
+    if (storedCase) {
+      setsManager.updateEvalCase(appName, 'support', {
+        ...storedCase,
+        creationTimestamp: 1,
+      });
+    }
+    setsManager.deleteEvalCase(appName, 'support', 'order_flow');
+
     const resultsManager = new LocalEvalSetResultsManager(tempAgentsDir);
     const savedSetResult = resultsManager.saveEvalSetResult({
       appName,

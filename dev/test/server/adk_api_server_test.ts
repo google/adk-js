@@ -24,6 +24,7 @@ import {
   InvocationContext,
   LlmAgent,
   LocalEvalSetResultsManager,
+  LocalEvalSetsManager,
   node,
   RESTORED_EVENT_KEY,
   Runner,
@@ -2078,6 +2079,29 @@ describe('AdkWebServer', () => {
       }
     });
 
+    it('returns 400 when a raw request body is not valid JSON', async () => {
+      const res = await fetch(`${server.url}/api/reasoning_engine`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json,application/json'},
+        body: '{not valid json',
+      });
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({
+        error: 'Request body is not valid JSON.',
+      });
+    });
+
+    it('returns 413 when a raw request body is larger than the limit', async () => {
+      const res = await fetch(`${server.url}/api/reasoning_engine`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json,application/json'},
+        body: 'a'.repeat(50 * 1024 * 1024 + 1),
+      });
+
+      expect(res.status).toBe(413);
+    });
+
     it.each([
       {name: 'already-parsed JSON body', contentType: 'application/json'},
       {
@@ -3108,6 +3132,88 @@ describe('AdkWebServer', () => {
         );
         expect(listEvalsRes.data).toEqual(['case_1']);
 
+        // 6a. Get the eval case by ID
+        const getCaseRes = await evalClient.get<{
+          evalId: string;
+          conversation: Array<{
+            userContent: {parts: Array<{text?: string}>};
+            finalResponse?: {parts: Array<{text?: string}>};
+          }>;
+        }>('/apps/testApp/eval_sets/set_one/evals/case_1');
+        expect(getCaseRes.status).toBe(200);
+        expect(getCaseRes.data?.evalId).toBe('case_1');
+        expect(getCaseRes.data?.conversation).toHaveLength(1);
+        expect(
+          getCaseRes.data?.conversation[0].userContent.parts[0]?.text,
+        ).toBe('Hi');
+        expect(
+          getCaseRes.data?.conversation[0].finalResponse?.parts[0]?.text,
+        ).toBe('Event 2');
+
+        // 6b. Return 404 when getting a missing eval case or missing eval set
+        await expect(
+          evalClient.get('/apps/testApp/eval_sets/set_one/evals/missing_case'),
+        ).rejects.toMatchObject({response: {status: 404}});
+        await expect(
+          evalClient.get('/apps/testApp/eval_sets/missing_set/evals/case_1'),
+        ).rejects.toMatchObject({response: {status: 404}});
+
+        // 6c. Reject PUT when body evalId does not match route evalCaseId
+        await expect(
+          evalClient.put('/apps/testApp/eval_sets/set_one/evals/case_1', {
+            evalId: 'different_id',
+            conversation: getCaseRes.data?.conversation ?? [],
+          }),
+        ).rejects.toMatchObject({
+          response: {
+            status: 400,
+            data: {
+              error: expect.stringMatching(
+                /Eval id in EvalCase should match the eval id in the API route/,
+              ),
+            },
+          },
+        });
+
+        // 6d. Update the eval case (with matching evalId and with empty evalId)
+        const putResMatching = await evalClient.put(
+          '/apps/testApp/eval_sets/set_one/evals/case_1',
+          {
+            evalId: 'case_1',
+            conversation: getCaseRes.data?.conversation ?? [],
+            creationTimestamp: 999,
+          },
+        );
+        expect(putResMatching.status).toBe(200);
+
+        const putResEmptyId = await evalClient.put(
+          '/apps/testApp/eval_sets/set_one/evals/case_1',
+          {
+            evalId: '',
+            conversation: getCaseRes.data?.conversation ?? [],
+            creationTimestamp: 1000,
+          },
+        );
+        expect(putResEmptyId.status).toBe(200);
+
+        const updatedCaseRes = await evalClient.get<{
+          evalId: string;
+          creationTimestamp: number;
+        }>('/apps/testApp/eval_sets/set_one/evals/case_1');
+        expect(updatedCaseRes.data?.evalId).toBe('case_1');
+        expect(updatedCaseRes.data?.creationTimestamp).toBe(1000);
+
+        // 6e. Return 404 when updating a missing eval case
+        await expect(
+          evalClient.put(
+            '/apps/testApp/eval_sets/set_one/evals/non_existent_case',
+            {
+              evalId: 'non_existent_case',
+              conversation: [],
+            },
+          ),
+        ).rejects.toMatchObject({response: {status: 404}});
+
         // 7. Run the eval set
         const runEvalRes = await evalClient.post<
           Array<Record<string, unknown>>
@@ -3197,8 +3303,160 @@ describe('AdkWebServer', () => {
         await expect(
           evalClient.get('/apps/testApp/eval_results/corrupt_result'),
         ).rejects.toMatchObject({response: {status: 500}});
+
+        // 12. Delete the eval case and verify it is removed
+        const deleteCaseRes = await evalClient.delete(
+          '/apps/testApp/eval_sets/set_one/evals/case_1',
+        );
+        expect(deleteCaseRes.status).toBe(200);
+        await expect(
+          evalClient.get('/apps/testApp/eval_sets/set_one/evals/case_1'),
+        ).rejects.toMatchObject({response: {status: 404}});
+
+        // 13. Return 404 when deleting an already-deleted or missing eval case
+        await expect(
+          evalClient.delete('/apps/testApp/eval_sets/set_one/evals/case_1'),
+        ).rejects.toMatchObject({response: {status: 404}});
       } finally {
         await evalServer.stop();
+        fs.rmSync(tempAgentsDir, {recursive: true, force: true});
+      }
+    });
+
+    it('validates eval set requests and serves them under the /dev prefix', async () => {
+      const tempAgentsDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-eval-api-validation-test-'),
+      );
+      const evalServer = new AdkApiServer({
+        agentsDir: tempAgentsDir,
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+      });
+      await evalServer.start();
+      const evalClient = new HttpClient(evalServer.url);
+
+      try {
+        // Create through the /dev prefix that the web UI uses.
+        const createRes = await evalClient.post(
+          '/dev/apps/testApp/eval_sets/dev_set',
+          {},
+        );
+        expect(createRes.status).toBe(200);
+
+        // Reject a second create for the same eval set.
+        await expect(
+          evalClient.post('/apps/testApp/eval_sets/dev_set', {}),
+        ).rejects.toMatchObject({
+          response: {
+            status: 400,
+            data: {
+              error: 'EvalSet dev_set already exists for app testApp.',
+            },
+          },
+        });
+
+        const listRes = await evalClient.get<string[]>(
+          '/dev/apps/testApp/eval_sets',
+        );
+        expect(listRes.data).toEqual(['dev_set']);
+
+        const evalSetsManager = new LocalEvalSetsManager(tempAgentsDir);
+        evalSetsManager.addEvalCase('testApp', 'dev_set', {
+          evalId: 'case_1',
+          conversation: [],
+        });
+
+        const listEvalsRes = await evalClient.get<string[]>(
+          '/dev/apps/testApp/eval_sets/dev_set/evals',
+        );
+        expect(listEvalsRes.data).toEqual(['case_1']);
+
+        const getCaseRes = await evalClient.get<{evalId: string}>(
+          '/dev/apps/testApp/eval_sets/dev_set/evals/case_1',
+        );
+        expect(getCaseRes.data?.evalId).toBe('case_1');
+
+        // Reject a PUT body that is an array.
+        await expect(
+          evalClient.put('/dev/apps/testApp/eval_sets/dev_set/evals/case_1', [
+            {conversation: []},
+          ]),
+        ).rejects.toMatchObject({
+          response: {
+            status: 400,
+            data: {error: 'Invalid EvalCase: expected a JSON object.'},
+          },
+        });
+
+        // Reject a PUT body whose evalId is not a string.
+        await expect(
+          evalClient.put('/apps/testApp/eval_sets/dev_set/evals/case_1', {
+            evalId: 123,
+            conversation: [],
+          }),
+        ).rejects.toMatchObject({
+          response: {
+            status: 400,
+            data: {error: 'Invalid EvalCase: evalId must be a string.'},
+          },
+        });
+
+        const deleteRes = await evalClient.delete(
+          '/dev/apps/testApp/eval_sets/dev_set/evals/case_1',
+        );
+        expect(deleteRes.status).toBe(200);
+      } finally {
+        await evalServer.stop();
+        fs.rmSync(tempAgentsDir, {recursive: true, force: true});
+      }
+    });
+
+    it('does not load the .env file of an app that the loader does not know', async () => {
+      const tempAgentsDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-unknown-app-env-test-'),
+      );
+      const envKey = 'ADK_UNKNOWN_APP_ENV_SENTINEL';
+      fs.mkdirSync(path.join(tempAgentsDir, 'ghostApp'));
+      fs.writeFileSync(
+        path.join(tempAgentsDir, 'ghostApp', '.env'),
+        `${envKey}=loaded\n`,
+      );
+      const rejectingLoader = {
+        listAgents: () => Promise.resolve([]),
+        getAgentFile: (name: string) =>
+          Promise.reject(new Error(`Agent '${name}' not found`)),
+      } as unknown as AgentLoader;
+      const envServer = new AdkApiServer({
+        agentsDir: tempAgentsDir,
+        agentLoader: rejectingLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+      });
+      await envServer.start();
+      const envClient = new HttpClient(envServer.url);
+
+      try {
+        await sessionService.createSession({
+          appName: 'ghostApp',
+          userId: 'testUser',
+          sessionId: 'ghostSession',
+        });
+
+        await expect(
+          envClient.post('/run', {
+            appName: 'ghostApp',
+            userId: 'testUser',
+            sessionId: 'ghostSession',
+            newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+          }),
+        ).rejects.toMatchObject({response: {status: 500}});
+        expect(process.env[envKey]).toBeUndefined();
+      } finally {
+        delete process.env[envKey];
+        await envServer.stop();
         fs.rmSync(tempAgentsDir, {recursive: true, force: true});
       }
     });
