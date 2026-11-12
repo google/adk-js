@@ -309,18 +309,49 @@ function isEventFromAnotherAgent(agentName: string, event: Event): boolean {
 }
 
 /**
+ * Returns a copy of the part without its `text`, `thought` and
+ * `thoughtSignature` fields.
+ */
+function withoutTextAndThought(part: Part): Part {
+  const {
+    text: _text,
+    thought: _thought,
+    thoughtSignature: _thoughtSignature,
+    ...rest
+  } = part;
+  return rest;
+}
+
+/**
+ * Whether the part has a defined field other than `text`, `thought` and
+ * `thoughtSignature`, such as `inlineData` or `fileData`.
+ */
+function hasNonTextPayload(part: Part): boolean {
+  return Object.values(withoutTextAndThought(part)).some(
+    (v) => v !== undefined,
+  );
+}
+
+/**
  * Whether a part from another agent's event produces visible context.
  *
- * Thought parts and empty-text parts (such as trailing `{text: '',
- * thoughtSignature}` chunks from streamed responses) are excluded unless they
- * carry a `functionCall` or `functionResponse`, which are summarized as plain
- * text without thought metadata.
+ * Parts with a `functionCall` or `functionResponse` are always visible, because
+ * they are summarized as plain text without thought metadata. Other thought
+ * parts are invisible. Parts with no text and no other payload, such as
+ * signature-only `{thoughtSignature}` parts, empty-text signature parts and
+ * empty `{}` parts, are also invisible.
  */
 function isVisibleForeignPart(part: Part): boolean {
   if (part.functionCall || part.functionResponse) {
     return true;
   }
-  return !part.thought && part.text !== '';
+  if (part.thought) {
+    return false;
+  }
+  if (part.text) {
+    return true;
+  }
+  return hasNonTextPayload(part);
 }
 
 /**
@@ -357,29 +388,34 @@ function convertForeignEvent(event: Event): Event | undefined {
     if (!isVisibleForeignPart(part)) {
       continue;
     }
-    if (part.text) {
-      content.parts?.push({
-        text: `[${event.author}] said: ${part.text}`,
-      });
-    } else if (part.functionCall) {
+    if (part.functionCall) {
+      if (!part.thought && part.text) {
+        content.parts?.push({
+          text: `[${event.author}] said: ${part.text}`,
+        });
+      }
       content.parts?.push({
         text: `[${event.author}] called tool \`${part.functionCall.name}\` with parameters: ${safeStringify(
           part.functionCall.args,
         )}`,
       });
     } else if (part.functionResponse) {
+      if (!part.thought && part.text) {
+        content.parts?.push({
+          text: `[${event.author}] said: ${part.text}`,
+        });
+      }
       content.parts?.push({
         text: `[${event.author}] tool \`${part.functionResponse.name}\` returned result: ${safeStringify(
           part.functionResponse.response,
         )}`,
       });
-    } else {
-      const {
-        thought: _thought,
-        thoughtSignature: _thoughtSignature,
-        ...rest
-      } = part;
-      content.parts?.push(cloneDeep(rest));
+    } else if (!part.thought && part.text) {
+      content.parts?.push({
+        text: `[${event.author}] said: ${part.text}`,
+      });
+    } else if (hasNonTextPayload(part)) {
+      content.parts?.push(cloneDeep(withoutTextAndThought(part)));
     }
   }
 
