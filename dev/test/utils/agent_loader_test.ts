@@ -1031,6 +1031,18 @@ describe('AgentLoader', () => {
         );
         await loader.disposeAll();
       });
+
+      it.each(['constructor', 'toString', 'hasOwnProperty', 'valueOf'])(
+        'rejects %s instead of returning an Object.prototype member',
+        async (agentName) => {
+          const loader = new AgentLoader(tempAgentsDir);
+
+          await expect(loader.getAgentFile(agentName)).rejects.toThrow(
+            `Agent '${agentName}' not found`,
+          );
+          await loader.disposeAll();
+        },
+      );
     });
 
     it('disposes all agent files', async () => {

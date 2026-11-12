@@ -45,8 +45,8 @@ import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {
   createEvalSetResult,
   parseEvalSetResultJson,
-  validatePathSegment,
 } from '../../src/cli/cli_eval.js';
+import {validatePathSegment} from '../../src/cli/utils/path_validation.js';
 
 class DeterministicEvalAgent extends BaseAgent {
   constructor() {

@@ -716,15 +716,17 @@ export class AgentLoader {
   async getAgentFile(agentName: string): Promise<AgentFile> {
     await this.preloadAgents();
 
-    const agentFile = this.preloadedAgents[agentName];
-    if (agentFile) {
-      return agentFile;
+    // `Object.hasOwn` rather than a plain lookup, so a request-supplied name
+    // such as 'constructor' or 'toString' does not resolve to an inherited
+    // `Object.prototype` member.
+    if (Object.hasOwn(this.preloadedAgents, agentName)) {
+      return this.preloadedAgents[agentName];
     }
 
     // Report the real reason rather than returning undefined and letting the
     // caller fail later with "cannot read properties of undefined".
-    const failure = this.loadFailures[agentName];
-    if (failure) {
+    if (Object.hasOwn(this.loadFailures, agentName)) {
+      const failure = this.loadFailures[agentName];
       throw new Error(
         `Agent '${agentName}' failed to load from ${failure.filePath}: ${failure.error.message}`,
         {cause: failure.error},

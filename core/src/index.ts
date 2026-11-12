@@ -241,4 +241,5 @@ export {
   setupAdkLogger,
 } from './cli/utils/logs.js';
 export type {LogToTmpFolderOptions} from './cli/utils/logs.js';
+export {validatePathSegment} from './cli/utils/path_validation.js';
 export * from './tools/mcp/index.js';
