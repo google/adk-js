@@ -50,4 +50,8 @@ graph errors. Otherwise those sites stay a bare `Error`.
   Workflow retries (`RetryConfig.exceptions`) and the `errorType` of node error
   events and tool spans match errors by class name, so a config listing
   `'Error'` stops matching.
-- Update the errors guide when a new type is added.
+- Update the errors guide in the same PR: add the site to the class's
+  "Thrown by" list, or add a section when a new type is added.
+- Let specific library errors through unwrapped. For example, schema-invalid
+  `AgentTool` args throw zod's `ZodError`, like pydantic's `ValidationError`
+  in adk-python.
