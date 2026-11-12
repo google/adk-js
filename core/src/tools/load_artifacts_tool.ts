@@ -28,7 +28,7 @@ function normalizeMimeType(mimeType?: string): string | undefined {
   if (!mimeType) {
     return undefined;
   }
-  return mimeType.split(';')[0].trim();
+  return mimeType.split(';')[0].trim().toLowerCase();
 }
 
 function isInlineMimeTypeSupported(mimeType?: string): boolean {
@@ -60,31 +60,56 @@ function base64ByteLength(data: string): number {
  *
  * @param artifact The artifact to convert.
  * @param artifactName The artifact name used in the placeholder text.
+ * @param options Optional settings controlling how inline media and file
+ *   references are formatted.
  * @return The artifact itself, or a text part that replaces it.
  */
-export function asSafePartForLlm(artifact: Part, artifactName: string): Part {
+export function asSafePartForLlm(
+  artifact: Part,
+  artifactName: string,
+  options?: {inlineMediaAsPlaceholder?: boolean},
+): Part {
+  if (
+    options?.inlineMediaAsPlaceholder &&
+    !artifact.inlineData &&
+    artifact.fileData
+  ) {
+    const fileUri = artifact.fileData.fileUri || 'unknown';
+    const mimeType =
+      normalizeMimeType(artifact.fileData.mimeType) ||
+      'application/octet-stream';
+    return {
+      text: `[Artifact: ${artifactName}, uri: ${fileUri}, type: ${mimeType}.]`,
+    };
+  }
+
   const inlineData = artifact.inlineData;
   if (!inlineData) {
     return artifact;
   }
 
-  if (isInlineMimeTypeSupported(inlineData.mimeType)) {
+  if (
+    !options?.inlineMediaAsPlaceholder &&
+    isInlineMimeTypeSupported(inlineData.mimeType)
+  ) {
     return artifact;
   }
 
   const mimeType =
     normalizeMimeType(inlineData.mimeType) || 'application/octet-stream';
+  const isTextLike =
+    mimeType.startsWith('text/') || TEXT_LIKE_MIME_TYPES.has(mimeType);
   const data = inlineData.data;
-  if (!data) {
+  if (data === undefined || data === null || (!isTextLike && data === '')) {
     return {
       text: `[Artifact: ${artifactName}, type: ${mimeType}. No inline data was provided.]`,
     };
   }
 
-  const isTextLike =
-    mimeType.startsWith('text/') || TEXT_LIKE_MIME_TYPES.has(mimeType);
-
   if (isTextLike) {
+    if (data === '') {
+      return {text: ''};
+    }
     try {
       // Browsers decode with atob, which rejects the URL-safe alphabet that
       // Node's Buffer accepts. Map it to the standard one first.

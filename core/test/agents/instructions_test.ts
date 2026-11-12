@@ -370,7 +370,7 @@ describe('injectSessionState', () => {
     );
   });
 
-  it('serializes non-text Part artifact object to JSON string', async () => {
+  it('formats supported inline media artifacts as binary placeholders', async () => {
     const mockArtifactService = {
       loadArtifact: vi.fn().mockResolvedValue({
         inlineData: {mimeType: 'image/png', data: 'abc'},
@@ -378,7 +378,48 @@ describe('injectSessionState', () => {
     };
     const ctx = makeContext({}, mockArtifactService);
     expect(await injectSessionState('Data: {artifact.chart.png}', ctx)).toBe(
-      'Data: {"inlineData":{"mimeType":"image/png","data":"abc"}}',
+      'Data: [Binary artifact: chart.png, type: image/png, size: 0.0 KB. Content cannot be displayed inline.]',
+    );
+  });
+
+  it('formats inline PDF artifacts as binary placeholders', async () => {
+    const mockArtifactService = {
+      loadArtifact: vi.fn().mockResolvedValue({
+        inlineData: {mimeType: 'application/pdf', data: 'JVBERi0xLjQ='},
+      }),
+    };
+    const ctx = makeContext({}, mockArtifactService);
+    expect(await injectSessionState('Document: {artifact.doc.pdf}', ctx)).toBe(
+      'Document: [Binary artifact: doc.pdf, type: application/pdf, size: 0.0 KB. Content cannot be displayed inline.]',
+    );
+  });
+
+  it('formats fileData artifacts as text placeholders', async () => {
+    const mockArtifactService = {
+      loadArtifact: vi.fn().mockResolvedValue({
+        fileData: {
+          fileUri: 'gs://bucket/contract.pdf',
+          mimeType: 'application/pdf',
+        },
+      }),
+    };
+    const ctx = makeContext({}, mockArtifactService);
+    expect(
+      await injectSessionState('Document: {artifact.contract.pdf}', ctx),
+    ).toBe(
+      'Document: [Artifact: contract.pdf, uri: gs://bucket/contract.pdf, type: application/pdf.]',
+    );
+  });
+
+  it('serializes custom non-text Part artifact object to JSON string', async () => {
+    const mockArtifactService = {
+      loadArtifact: vi.fn().mockResolvedValue({
+        executableCode: {code: 'print(42)', language: 'PYTHON'},
+      }),
+    };
+    const ctx = makeContext({}, mockArtifactService);
+    expect(await injectSessionState('Data: {artifact.code}', ctx)).toBe(
+      'Data: {"executableCode":{"code":"print(42)","language":"PYTHON"}}',
     );
   });
 
@@ -464,6 +505,33 @@ describe('injectSessionState', () => {
       const ctx = makeContext({}, mockArtifactService);
       expect(await injectSessionState('Notes: {artifact.notes}', ctx)).toBe(
         'Notes: ???',
+      );
+    });
+
+    it('injects empty string for 0-byte text artifact', async () => {
+      const mockArtifactService = {
+        loadArtifact: vi.fn().mockResolvedValue({
+          inlineData: {mimeType: 'text/plain', data: ''},
+        }),
+      };
+      const ctx = makeContext({}, mockArtifactService);
+      expect(await injectSessionState('Notes: {artifact.empty.txt}', ctx)).toBe(
+        'Notes: ',
+      );
+    });
+
+    it('normalizes mixed-case text MIME types with parameters', async () => {
+      const mockArtifactService = {
+        loadArtifact: vi.fn().mockResolvedValue({
+          inlineData: {
+            mimeType: 'Text/Plain; charset=UTF-8',
+            data: 'QnV5IG1pbGsu',
+          },
+        }),
+      };
+      const ctx = makeContext({}, mockArtifactService);
+      expect(await injectSessionState('Notes: {artifact.notes}', ctx)).toBe(
+        'Notes: Buy milk.',
       );
     });
   });
