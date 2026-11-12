@@ -5,12 +5,12 @@
  */
 
 /**
- * BigQuery Toolset (`BigQueryToolset`, `BigQueryTool`, `BigQueryCredentialsConfig`)
+ * BigQuery Toolset (`BigQueryToolset`, `BigQueryTool`, `BigQueryCredentialsConfig`, `BigQueryToolConfig`)
  * ../../../docs/guides/integrations/bigquery/index.md
  *
  * An `LlmAgent` equipped with `BigQueryToolset` and a custom `BigQueryTool`
  * from `@google/adk-integrations` for inspecting BigQuery datasets and tables
- * and running SQL queries.
+ * and running SQL queries with configured write modes.
  *
  * Prerequisites:
  *   npm install @google-cloud/bigquery
@@ -28,7 +28,9 @@ import {LlmAgent} from '@google/adk';
 import {
   BigQueryCredentialsConfig,
   BigQueryTool,
+  BigQueryToolConfig,
   BigQueryToolset,
+  WriteMode,
 } from '@google/adk-integrations';
 import {z} from 'zod';
 
@@ -38,8 +40,13 @@ export const credentialsConfig = new BigQueryCredentialsConfig({
     process.env['GOOGLE_OAUTH_CLIENT_SECRET'] ?? 'sample-client-secret',
 });
 
+export const toolConfig = new BigQueryToolConfig({
+  writeMode: WriteMode.BLOCKED,
+});
+
 export const bigQueryToolset = new BigQueryToolset({
   credentialsConfig,
+  toolConfig,
   toolFilter: [
     'list_dataset_ids',
     'get_dataset_info',
@@ -49,7 +56,7 @@ export const bigQueryToolset = new BigQueryToolset({
   ],
 });
 
-export const summarizeQueryPlanTool = new BigQueryTool({
+export const summarizeBigQueryTargetTool = new BigQueryTool({
   name: 'summarize_bigquery_target',
   description:
     'Formats a fully-qualified BigQuery table identifier for a project, dataset, and table.',
@@ -59,6 +66,7 @@ export const summarizeQueryPlanTool = new BigQueryTool({
     tableId: z.string().describe('BigQuery table ID.'),
   }),
   credentialsConfig,
+  toolConfig,
   execute: async ({projectId, datasetId, tableId, credentials}) => ({
     fullTableId: `${projectId}.${datasetId}.${tableId}`,
     authenticated: credentials !== undefined,
@@ -73,5 +81,5 @@ export const rootAgent = new LlmAgent({
   instruction:
     'You are a BigQuery data assistant. Use the BigQuery metadata tools to ' +
     'inspect datasets and tables before running SQL queries with execute_sql.',
-  tools: [bigQueryToolset, summarizeQueryPlanTool],
+  tools: [bigQueryToolset, summarizeBigQueryTargetTool],
 });

@@ -14,6 +14,11 @@ import {
 import type {BigQueryCredentialsConfig} from './bigquery_credentials.js';
 import {BigQueryTool} from './bigquery_tool.js';
 import {
+  BigQueryToolConfig,
+  type BigQueryToolConfigOptions,
+  isBigQueryToolConfig,
+} from './config.js';
+import {
   getDatasetInfo,
   getDatasetInfoParameters,
   getTableInfo,
@@ -23,7 +28,11 @@ import {
   listTableIds,
   listTableIdsParameters,
 } from './metadata_tool.js';
-import {executeSql, executeSqlParameters} from './query_tool.js';
+import {
+  executeSqlParameters,
+  getExecuteSql,
+  getExecuteSqlDescription,
+} from './query_tool.js';
 
 /**
  * Configuration options for {@link BigQueryToolset}.
@@ -40,6 +49,11 @@ export interface BigQueryToolsetOptions {
    * Optional BigQuery credentials configuration shared across all tools in the toolset.
    */
   credentialsConfig?: BigQueryCredentialsConfig;
+
+  /**
+   * Optional BigQuery tool configuration (such as write mode) shared across all tools in the toolset.
+   */
+  toolConfig?: BigQueryToolConfig | BigQueryToolConfigOptions;
 }
 
 const BIGQUERY_TOOLSET_SIGNATURE_SYMBOL = Symbol.for(
@@ -60,6 +74,7 @@ export function isBigQueryToolset(obj: unknown): obj is BigQueryToolset {
 
 function createBigQueryTools(
   credentialsConfig?: BigQueryCredentialsConfig,
+  toolConfig?: BigQueryToolConfig,
 ): BaseTool[] {
   return [
     new BigQueryTool({
@@ -67,23 +82,25 @@ function createBigQueryTools(
       description:
         'Get metadata information about a BigQuery dataset. Returns an object ' +
         'with the properties of the dataset, such as datasetReference, ' +
-        'location, creationTime and access. On failure, returns ' +
+        'description, location, creationTime and access. On failure, returns ' +
         "{status: 'ERROR', error_details}.",
       parameters: getDatasetInfoParameters,
       execute: getDatasetInfo,
       credentialsConfig,
+      toolConfig,
     }),
     new BigQueryTool({
       name: 'get_table_info',
       description:
         'Get metadata information about a BigQuery table. Returns an object ' +
-        'with the properties of the table, such as tableReference, schema ' +
+        'with the properties of the table, such as tableReference, description, schema ' +
         '(the table fields with their name, type and mode), numRows, ' +
         'numBytes, type and location. On failure, returns ' +
         "{status: 'ERROR', error_details}.",
       parameters: getTableInfoParameters,
       execute: getTableInfo,
       credentialsConfig,
+      toolConfig,
     }),
     new BigQueryTool({
       name: 'list_dataset_ids',
@@ -94,29 +111,26 @@ function createBigQueryTools(
       parameters: listDatasetIdsParameters,
       execute: listDatasetIds,
       credentialsConfig,
+      toolConfig,
     }),
     new BigQueryTool({
       name: 'list_table_ids',
       description:
         'List table ids in a BigQuery dataset. Returns an array of table ' +
-        "ids, for example ['iris', 'penguins']. On failure, returns " +
+        "ids, for example ['chronic_disease_indicators', 'local_data_for_better_health_county_data']. On failure, returns " +
         "{status: 'ERROR', error_details}.",
       parameters: listTableIdsParameters,
       execute: listTableIds,
       credentialsConfig,
+      toolConfig,
     }),
     new BigQueryTool({
       name: 'execute_sql',
-      description:
-        'Run a BigQuery SQL query in the project and return the result. ' +
-        "Returns {status: 'SUCCESS', rows}, where each row is an object that maps column names " +
-        'to values. At most 50 rows are returned. If the result contains ' +
-        'result_is_likely_truncated: true, more rows can match the query than ' +
-        'the result contains; use aggregation, filters or LIMIT to get a ' +
-        "smaller result. On failure, returns {status: 'ERROR', error_details}.",
+      description: getExecuteSqlDescription(toolConfig),
       parameters: executeSqlParameters,
-      execute: executeSql,
+      execute: getExecuteSql(toolConfig),
       credentialsConfig,
+      toolConfig,
     }),
   ];
 }
@@ -126,26 +140,32 @@ function createBigQueryTools(
  * `get_dataset_info`, `get_table_info`, `list_dataset_ids`, `list_table_ids`,
  * and `execute_sql`.
  *
- * `execute_sql` executes any SQL statement permitted by the configured
- * credentials, including DML and DDL statements, without a read-only dry-run
- * check. Grant read-only IAM roles or scopes when write access is not intended.
+ * In default read-only mode, `execute_sql` verifies that queries are SELECT
+ * statements before running. Configure `toolConfig` with `writeMode: WriteMode.ALLOWED`
+ * to permit DDL and DML write queries.
  */
 export class BigQueryToolset extends BaseToolset {
   readonly [BIGQUERY_TOOLSET_SIGNATURE_SYMBOL] = true;
 
   private readonly credentialsConfig?: BigQueryCredentialsConfig;
+  readonly toolConfig: BigQueryToolConfig;
 
   constructor(options: BigQueryToolsetOptions = {}) {
     super(options.toolFilter);
     this.credentialsConfig = options.credentialsConfig;
+    this.toolConfig = options.toolConfig
+      ? isBigQueryToolConfig(options.toolConfig)
+        ? options.toolConfig
+        : new BigQueryToolConfig(options.toolConfig)
+      : new BigQueryToolConfig();
   }
 
   /**
    * Returns the {@link BigQueryTool} instances selected by `toolFilter`.
    */
   override async getTools(context?: ReadonlyContext): Promise<BaseTool[]> {
-    return createBigQueryTools(this.credentialsConfig).filter((tool) =>
-      this.isToolSelected(tool, context),
+    return createBigQueryTools(this.credentialsConfig, this.toolConfig).filter(
+      (tool) => this.isToolSelected(tool, context),
     );
   }
 

@@ -11,12 +11,15 @@ import {
   executeSql,
   getBigQueryClient,
   getDatasetInfo,
+  getExecuteSql,
+  getExecuteSqlDescription,
   getTableInfo,
   type GoogleOAuthCredentials,
   listDatasetIds,
   listTableIds,
+  WriteMode,
 } from '@google/adk-integrations';
-import {afterEach, describe, expect, it, vi} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 import type {
   BigQuerySdkClient,
@@ -34,7 +37,6 @@ describe('getBigQueryClient and BigQueryClient', () => {
     vi.restoreAllMocks();
   });
 
-  // reference: test_bigquery_client_default
   it('uses the given project and no default location', () => {
     vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
     const client = getBigQueryClient({
@@ -46,7 +48,6 @@ describe('getBigQueryClient and BigQueryClient', () => {
     expect(client.location).toBeUndefined();
   });
 
-  // reference: test_bigquery_client_project_set_with_env
   it('falls back to GOOGLE_CLOUD_PROJECT when projectId is omitted', () => {
     vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'env-gcp-project');
     const client = getBigQueryClient({
@@ -56,7 +57,6 @@ describe('getBigQueryClient and BigQueryClient', () => {
     expect(client.projectId).toBe('env-gcp-project');
   });
 
-  // reference: test_bigquery_client_location_custom
   it('keeps a custom location', () => {
     const client = getBigQueryClient({
       projectId: 'test-gcp-project',
@@ -68,7 +68,6 @@ describe('getBigQueryClient and BigQueryClient', () => {
     expect(client.location).toBe('us-central1');
   });
 
-  // reference: test_bigquery_client_user_agent_default
   it('sends the default user agent', () => {
     const client = getBigQueryClient({
       projectId: 'test-gcp-project',
@@ -78,7 +77,6 @@ describe('getBigQueryClient and BigQueryClient', () => {
     expect(client.userAgent).toBe(BIGQUERY_USER_AGENT);
   });
 
-  // reference: test_bigquery_client_user_agent_custom
   it('appends a custom user agent string', () => {
     const client = getBigQueryClient({
       projectId: 'test-gcp-project',
@@ -89,7 +87,6 @@ describe('getBigQueryClient and BigQueryClient', () => {
     expect(client.userAgent).toBe(`${BIGQUERY_USER_AGENT} custom_user_agent`);
   });
 
-  // reference: test_bigquery_client_user_agent_custom_list
   it('appends each defined custom user agent from an array', () => {
     const client = getBigQueryClient({
       projectId: 'test-gcp-project',
@@ -128,6 +125,12 @@ describe('getBigQueryClient and BigQueryClient', () => {
         }),
       }),
       query: querySpy,
+      createQueryJob: async () => [
+        {
+          id: 'job-1',
+          metadata: {statistics: {query: {statementType: 'SELECT'}}},
+        },
+      ],
     };
 
     const fakeModule: BigQuerySdkModule = {
@@ -209,6 +212,12 @@ describe('getBigQueryClient and BigQueryClient', () => {
       getDatasets: async () => [[]],
       dataset: () => ({}),
       query: querySpy,
+      createQueryJob: async () => [
+        {
+          id: 'job-1',
+          metadata: {statistics: {query: {statementType: 'SELECT'}}},
+        },
+      ],
     };
     const fakeModule: BigQuerySdkModule = {
       BigQuery: class {
@@ -247,6 +256,12 @@ describe('getBigQueryClient and BigQueryClient', () => {
       getDatasets: async () => [[{id: 'ds_1'}]],
       dataset: () => ({}),
       query: async () => [[]],
+      createQueryJob: async () => [
+        {
+          id: 'job-1',
+          metadata: {statistics: {query: {statementType: 'SELECT'}}},
+        },
+      ],
     };
     const fakeModule: BigQuerySdkModule = {
       BigQuery: class {
@@ -276,6 +291,12 @@ describe('getBigQueryClient and BigQueryClient', () => {
       getDatasets: async () => [[]],
       dataset: () => ({}),
       query: async () => [[]],
+      createQueryJob: async () => [
+        {
+          id: 'job-1',
+          metadata: {statistics: {query: {statementType: 'SELECT'}}},
+        },
+      ],
     };
     const fakeModule: BigQuerySdkModule = {
       BigQuery: class {
@@ -303,6 +324,117 @@ describe('getBigQueryClient and BigQueryClient', () => {
       /BigQuery integration requires the optional '@google-cloud\/bigquery' package/,
     );
   });
+
+  it('performs a dry run via createQueryJob on BigQuerySdkClient', async () => {
+    let capturedJobOptions: Record<string, unknown> | undefined;
+    const fakeSdkClient: BigQuerySdkClient = {
+      getDatasets: async () => [[]],
+      dataset: () => ({}),
+      query: async () => [[]],
+      createQueryJob: async (options: Record<string, unknown>) => {
+        capturedJobOptions = options;
+        return [
+          {
+            id: 'job-123',
+            metadata: {
+              statistics: {
+                query: {
+                  statementType: 'SELECT',
+                },
+              },
+            },
+          },
+        ];
+      },
+    };
+    const fakeModule: BigQuerySdkModule = {
+      BigQuery: class {
+        constructor() {
+          return fakeSdkClient;
+        }
+      } as unknown as BigQuerySdkModule['BigQuery'],
+    };
+
+    const client = getBigQueryClient({
+      projectId: 'proj',
+      location: 'US',
+      sdkLoader: async () => fakeModule,
+    } as InternalGetBigQueryClientOptions);
+
+    const dryRunResult = await client.dryRun({
+      query: 'SELECT 1',
+    });
+
+    expect(dryRunResult).toEqual({statementType: 'SELECT'});
+    expect(capturedJobOptions).toEqual({
+      query: 'SELECT 1',
+      dryRun: true,
+      location: 'US',
+    });
+  });
+
+  it('instantiates an SDK client with effective projectId when options.projectId differs', async () => {
+    let capturedClientOptions: Record<string, unknown> | undefined;
+    const fakeSdkClient: BigQuerySdkClient = {
+      getDatasets: async () => [[]],
+      dataset: () => ({}),
+      query: async () => [[]],
+      createQueryJob: async () => [
+        {
+          id: 'job-1',
+          metadata: {statistics: {query: {statementType: 'SELECT'}}},
+        },
+      ],
+    };
+    const fakeModule: BigQuerySdkModule = {
+      BigQuery: class {
+        constructor(options?: Record<string, unknown>) {
+          capturedClientOptions = options;
+          return fakeSdkClient;
+        }
+      } as unknown as BigQuerySdkModule['BigQuery'],
+    };
+
+    const client = getBigQueryClient({
+      projectId: 'client-proj',
+      location: 'US',
+      sdkLoader: async () => fakeModule,
+    } as InternalGetBigQueryClientOptions);
+
+    await client.dryRun({
+      query: 'SELECT 1',
+      projectId: 'override-proj',
+    });
+
+    expect(capturedClientOptions?.['projectId']).toBe('override-proj');
+  });
+
+  it('propagates errors from createQueryJob during dryRun', async () => {
+    const fakeSdkClient: BigQuerySdkClient = {
+      getDatasets: async () => [[]],
+      dataset: () => ({}),
+      query: async () => [[]],
+      createQueryJob: async () => {
+        throw new Error('Dry run failed: table not found');
+      },
+    };
+    const fakeModule: BigQuerySdkModule = {
+      BigQuery: class {
+        constructor() {
+          return fakeSdkClient;
+        }
+      } as unknown as BigQuerySdkModule['BigQuery'],
+    };
+
+    const client = getBigQueryClient({
+      projectId: 'proj',
+      sdkLoader: async () => fakeModule,
+    } as InternalGetBigQueryClientOptions);
+
+    await expect(client.dryRun({query: 'SELECT 1'})).rejects.toThrow(
+      'Dry run failed: table not found',
+    );
+  });
 });
 
 describe('BigQuery metadata tools', () => {
@@ -315,7 +447,6 @@ describe('BigQuery metadata tools', () => {
     vi.restoreAllMocks();
   });
 
-  // reference: test_list_dataset_ids_no_default_auth
   it('lists dataset ids with the given credentials', async () => {
     const spy = vi
       .spyOn(BigQueryClient.prototype, 'listDatasets')
@@ -353,7 +484,6 @@ describe('BigQuery metadata tools', () => {
     });
   });
 
-  // reference: test_get_dataset_info_no_default_auth
   it('gets dataset metadata with the given credentials', async () => {
     const datasetMetadata = {
       kind: 'bigquery#dataset',
@@ -398,7 +528,6 @@ describe('BigQuery metadata tools', () => {
     });
   });
 
-  // reference: test_list_table_ids_no_default_auth
   it('lists table ids with the given credentials', async () => {
     const spy = vi
       .spyOn(BigQueryClient.prototype, 'listTables')
@@ -438,7 +567,6 @@ describe('BigQuery metadata tools', () => {
     });
   });
 
-  // reference: test_get_table_info_no_default_auth
   it('gets table metadata with the given credentials', async () => {
     const tableMetadata = {
       kind: 'bigquery#table',
@@ -492,6 +620,12 @@ describe('executeSql query tool', () => {
     token: 'test-token',
     valid: true,
   };
+
+  beforeEach(() => {
+    vi.spyOn(BigQueryClient.prototype, 'dryRun').mockResolvedValue({
+      statementType: 'SELECT',
+    });
+  });
 
   afterEach(() => {
     vi.restoreAllMocks();
@@ -556,6 +690,12 @@ describe('executeSql query tool', () => {
       getDatasets: async () => [[]],
       dataset: () => ({}),
       query: sdkQuerySpy,
+      createQueryJob: async () => [
+        {
+          id: 'job-1',
+          metadata: {statistics: {query: {statementType: 'SELECT'}}},
+        },
+      ],
     };
     const fakeModule: BigQuerySdkModule = {
       BigQuery: class {
@@ -630,6 +770,163 @@ describe('executeSql query tool', () => {
       error_details: 'Syntax error in SQL query',
     });
   });
+
+  it('rejects non-SELECT query in read-only mode (WriteMode.BLOCKED)', async () => {
+    vi.spyOn(BigQueryClient.prototype, 'dryRun').mockResolvedValue({
+      statementType: 'CREATE_TABLE',
+    });
+    const querySpy = vi.spyOn(BigQueryClient.prototype, 'query');
+
+    const result = await executeSql({
+      project_id: 'my_project',
+      query: 'CREATE TABLE dataset.t AS SELECT 1',
+      credentials: mockCredentials,
+    });
+
+    expect(result).toEqual({
+      status: 'ERROR',
+      error_details: 'Read-only mode only supports SELECT statements.',
+    });
+    expect(querySpy).not.toHaveBeenCalled();
+  });
+
+  it('allows non-SELECT query when configured with WriteMode.ALLOWED', async () => {
+    const dryRunSpy = vi.spyOn(BigQueryClient.prototype, 'dryRun');
+    const querySpy = vi
+      .spyOn(BigQueryClient.prototype, 'query')
+      .mockResolvedValue([]);
+
+    const result = await executeSql({
+      project_id: 'my_project',
+      query: 'CREATE TABLE dataset.t AS SELECT 1',
+      credentials: mockCredentials,
+      config: {writeMode: WriteMode.ALLOWED},
+    });
+
+    expect(result).toEqual({
+      status: 'SUCCESS',
+      rows: [],
+    });
+    expect(dryRunSpy).not.toHaveBeenCalled();
+    expect(querySpy).toHaveBeenCalledWith({
+      query: 'CREATE TABLE dataset.t AS SELECT 1',
+      projectId: 'my_project',
+      maxResults: 50,
+    });
+  });
+
+  it('allows SELECT query when dryRun confirms SELECT statementType', async () => {
+    const dryRunSpy = vi
+      .spyOn(BigQueryClient.prototype, 'dryRun')
+      .mockResolvedValue({statementType: 'SELECT'});
+    const sampleRows = [{id: 1}];
+    const querySpy = vi
+      .spyOn(BigQueryClient.prototype, 'query')
+      .mockResolvedValue(sampleRows);
+
+    const result = await executeSql({
+      project_id: 'my_project',
+      query: 'SELECT id FROM dataset.t',
+      credentials: mockCredentials,
+      config: {writeMode: WriteMode.BLOCKED},
+    });
+
+    expect(result).toEqual({
+      status: 'SUCCESS',
+      rows: sampleRows,
+    });
+    expect(dryRunSpy).toHaveBeenCalledWith({
+      query: 'SELECT id FROM dataset.t',
+      projectId: 'my_project',
+    });
+    expect(querySpy).toHaveBeenCalledOnce();
+  });
+
+  it('rejects non-SELECT query when configured with an unrecognized or non-ALLOWED writeMode', async () => {
+    vi.spyOn(BigQueryClient.prototype, 'dryRun').mockResolvedValue({
+      statementType: 'DROP_TABLE',
+    });
+    const querySpy = vi.spyOn(BigQueryClient.prototype, 'query');
+
+    const result = await executeSql({
+      project_id: 'my_project',
+      query: 'DROP TABLE dataset.t',
+      credentials: mockCredentials,
+      config: {writeMode: 'unrecognized' as unknown as WriteMode},
+    });
+
+    expect(result).toEqual({
+      status: 'ERROR',
+      error_details: 'Read-only mode only supports SELECT statements.',
+    });
+    expect(querySpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('getExecuteSql and getExecuteSqlDescription', () => {
+  const mockCredentials: GoogleOAuthCredentials = {
+    token: 'test-token',
+    valid: true,
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns base description for default or WriteMode.BLOCKED config', () => {
+    expect(getExecuteSqlDescription()).toContain('At most 50 rows');
+    expect(getExecuteSqlDescription()).not.toContain('CREATE TABLE');
+    expect(
+      getExecuteSqlDescription({writeMode: WriteMode.BLOCKED}),
+    ).not.toContain('CREATE TABLE');
+  });
+
+  it('returns write examples in description when WriteMode.ALLOWED', () => {
+    const desc = getExecuteSqlDescription({writeMode: WriteMode.ALLOWED});
+    expect(desc).toContain('At most 50 rows');
+    expect(desc).toContain('CREATE TABLE');
+    expect(desc).toContain('DROP TABLE');
+  });
+
+  it('enforces bound config precedence over args.config in getExecuteSql', async () => {
+    const dryRunSpy = vi
+      .spyOn(BigQueryClient.prototype, 'dryRun')
+      .mockResolvedValue({statementType: 'DROP_TABLE'});
+    const querySpy = vi.spyOn(BigQueryClient.prototype, 'query');
+
+    const blockedExecutor = getExecuteSql({writeMode: WriteMode.BLOCKED});
+    const result = await blockedExecutor({
+      project_id: 'my_project',
+      query: 'DROP TABLE dataset.t',
+      credentials: mockCredentials,
+      config: {writeMode: WriteMode.ALLOWED},
+    });
+
+    expect(result).toEqual({
+      status: 'ERROR',
+      error_details: 'Read-only mode only supports SELECT statements.',
+    });
+    expect(dryRunSpy).toHaveBeenCalledOnce();
+    expect(querySpy).not.toHaveBeenCalled();
+  });
+
+  it('allows write execution when getExecuteSql is configured with WriteMode.ALLOWED', async () => {
+    const dryRunSpy = vi.spyOn(BigQueryClient.prototype, 'dryRun');
+    const querySpy = vi
+      .spyOn(BigQueryClient.prototype, 'query')
+      .mockResolvedValue([]);
+
+    const writeExecutor = getExecuteSql({writeMode: WriteMode.ALLOWED});
+    const result = await writeExecutor({
+      project_id: 'my_project',
+      query: 'DROP TABLE dataset.t',
+      credentials: mockCredentials,
+    });
+
+    expect(result).toEqual({status: 'SUCCESS', rows: []});
+    expect(dryRunSpy).not.toHaveBeenCalled();
+    expect(querySpy).toHaveBeenCalledOnce();
+  });
 });
 
 describe('BigQuery tools without a project_id', () => {
@@ -667,12 +964,19 @@ describe('BigQuery tools without a project_id', () => {
 
   it('falls back to GOOGLE_CLOUD_PROJECT in executeSql', async () => {
     vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'env-gcp-project');
+    const dryRunSpy = vi
+      .spyOn(BigQueryClient.prototype, 'dryRun')
+      .mockResolvedValue({statementType: 'SELECT'});
     const spy = vi
       .spyOn(BigQueryClient.prototype, 'query')
       .mockResolvedValue([]);
 
     await executeSql({query: 'SELECT 1'});
 
+    expect(dryRunSpy).toHaveBeenCalledWith({
+      query: 'SELECT 1',
+      projectId: 'env-gcp-project',
+    });
     expect(spy).toHaveBeenCalledWith({
       query: 'SELECT 1',
       projectId: 'env-gcp-project',
