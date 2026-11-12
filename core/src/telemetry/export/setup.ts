@@ -4,7 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {metrics} from '@opentelemetry/api';
+import {
+  createNoopMeter,
+  metrics,
+  ProxyTracerProvider,
+  trace,
+} from '@opentelemetry/api';
 import {logs} from '@opentelemetry/api-logs';
 import {OTLPLogExporter} from '@opentelemetry/exporter-logs-otlp-http';
 import {OTLPMetricExporter} from '@opentelemetry/exporter-metrics-otlp-http';
@@ -71,8 +76,27 @@ export function maybeSetOtelProviders(
   otelHooksToSetup: OTelHooks[] = [],
   otelResource?: Resource,
 ): void {
+  const tracerAlreadySet = isTracerProviderRegistered();
+  const meterAlreadySet = isMeterProviderRegistered();
+  const loggerAlreadySet = isLoggerProviderRegistered();
+
+  if (tracerAlreadySet && meterAlreadySet && loggerAlreadySet) {
+    return;
+  }
+
+  const exportersConfig = getOtelExportersConfig();
+  if (tracerAlreadySet) {
+    exportersConfig.enableTracing = false;
+  }
+  if (meterAlreadySet) {
+    exportersConfig.enableMetrics = false;
+  }
+  if (loggerAlreadySet) {
+    exportersConfig.enableLogging = false;
+  }
+
   const resource = otelResource || getOtelResource();
-  const allHooks = [...otelHooksToSetup, getOtelExporters()];
+  const allHooks = [...otelHooksToSetup, getOtelExporters(exportersConfig)];
   const spanProcessors = allHooks.flatMap(
     (hooks) => hooks.spanProcessors || [],
   );
@@ -81,7 +105,7 @@ export function maybeSetOtelProviders(
     (hooks) => hooks.logRecordProcessors || [],
   );
 
-  if (spanProcessors.length > 0) {
+  if (!tracerAlreadySet && spanProcessors.length > 0) {
     const tracerProvider = new NodeTracerProvider({
       resource,
       spanProcessors,
@@ -89,7 +113,7 @@ export function maybeSetOtelProviders(
     tracerProvider.register();
   }
 
-  if (metricReaders.length > 0) {
+  if (!meterAlreadySet && metricReaders.length > 0) {
     const meterProvider = new MeterProvider({
       readers: metricReaders,
       resource,
@@ -97,7 +121,7 @@ export function maybeSetOtelProviders(
     metrics.setGlobalMeterProvider(meterProvider);
   }
 
-  if (logRecordProcessors.length > 0) {
+  if (!loggerAlreadySet && logRecordProcessors.length > 0) {
     const loggerProvider = new LoggerProvider({
       resource,
       processors: logRecordProcessors,
@@ -166,4 +190,94 @@ function getOtelExporters(config = getOtelExportersConfig()): OTelHooks {
       ? [new BatchLogRecordProcessor({exporter: new OTLPLogExporter()})]
       : [],
   };
+}
+
+/**
+ * Detects whether a global tracer provider has already been registered.
+ *
+ * Handles cases where trace.getTracerProvider returns undefined (e.g. in tests)
+ * or a ProxyTracerProvider delegating to a NoopTracerProvider, including when
+ * minification mangles class names.
+ */
+function isTracerProviderRegistered(): boolean {
+  const provider = trace.getTracerProvider?.();
+  if (!provider) {
+    return false;
+  }
+  const noopDelegate =
+    typeof ProxyTracerProvider === 'function'
+      ? new ProxyTracerProvider()?.getDelegate?.()
+      : undefined;
+  const getDelegate = (
+    provider as {getDelegate?: () => {constructor?: {name?: string}}}
+  ).getDelegate;
+  if (typeof getDelegate === 'function') {
+    const delegate = getDelegate.call(provider);
+    if (!delegate) {
+      return false;
+    }
+    if (noopDelegate && delegate === noopDelegate) {
+      return false;
+    }
+    return delegate.constructor?.name !== 'NoopTracerProvider';
+  }
+  if (noopDelegate && provider === noopDelegate) {
+    return false;
+  }
+  return (
+    provider.constructor?.name !== 'ProxyTracerProvider' &&
+    provider.constructor?.name !== 'NoopTracerProvider'
+  );
+}
+
+/**
+ * Detects whether a global meter provider has already been registered.
+ *
+ * Handles cases where metrics.getMeterProvider returns undefined (e.g. in tests)
+ * or the default NoopMeterProvider, including when minification mangles class names.
+ */
+function isMeterProviderRegistered(): boolean {
+  const provider = metrics.getMeterProvider?.();
+  if (!provider) {
+    return false;
+  }
+  const noopMeter =
+    typeof createNoopMeter === 'function' ? createNoopMeter() : undefined;
+  if (
+    noopMeter &&
+    typeof (provider as {getMeter?: (name: string) => unknown}).getMeter ===
+      'function'
+  ) {
+    if (provider.getMeter('adk') === noopMeter) {
+      return false;
+    }
+  }
+  return provider.constructor?.name !== 'NoopMeterProvider';
+}
+
+/**
+ * Detects whether a global logger provider has already been registered.
+ *
+ * Handles cases where logs.getLoggerProvider returns undefined (e.g. in tests)
+ * or the default ProxyLoggerProvider/NoopLoggerProvider, including when
+ * minification mangles class names.
+ */
+function isLoggerProviderRegistered(): boolean {
+  const provider = logs.getLoggerProvider?.() as
+    | {
+        _getDelegate?: () => unknown;
+        _delegate?: unknown;
+        constructor?: {name?: string};
+      }
+    | undefined;
+  if (!provider) {
+    return false;
+  }
+  if (typeof provider._getDelegate === 'function') {
+    return provider._delegate !== undefined;
+  }
+  return (
+    provider.constructor?.name !== 'ProxyLoggerProvider' &&
+    provider.constructor?.name !== 'NoopLoggerProvider'
+  );
 }
