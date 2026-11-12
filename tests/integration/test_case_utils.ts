@@ -307,7 +307,18 @@ export abstract class BaseTestServer {
 
     await new Promise<void>((resolve, reject) => {
       let started = false;
+      let sawStartMessage = false;
       const stdoutChunks: string[] = [];
+
+      const timeoutId = setTimeout(() => {
+        if (!started) {
+          reject(
+            new Error(
+              `Timeout waiting for ${serverName.toLowerCase()} to start.`,
+            ),
+          );
+        }
+      }, timeoutMs);
 
       this.serverProcess!.stdout.on('data', (data) => {
         const message = data.toString();
@@ -326,7 +337,12 @@ export abstract class BaseTestServer {
         }
 
         if (message.includes(startMessage)) {
+          sawStartMessage = true;
+        }
+
+        if (!started && sawStartMessage && this.port > 0) {
           started = true;
+          clearTimeout(timeoutId);
           console.log(successLogMessage);
           resolve();
         }
@@ -337,6 +353,7 @@ export abstract class BaseTestServer {
       });
 
       this.serverProcess!.on('error', (error) => {
+        clearTimeout(timeoutId);
         console.error(`${serverName} Error: ${error.message}`);
 
         reject(
@@ -350,6 +367,7 @@ export abstract class BaseTestServer {
         console.error(`${serverName} exited with code ${code}`);
 
         if (!started) {
+          clearTimeout(timeoutId);
           console.error(
             `${serverName} Captured stdout before premature exit:\n${stdoutChunks.join('')}`,
           );
@@ -358,16 +376,6 @@ export abstract class BaseTestServer {
           );
         }
       });
-
-      setTimeout(() => {
-        if (!started) {
-          reject(
-            new Error(
-              `Timeout waiting for ${serverName.toLowerCase()} to start.`,
-            ),
-          );
-        }
-      }, timeoutMs);
     });
   }
 
