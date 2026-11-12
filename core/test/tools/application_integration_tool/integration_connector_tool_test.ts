@@ -56,12 +56,14 @@ function createRestTool(): RestApiTool {
               pageSize: {type: 'integer'},
               pageToken: {type: 'string'},
               filterClause: {type: 'string'},
+              sortByColumns: {type: 'array', items: {type: 'string'}},
             },
             required: [
               'userId',
               'pageSize',
               'pageToken',
               'filterClause',
+              'sortByColumns',
               'connectionName',
               'dynamicAuthConfig',
             ],
@@ -128,6 +130,7 @@ describe('IntegrationConnectorTool', () => {
       'pageSize',
       'pageToken',
       'filterClause',
+      'sortByColumns',
     ]);
     expect(Object.isFrozen(IntegrationConnectorTool.EXCLUDE_FIELDS)).toBe(true);
     expect(Object.isFrozen(IntegrationConnectorTool.OPTIONAL_FIELDS)).toBe(
@@ -152,6 +155,7 @@ describe('IntegrationConnectorTool', () => {
       'pageSize',
       'pageToken',
       'filterClause',
+      'sortByColumns',
     ]);
     expect(params?.required).toEqual(['userId']);
 
@@ -164,6 +168,7 @@ describe('IntegrationConnectorTool', () => {
     expect(underlyingParams?.required).toContain('connectionName');
     expect(underlyingParams?.required).toContain('dynamicAuthConfig');
     expect(underlyingParams?.required).toContain('pageSize');
+    expect(underlyingParams?.required).toContain('sortByColumns');
   });
 
   it('excludes camelCase routing fields and optional fields when preservePropertyNames is enabled', () => {
@@ -187,6 +192,7 @@ describe('IntegrationConnectorTool', () => {
                 pageSize: {type: 'integer'},
                 pageToken: {type: 'string'},
                 filterClause: {type: 'string'},
+                sortByColumns: {type: 'array', items: {type: 'string'}},
               },
               required: [
                 'userId',
@@ -196,6 +202,7 @@ describe('IntegrationConnectorTool', () => {
                 'pageSize',
                 'pageToken',
                 'filterClause',
+                'sortByColumns',
               ],
             },
           },
@@ -221,6 +228,7 @@ describe('IntegrationConnectorTool', () => {
       'pageSize',
       'pageToken',
       'filterClause',
+      'sortByColumns',
     ]);
     expect(params?.required).toEqual(['userId']);
   });
@@ -276,7 +284,7 @@ describe('IntegrationConnectorTool', () => {
     const toolContext = createToolContext();
 
     const result = await integrationTool.runAsync({
-      args: {userId: 'user123', pageSize: 10},
+      args: {userId: 'user123', pageSize: 10, sortByColumns: ['a', 'b']},
       toolContext,
     });
 
@@ -284,6 +292,7 @@ describe('IntegrationConnectorTool', () => {
       args: {
         userId: 'user123',
         pageSize: 10,
+        sortByColumns: ['a', 'b'],
         connectionName: 'test-conn',
         host: 'test.example.com',
         serviceName: 'test-service',

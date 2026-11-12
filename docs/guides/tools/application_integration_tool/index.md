@@ -146,13 +146,14 @@ tool parameters keep the camelCase names of the request schema. Its
 `_getDeclaration` removes the internal routing and dynamic authentication fields
 (`connectionName`, `serviceName`, `host`, `entity`, `operation`, `action` and
 `dynamicAuthConfig`) from `parameters.properties`. It also removes those fields,
-together with the optional `pageSize`, `pageToken` and `filterClause`, from
-`parameters.required`. The model still sees the other parameters, such as
-`entityId` and `connectorInputPayload`. When the agent calls the tool,
-`runAsync` prepares any configured dynamic end-user credentials and injects the
-connection name, service name, host, and any configured entity, action,
-operation and dynamic auth configuration before delegating the request to the
-wrapped `RestApiTool`.
+together with the optional `pageSize`, `pageToken`, `filterClause` and
+`sortByColumns`, from `parameters.required`. The model still sees the other
+parameters, such as `entityId` and `connectorInputPayload`. List tools accept
+an optional `sortByColumns` array of column names to sort the results by.
+When the agent calls the tool, `runAsync` prepares any configured dynamic
+end-user credentials and injects the connection name, service name, host, and
+any configured entity, action, operation and dynamic auth configuration before
+delegating the request to the wrapped `RestApiTool`.
 
 The entity schema reaches the model in two places. The list and get tools
 quote it in their response description, and the create and update tools take

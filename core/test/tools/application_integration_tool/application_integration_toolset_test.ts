@@ -760,7 +760,7 @@ describe('ApplicationIntegrationToolset', () => {
 
       expect(
         Object.keys(tools[0]._getDeclaration()?.parameters?.properties ?? {}),
-      ).toEqual(['filterClause', 'pageSize', 'pageToken']);
+      ).toEqual(['filterClause', 'pageSize', 'pageToken', 'sortByColumns']);
       fetchMock.mockReset();
       fetchMock.mockResolvedValue(jsonResponse({connectorOutputPayload: []}));
       await tools[0].runAsync({
@@ -913,7 +913,7 @@ describe('ApplicationIntegrationToolset', () => {
 
       expect(
         Object.keys(tools[0]._getDeclaration()?.parameters?.properties ?? {}),
-      ).toEqual(['filterClause', 'pageSize', 'pageToken']);
+      ).toEqual(['filterClause', 'pageSize', 'pageToken', 'sortByColumns']);
       expect(
         Object.keys(tools[1]._getDeclaration()?.parameters?.properties ?? {}),
       ).toEqual(['query', 'timeout', 'pageSize']);

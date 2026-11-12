@@ -66,6 +66,7 @@ export class IntegrationConnectorTool extends BaseTool {
     'pageSize',
     'pageToken',
     'filterClause',
+    'sortByColumns',
   ]);
 
   readonly connectionName: string;
