@@ -1564,6 +1564,18 @@ export class AdkApiServer {
           }
           chunks.push(buf);
         });
+        req.on('error', () => {
+          if (rejected) {
+            return;
+          }
+          rejected = true;
+          chunks.length = 0;
+          this.logger.error('Failed to read raw request body');
+          if (!res.headersSent) {
+            res.status(400).json({error: 'Request body is not valid JSON.'});
+          }
+          resolve(undefined);
+        });
         req.on('end', () => {
           if (rejected) {
             return;
@@ -1574,6 +1586,17 @@ export class AdkApiServer {
             try {
               body = JSON.parse(rawBody);
             } catch {
+              this.logger.error('Failed to parse raw body as JSON');
+              res.status(400).json({error: 'Request body is not valid JSON.'});
+              resolve(undefined);
+              return;
+            }
+            if (
+              typeof body !== 'object' ||
+              body === null ||
+              Array.isArray(body)
+            ) {
+              this.logger.error('Failed to parse raw body as JSON');
               res.status(400).json({error: 'Request body is not valid JSON.'});
               resolve(undefined);
               return;

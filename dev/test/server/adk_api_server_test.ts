@@ -2102,6 +2102,61 @@ describe('AdkWebServer', () => {
       expect(res.status).toBe(413);
     });
 
+    it('returns 400 and does not log sensitive payload when raw body is malformed JSON', async () => {
+      const sentinel = 'secret-malformed-sentinel';
+      const loggedMessages: string[] = [];
+      const recordArgs = (...args: unknown[]) => {
+        loggedMessages.push(args.map(String).join(' '));
+      };
+      const spies = [
+        vi.spyOn(AdkLogger.prototype, 'debug').mockImplementation(recordArgs),
+        vi.spyOn(AdkLogger.prototype, 'info').mockImplementation(recordArgs),
+        vi.spyOn(AdkLogger.prototype, 'warn').mockImplementation(recordArgs),
+        vi.spyOn(AdkLogger.prototype, 'error').mockImplementation(recordArgs),
+        vi
+          .spyOn(AdkLogger.prototype, 'log')
+          .mockImplementation((_level, ...args) => {
+            recordArgs(...args);
+          }),
+      ];
+
+      try {
+        const res = await fetch(`${server.url}/api/reasoning_engine`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json,application/json'},
+          body: `{"input": "${sentinel}"`,
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'Request body is not valid JSON.',
+        });
+        const allLogs = loggedMessages.join('\n');
+        expect(allLogs).toContain('Failed to parse raw body as JSON');
+        expect(allLogs).not.toContain(sentinel);
+      } finally {
+        for (const spy of spies) {
+          spy.mockRestore();
+        }
+      }
+    });
+
+    it.each(['null', '[]', '"string"', '123'])(
+      'returns 400 when a raw request body is non-object JSON value %s',
+      async (rawBody) => {
+        const res = await fetch(`${server.url}/api/reasoning_engine`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json,application/json'},
+          body: rawBody,
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'Request body is not valid JSON.',
+        });
+      },
+    );
+
     it.each([
       {name: 'already-parsed JSON body', contentType: 'application/json'},
       {
