@@ -65,9 +65,10 @@ describe('file_utils', () => {
         },
       ];
 
-      await expect(materializeFiles(files, tempDir)).rejects.toThrow(
-        /Path traversal detected/,
-      );
+      await expect(materializeFiles(files, tempDir)).rejects.toMatchObject({
+        name: 'InputValidationError',
+        message: expect.stringMatching(/Path traversal detected/),
+      });
     });
 
     it('should throw an error if file attempts to escape into a sibling directory sharing a name prefix', async () => {

@@ -586,6 +586,34 @@ describe('AgentTool', () => {
       });
     });
 
+    it('rejects non-object input args with InputValidationError', async () => {
+      const subAgent = new LlmAgent({
+        name: 'object_input_agent',
+        inputSchema: z.object({count: z.number()}),
+      });
+      const tool = new AgentTool({agent: subAgent});
+      const invocationContext = new InvocationContext({
+        invocationId: 'test-invocation',
+        agent: subAgent,
+        session: createSession({
+          id: 'parent-session',
+          appName: 'object_input_agent',
+          userId: 'parent-user',
+        }),
+        pluginManager: new PluginManager([]),
+      });
+
+      await expect(
+        tool.runAsync({
+          args: [1, 2] as unknown as Record<string, unknown>,
+          toolContext: new Context({invocationContext}),
+        }),
+      ).rejects.toMatchObject({
+        name: 'InputValidationError',
+        message: 'AgentTool input args must be a plain object.',
+      });
+    });
+
     it('rejects invalid input args against inputSchema and invalid output JSON against outputSchema', async () => {
       const subAgent = new LlmAgent({
         name: 'strict_schema_agent',

@@ -5,6 +5,7 @@
  */
 
 import {OpenAPIV3} from 'openapi-types';
+import {InputValidationError} from '../../../errors/input_validation_error.js';
 import {
   renameReservedKeywords,
   toSnakeCaseName,
@@ -288,14 +289,14 @@ export class OperationParser {
   /**
    * Gets a valid tool function name derived from the operation's operationId.
    *
-   * @throws {Error} If the operation does not have an operationId.
+   * @throws {InputValidationError} If the operation does not have an operationId.
    * @returns A string representing the function name.
    */
   @experimental
   public getFunctionName(): string {
     const operationId = this.operation.operationId;
     if (!operationId) {
-      throw new Error('Operation ID is missing');
+      throw new InputValidationError('Operation ID is missing');
     }
     return this.getParamName(operationId).substring(0, 60);
   }

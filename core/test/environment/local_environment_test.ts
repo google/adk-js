@@ -211,9 +211,10 @@ describe('LocalEnvironment', () => {
     });
 
     it('rejects the working directory parent itself', async () => {
-      await expect(env.readFile('..')).rejects.toThrow(
-        /escapes working directory/,
-      );
+      await expect(env.readFile('..')).rejects.toMatchObject({
+        name: 'InputValidationError',
+        message: expect.stringMatching(/escapes working directory/),
+      });
     });
 
     it('rejects an absolute path outside the working directory', async () => {

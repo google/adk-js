@@ -12,6 +12,7 @@ import {
   Session,
 } from '@google/genai';
 
+import {InputValidationError} from '../errors/input_validation_error.js';
 import {LiveResponseAggregator} from '../utils/live_connection_utils.js';
 import {logger} from '../utils/logger.js';
 import {isGemini35LiveTranslate, isGemini3xLive} from '../utils/model_name.js';
@@ -68,7 +69,7 @@ export class GeminiLlmConnection implements BaseLlmConnection {
    */
   async sendContent(content: Content): Promise<void> {
     if (!content.parts) {
-      throw new Error('Content must have parts.');
+      throw new InputValidationError('Content must have parts.');
     }
     if (content.parts[0].functionResponse) {
       // All parts have to be function responses.

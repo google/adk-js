@@ -333,7 +333,10 @@ describe('AgentRegistry', () => {
       vi.spyOn(registry, 'getMcpServer').mockResolvedValue({});
       await expect(
         registry.getMcpToolset('mcpServers/invalid'),
-      ).rejects.toThrow('MCP Server endpoint URI not found');
+      ).rejects.toMatchObject({
+        name: 'NotFoundError',
+        message: expect.stringContaining('MCP Server endpoint URI not found'),
+      });
     });
 
     it('should resolve auth scheme from bindings if available', async () => {

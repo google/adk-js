@@ -13,6 +13,7 @@ import {isLlmAgent, LlmAgent} from '../agents/llm_agent.js';
 import {isLoopAgent, LoopAgent} from '../agents/loop_agent.js';
 import {isParallelAgent} from '../agents/parallel_agent.js';
 import {isSequentialAgent} from '../agents/sequential_agent.js';
+import {InputValidationError} from '../errors/input_validation_error.js';
 import {propagateTraceContext} from '../telemetry/api/instrumentation.js';
 import {BaseTool, isBaseTool} from '../tools/base_tool.js';
 import {isBaseToolset} from '../tools/base_toolset.js';
@@ -102,7 +103,7 @@ export async function resolveAgentCard(
   }
   const url = parseCardUrl(source);
   if (url && url.protocol !== 'file:') {
-    throw new Error(
+    throw new InputValidationError(
       `Unsupported agent card URL scheme "${url.protocol}": ${agentCard}. ` +
         'Use http://, https:// or file://, or pass a filesystem path with no scheme.',
     );
@@ -134,7 +135,7 @@ async function refuseLinkLocalHost(source: string): Promise<void> {
   }
   const addresses = await resolveHostAddresses(hostname);
   if (addresses.some((address) => isLinkLocalAddress(address))) {
-    throw new Error(
+    throw new InputValidationError(
       `Refusing to fetch agent card from a link-local address: ${hostname}`,
     );
   }
@@ -166,7 +167,7 @@ async function refuseRedirectFetch(
     (response.status >= 300 && response.status < 400)
   ) {
     const location = response.headers.get('location');
-    throw new Error(
+    throw new InputValidationError(
       `Refusing to follow a redirect from the agent card endpoint ` +
         `(status ${response.status}, location ${location}): ${url}`,
     );
@@ -205,8 +206,9 @@ async function readAgentCardFile(
     const content = await fs.readFile(path, 'utf-8');
     return JSON.parse(content) as AgentCard;
   } catch (err: unknown) {
-    throw new Error(
+    throw new InputValidationError(
       `Failed to read agent card from file ${source}: ${(err as Error).message}`,
+      {cause: err},
     );
   }
 }
@@ -252,8 +254,9 @@ function validateCardRpcTargets(
   try {
     parsedSource = new URL(source);
   } catch (err: unknown) {
-    throw new Error(
+    throw new InputValidationError(
       `Invalid agent card source URL: ${source}: ${(err as Error).message}`,
+      {cause: err},
     );
   }
 
@@ -267,8 +270,9 @@ function validateCardRpcTargets(
     try {
       parsed = new URL(rpcUrl);
     } catch (err: unknown) {
-      throw new Error(
+      throw new InputValidationError(
         `Invalid RPC URL in agent card: ${rpcUrl}: ${(err as Error).message}`,
+        {cause: err},
       );
     }
 
@@ -281,7 +285,7 @@ function validateCardRpcTargets(
             'anything on the network path.',
         );
       } else {
-        throw new Error(
+        throw new InputValidationError(
           `Agent card RPC URL must use https, or http on a loopback host: ${rpcUrl}`,
         );
       }
@@ -296,7 +300,7 @@ function validateCardRpcTargets(
             `${rpcUrl}.`,
         );
       } else {
-        throw new Error(
+        throw new InputValidationError(
           'Agent card RPC URL must have the same origin as the location the ' +
             `card was fetched from (${source}): ${rpcUrl}`,
         );

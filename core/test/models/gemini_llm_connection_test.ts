@@ -164,9 +164,10 @@ describe('GeminiLlmConnection', () => {
         mockSession,
         'gemini-2.5-flash',
       );
-      await expect(connection.sendContent({})).rejects.toThrow(
-        'Content must have parts.',
-      );
+      await expect(connection.sendContent({})).rejects.toMatchObject({
+        name: 'InputValidationError',
+        message: expect.stringContaining('Content must have parts.'),
+      });
     });
   });
 

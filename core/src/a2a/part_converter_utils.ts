@@ -22,6 +22,7 @@ import {
   Part as GenAIPart,
   VideoMetadata,
 } from '@google/genai';
+import {InputValidationError} from '../errors/input_validation_error.js';
 import {A2AMetadataKeys} from './metadata_converter_utils.js';
 
 /**
@@ -220,7 +221,7 @@ export function toGenAIParts(a2aParts: A2APart[]): GenAIPart[] {
  *
  * @param a2aPart - The A2A part to convert.
  * @returns The corresponding GenAI part.
- * @throws {Error} If the A2A part has an unrecognized `kind`.
+ * @throws {InputValidationError} If the A2A part has an unrecognized `kind`.
  */
 export function toGenAIPart(a2aPart: A2APart): GenAIPart {
   if (a2aPart.kind === 'text') {
@@ -235,7 +236,9 @@ export function toGenAIPart(a2aPart: A2APart): GenAIPart {
     return toGenAIPartData(a2aPart);
   }
 
-  throw new Error(`Unknown part kind: ${JSON.stringify(a2aPart)}`);
+  throw new InputValidationError(
+    `Unknown part kind: ${JSON.stringify(a2aPart)}`,
+  );
 }
 
 /**
@@ -257,7 +260,7 @@ export function toGenAIPartText(a2aPart: A2ATextPart): GenAIPart {
  * @param a2aPart - The A2A file part containing bytes or a URI.
  * @returns A GenAI part with `inlineData` or `fileData` depending on the
  *   source, with optional video metadata attached.
- * @throws {Error} If the file part contains neither bytes nor a URI.
+ * @throws {InputValidationError} If the file part contains neither bytes nor a URI.
  */
 export function toGenAIPartFile(a2aPart: A2AFilePart): GenAIPart {
   const part: GenAIPart = {};
@@ -283,7 +286,7 @@ export function toGenAIPartFile(a2aPart: A2AFilePart): GenAIPart {
     return part;
   }
 
-  throw new Error(`Not a file part: ${JSON.stringify(a2aPart)}`);
+  throw new InputValidationError(`Not a file part: ${JSON.stringify(a2aPart)}`);
 }
 
 /**
@@ -296,7 +299,9 @@ export function toGenAIPartFile(a2aPart: A2AFilePart): GenAIPart {
  */
 export function toGenAIPartData(a2aPart: A2ADataPart): GenAIPart {
   if (!a2aPart.data) {
-    throw new Error(`No data in part: ${JSON.stringify(a2aPart)}`);
+    throw new InputValidationError(
+      `No data in part: ${JSON.stringify(a2aPart)}`,
+    );
   }
 
   const data = a2aPart.data as Record<string, unknown>;

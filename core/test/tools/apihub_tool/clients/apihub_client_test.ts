@@ -208,9 +208,12 @@ describe('APIHubClient', () => {
     it('rejects when the API has no versions', async () => {
       fetchMock.mockResolvedValue(jsonResponse({name: API_NAME, versions: []}));
 
-      await expect(client.getSpecContent(API_NAME)).rejects.toThrow(
-        `No versions found in API Hub resource: ${API_NAME}`,
-      );
+      await expect(client.getSpecContent(API_NAME)).rejects.toMatchObject({
+        name: 'NotFoundError',
+        message: expect.stringContaining(
+          `No versions found in API Hub resource: ${API_NAME}`,
+        ),
+      });
     });
 
     it('rejects when the version has no specs', async () => {

@@ -7,6 +7,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {File} from '../code_executors/code_execution_utils.js';
+import {InputValidationError} from '../errors/input_validation_error.js';
 import {getMimeTypeAndEncoding} from './file_extension_utils.js';
 
 /**
@@ -48,7 +49,7 @@ export async function materializeFiles(
     const fullPath = path.resolve(dir, file.name);
 
     if (!isInsideDir(fullPath, resolvedBaseDir)) {
-      throw new Error(
+      throw new InputValidationError(
         `Path traversal detected: ${file.name} resolves outside of ${dir}`,
       );
     }
@@ -78,7 +79,7 @@ export async function materializeFiles(
     }
 
     if (!isInsideDir(finalPath, resolvedBaseDir)) {
-      throw new Error(
+      throw new InputValidationError(
         `Path traversal detected: ${file.name} resolves outside of ${dir}`,
       );
     }

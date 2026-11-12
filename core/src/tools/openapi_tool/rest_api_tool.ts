@@ -9,6 +9,7 @@ import {OpenAPIV3} from 'openapi-types';
 import {Context} from '../../agents/context.js';
 import {ReadonlyContext} from '../../agents/readonly_context.js';
 import {AuthCredential} from '../../auth/auth_credential.js';
+import {InputValidationError} from '../../errors/input_validation_error.js';
 import {experimental} from '../../utils/experimental.js';
 import {openApiSchemaToGeminiSchema} from '../../utils/gemini_schema_util.js';
 import {BaseTool, RunAsyncToolRequest} from '../base_tool.js';
@@ -270,11 +271,11 @@ export interface PreparedParams {
  * rejected rather than encoded, because URL normalization resolves a
  * percent-encoded dot-segment (`%2E%2E`) exactly like a literal one.
  *
- * @throws {Error} If the value is a relative path segment.
+ * @throws {InputValidationError} If the value is a relative path segment.
  */
 function encodePathParamValue(name: string, value: string): string {
   if (value === '.' || value === '..') {
-    throw new Error(
+    throw new InputValidationError(
       `Invalid value for path parameter '${name}': relative path segments ` +
         `('.' and '..') are not allowed.`,
     );
@@ -570,14 +571,14 @@ export function createRestApiTool(
  *
  * @param parsedOperationJson A serialized {@link ParsedOperationInput}.
  * @returns The tool for that operation.
- * @throws {Error} If the auth scheme does not declare a known `type`.
+ * @throws {InputValidationError} If the auth scheme does not declare a known `type`.
  */
 export function createRestApiToolFromJson(
   parsedOperationJson: string,
 ): RestApiTool {
   const parsed = JSON.parse(parsedOperationJson) as ParsedOperationInput;
   if (parsed.authScheme && !isSecurityScheme(parsed.authScheme)) {
-    throw new Error(
+    throw new InputValidationError(
       `Unsupported security scheme type: ${JSON.stringify(readSchemeType(parsed.authScheme))}. ` +
         `Expected one of: ${SECURITY_SCHEME_TYPES.join(', ')}.`,
     );

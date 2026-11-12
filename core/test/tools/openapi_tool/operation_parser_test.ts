@@ -14,7 +14,12 @@ describe('OperationParser', () => {
       responses: {},
     };
     const parser = new OperationParser(op);
-    expect(() => parser.getFunctionName()).toThrow('Operation ID is missing');
+    expect(() => parser.getFunctionName()).toThrow(
+      expect.objectContaining({
+        name: 'InputValidationError',
+        message: expect.stringContaining('Operation ID is missing'),
+      }),
+    );
   });
 
   it('should parse array request body', () => {

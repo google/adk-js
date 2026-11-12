@@ -520,9 +520,12 @@ describe('Agent Card', () => {
       await withCardServer(
         (port) => baseCard(`http://${nonLoopback}:${port}/rpc`),
         async (source) => {
-          await expect(resolveAgentCard(source)).rejects.toThrow(
-            /must use https, or http on a loopback host/,
-          );
+          await expect(resolveAgentCard(source)).rejects.toMatchObject({
+            name: 'InputValidationError',
+            message: expect.stringMatching(
+              /must use https, or http on a loopback host/,
+            ),
+          });
         },
         nonLoopback,
       );
@@ -532,9 +535,12 @@ describe('Agent Card', () => {
       await withCardServer(
         () => baseCard(''),
         async (source) => {
-          await expect(resolveAgentCard(source)).rejects.toThrow(
-            /Invalid RPC URL/,
-          );
+          const error = await resolveAgentCard(source).catch((e) => e);
+          expect(error).toMatchObject({
+            name: 'InputValidationError',
+            message: expect.stringMatching(/Invalid RPC URL/),
+          });
+          expect(error.cause).toBeInstanceOf(TypeError);
         },
       );
     });
@@ -890,9 +896,12 @@ describe('Agent Card', () => {
       'http://[fe80::1]/',
       'http://[64:ff9b::a9fe:a9fe]/',
     ])('refuses the link-local literal %s without fetching', async (source) => {
-      await expect(resolveAgentCard(source)).rejects.toThrow(
-        /Refusing to fetch agent card from a link-local address/,
-      );
+      await expect(resolveAgentCard(source)).rejects.toMatchObject({
+        name: 'InputValidationError',
+        message: expect.stringMatching(
+          /Refusing to fetch agent card from a link-local address/,
+        ),
+      });
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
@@ -927,11 +936,13 @@ describe('Agent Card', () => {
         }),
       );
 
-      await expect(
-        resolveAgentCard('http://cards.example.com/'),
-      ).rejects.toThrow(
-        /Refusing to follow a redirect .* \(status 302, location http:\/\/169\.254\.169\.254\/\)/,
-      );
+      const rejection = resolveAgentCard('http://cards.example.com/');
+      await expect(rejection).rejects.toMatchObject({
+        name: 'InputValidationError',
+        message: expect.stringMatching(
+          /Refusing to follow a redirect .* \(status 302, location http:\/\/169\.254\.169\.254\/\)/,
+        ),
+      });
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(fetchMock).toHaveBeenCalledWith(
         expect.any(URL),
@@ -989,9 +1000,10 @@ describe('Agent Card', () => {
     ])('refuses the unsupported scheme in %s', async (source) => {
       const rejection = resolveAgentCard(source);
 
-      await expect(rejection).rejects.toThrow(
-        /Unsupported agent card URL scheme/,
-      );
+      await expect(rejection).rejects.toMatchObject({
+        name: 'InputValidationError',
+        message: expect.stringMatching(/Unsupported agent card URL scheme/),
+      });
       await expect(rejection).rejects.not.toThrow(
         /Failed to read agent card from file/,
       );
@@ -1019,11 +1031,16 @@ describe('Agent Card', () => {
     });
 
     it('reports a missing card file with its source', async () => {
-      await expect(
-        resolveAgentCard('./no-such-agent-card.json'),
-      ).rejects.toThrow(
-        /^Failed to read agent card from file \.\/no-such-agent-card\.json: ENOENT/,
+      const error = await resolveAgentCard('./no-such-agent-card.json').catch(
+        (e) => e,
       );
+      expect(error).toMatchObject({
+        name: 'InputValidationError',
+        message: expect.stringMatching(
+          /^Failed to read agent card from file \.\/no-such-agent-card\.json: ENOENT/,
+        ),
+        cause: expect.objectContaining({code: 'ENOENT'}),
+      });
     });
   });
 });

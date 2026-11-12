@@ -359,7 +359,12 @@ describe('part_converter_utils', () => {
     it('throws if neither uri nor bytes', () => {
       const a2aPart = {kind: 'file', file: {}} as unknown as A2AFilePart;
       expect(() => toGenAIPartFile(a2aPart)).toThrow(
-        'Not a file part: {"kind":"file","file":{}}',
+        expect.objectContaining({
+          name: 'InputValidationError',
+          message: expect.stringContaining(
+            'Not a file part: {"kind":"file","file":{}}',
+          ),
+        }),
       );
     });
   });
@@ -427,7 +432,12 @@ describe('part_converter_utils', () => {
       const a2aPart = {
         kind: 'data',
       } as unknown as A2ADataPart;
-      expect(() => toGenAIPartData(a2aPart)).toThrow('No data in part');
+      expect(() => toGenAIPartData(a2aPart)).toThrow(
+        expect.objectContaining({
+          name: 'InputValidationError',
+          message: expect.stringContaining('No data in part'),
+        }),
+      );
     });
 
     it('falls back to stringified text if type is unknown', () => {
@@ -471,7 +481,12 @@ describe('part_converter_utils', () => {
 
     it('throws on unknown kind', () => {
       const a2aPart = {kind: 'unknown'} as unknown as A2APart;
-      expect(() => toGenAIPart(a2aPart)).toThrow('Unknown part kind');
+      expect(() => toGenAIPart(a2aPart)).toThrow(
+        expect.objectContaining({
+          name: 'InputValidationError',
+          message: expect.stringContaining('Unknown part kind'),
+        }),
+      );
     });
   });
 

@@ -5,6 +5,7 @@
  */
 
 import {AsyncLocalStorage} from 'node:async_hooks';
+import {InputValidationError} from '../errors/input_validation_error.js';
 import {version} from '../version.js';
 import {isBrowser} from './env_aware_utils.js';
 
@@ -74,7 +75,7 @@ export function runWithClientLabel<R>(
   callback: () => R,
 ): R {
   if (typeof clientLabel !== 'string' || clientLabel.trim() === '') {
-    throw new Error('Client label must be a non-empty string.');
+    throw new InputValidationError('Client label must be a non-empty string.');
   }
 
   return clientLabelLocalStorage.run(clientLabel, callback);

@@ -491,7 +491,12 @@ describe('VertexAiMemoryBankService', () => {
           userId: 'test-user',
           memories: [],
         }),
-      ).rejects.toThrow('memories must contain at least one entry.');
+      ).rejects.toMatchObject({
+        name: 'InputValidationError',
+        message: expect.stringContaining(
+          'memories must contain at least one entry.',
+        ),
+      });
     });
 
     it('throws error if memory does not include text', async () => {
