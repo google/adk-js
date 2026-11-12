@@ -48,6 +48,7 @@ import {
   StreamingMode,
   toA2a,
   tryGetResetFunc,
+  validatePathSegment,
 } from '@google/adk';
 import {Content} from '@google/genai';
 import {trace, TracerProvider} from '@opentelemetry/api';
@@ -243,12 +244,14 @@ export class AdkApiServer {
     this.memoryService = options.memoryService ?? new InMemoryMemoryService();
     this.artifactService =
       options.artifactService ?? new InMemoryArtifactService();
-    this.evalSetsManager = new LocalEvalSetsManager(
-      options.agentsDir ?? process.cwd(),
-    );
-    this.evalSetResultsManager = new LocalEvalSetResultsManager(
-      options.agentsDir ?? process.cwd(),
-    );
+    const configuredAgentsDir = options.agentsDir ?? process.cwd();
+    const evalBaseDir =
+      fs.existsSync(configuredAgentsDir) &&
+      fs.statSync(configuredAgentsDir).isFile()
+        ? path.dirname(path.resolve(configuredAgentsDir))
+        : path.resolve(configuredAgentsDir);
+    this.evalSetsManager = new LocalEvalSetsManager(evalBaseDir);
+    this.evalSetResultsManager = new LocalEvalSetResultsManager(evalBaseDir);
     this.agentLoader =
       options.agentLoader ??
       new AgentLoader(
@@ -1017,6 +1020,29 @@ export class AdkApiServer {
     );
 
     // --------------------- Eval Sets related endpoints -----------------------
+    const getEvalBaseDir = (): string => {
+      const configured = this.agentsDir ?? process.cwd();
+      return fs.existsSync(configured) && fs.statSync(configured).isFile()
+        ? path.dirname(path.resolve(configured))
+        : path.resolve(configured);
+    };
+    // These checks are lexical. They keep request-supplied names from leaving
+    // the eval base directory, but they do not follow symlinks.
+    const resolveAppEvalDir = (appName: string): string => {
+      validatePathSegment(appName, 'appName');
+      const baseDir = getEvalBaseDir();
+      const appDir = path.resolve(baseDir, appName);
+      const rel = path.relative(baseDir, appDir);
+      if (
+        !rel ||
+        rel.startsWith('..') ||
+        path.isAbsolute(rel) ||
+        path.dirname(appDir) !== baseDir
+      ) {
+        throw new InputValidationError(`Invalid appName '${appName}'.`);
+      }
+      return appDir;
+    };
     app.post(
       [
         '/apps/:appName/eval_sets/:evalSetId',
@@ -1318,9 +1344,7 @@ export class AdkApiServer {
               : evalSet.evalCases;
 
           const agentFile = await this.agentLoader.getAgentFile(appName);
-          if (this.agentsDir) {
-            loadDotenvForAgent(appName, this.agentsDir);
-          }
+          this.loadAgentDotenv(appName);
           await using _bundleLease = agentFile.retain();
           const loaded = await agentFile.load();
           const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
@@ -1331,7 +1355,12 @@ export class AdkApiServer {
           }
 
           const resetFunc = this.agentsDir
-            ? await tryGetResetFunc(path.join(this.agentsDir, appName))
+            ? await tryGetResetFunc(
+                fs.existsSync(this.agentsDir) &&
+                  fs.statSync(this.agentsDir).isFile()
+                  ? this.agentsDir
+                  : resolveAppEvalDir(appName),
+              )
             : undefined;
 
           const runEvalResults: RunEvalResult[] = [];
@@ -1378,6 +1407,9 @@ export class AdkApiServer {
 
           return res.json(runEvalResults);
         } catch (e: unknown) {
+          if (e instanceof InputValidationError) {
+            return res.status(400).json({error: e.message});
+          }
           const error = `Failed to run eval: ${getErrorMessage(e)}`;
           this.logger.error(error);
           return res.status(500).json({error});
@@ -1443,7 +1475,12 @@ export class AdkApiServer {
         newMessage,
         stateDelta,
         customMetadata,
-      } = req.body;
+      } = req.body ?? {};
+      const appNameError = getAppNameError(appName);
+      if (appNameError) {
+        res.status(400).json({error: appNameError});
+        return;
+      }
       const session = await this.sessionService.getSession({
         appName,
         userId,
@@ -1590,7 +1627,12 @@ export class AdkApiServer {
         streaming,
         stateDelta,
         customMetadata,
-      } = req.body;
+      } = req.body ?? {};
+      const appNameError = getAppNameError(appName);
+      if (appNameError) {
+        res.status(400).json({error: appNameError});
+        return;
+      }
 
       const session = await this.sessionService.getSession({
         appName,
@@ -1820,6 +1862,12 @@ export class AdkApiServer {
       '';
     const modalitiesParam = reqUrl.searchParams.getAll('modalities');
 
+    if (getAppNameError(appName)) {
+      // The close frame has a one-byte length, so never echo appName here.
+      sendWsClose(1008, 'Invalid appName');
+      return;
+    }
+
     const session = await this.sessionService.getSession({
       appName,
       userId,
@@ -1922,9 +1970,7 @@ export class AdkApiServer {
       // Resolve the app through the loader first, so an unknown app name
       // never reaches the `.env` lookup.
       const agentFile = await this.agentLoader.getAgentFile(appName);
-      if (this.agentsDir) {
-        loadDotenvForAgent(appName, this.agentsDir);
-      }
+      this.loadAgentDotenv(appName);
       await using _bundleLease = agentFile.retain();
       const loaded = await agentFile.load();
       const runner = await this.getRunner(loaded, appName);
@@ -2015,6 +2061,25 @@ export class AdkApiServer {
     return isApp(loaded) ? loaded.rootAgent : loaded;
   }
 
+  /**
+   * Loads the `.env` file of a registered app into `process.env`. Call it only
+   * after `agentLoader.getAgentFile(appName)` succeeds.
+   */
+  private loadAgentDotenv(appName: string): void {
+    validatePathSegment(appName, 'appName');
+    if (!this.agentsDir) {
+      return;
+    }
+    if (fs.existsSync(this.agentsDir) && fs.statSync(this.agentsDir).isFile()) {
+      loadDotenvForAgent(
+        path.basename(this.agentsDir),
+        path.dirname(this.agentsDir),
+      );
+      return;
+    }
+    loadDotenvForAgent(appName, this.agentsDir);
+  }
+
   private async getRunner(
     agentOrApp: RunnableRoot | App,
     appName: string,
@@ -2048,13 +2113,10 @@ export class AdkApiServer {
     runConfig?: RunConfig;
     abortSignal: AbortSignal;
   }): AsyncGenerator<Event> {
-    // Resolve the app through the loader first, so an unknown app name never
-    // reaches the `.env` lookup.
+    validatePathSegment(options.appName, 'appName');
+    // Resolve the agent first, so an unknown appName never loads a .env file.
     const agentFile = await this.agentLoader.getAgentFile(options.appName);
-    if (this.agentsDir) {
-      loadDotenvForAgent(options.appName, this.agentsDir);
-    }
-
+    this.loadAgentDotenv(options.appName);
     await using _bundleLease = agentFile.retain();
     const loaded = await agentFile.load();
     const runner = await this.getRunner(loaded, options.appName);
@@ -2072,5 +2134,21 @@ export class AdkApiServer {
     })) {
       yield publicEvent(event);
     }
+  }
+}
+
+/**
+ * Returns the validation message for an invalid request `appName`, or
+ * `undefined` when `appName` is a safe single path segment.
+ */
+function getAppNameError(appName: string): string | undefined {
+  try {
+    validatePathSegment(appName, 'appName');
+    return undefined;
+  } catch (e: unknown) {
+    if (e instanceof InputValidationError) {
+      return e.message;
+    }
+    throw e;
   }
 }

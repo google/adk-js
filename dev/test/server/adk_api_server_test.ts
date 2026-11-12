@@ -3493,3 +3493,590 @@ describe('AdkWebServer', () => {
     });
   });
 });
+
+interface RawResponse {
+  status: number;
+  body: string;
+}
+
+/**
+ * Sends a request with the path exactly as given. `fetch` normalizes `..` and
+ * `%2E%2E` path segments on the client, so traversal paths need this helper.
+ */
+function sendRawRequest(
+  baseUrl: string,
+  {method, rawPath, body}: {method: string; rawPath: string; body?: unknown},
+): Promise<RawResponse> {
+  const target = new URL(baseUrl);
+  const payload = body === undefined ? undefined : JSON.stringify(body);
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        host: target.hostname,
+        port: target.port,
+        path: rawPath,
+        method,
+        headers: payload
+          ? {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(payload),
+            }
+          : undefined,
+      },
+      (res) => {
+        let text = '';
+        res.setEncoding('utf-8');
+        res.on('data', (chunk: string) => {
+          text += chunk;
+        });
+        res.on('end', () => resolve({status: res.statusCode ?? 0, body: text}));
+      },
+    );
+    req.on('error', reject);
+    req.end(payload);
+  });
+}
+
+/**
+ * Opens a `/run_live` WebSocket and resolves with the close code that the
+ * server sends.
+ */
+function getRunLiveCloseCode(baseUrl: string, query: string): Promise<number> {
+  const target = new URL(baseUrl);
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      host: target.hostname,
+      port: target.port,
+      path: `/run_live?${query}`,
+      method: 'GET',
+      headers: {
+        Connection: 'Upgrade',
+        Upgrade: 'websocket',
+        'Sec-WebSocket-Key': Buffer.from('1234567890123456').toString('base64'),
+        'Sec-WebSocket-Version': '13',
+      },
+    });
+    req.on('upgrade', (_res, socket, head) => {
+      let buf = head.length > 0 ? Buffer.from(head) : Buffer.alloc(0);
+      const tryParseClose = () => {
+        while (buf.length >= 2) {
+          const opcode = buf[0] & 0x0f;
+          const len = buf[1] & 0x7f;
+          if (buf.length < 2 + len) {
+            return;
+          }
+          const payload = buf.subarray(2, 2 + len);
+          buf = buf.subarray(2 + len);
+          if (opcode === 0x08) {
+            socket.destroy();
+            resolve(payload.readUInt16BE(0));
+            return;
+          }
+        }
+      };
+      socket.on('data', (chunk: Buffer) => {
+        buf = Buffer.concat([buf, Buffer.from(chunk)]);
+        tryParseClose();
+      });
+      socket.on('end', () => reject(new Error('Socket ended without close.')));
+      socket.on('error', reject);
+      tryParseClose();
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+describe('AdkApiServer path validation', () => {
+  const AGENT_SECRET_KEY = 'ADK_TEST_AGENT_SECRET';
+  const OUTSIDE_SECRET_KEY = 'ADK_TEST_OUTSIDE_SECRET';
+
+  let rootDir: string;
+  let agentsDir: string;
+  let sessionService: BaseSessionService;
+  let server: AdkApiServer;
+
+  const newMessage = {role: 'user', parts: [{text: 'Hello'}]};
+
+  function createLoader(): AgentLoader {
+    return {
+      listAgents: () => Promise.resolve(['testApp']),
+      getAgentFile: (appName: string) => {
+        if (appName !== 'testApp') {
+          return Promise.reject(new Error(`Agent '${appName}' not found.`));
+        }
+        return Promise.resolve({
+          retain: () => ({
+            async [Symbol.asyncDispose](): Promise<void> {
+              return;
+            },
+          }),
+          load() {
+            return Promise.resolve(TEST_AGENT);
+          },
+        });
+      },
+    } as unknown as AgentLoader;
+  }
+
+  async function startServer(serverAgentsDir: string): Promise<void> {
+    server = new AdkApiServer({
+      agentsDir: serverAgentsDir,
+      agentLoader: createLoader(),
+      sessionService,
+      memoryService: new InMemoryMemoryService(),
+      artifactService: new InMemoryArtifactService(),
+    });
+    await server.start();
+  }
+
+  beforeEach(async () => {
+    delete process.env[AGENT_SECRET_KEY];
+    delete process.env[OUTSIDE_SECRET_KEY];
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adk-path-validation-'));
+    agentsDir = path.join(rootDir, 'agents');
+    fs.mkdirSync(path.join(agentsDir, 'testApp'), {recursive: true});
+    fs.writeFileSync(
+      path.join(agentsDir, 'testApp', '.env'),
+      `${AGENT_SECRET_KEY}=agent\n`,
+    );
+    fs.writeFileSync(
+      path.join(rootDir, '.env'),
+      `${OUTSIDE_SECRET_KEY}=root\n`,
+    );
+    fs.mkdirSync(path.join(rootDir, 'outside_secret'));
+    fs.writeFileSync(
+      path.join(rootDir, 'outside_secret', '.env'),
+      `${OUTSIDE_SECRET_KEY}=outside\n`,
+    );
+    fs.mkdirSync(path.join(rootDir, 'outside'));
+    sessionService = new InMemorySessionService();
+    await startServer(agentsDir);
+  });
+
+  afterEach(async () => {
+    await server.stop();
+    fs.rmSync(rootDir, {recursive: true, force: true});
+    delete process.env[AGENT_SECRET_KEY];
+    delete process.env[OUTSIDE_SECRET_KEY];
+  });
+
+  describe('eval set routes', () => {
+    const invalidAppNames = ['..%2Foutside', '..', 'foo%5Cbar'];
+    const invalidEvalSetIds = [
+      '..%2Foutside',
+      '..',
+      'invalid-id!',
+      'foo%5Cbar',
+    ];
+    const routes: Array<{
+      name: string;
+      method: string;
+      buildPath: (appName: string, evalSetId: string) => string;
+      body?: unknown;
+    }> = [
+      {
+        name: 'POST eval_sets/:evalSetId',
+        method: 'POST',
+        buildPath: (a, s) => `/apps/${a}/eval_sets/${s}`,
+        body: {},
+      },
+      {
+        name: 'POST add_session',
+        method: 'POST',
+        buildPath: (a, s) => `/apps/${a}/eval_sets/${s}/add_session`,
+        body: {evalId: 'case_1', sessionId: 'session_1', userId: 'user_1'},
+      },
+      {
+        name: 'GET evals',
+        method: 'GET',
+        buildPath: (a, s) => `/apps/${a}/eval_sets/${s}/evals`,
+      },
+      {
+        name: 'POST run_eval',
+        method: 'POST',
+        buildPath: (a, s) => `/apps/${a}/eval_sets/${s}/run_eval`,
+        body: {},
+      },
+    ];
+
+    describe.each(routes)('$name', ({method, buildPath, body}) => {
+      it.each(invalidAppNames)(
+        'returns 400 for appName %s',
+        async (appName) => {
+          const response = await sendRawRequest(server.url, {
+            method,
+            rawPath: buildPath(appName, 'set_one'),
+            body,
+          });
+
+          expect(response.status).toBe(400);
+          expect(JSON.parse(response.body).error).toMatch(/appName/);
+        },
+      );
+
+      it.each(invalidEvalSetIds)(
+        'returns 400 for evalSetId %s',
+        async (evalSetId) => {
+          const response = await sendRawRequest(server.url, {
+            method,
+            rawPath: buildPath('testApp', evalSetId),
+            body,
+          });
+
+          expect(response.status).toBe(400);
+          expect(JSON.parse(response.body).error).toMatch(
+            /evalSetId|eval set ID/,
+          );
+        },
+      );
+    });
+
+    it.each(invalidAppNames)(
+      'returns 400 from GET eval_sets for appName %s',
+      async (appName) => {
+        const response = await sendRawRequest(server.url, {
+          method: 'GET',
+          rawPath: `/apps/${appName}/eval_sets`,
+        });
+
+        expect(response.status).toBe(400);
+        expect(JSON.parse(response.body).error).toMatch(/appName/);
+      },
+    );
+
+    it('does not create an eval set outside agentsDir', async () => {
+      const response = await sendRawRequest(server.url, {
+        method: 'POST',
+        rawPath: '/apps/..%2Foutside/eval_sets/set_one',
+        body: {},
+      });
+
+      expect(response.status).toBe(400);
+      expect(fs.readdirSync(path.join(rootDir, 'outside'))).toEqual([]);
+      expect(fs.existsSync(path.join(rootDir, 'set_one.evalset.json'))).toBe(
+        false,
+      );
+    });
+
+    it('does not list eval sets outside agentsDir', async () => {
+      fs.writeFileSync(
+        path.join(rootDir, 'outside', 'planted.evalset.json'),
+        '[]',
+      );
+
+      const response = await sendRawRequest(server.url, {
+        method: 'GET',
+        rawPath: '/apps/..%2Foutside/eval_sets',
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body).not.toContain('planted');
+    });
+  });
+
+  describe('.env loading', () => {
+    it.each([
+      ['a traversal appName', {appName: '../outside_secret'}],
+      ['an empty appName', {appName: ''}],
+      ['a missing appName', {}],
+    ])(
+      'POST /run returns 400 for %s and loads no .env',
+      async (_label, fields) => {
+        await sessionService.createSession({
+          appName: '../outside_secret',
+          userId: 'user_1',
+          sessionId: 'session_1',
+        });
+
+        const response = await sendRawRequest(server.url, {
+          method: 'POST',
+          rawPath: '/run',
+          body: {
+            ...fields,
+            userId: 'user_1',
+            sessionId: 'session_1',
+            newMessage,
+          },
+        });
+
+        expect(response.status).toBe(400);
+        expect(process.env[OUTSIDE_SECRET_KEY]).toBeUndefined();
+      },
+    );
+
+    it.each([
+      ['a traversal appName', {appName: '../outside_secret'}],
+      ['an empty appName', {appName: ''}],
+      ['a missing appName', {}],
+    ])(
+      'POST /run_sse returns 400 for %s and loads no .env',
+      async (_label, fields) => {
+        await sessionService.createSession({
+          appName: '../outside_secret',
+          userId: 'user_1',
+          sessionId: 'session_1',
+        });
+
+        const response = await sendRawRequest(server.url, {
+          method: 'POST',
+          rawPath: '/run_sse',
+          body: {
+            ...fields,
+            userId: 'user_1',
+            sessionId: 'session_1',
+            newMessage,
+          },
+        });
+
+        expect(response.status).toBe(400);
+        expect(process.env[OUTSIDE_SECRET_KEY]).toBeUndefined();
+      },
+    );
+
+    it('POST /run returns 500 for an unknown appName and loads no .env', async () => {
+      await sessionService.createSession({
+        appName: 'ghost',
+        userId: 'user_1',
+        sessionId: 'session_1',
+      });
+
+      const response = await sendRawRequest(server.url, {
+        method: 'POST',
+        rawPath: '/run',
+        body: {
+          appName: 'ghost',
+          userId: 'user_1',
+          sessionId: 'session_1',
+          newMessage,
+        },
+      });
+
+      expect(response.status).toBe(500);
+      expect(process.env[OUTSIDE_SECRET_KEY]).toBeUndefined();
+    });
+
+    it('POST /api/reasoning_engine fails for a traversal appName and loads no .env', async () => {
+      const response = await sendRawRequest(server.url, {
+        method: 'POST',
+        rawPath: '/api/reasoning_engine',
+        body: {
+          input: {
+            appName: '../outside_secret',
+            userId: 'user_1',
+            sessionId: 'session_1',
+            newMessage,
+          },
+        },
+      });
+
+      expect([400, 500]).toContain(response.status);
+      expect(process.env[OUTSIDE_SECRET_KEY]).toBeUndefined();
+    });
+
+    it('/run_live closes with 1008 for a traversal appName and loads no .env', async () => {
+      await sessionService.createSession({
+        appName: '../outside_secret',
+        userId: 'user_1',
+        sessionId: 'session_1',
+      });
+
+      const code = await getRunLiveCloseCode(
+        server.url,
+        'app_name=../outside_secret&user_id=user_1&session_id=session_1',
+      );
+
+      expect(code).toBe(1008);
+      expect(process.env[OUTSIDE_SECRET_KEY]).toBeUndefined();
+    });
+
+    it('/run_live closes with 1011 for an unknown appName and loads no .env', async () => {
+      await sessionService.createSession({
+        appName: 'ghost',
+        userId: 'user_1',
+        sessionId: 'session_1',
+      });
+
+      const code = await getRunLiveCloseCode(
+        server.url,
+        'app_name=ghost&user_id=user_1&session_id=session_1',
+      );
+
+      expect(code).toBe(1011);
+      expect(process.env[OUTSIDE_SECRET_KEY]).toBeUndefined();
+    });
+
+    it('run_eval returns 400 for a traversal appName and loads no .env', async () => {
+      fs.writeFileSync(
+        path.join(rootDir, 'outside_secret', 'set_one.evalset.json'),
+        '[]',
+      );
+
+      const response = await sendRawRequest(server.url, {
+        method: 'POST',
+        rawPath: '/apps/..%2Foutside_secret/eval_sets/set_one/run_eval',
+        body: {},
+      });
+
+      expect(response.status).toBe(400);
+      expect(process.env[OUTSIDE_SECRET_KEY]).toBeUndefined();
+    });
+
+    it('run_eval returns 500 for an unknown appName and loads no .env', async () => {
+      fs.mkdirSync(path.join(agentsDir, 'ghost'));
+      fs.writeFileSync(
+        path.join(agentsDir, 'ghost', 'set_one.evalset.json'),
+        '[]',
+      );
+
+      const response = await sendRawRequest(server.url, {
+        method: 'POST',
+        rawPath: '/apps/ghost/eval_sets/set_one/run_eval',
+        body: {},
+      });
+
+      expect(response.status).toBe(500);
+      expect(process.env[OUTSIDE_SECRET_KEY]).toBeUndefined();
+    });
+
+    it('POST /run loads the .env of a registered agent', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'user_1',
+        sessionId: 'session_1',
+      });
+
+      const response = await sendRawRequest(server.url, {
+        method: 'POST',
+        rawPath: '/run',
+        body: {
+          appName: 'testApp',
+          userId: 'user_1',
+          sessionId: 'session_1',
+          newMessage,
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(process.env[AGENT_SECRET_KEY]).toBe('agent');
+      expect(process.env[OUTSIDE_SECRET_KEY]).toBeUndefined();
+    });
+
+    it('POST /run loads the .env next to a single-file agentsDir', async () => {
+      await server.stop();
+      const agentFilePath = path.join(agentsDir, 'testApp', 'agent.ts');
+      fs.writeFileSync(agentFilePath, '');
+      await startServer(agentFilePath);
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'user_1',
+        sessionId: 'session_1',
+      });
+
+      const response = await sendRawRequest(server.url, {
+        method: 'POST',
+        rawPath: '/run',
+        body: {
+          appName: 'testApp',
+          userId: 'user_1',
+          sessionId: 'session_1',
+          newMessage,
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(process.env[AGENT_SECRET_KEY]).toBe('agent');
+    });
+
+    describe('with a real AgentLoader', () => {
+      const prototypeNames = [
+        'constructor',
+        'toString',
+        'hasOwnProperty',
+        'valueOf',
+      ];
+      let realLoader: AgentLoader;
+
+      beforeEach(async () => {
+        await server.stop();
+        realLoader = new AgentLoader(agentsDir);
+        server = new AdkApiServer({
+          agentsDir,
+          agentLoader: realLoader,
+          sessionService,
+          memoryService: new InMemoryMemoryService(),
+          artifactService: new InMemoryArtifactService(),
+        });
+        await server.start();
+      });
+
+      afterEach(async () => {
+        await realLoader.disposeAll();
+      });
+
+      it.each(prototypeNames)(
+        'POST /run returns 500 for appName %s and loads no .env',
+        async (appName) => {
+          await sessionService.createSession({
+            appName,
+            userId: 'user_1',
+            sessionId: 'session_1',
+          });
+
+          const response = await sendRawRequest(server.url, {
+            method: 'POST',
+            rawPath: '/run',
+            body: {
+              appName,
+              userId: 'user_1',
+              sessionId: 'session_1',
+              newMessage,
+            },
+          });
+
+          expect(response.status).toBe(500);
+          expect(process.env[OUTSIDE_SECRET_KEY]).toBeUndefined();
+        },
+      );
+
+      it.each(prototypeNames)(
+        '/run_live closes with 1011 for appName %s and loads no .env',
+        async (appName) => {
+          await sessionService.createSession({
+            appName,
+            userId: 'user_1',
+            sessionId: 'session_1',
+          });
+
+          const code = await getRunLiveCloseCode(
+            server.url,
+            `app_name=${appName}&user_id=user_1&session_id=session_1`,
+          );
+
+          expect(code).toBe(1011);
+          expect(process.env[OUTSIDE_SECRET_KEY]).toBeUndefined();
+        },
+      );
+
+      it.each(prototypeNames)(
+        'run_eval returns 500 for appName %s and loads no .env',
+        async (appName) => {
+          fs.mkdirSync(path.join(agentsDir, appName));
+          fs.writeFileSync(
+            path.join(agentsDir, appName, 'set_one.evalset.json'),
+            '[]',
+          );
+
+          const response = await sendRawRequest(server.url, {
+            method: 'POST',
+            rawPath: `/apps/${appName}/eval_sets/set_one/run_eval`,
+            body: {},
+          });
+
+          expect(response.status).toBe(500);
+          expect(process.env[OUTSIDE_SECRET_KEY]).toBeUndefined();
+        },
+      );
+    });
+  });
+});

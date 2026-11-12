@@ -39,6 +39,10 @@ import {
   IntermediateAgentResponseItem,
   ToolUseItem,
 } from './utils/evals.js';
+import {
+  isStrictlyInside,
+  validatePathSegment,
+} from './utils/path_validation.js';
 
 /**
  * Error message when evaluation dependencies are missing.
@@ -961,39 +965,6 @@ export async function* runEvals(
 
 const ADK_EVAL_HISTORY_DIR = '.adk/eval_history';
 const EVAL_SET_RESULT_FILE_EXTENSION = '.evalset_result.json';
-const WINDOWS_DRIVE_RE = /^[A-Za-z]:/;
-
-/**
- * Validates that a caller-supplied identifier is a safe single path segment and
- * cannot traverse directories.
- *
- * @param value The caller-supplied identifier.
- * @param fieldName Human-readable field name used in error messages.
- */
-export function validatePathSegment(value: string, fieldName: string): void {
-  if (!value) {
-    throw new InputValidationError(`${fieldName} must not be empty.`);
-  }
-  if (value.includes('\x00')) {
-    throw new InputValidationError(`${fieldName} must not contain null bytes.`);
-  }
-  if (value.includes('/') || value.includes('\\')) {
-    throw new InputValidationError(
-      `${fieldName} '${value}' must not contain path separators.`,
-    );
-  }
-  if (WINDOWS_DRIVE_RE.test(value)) {
-    throw new InputValidationError(
-      `${fieldName} '${value}' must not be drive-qualified.`,
-    );
-  }
-  if (value === '.' || value === '..') {
-    throw new InputValidationError(
-      `${fieldName} '${value}' must not contain traversal segments.`,
-    );
-  }
-}
-
 function sanitizeEvalSetResultName(evalSetResultName: string): string {
   return evalSetResultName.replace(/\//g, '_');
 }
@@ -1248,10 +1219,15 @@ export class LocalEvalSetResultsManager {
   getEvalSetResult(appName: string, evalSetResultId: string): EvalSetResult {
     const appEvalHistoryDir = this.getEvalHistoryDir(appName);
     validatePathSegment(evalSetResultId, 'evalSetResultId');
-    const filePath = path.join(
+    const filePath = path.resolve(
       appEvalHistoryDir,
       `${evalSetResultId}${EVAL_SET_RESULT_FILE_EXTENSION}`,
     );
+    if (!isStrictlyInside(appEvalHistoryDir, filePath)) {
+      throw new InputValidationError(
+        `evalSetResultId '${evalSetResultId}' resolves outside the eval history directory.`,
+      );
+    }
     if (!fs.existsSync(filePath)) {
       throw new NotFoundError(
         `Eval set result \`${evalSetResultId}\` not found.`,
@@ -1277,7 +1253,14 @@ export class LocalEvalSetResultsManager {
 
   private getEvalHistoryDir(appName: string): string {
     validatePathSegment(appName, 'appName');
-    return path.join(this.agentsDir, appName, ADK_EVAL_HISTORY_DIR);
+    const baseDir = path.resolve(this.agentsDir);
+    const appDir = path.resolve(baseDir, appName);
+    if (!isStrictlyInside(baseDir, appDir)) {
+      throw new InputValidationError(
+        `appName '${appName}' resolves outside agentsDir.`,
+      );
+    }
+    return path.join(appDir, ADK_EVAL_HISTORY_DIR);
   }
 }
 
@@ -1286,8 +1269,10 @@ const VALID_EVAL_ID_PATTERN = /^[a-zA-Z0-9_]+$/;
 
 function validateEvalId(idName: string, idValue: string): void {
   if (!VALID_EVAL_ID_PATTERN.test(idValue)) {
+    const formattedName =
+      idName.length > 0 ? idName[0].toUpperCase() + idName.slice(1) : idName;
     throw new InputValidationError(
-      `Invalid ${idName}. ${idName} should have the \`${VALID_EVAL_ID_PATTERN.source}\` format`,
+      `Invalid ${idName}. ${formattedName} should have the \`${VALID_EVAL_ID_PATTERN.source}\` format`,
     );
   }
 }
@@ -1854,7 +1839,7 @@ export class LocalEvalSetsManager {
    *     already exists.
    */
   createEvalSet(appName: string, evalSetId: string): EvalSet {
-    validateEvalId('Eval Set ID', evalSetId);
+    validateEvalId('eval set ID', evalSetId);
     const newEvalSetPath = this.getEvalSetFilePath(appName, evalSetId);
     if (fs.existsSync(newEvalSetPath)) {
       throw new InputValidationError(
@@ -1878,12 +1863,16 @@ export class LocalEvalSetsManager {
    */
   listEvalSets(appName: string): string[] {
     validatePathSegment(appName, 'appName');
-    const evalSetFolderPath = path.join(this.agentsDir, appName);
-    if (!fs.existsSync(evalSetFolderPath)) {
+    const baseDir = path.resolve(this.agentsDir);
+    const appDir = path.resolve(baseDir, appName);
+    if (!isStrictlyInside(baseDir, appDir)) {
+      throw new InputValidationError(`Invalid appName '${appName}'.`);
+    }
+    if (!fs.existsSync(appDir)) {
       return [];
     }
     const evalSets: string[] = [];
-    for (const file of fs.readdirSync(evalSetFolderPath)) {
+    for (const file of fs.readdirSync(appDir)) {
       if (file.endsWith(EVAL_SET_FILE_EXTENSION)) {
         evalSets.push(file.slice(0, -EVAL_SET_FILE_EXTENSION.length));
       }
@@ -1992,11 +1981,20 @@ export class LocalEvalSetsManager {
   private getEvalSetFilePath(appName: string, evalSetId: string): string {
     validatePathSegment(appName, 'appName');
     validatePathSegment(evalSetId, 'evalSetId');
-    return path.join(
-      this.agentsDir,
-      appName,
+    validateEvalId('eval set ID', evalSetId);
+    const baseDir = path.resolve(this.agentsDir);
+    const appDir = path.resolve(baseDir, appName);
+    if (!isStrictlyInside(baseDir, appDir)) {
+      throw new InputValidationError(`Invalid appName '${appName}'.`);
+    }
+    const filePath = path.resolve(
+      appDir,
       `${evalSetId}${EVAL_SET_FILE_EXTENSION}`,
     );
+    if (!isStrictlyInside(appDir, filePath)) {
+      throw new InputValidationError(`Invalid evalSetId '${evalSetId}'.`);
+    }
+    return filePath;
   }
 
   private writeEvalSet(evalSetPath: string, evalSet: EvalSet): void {

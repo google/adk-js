@@ -113,6 +113,8 @@ Each helper handles one stage of preparing, observing, or evaluating an agent ru
 
 `loadDotenvForAgent(agentName, agentParentFolder, filename)` resolves the starting directory from `agentParentFolder` and `agentName`, walks up with `walkToRootUntilFound`, and parses the first `.env` file it finds. Existing keys in `process.env` are overwritten so that switching between agents in the same process updates the active configuration.
 
+When `agentParentFolder` is given, `agentName` must be a single path segment inside it. When it is omitted, `agentName` can be a path, but it must not be `.` or contain a `..` segment. `filename` must be a single path segment. Invalid input throws `InputValidationError` before any file is read. These checks compare strings only and do not follow symlinks.
+
 ### Session conversion and empty state
 
 `createEmptyState(agent, initializedStates)` walks `agent.subAgents` recursively. For every `LlmAgent` whose `instruction` is a string, it finds `{var}` word placeholders (`/{([\w]+)}/g`) and sets each key to `''`. Keys passed in `initializedStates` are copied on top so caller-supplied values win over the empty defaults.
@@ -159,11 +161,11 @@ Each helper handles one stage of preparing, observing, or evaluating an agent ru
 
 ### loadDotenvForAgent and walkToRootUntilFound
 
-| Parameter           | Type     | Default  | Description                                               |
-| :------------------ | :------- | :------- | :-------------------------------------------------------- |
-| `agentName`         | `string` | required | The agent name, directory, or file path.                  |
-| `agentParentFolder` | `string` | `'.'`    | The parent directory used to resolve `agentName`.         |
-| `filename`          | `string` | `'.env'` | The file name to search for while walking up to the root. |
+| Parameter           | Type     | Default  | Description                                                                                    |
+| :------------------ | :------- | :------- | :--------------------------------------------------------------------------------------------- |
+| `agentName`         | `string` | required | The agent name. A directory or file path is accepted only when `agentParentFolder` is omitted. |
+| `agentParentFolder` | `string` | optional | The parent directory used to resolve `agentName`.                                              |
+| `filename`          | `string` | `'.env'` | The file name to search for while walking up to the root.                                      |
 
 ### LogToTmpFolderOptions
 
