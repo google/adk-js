@@ -36,10 +36,7 @@ import {
 } from '../../../src/tools/openapi_tool/rest_api_tool.js';
 // `openApiSchemaToGeminiSchema` is internal, like `toGeminiSchema`, so the test
 // imports it the way `core/test/utils/gemini_schema_util_test.ts` does.
-import {
-  normalizeJsonSchemaType,
-  openApiSchemaToGeminiSchema,
-} from '../../../src/utils/gemini_schema_util.js';
+import {openApiSchemaToGeminiSchema} from '../../../src/utils/gemini_schema_util.js';
 
 const sampleEndpoint: OperationEndpoint = {
   baseUrl: 'https://example.com',
@@ -860,22 +857,22 @@ describe('openApiSchemaToGeminiSchema type array normalization', () => {
     ).toBeFalsy();
   });
 
-  it('normalizes JSON Schema type strings and arrays via normalizeJsonSchemaType', () => {
-    expect(normalizeJsonSchemaType(undefined)).toEqual([undefined, false]);
-    expect(normalizeJsonSchemaType(null)).toEqual([undefined, false]);
-    expect(normalizeJsonSchemaType('string')).toEqual(['string', false]);
-    expect(normalizeJsonSchemaType('null')).toEqual([undefined, true]);
-    expect(normalizeJsonSchemaType(['string'])).toEqual(['string', false]);
-    expect(normalizeJsonSchemaType(['string', 'null'])).toEqual([
-      'string',
-      true,
-    ]);
-    expect(normalizeJsonSchemaType(['null', 'integer'])).toEqual([
-      'integer',
-      true,
-    ]);
-    expect(normalizeJsonSchemaType(['null'])).toEqual([undefined, true]);
-    expect(normalizeJsonSchemaType([])).toEqual([undefined, false]);
+  it('normalizes JSON Schema type strings and arrays', () => {
+    const convert = (type: unknown) => {
+      const schema = openApiSchemaToGeminiSchema({type});
+      return [schema?.type, schema?.nullable ?? false];
+    };
+
+    // An untyped schema is treated as an object.
+    expect(convert(undefined)).toEqual([Type.OBJECT, false]);
+    expect(convert(null)).toEqual([Type.OBJECT, false]);
+    expect(convert('string')).toEqual([Type.STRING, false]);
+    expect(convert('null')).toEqual([Type.OBJECT, true]);
+    expect(convert(['string'])).toEqual([Type.STRING, false]);
+    expect(convert(['string', 'null'])).toEqual([Type.STRING, true]);
+    expect(convert(['null', 'integer'])).toEqual([Type.INTEGER, true]);
+    expect(convert(['null'])).toEqual([Type.OBJECT, true]);
+    expect(convert([])).toEqual([Type.OBJECT, false]);
   });
 
   it('normalizes nested object, array, and anyOf schemas with nullable type arrays', () => {
