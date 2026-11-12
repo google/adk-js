@@ -1626,5 +1626,29 @@ describe('FunctionTool', () => {
       });
       expect(result).toBe('test_value_1,test_value_3');
     });
+
+    it('preserves undefined and empty object return values in runAsync', async () => {
+      const undefinedTool = new FunctionTool({
+        name: 'function_returning_undefined',
+        description: 'Function returning undefined.',
+        execute: (): undefined => undefined,
+      });
+      const undefinedResult = await undefinedTool.runAsync({
+        args: {},
+        toolContext: emptyContext,
+      });
+      expect(undefinedResult).toBeUndefined();
+
+      const emptyObjectTool = new FunctionTool({
+        name: 'function_returning_empty_object',
+        description: 'Function returning empty object.',
+        execute: (): Record<string, string> => ({}),
+      });
+      const emptyObjectResult = await emptyObjectTool.runAsync({
+        args: {},
+        toolContext: emptyContext,
+      });
+      expect(emptyObjectResult).toEqual({});
+    });
   });
 });

@@ -74,6 +74,35 @@ const PATTERN_REDUNDANT_FORMATS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Formats the Gemini backend accepts on `INTEGER` and `NUMBER` schema fields.
+ */
+const GEMINI_INTEGER_NUMBER_FORMATS: ReadonlySet<string> = new Set([
+  'int32',
+  'int64',
+]);
+
+/**
+ * Formats the Gemini backend accepts on `STRING` schema fields.
+ */
+const GEMINI_STRING_FORMATS: ReadonlySet<string> = new Set([
+  'date-time',
+  'enum',
+]);
+
+function keepsGeminiFormat(type: unknown, format: unknown): boolean {
+  if (typeof type !== 'string' || typeof format !== 'string') {
+    return false;
+  }
+  if (type === 'integer' || type === 'number') {
+    return GEMINI_INTEGER_NUMBER_FORMATS.has(format);
+  }
+  if (type === 'string') {
+    return GEMINI_STRING_FORMATS.has(format);
+  }
+  return false;
+}
+
+/**
  * Copies the constraint keywords a genai `Schema` declares from a JSON Schema
  * node onto a `Schema` node, in the encoding the genai dialect expects.
  *
@@ -90,9 +119,9 @@ const PATTERN_REDUNDANT_FORMATS: ReadonlySet<string> = new Set([
  * - `pattern` is already a string in both dialects, and survives unless it
  *   merely restates an `email`/`uuid` format.
  *
- * Every other JSON Schema keyword (`title`, `default`, `example`, `format`,
- * `exclusiveMinimum`, ...) has no `Schema` field the backend accepts, so it is
- * still dropped.
+ * Every other JSON Schema keyword (`title`, `default`, `example`,
+ * `exclusiveMinimum`, ...) and any unsupported `format` has no `Schema` field
+ * the backend accepts, so it is still dropped.
  *
  * @param source The JSON Schema node to read the constraints from.
  * @param target The `Schema` node to write them to; may be `source` itself.
@@ -192,6 +221,12 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
       }
     }
 
+    // The type is read here, after a nullable type array or `anyOf` has been
+    // reduced to its single non-null branch and before the inference below.
+    // A format survives only on a type the schema declares, never on an
+    // inferred one.
+    const declaredType = mcp.type;
+
     // Infer unknown types
     if (!mcp.type) {
       if (mcp.properties || mcp.$ref) {
@@ -235,6 +270,10 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
 
     if (mcp.description) {
       geminiSchema.description = mcp.description;
+    }
+
+    if (keepsGeminiFormat(declaredType, mcp.format)) {
+      geminiSchema.format = mcp.format;
     }
 
     if (mcp.enum) {
@@ -311,14 +350,13 @@ const GEMINI_SCHEMA_FIELDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Fields the Gemini backend rejects even though `Schema` declares them. A
- * `format` of `date` on a STRING, for example, fails with "only 'enum' and
- * 'date-time' are supported for STRING type".
+ * Fields the Gemini backend rejects even though `Schema` declares them.
+ * Unsupported `format` values (such as `date` on a STRING) are filtered by
+ * {@link keepsGeminiFormat}.
  */
 const GEMINI_REJECTED_SCHEMA_FIELDS: ReadonlySet<string> = new Set([
   'title',
   'default',
-  'format',
 ]);
 
 /**
@@ -382,10 +420,37 @@ function convertSchemaField(field: string, value: unknown): unknown {
   if (field === 'items' && isPlainObject(value)) {
     return openApiSchemaToGeminiSchema(value);
   }
-  if (field === 'anyOf' && Array.isArray(value)) {
-    return value.map((item) => openApiSchemaToGeminiSchema(item));
-  }
   return value;
+}
+
+function isNullSchema(value: unknown): boolean {
+  return isPlainObject(value) && value['type'] === 'null';
+}
+
+/**
+ * Removes the `anyOf` and `oneOf` keys from `schema` and returns their
+ * branches, or `undefined` when the schema has neither.
+ *
+ * The Gemini `Schema` has no `oneOf`, so its branches are folded into `anyOf`.
+ * This widens the schema slightly: `anyOf` also accepts a value that matches
+ * more than one branch. A schema may carry both keys, so the branches are
+ * accumulated rather than replaced.
+ */
+function takeUnionBranches(
+  schema: Record<string, unknown>,
+): unknown[] | undefined {
+  let branches: unknown[] | undefined;
+  for (const [key, value] of Object.entries(schema)) {
+    const field = toGeminiSchemaField(key);
+    if (field !== 'anyOf' && field !== 'oneOf') {
+      continue;
+    }
+    delete schema[key];
+    if (Array.isArray(value)) {
+      branches = [...(branches ?? []), ...value];
+    }
+  }
+  return branches;
 }
 
 /**
@@ -395,6 +460,10 @@ function convertSchemaField(field: string, value: unknown): unknown {
  * rather than an MCP tool input schema. An OpenAPI document may carry any key
  * it likes, so a key the Gemini `Schema` does not declare is dropped instead of
  * being forwarded to a backend that rejects it.
+ *
+ * `oneOf` branches are folded into `anyOf`. A `{type: 'null'}` branch is
+ * removed and marks the schema `nullable`. When only one branch remains, it is
+ * merged into the parent schema instead of being kept as a one-item `anyOf`.
  *
  * @param openApiSchema The OpenAPI schema, which may be any value.
  * @returns The converted schema, or `undefined` when there is no input.
@@ -407,18 +476,44 @@ export function openApiSchemaToGeminiSchema(
     return undefined;
   }
   if (!isPlainObject(openApiSchema)) {
-    throw new TypeError('openapi_schema must be a dictionary');
+    throw new TypeError('openApiSchema must be a plain object');
   }
 
   const source: Record<string, unknown> = {...openApiSchema};
-  const [schemaType, nullable] = normalizeJsonSchemaType(source['type']);
+  let unionNullable = false;
+  let anyOf: Schema[] | undefined;
+  const branches = takeUnionBranches(source);
+  if (branches) {
+    const nonNullBranches = branches.filter((branch) => !isNullSchema(branch));
+    unionNullable = nonNullBranches.length !== branches.length;
+    if (nonNullBranches.length === 1 && isPlainObject(nonNullBranches[0])) {
+      // The parent's own keys, such as `description`, describe the property
+      // and take precedence over the same keys on the branch. The merged
+      // schema is converted again, because the branch may itself be a union.
+      const merged = openApiSchemaToGeminiSchema({
+        ...nonNullBranches[0],
+        ...source,
+      }) as Schema;
+      if (unionNullable) {
+        merged.nullable = true;
+      }
+      return merged;
+    } else if (nonNullBranches.length > 0) {
+      anyOf = nonNullBranches.map(
+        (branch) => openApiSchemaToGeminiSchema(branch) as Schema,
+      );
+    }
+  }
+
+  const [schemaType, typeNullable] = normalizeJsonSchemaType(source['type']);
   source['type'] = schemaType;
-  if (nullable) {
+  if (typeNullable || unionNullable) {
     source['nullable'] = true;
   }
   // A schema with no type at all fails with "one_of or any_of must specify a
-  // type", so an untyped schema is treated as an object.
-  if (!source['type']) {
+  // type", so an untyped schema is treated as an object. A union is left
+  // untyped, because its branches carry the types.
+  if (!source['type'] && !anyOf) {
     source['type'] = 'object';
   }
 
@@ -428,12 +523,24 @@ export function openApiSchemaToGeminiSchema(
   for (const [key, value] of Object.entries(source)) {
     const field = toGeminiSchemaField(key);
     if (
+      value === undefined ||
       !GEMINI_SCHEMA_FIELDS.has(field) ||
       GEMINI_REJECTED_SCHEMA_FIELDS.has(field)
     ) {
       continue;
     }
+    if (field === 'format') {
+      // The format is checked against the declared type, read before an
+      // untyped schema defaults to an object.
+      if (keepsGeminiFormat(schemaType, value)) {
+        converted[field] = value;
+      }
+      continue;
+    }
     converted[field] = convertSchemaField(field, value);
+  }
+  if (anyOf) {
+    converted['anyOf'] = anyOf;
   }
   return converted as Schema;
 }

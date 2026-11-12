@@ -617,7 +617,7 @@ describe('openApiSchemaToGeminiSchema parity with adk-python v0.1.0', () => {
 
   it('test_to_gemini_schema_not_dict', () => {
     expect(() => openApiSchemaToGeminiSchema('not a dict')).toThrow(
-      'openapi_schema must be a dictionary',
+      'openApiSchema must be a plain object',
     );
     expect(() => openApiSchemaToGeminiSchema('not a dict')).toThrow(TypeError);
   });

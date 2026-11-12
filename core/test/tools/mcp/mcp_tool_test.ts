@@ -32,6 +32,9 @@ describe('MCPTool', () => {
     const mockSessionManager = {
       createSession: vi.fn().mockResolvedValue(mockClient),
       closeSession: vi.fn().mockResolvedValue(undefined),
+      getRequestOptions: vi.fn((signal?: AbortSignal) =>
+        signal ? {signal} : {},
+      ),
     } as unknown as MCPSessionManager;
 
     const tool = new MCPTool(mockTool, mockSessionManager);
@@ -70,6 +73,9 @@ describe('MCPTool', () => {
     const mockSessionManager = {
       createSession: vi.fn().mockResolvedValue(mockClient),
       closeSession: vi.fn().mockResolvedValue(undefined),
+      getRequestOptions: vi.fn((signal?: AbortSignal) =>
+        signal ? {signal} : {},
+      ),
     } as unknown as MCPSessionManager;
 
     const tool = new MCPTool(mockTool, mockSessionManager, 'test-tool');
@@ -112,6 +118,9 @@ describe('MCPTool', () => {
     const mockSessionManager = {
       createSession: vi.fn().mockResolvedValue(mockClient),
       closeSession: vi.fn().mockResolvedValue(undefined),
+      getRequestOptions: vi.fn((signal?: AbortSignal) =>
+        signal ? {signal} : {},
+      ),
     } as unknown as MCPSessionManager;
 
     const tool = new MCPTool(mockTool, mockSessionManager);
@@ -146,6 +155,9 @@ describe('MCPTool', () => {
     const mockSessionManager = {
       createSession: vi.fn().mockResolvedValue(mockClient),
       closeSession: vi.fn().mockResolvedValue(undefined),
+      getRequestOptions: vi.fn((signal?: AbortSignal) =>
+        signal ? {signal} : {},
+      ),
     } as unknown as MCPSessionManager;
 
     const tool = new MCPTool(mockTool, mockSessionManager);
@@ -163,6 +175,43 @@ describe('MCPTool', () => {
 
     // Assert that closeSession was still called despite the error
     expect(mockSessionManager.closeSession).toHaveBeenCalledWith(mockClient);
+  });
+
+  it('passes stdio timeout and abort signal from sessionManager.getRequestOptions to callTool', async () => {
+    const mockTool: Tool = {
+      name: 'stdio-tool',
+      description: 'An stdio tool',
+      inputSchema: {type: 'object', properties: {}},
+    };
+
+    const mockClient = {
+      callTool: vi.fn().mockResolvedValue({content: []}),
+      close: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Client;
+
+    const sessionManager = new MCPSessionManager({
+      type: 'StdioConnectionParams',
+      serverParams: {command: 'test'},
+      timeout: 8,
+    });
+    vi.spyOn(sessionManager, 'createSession').mockResolvedValue(mockClient);
+    vi.spyOn(sessionManager, 'closeSession').mockResolvedValue(undefined);
+
+    const tool = new MCPTool(mockTool, sessionManager);
+    const controller = new AbortController();
+    const invocationContext = {
+      abortSignal: controller.signal,
+      session: {state: {}},
+    } as unknown as InvocationContext;
+    const toolContext = new Context({invocationContext});
+
+    await tool.runAsync({args: {query: 'hello'}, toolContext});
+
+    expect(mockClient.callTool).toHaveBeenCalledWith(
+      {name: 'stdio-tool', arguments: {query: 'hello'}},
+      undefined,
+      {signal: controller.signal, timeout: 8000},
+    );
   });
 
   describe('initialization and declaration', () => {

@@ -88,6 +88,24 @@ describe('MCPToolset', () => {
     expect(tools[1].name).toBe('other-tool');
   });
 
+  it('passes the configured stdio timeout to listTools', async () => {
+    const listTools = vi.fn().mockResolvedValue({
+      tools: [{name: 'test-tool', description: 'A test tool', inputSchema: {}}],
+    });
+    vi.mocked(Client).mockImplementationOnce(function () {
+      return {
+        connect: noop(),
+        close: noop(),
+        listTools,
+      } as unknown as Client;
+    });
+
+    const toolset = new MCPToolset({...stdioParams, timeout: 5});
+    await toolset.getTools();
+
+    expect(listTools).toHaveBeenCalledWith(undefined, {timeout: 5000});
+  });
+
   it('discovers tools with prefix applied', async () => {
     const toolset = new MCPToolset(stdioParams, [], 'myprefix');
     const tools = await toolset.getTools();
@@ -241,8 +259,48 @@ describe('MCPToolset', () => {
       const toolset = new MCPToolset(stdioParams);
       const contents = await toolset.readResource('res1');
 
-      expect(readResource).toHaveBeenCalledWith({uri: 'file:///res1'});
+      expect(readResource).toHaveBeenCalledWith({uri: 'file:///res1'}, {});
       expect(contents).toEqual([{uri: 'file:///res1', text: 'hello'}]);
+    });
+
+    it('passes the configured stdio timeout to listResources and readResource', async () => {
+      const {Client} =
+        await import('@modelcontextprotocol/sdk/client/index.js');
+      const listResources = vi.fn().mockResolvedValue({
+        resources: [{uri: 'file:///res1', name: 'res1'}],
+      });
+      const readResource = vi.fn().mockResolvedValue({
+        contents: [{uri: 'file:///res1', text: 'hello'}],
+      });
+      const createClient = function () {
+        return {
+          connect: noop(),
+          close: noop(),
+          listResources,
+          readResource,
+        } as unknown as Client;
+      };
+      // One session for listResources, then two for readResource: one to
+      // resolve the URI and one to read it.
+      vi.mocked(Client)
+        .mockImplementationOnce(createClient)
+        .mockImplementationOnce(createClient)
+        .mockImplementationOnce(createClient);
+
+      const toolset = new MCPToolset({...stdioParams, timeout: 7});
+      await toolset.listResources();
+      await toolset.readResource('res1');
+
+      // Both listResources and readResource (to resolve the URI) list the
+      // resources, so every call must carry the timeout.
+      expect(listResources.mock.calls).toEqual([
+        [undefined, {timeout: 7000}],
+        [undefined, {timeout: 7000}],
+      ]);
+      expect(readResource).toHaveBeenCalledWith(
+        {uri: 'file:///res1'},
+        {timeout: 7000},
+      );
     });
 
     it('readResource rejects when the name is unknown', async () => {

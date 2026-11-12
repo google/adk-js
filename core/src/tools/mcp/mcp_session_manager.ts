@@ -8,6 +8,7 @@ import type {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import type {SSEClientTransportOptions} from '@modelcontextprotocol/sdk/client/sse.js';
 import type {StdioServerParameters} from '@modelcontextprotocol/sdk/client/stdio.js';
 import type {StreamableHTTPClientTransportOptions} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type {RequestOptions} from '@modelcontextprotocol/sdk/shared/protocol.js';
 
 import {instrumentMcpFetch} from '../../telemetry/api/instrumentation.js';
 import {mergeTrackingHeaders} from '../../utils/client_labels.js';
@@ -40,6 +41,10 @@ function logTransportError(err: unknown): void {
 export interface StdioConnectionParams {
   type: 'StdioConnectionParams';
   serverParams: StdioServerParameters;
+  /**
+   * Request timeout in seconds for stdio MCP operations. When unset, the MCP
+   * SDK applies its own default request timeout.
+   */
   timeout?: number;
 }
 
@@ -177,6 +182,27 @@ export class MCPSessionManager {
     this.connectionParams = connectionParams;
   }
 
+  /**
+   * Builds per-request options for MCP client operations.
+   *
+   * For a stdio connection with a configured `timeout`, the timeout is
+   * converted from seconds to milliseconds. Otherwise the MCP SDK applies its
+   * own default request timeout.
+   *
+   * @param signal Optional abort signal to attach to the request.
+   * @return The request options for the MCP SDK client.
+   */
+  getRequestOptions(signal?: AbortSignal): RequestOptions {
+    const options: RequestOptions = signal !== undefined ? {signal} : {};
+    if (
+      this.connectionParams.type === 'StdioConnectionParams' &&
+      this.connectionParams.timeout !== undefined
+    ) {
+      options.timeout = this.connectionParams.timeout * 1000;
+    }
+    return options;
+  }
+
   async createSession(): Promise<Client> {
     const {Client} = await loadOptionalPeer(
       MCP_SDK,
@@ -195,7 +221,7 @@ export class MCPSessionManager {
             this.connectionParams.serverParams,
           );
           transport.onerror = logTransportError;
-          await client.connect(transport);
+          await client.connect(transport, this.getRequestOptions());
           break;
         }
         case 'StreamableHTTPConnectionParams': {

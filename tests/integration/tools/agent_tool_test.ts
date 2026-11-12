@@ -12,6 +12,7 @@ import {
   InMemorySessionService,
   LlmAgent,
   Runner,
+  SequentialAgent,
 } from '@google/adk';
 import {FinishReason} from '@google/genai';
 import {describe, expect, it} from 'vitest';
@@ -278,5 +279,124 @@ describe('AgentTool', () => {
 
     expect(loadedPart).toBeDefined();
     expect(loadedPart!.text).toBe('Hello Artifact');
+  });
+
+  it('reads and writes artifacts across root and tool agent callbacks', async () => {
+    const toolAgent = new SequentialAgent({
+      name: 'tool_agent',
+      description: 'Reads artifact_1 and writes artifact_2',
+      subAgents: [],
+      beforeAgentCallback: async (callbackContext) => {
+        const artifact1 = await callbackContext.loadArtifact('artifact_1');
+        expect(artifact1?.text).toBe('test');
+        await callbackContext.saveArtifact('artifact_2', {
+          text: `${artifact1?.text ?? ''} 2`,
+        });
+        return undefined;
+      },
+    });
+
+    const mockParentAgentResponses: RawGenerateContentResponse[] = [
+      {
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  functionCall: {
+                    name: 'tool_agent',
+                    args: {request: 'test1'},
+                    id: 'parent-call-artifacts',
+                  },
+                },
+              ],
+              role: 'model',
+            },
+            finishReason: FinishReason.STOP,
+          },
+        ],
+      },
+      {
+        candidates: [
+          {
+            content: {
+              parts: [{text: 'response2'}],
+              role: 'model',
+            },
+            finishReason: FinishReason.STOP,
+          },
+        ],
+      },
+    ];
+
+    const rootAgent = new LlmAgent({
+      name: 'root_agent',
+      model: new GeminiWithMockResponses(mockParentAgentResponses),
+      tools: [new AgentTool({agent: toolAgent})],
+      beforeAgentCallback: async (callbackContext) => {
+        await callbackContext.saveArtifact('artifact_1', {text: 'test'});
+        return undefined;
+      },
+      afterAgentCallback: async (callbackContext) => {
+        const artifact2 = await callbackContext.loadArtifact('artifact_2');
+        expect(artifact2?.text).toBe('test 2');
+        await callbackContext.saveArtifact('artifact_3', {
+          text: `${artifact2?.text ?? ''} 3`,
+        });
+        return undefined;
+      },
+    });
+
+    const sessionService = new InMemorySessionService();
+    const memoryService = new InMemoryMemoryService();
+    const artifactService = new InMemoryArtifactService();
+
+    await sessionService.createSession({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId: 'session_artifacts',
+    });
+
+    const runner = new Runner({
+      appName: 'test_app',
+      agent: rootAgent,
+      sessionService,
+      memoryService,
+      artifactService,
+    });
+
+    for await (const _event of runner.runAsync({
+      userId: 'test_user',
+      sessionId: 'session_artifacts',
+      newMessage: {
+        role: 'user',
+        parts: [{text: 'test1'}],
+      },
+    })) {
+      // Consume events.
+    }
+
+    const artifact1 = await artifactService.loadArtifact({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId: 'session_artifacts',
+      filename: 'artifact_1',
+    });
+    const artifact2 = await artifactService.loadArtifact({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId: 'session_artifacts',
+      filename: 'artifact_2',
+    });
+    const artifact3 = await artifactService.loadArtifact({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId: 'session_artifacts',
+      filename: 'artifact_3',
+    });
+
+    expect(artifact1).toEqual({text: 'test'});
+    expect(artifact2).toEqual({text: 'test 2'});
+    expect(artifact3).toEqual({text: 'test 2 3'});
   });
 });

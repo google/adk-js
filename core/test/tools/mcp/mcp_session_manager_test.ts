@@ -88,7 +88,67 @@ describe('MCPSessionManager', () => {
       command: 'test-command',
       args: ['arg1', 'arg2'],
     });
-    expect(client.connect).toHaveBeenCalled();
+    // No timeout is set, so the MCP SDK applies its own default.
+    expect(client.connect).toHaveBeenCalledWith(expect.anything(), {});
+  });
+
+  it('passes a custom stdio timeout in milliseconds when connecting', async () => {
+    const manager = new MCPSessionManager({
+      type: 'StdioConnectionParams',
+      serverParams: {
+        command: 'test-command',
+      },
+      timeout: 12,
+    });
+
+    const client = await manager.createSession();
+
+    expect(client.connect).toHaveBeenCalledWith(expect.anything(), {
+      timeout: 12000,
+    });
+  });
+
+  it('builds request options with a timeout only for stdio with a configured timeout', () => {
+    const controller = new AbortController();
+    const stdioDefault = new MCPSessionManager({
+      type: 'StdioConnectionParams',
+      serverParams: {command: 'test-command'},
+    });
+    expect(stdioDefault.getRequestOptions()).toEqual({});
+    expect(stdioDefault.getRequestOptions()).not.toHaveProperty('timeout');
+    expect(stdioDefault.getRequestOptions(controller.signal)).toEqual({
+      signal: controller.signal,
+    });
+
+    const stdioCustom = new MCPSessionManager({
+      type: 'StdioConnectionParams',
+      serverParams: {command: 'test-command'},
+      timeout: 15,
+    });
+    expect(stdioCustom.getRequestOptions()).toEqual({timeout: 15000});
+    expect(stdioCustom.getRequestOptions(controller.signal)).toEqual({
+      signal: controller.signal,
+      timeout: 15000,
+    });
+
+    const httpManager = new MCPSessionManager({
+      type: 'StreamableHTTPConnectionParams',
+      url: 'http://test-url',
+      timeout: 30,
+    });
+    expect(httpManager.getRequestOptions()).toEqual({});
+    expect(httpManager.getRequestOptions(controller.signal)).toEqual({
+      signal: controller.signal,
+    });
+
+    const sseManager = new MCPSessionManager({
+      type: 'SseConnectionParams',
+      url: 'http://test-sse-url/sse',
+    });
+    expect(sseManager.getRequestOptions()).toEqual({});
+    expect(sseManager.getRequestOptions(controller.signal)).toEqual({
+      signal: controller.signal,
+    });
   });
 
   it('creates an http client with transport options headers', async () => {
