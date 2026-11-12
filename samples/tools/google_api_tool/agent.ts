@@ -53,7 +53,9 @@ const CALENDAR_DISCOVERY_SPEC = JSON.parse(
 
 // Stub globalThis.fetch to support offline execution with the local calendar discovery fixture.
 const originalFetch = globalThis.fetch;
-globalThis.fetch = async (
+let activeStubCount = 0;
+
+const stubbedFetch: typeof globalThis.fetch = async (
   ...args: Parameters<typeof globalThis.fetch>
 ): Promise<Response> => {
   const [input] = args;
@@ -83,46 +85,57 @@ function redact(secret: string | undefined): string {
 async function describeCalendarToolset(
   ctx: InvocationContext,
 ): Promise<string[]> {
-  const unfilteredToolset = new CalendarToolset();
-  const allTools = await unfilteredToolset.getTools();
+  activeStubCount++;
+  if (activeStubCount === 1) {
+    globalThis.fetch = stubbedFetch;
+  }
+  try {
+    const unfilteredToolset = new CalendarToolset();
+    const allTools = await unfilteredToolset.getTools();
 
-  const toolset = new CalendarToolset({
-    clientId: PLACEHOLDER_CLIENT_ID,
-    clientSecret: PLACEHOLDER_CLIENT_SECRET,
-    toolFilter: ['calendar_calendars_get'],
-  });
-  const filteredTools = await toolset.getTools();
+    const toolset = new CalendarToolset({
+      clientId: PLACEHOLDER_CLIENT_ID,
+      clientSecret: PLACEHOLDER_CLIENT_SECRET,
+      toolFilter: ['calendar_calendars_get'],
+    });
+    const filteredTools = await toolset.getTools();
 
-  const getCalendarTool = filteredTools.find(
-    (tool) => tool.name === 'calendar_calendars_get',
-  );
-  const declaration = getCalendarTool?._getDeclaration();
-  const paramNames = Object.keys(declaration?.parameters?.properties ?? {});
+    const getCalendarTool = filteredTools.find(
+      (tool) => tool.name === 'calendar_calendars_get',
+    );
+    const declaration = getCalendarTool?._getDeclaration();
+    const paramNames = Object.keys(declaration?.parameters?.properties ?? {});
 
-  const toolContext = new Context({
-    invocationContext: ctx,
-    functionCallId: 'call_calendar_get',
-  });
-  await getCalendarTool?.runAsync({
-    args: {calendar_id: 'primary'},
-    toolContext,
-  });
-  const requestedAuth =
-    toolContext.eventActions.requestedAuthConfigs['call_calendar_get'];
-  const oauth2Cred = requestedAuth?.exchangedAuthCredential?.oauth2;
+    const toolContext = new Context({
+      invocationContext: ctx,
+      functionCallId: 'call_calendar_get',
+    });
+    await getCalendarTool?.runAsync({
+      args: {calendar_id: 'primary'},
+      toolContext,
+    });
+    const requestedAuth =
+      toolContext.eventActions.requestedAuthConfigs['call_calendar_get'];
+    const oauth2Cred = requestedAuth?.exchangedAuthCredential?.oauth2;
 
-  await unfilteredToolset.close();
-  await toolset.close();
+    await unfilteredToolset.close();
+    await toolset.close();
 
-  return [
-    `All tools (${allTools.length}): ${allTools.map((t) => t.name).join(', ')}`,
-    `Filtered tools (${filteredTools.length}): ${filteredTools.map((t) => t.name).join(', ')}`,
-    `isGoogleApiToolset(toolset): ${isGoogleApiToolset(toolset)}`,
-    `isGoogleApiTool(getCalendarTool): ${isGoogleApiTool(getCalendarTool)}`,
-    `calendar_calendars_get parameters: ${paramNames.join(', ')}`,
-    `Configured OIDC clientId: ${oauth2Cred?.clientId ?? '<none>'}`,
-    `Configured OIDC clientSecret: ${redact(oauth2Cred?.clientSecret)}`,
-  ];
+    return [
+      `All tools (${allTools.length}): ${allTools.map((t) => t.name).join(', ')}`,
+      `Filtered tools (${filteredTools.length}): ${filteredTools.map((t) => t.name).join(', ')}`,
+      `isGoogleApiToolset(toolset): ${isGoogleApiToolset(toolset)}`,
+      `isGoogleApiTool(getCalendarTool): ${isGoogleApiTool(getCalendarTool)}`,
+      `calendar_calendars_get parameters: ${paramNames.join(', ')}`,
+      `Configured OIDC clientId: ${oauth2Cred?.clientId ?? '<none>'}`,
+      `Configured OIDC clientSecret: ${redact(oauth2Cred?.clientSecret)}`,
+    ];
+  } finally {
+    activeStubCount--;
+    if (activeStubCount === 0 && globalThis.fetch === stubbedFetch) {
+      globalThis.fetch = originalFetch;
+    }
+  }
 }
 
 class GoogleApiShowcaseAgent extends BaseAgent {
