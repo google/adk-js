@@ -349,6 +349,34 @@ describe('cli/utils/logs', () => {
         logToTmpFolder({subFolder, logFileTimestamp: '20260101_000001'}),
       ).toThrow('Failed to create a unique log file');
     });
+
+    it('formats file log records with an ISO-8601 timestamp and no template tokens', () => {
+      silenceStderr();
+      const subFolder = uniqueSubFolder();
+      const logPath = logToTmpFolder({
+        level: LogLevel.INFO,
+        subFolder,
+        logFilePrefix: 'format_test',
+        logFileTimestamp: '20260101_000001',
+      });
+
+      logger.info('file log message');
+
+      const content = fs.readFileSync(logPath, 'utf-8');
+      const lines = content.trim().split('\n');
+      expect(lines).toHaveLength(2);
+      expect(lines[0]).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z - INFO - Log setup complete: /,
+      );
+      expect(lines[1]).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z - INFO - file log message$/,
+      );
+      expect(content).not.toContain('%(asctime)s');
+      expect(content).not.toContain('%(levelname)s');
+      expect(content).not.toContain('%(filename)s');
+      expect(content).not.toContain('%(lineno)d');
+      expect(content).not.toContain('%(message)s');
+    });
   });
 
   describe('setupAdkLogger', () => {
@@ -390,6 +418,27 @@ describe('cli/utils/logs', () => {
       expect(writes.some((w) => w.includes('WARNING - warn-emitted'))).toBe(
         true,
       );
+    });
+
+    it('formats log lines with an ISO-8601 timestamp and no template tokens', () => {
+      const writes: string[] = [];
+      vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+        writes.push(String(chunk));
+        return true;
+      });
+
+      setupAdkLogger(LogLevel.INFO);
+      logger.info('formatted log message');
+
+      expect(writes).toHaveLength(1);
+      expect(writes[0]).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z - INFO - formatted log message\n$/,
+      );
+      expect(writes[0]).not.toContain('%(asctime)s');
+      expect(writes[0]).not.toContain('%(levelname)s');
+      expect(writes[0]).not.toContain('%(filename)s');
+      expect(writes[0]).not.toContain('%(lineno)d');
+      expect(writes[0]).not.toContain('%(message)s');
     });
 
     it('closes the log file that logToTmpFolder opened', () => {

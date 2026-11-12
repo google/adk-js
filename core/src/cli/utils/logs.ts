@@ -12,7 +12,10 @@ import * as util from 'node:util';
 import {Logger, LogLevel, setLogger, setLogLevel} from '../../utils/logger.js';
 
 /**
- * Standard log format template for CLI log output.
+ * Legacy Python `logging.Formatter` template string retained for compatibility.
+ *
+ * @deprecated Unused by `adk-js` loggers. ADK CLI stderr and file loggers
+ *     format records directly as `<ISO-8601 timestamp> - <LEVEL> - <message>`.
  */
 export const LOGGING_FORMAT =
   '%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s';
