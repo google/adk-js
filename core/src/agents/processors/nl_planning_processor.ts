@@ -121,6 +121,7 @@ export class NlPlanningResponseProcessor extends BaseLlmResponseProcessor {
         author: invocationContext.agent?.name,
         branch: invocationContext.branch,
         actions: callbackContext.eventActions,
+        partial: llmResponse.partial ? true : undefined,
       });
     }
   }
