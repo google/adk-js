@@ -79,8 +79,16 @@ export type {
 export {
   AnthropicLlm,
   Claude,
+  MAX_TOKEN,
   isAnthropicLlm,
   isClaude,
 } from './models/anthropic_llm.js';
 export type {AnthropicLlmParams, ClaudeParams} from './models/anthropic_llm.js';
+export {
+  ClaudeRole,
+  ToolUseIdSanitizer,
+  contentToMessageParam,
+  partToMessageBlock,
+} from './models/anthropic_utils.js';
+export type {ClaudeMessageBlockParam} from './models/anthropic_utils.js';
 export {version} from './version.js';

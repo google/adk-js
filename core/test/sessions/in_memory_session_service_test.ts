@@ -11,8 +11,9 @@ import {
   createEvent,
   createEventActions,
 } from '@google/adk';
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {isInMemoryConnectionString} from '../../src/sessions/in_memory_session_service.js';
+import {logger} from '../../src/utils/logger.js';
 
 describe('isInMemoryConnectionString', () => {
   it('returns true for memory://', () => {
@@ -765,6 +766,79 @@ describe('InMemorySessionService', () => {
       // Should just log warnings and return event
       const returnedEvent = await service.appendEvent({session, event});
       expect(returnedEvent).toBe(event);
+    });
+
+    it('logs a warning when appName is not in sessions', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const session: Session = {
+        id: 'missing-session',
+        appName: 'unknown-app',
+        userId: 'user-1',
+        state: {},
+        events: [],
+        lastUpdateTime: 0,
+      };
+      const event = createEvent({timestamp: Date.now()});
+
+      const returnedEvent = await service.appendEvent({session, event});
+
+      expect(returnedEvent).toBe(event);
+      expect(warnSpy).toHaveBeenCalledWith(
+        'Failed to append event to session missing-session: appName unknown-app not in sessions',
+      );
+      warnSpy.mockRestore();
+    });
+
+    it('logs a warning when userId is not in sessions for the appName', async () => {
+      await service.createSession({
+        appName: 'known-app',
+        userId: 'existing-user',
+        sessionId: 'existing-session',
+      });
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const session: Session = {
+        id: 'missing-session',
+        appName: 'known-app',
+        userId: 'unknown-user',
+        state: {},
+        events: [],
+        lastUpdateTime: 0,
+      };
+      const event = createEvent({timestamp: Date.now()});
+
+      const returnedEvent = await service.appendEvent({session, event});
+
+      expect(returnedEvent).toBe(event);
+      expect(warnSpy).toHaveBeenCalledWith(
+        'Failed to append event to session missing-session: userId unknown-user not in sessions[appName]',
+      );
+      warnSpy.mockRestore();
+    });
+
+    it('logs a warning when sessionId is not in sessions for the appName and userId', async () => {
+      await service.createSession({
+        appName: 'known-app',
+        userId: 'known-user',
+        sessionId: 'existing-session',
+      });
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const session: Session = {
+        id: 'unknown-session',
+        appName: 'known-app',
+        userId: 'known-user',
+        state: {},
+        events: [],
+        lastUpdateTime: 0,
+      };
+      const event = createEvent({timestamp: Date.now()});
+
+      const returnedEvent = await service.appendEvent({session, event});
+
+      expect(returnedEvent).toBe(event);
+      expect(warnSpy).toHaveBeenCalledWith(
+        'Failed to append event to session unknown-session: sessionId unknown-session not in sessions[appName][userId]',
+      );
+      warnSpy.mockRestore();
     });
   });
 

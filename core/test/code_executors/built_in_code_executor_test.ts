@@ -59,4 +59,54 @@ describe('BuiltInCodeExecutor', () => {
       'Gemini code execution tool is not supported for model invalid-model',
     );
   });
+
+  it('processLlmRequest should initialize tools when config exists without tools', () => {
+    const llmRequest: LlmRequest = {
+      model: 'gemini-2.5-flash',
+      config: {},
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    executor.processLlmRequest(llmRequest);
+
+    expect(llmRequest.config?.tools).toEqual([{codeExecution: {}}]);
+  });
+
+  it('processLlmRequest should append codeExecution when config.tools is empty', () => {
+    const llmRequest: LlmRequest = {
+      model: 'gemini-2.5-flash',
+      config: {tools: []},
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    executor.processLlmRequest(llmRequest);
+
+    expect(llmRequest.config?.tools).toEqual([{codeExecution: {}}]);
+  });
+
+  it('processLlmRequest should preserve existing tools when appending codeExecution', () => {
+    const existingTool = {
+      functionDeclarations: [
+        {name: 'lookup_order', description: 'Looks up an order by ID.'},
+      ],
+    };
+    const llmRequest: LlmRequest = {
+      model: 'gemini-2.5-flash',
+      config: {tools: [existingTool]},
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    executor.processLlmRequest(llmRequest);
+
+    expect(llmRequest.config?.tools).toEqual([
+      existingTool,
+      {codeExecution: {}},
+    ]);
+  });
 });

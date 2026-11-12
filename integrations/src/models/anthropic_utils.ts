@@ -35,7 +35,6 @@ export type ClaudeMessageBlockParam =
   | Anthropic.TextBlockParam
   | Anthropic.ThinkingBlockParam
   | Anthropic.RedactedThinkingBlockParam
-  | Anthropic.ImageBlockParam
   | Anthropic.ToolUseBlockParam
   | Anthropic.ToolResultBlockParam;
 
@@ -145,9 +144,6 @@ function describeUnsupportedPartKind(part: Part): string {
   if (part.toolResponse) {
     return 'toolResponse';
   }
-  if (part.text === '') {
-    return 'empty text';
-  }
   const keys = Object.keys(part);
   return keys.length > 0 ? keys.join(', ') : 'empty part';
 }
@@ -158,7 +154,8 @@ function formatFunctionResponseContent(
   if (!response) {
     return '';
   }
-  if ('result' in response) {
+  const keys = Object.keys(response);
+  if (keys.length === 1 && 'result' in response) {
     const result = response['result'];
     if (result === null || result === undefined) {
       return '';
@@ -168,10 +165,37 @@ function formatFunctionResponseContent(
     }
     return JSON.stringify(result);
   }
-  if (Object.keys(response).length > 0) {
+  if (keys.length > 0) {
     return JSON.stringify(response);
   }
   return '';
+}
+
+function isErrorFunctionResponse(
+  response: Record<string, unknown> | undefined,
+): boolean {
+  if (!response || typeof response !== 'object') {
+    return false;
+  }
+  return Boolean(
+    response['is_error'] ?? response['isError'] ?? response['error'],
+  );
+}
+
+function extractTextFromPartUnion(part: unknown): string | undefined {
+  if (typeof part === 'string') {
+    return part.length > 0 ? part : undefined;
+  }
+  if (
+    typeof part === 'object' &&
+    part !== null &&
+    'text' in part &&
+    typeof part.text === 'string' &&
+    part.text.length > 0
+  ) {
+    return part.text;
+  }
+  return undefined;
 }
 
 /**
@@ -187,24 +211,33 @@ export function extractSystemInstructionText(
   if (typeof systemInstruction === 'string') {
     return systemInstruction;
   }
-  if (
-    typeof systemInstruction === 'object' &&
-    'parts' in systemInstruction &&
-    Array.isArray(systemInstruction.parts)
-  ) {
+  if (Array.isArray(systemInstruction)) {
     const texts: string[] = [];
-    for (const part of systemInstruction.parts) {
-      if (
-        typeof part === 'object' &&
-        part !== null &&
-        'text' in part &&
-        typeof part.text === 'string' &&
-        part.text.length > 0
-      ) {
-        texts.push(part.text);
+    for (const part of systemInstruction) {
+      const text = extractTextFromPartUnion(part);
+      if (text !== undefined) {
+        texts.push(text);
       }
     }
     return texts.length > 0 ? texts.join('\n') : undefined;
+  }
+  if (typeof systemInstruction === 'object') {
+    if (
+      'parts' in systemInstruction &&
+      Array.isArray(systemInstruction.parts)
+    ) {
+      const texts: string[] = [];
+      for (const part of systemInstruction.parts) {
+        const text = extractTextFromPartUnion(part);
+        if (text !== undefined) {
+          texts.push(text);
+        }
+      }
+      return texts.length > 0 ? texts.join('\n') : undefined;
+    }
+    if ('text' in systemInstruction) {
+      return extractTextFromPartUnion(systemInstruction);
+    }
   }
   return undefined;
 }
@@ -405,7 +438,20 @@ export function partToMessageBlock(
         false,
       ),
       content: formatFunctionResponseContent(part.functionResponse.response),
-      is_error: false,
+      is_error: isErrorFunctionResponse(part.functionResponse.response),
+    };
+  }
+  if (isEmptyTextPart(part)) {
+    return {
+      type: 'text',
+      text: '',
+    };
+  }
+  if (isContentFreeSignature(part)) {
+    logger.warn('Dropping a thought signature from another model.');
+    return {
+      type: 'text',
+      text: '',
     };
   }
   throw new Error(
@@ -505,6 +551,11 @@ function extractThinkingTokenCount(
   return Math.min(thinkingTokens, outputTokens);
 }
 
+const TRUNCATING_STOP_REASONS = new Set<string>([
+  'max_tokens',
+  'model_context_window_exceeded',
+]);
+
 /**
  * Converts an Anthropic `Message` into an {@link LlmResponse}.
  */
@@ -512,11 +563,18 @@ export function messageToGenerateContentResponse(
   message: Anthropic.Message,
 ): LlmResponse {
   const thinkingTokens = extractThinkingTokenCount(message.usage);
+  const isTruncated =
+    typeof message.stop_reason === 'string' &&
+    TRUNCATING_STOP_REASONS.has(message.stop_reason);
   return {
     content: {
       role: 'model',
       parts: message.content
-        .filter((block) => !isEmptyOrWhitespaceTextBlock(block))
+        .filter(
+          (block) =>
+            !isEmptyOrWhitespaceTextBlock(block) &&
+            !(isTruncated && block.type === 'tool_use'),
+        )
         .map(contentBlockToPart),
     },
     finishReason: toGoogleGenaiFinishReason(message.stop_reason),

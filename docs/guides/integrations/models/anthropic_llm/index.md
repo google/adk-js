@@ -7,7 +7,7 @@
 
 ## Introduction
 
-`AnthropicLlm` translates ADK `LlmRequest` payloads into Anthropic Messages API calls via `@anthropic-ai/sdk` and converts the returned `Anthropic.Message` into an `LlmResponse`. `Claude` inherits all request and response conversion from `AnthropicLlm` and overrides only `createClient()` to build an `AnthropicVertex` client from `@anthropic-ai/vertex-sdk`. The package exports `AnthropicLlm`, `AnthropicLlmParams`, `isAnthropicLlm`, `Claude`, `ClaudeParams`, and `isClaude`.
+`AnthropicLlm` translates ADK `LlmRequest` payloads into Anthropic Messages API calls via `@anthropic-ai/sdk` and converts the returned `Anthropic.Message` into an `LlmResponse`. `Claude` inherits all request and response conversion from `AnthropicLlm` and overrides only `createClient()` to build an `AnthropicVertex` client from `@anthropic-ai/vertex-sdk`. The package exports `AnthropicLlm`, `AnthropicLlmParams`, `isAnthropicLlm`, `Claude`, `ClaudeParams`, `isClaude`, `MAX_TOKEN`, `ClaudeRole`, `ClaudeMessageBlockParam`, `ToolUseIdSanitizer`, `contentToMessageParam`, and `partToMessageBlock`.
 
 ## Installation and environment setup
 
@@ -146,11 +146,13 @@ When an `LlmAgent` is configured with tools, `AnthropicLlm` and `Claude` transla
 
 1. **Tool collection**: Collects `functionDeclarations` across every `Tool` entry in `llmRequest.config?.tools`.
 2. **Schema conversion**: Converts `FunctionDeclaration.parameters` (`@google/genai` `Schema` with uppercase `Type` enums) into lowercase JSON Schema via `genaiSchemaToJsonSchema` with `input_schema.type` set to `'object'`, or passes `FunctionDeclaration.parametersJsonSchema` through directly.
-3. **Sequential tool choice**: When `llmRequest.toolsDict` is non-empty, sets `tool_choice` to `{type: 'auto', disable_parallel_tool_use: true}` so the model invokes at most one tool per turn.
+3. **Tool choice**: When `tools` contains one or more function declarations, sets `tool_choice` to `{type: 'auto'}`.
 4. **Tool-use ID preservation and sanitization**: Client-generated `adk-*` function call and response IDs are preserved in `LlmRequest.contents` for Claude requests, and any missing or invalid `tool_use` / `tool_result` IDs (not matching `^[a-zA-Z0-9_-]+$`) are mapped consistently within each request to `toolu_fallback_<N>`.
 5. **Tool result serialization**: Converts each `functionResponse` part into a `tool_result` block:
-   - When `'result' in response`, string values of `response.result` are sent unchanged, non-null structured values (`object`, `array`, `number`, `boolean`) are serialized with `JSON.stringify(response.result)`, and `null` or `undefined` becomes `''`.
-   - When `'result'` is not a key in `response`, a non-empty `response` object is serialized with `JSON.stringify(response)`.
+   - When `'result'` is the sole key in `response`, string values of `response.result` are sent unchanged, non-null structured values (`object`, `array`, `number`, `boolean`) are serialized with `JSON.stringify(response.result)`, and `null` or `undefined` becomes `''`.
+   - When `response` contains any other keys (including sibling keys alongside `'result'`), the non-empty `response` object is serialized with `JSON.stringify(response)`.
+   - Sets `is_error: true` when `response.is_error`, `response.isError`, or `response.error` is truthy, and `false` otherwise.
+6. **Truncated tool calls**: When `message.stop_reason` is `'max_tokens'` or `'model_context_window_exceeded'`, `tool_use` blocks are omitted from `LlmResponse.content.parts` so incomplete tool arguments are not executed.
 
 ## Extended thinking
 
