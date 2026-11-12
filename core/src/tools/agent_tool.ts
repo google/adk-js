@@ -9,6 +9,7 @@ import {isEqual} from 'lodash-es';
 
 import {BaseAgent} from '../agents/base_agent.js';
 import {isLlmAgent} from '../agents/llm_agent.js';
+import {InputValidationError} from '../errors/input_validation_error.js';
 import {Event} from '../events/event.js';
 import {InMemoryMemoryService} from '../memory/in_memory_memory_service.js';
 import {Runner} from '../runner/runner.js';
@@ -50,7 +51,9 @@ function validateAndStripAgentInput(
   args: Record<string, unknown>,
 ): Record<string, unknown> {
   if (typeof args !== 'object' || args === null || Array.isArray(args)) {
-    throw new Error('AgentTool input args must be a plain object.');
+    throw new InputValidationError(
+      'AgentTool input args must be a plain object.',
+    );
   }
   const schema = isZodSchema(agent.inputSchema)
     ? agent.inputSchema

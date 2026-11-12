@@ -83,7 +83,11 @@ describe('LlamaIndexRetrieval', () => {
         args: {query: 'nothing matches'},
         toolContext: TOOL_CONTEXT,
       }),
-    ).rejects.toThrow('docs retrieved no results');
+    ).rejects.toMatchObject({
+      name: 'ToolExecutionError',
+      message: expect.stringContaining('docs retrieved no results'),
+      errorType: 'NOT_FOUND',
+    });
   });
 
   it('treats a missing query argument as the empty query', async () => {

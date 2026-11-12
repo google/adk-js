@@ -11,6 +11,7 @@ import {
   RequestContext,
 } from '@a2a-js/sdk/server';
 import {RunConfig} from '../agents/run_config.js';
+import {InputValidationError} from '../errors/input_validation_error.js';
 import {Event as AdkEvent} from '../events/event.js';
 import {isRunner, Runner, RunnerConfig} from '../runner/runner.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
@@ -95,7 +96,7 @@ export class A2AAgentExecutor implements AgentExecutor {
   ): Promise<void> {
     const a2aUserMessage = ctx.userMessage;
     if (!a2aUserMessage) {
-      throw new Error('message not provided');
+      throw new InputValidationError('message not provided');
     }
 
     const userId = `A2A_USER_${ctx.contextId}`;

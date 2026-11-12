@@ -4,6 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {
+  ToolErrorType,
+  ToolExecutionError,
+} from '../../errors/tool_execution_error.js';
 import {RunAsyncToolRequest} from '../base_tool.js';
 import {BaseRetrievalTool} from './base_retrieval_tool.js';
 
@@ -77,7 +81,10 @@ export class LlamaIndexRetrieval extends BaseRetrievalTool {
     // an unguarded index would surface as a bare `TypeError`.
     const top = nodes[0];
     if (!top) {
-      throw new Error(`${this.name} retrieved no results for the query.`);
+      throw new ToolExecutionError(
+        `${this.name} retrieved no results for the query.`,
+        ToolErrorType.NOT_FOUND,
+      );
     }
     return top.node.text;
   }

@@ -13,6 +13,7 @@ import {
   MemoryMetadataValue,
 } from '@google-cloud/vertexai/build/src/genai/types.js';
 import {Content, createUserContent} from '@google/genai';
+import {InputValidationError} from '../errors/input_validation_error.js';
 import {Event} from '../events/event.js';
 import {Session} from '../sessions/session.js';
 import {logger} from '../utils/logger.js';
@@ -557,7 +558,7 @@ function normalizeMemoriesForCreate(memories: MemoryEntry[]): MemoryEntry[] {
     throw new TypeError('memories must be a sequence of memory items.');
   }
   if (memories.length === 0) {
-    throw new Error('memories must contain at least one entry.');
+    throw new InputValidationError('memories must contain at least one entry.');
   }
   return memories;
 }
@@ -567,7 +568,7 @@ function memoryEntryToFact(memory: MemoryEntry, index: number): string {
   if (memory.content && memory.content.parts) {
     for (const part of memory.content.parts) {
       if (part.inlineData || part.fileData) {
-        throw new Error(
+        throw new InputValidationError(
           `memories[${index}] must include text only; inlineData and fileData are not supported.`,
         );
       }
@@ -581,7 +582,9 @@ function memoryEntryToFact(memory: MemoryEntry, index: number): string {
   }
 
   if (textParts.length === 0) {
-    throw new Error(`memories[${index}] must include non-whitespace text.`);
+    throw new InputValidationError(
+      `memories[${index}] must include non-whitespace text.`,
+    );
   }
   return textParts.join('\n');
 }

@@ -8,6 +8,7 @@ import {spawn} from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import {InputValidationError} from '../errors/input_validation_error.js';
 import {experimental} from '../utils/experimental.js';
 import {logger} from '../utils/logger.js';
 import {BaseEnvironment, ExecutionResult} from './base_environment.js';
@@ -35,7 +36,8 @@ export interface LocalEnvironmentOptions {
  * sandbox: it does not survive symlinks, hardlinks, bind mounts, or TOCTOU
  * races. It is a guard against accidental traversal, not a security boundary.
  *
- * @throws If the resolved path is not inside `workingDir`.
+ * @throws {InputValidationError} If the resolved path is not inside
+ *   `workingDir`.
  */
 function resolvePathInWorkingDir(workingDir: string, filePath: string): string {
   const base = path.resolve(workingDir);
@@ -47,7 +49,9 @@ function resolvePathInWorkingDir(workingDir: string, filePath: string): string {
     // `path.relative` returns an absolute path across Windows drives.
     path.isAbsolute(relative)
   ) {
-    throw new Error(`Path escapes working directory: ${filePath}`);
+    throw new InputValidationError(
+      `Path escapes working directory: ${filePath}`,
+    );
   }
   return resolved;
 }

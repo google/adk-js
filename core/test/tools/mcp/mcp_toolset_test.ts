@@ -209,9 +209,12 @@ describe('MCPToolset', () => {
     it('getResourceInfo rejects when the name is unknown', async () => {
       const toolset = new MCPToolset(stdioParams);
 
-      await expect(toolset.getResourceInfo('nope')).rejects.toThrow(
-        "Resource with name 'nope' not found.",
-      );
+      await expect(toolset.getResourceInfo('nope')).rejects.toMatchObject({
+        name: 'NotFoundError',
+        message: expect.stringContaining(
+          "Resource with name 'nope' not found.",
+        ),
+      });
     });
 
     it('readResource resolves the URI and returns the contents', async () => {

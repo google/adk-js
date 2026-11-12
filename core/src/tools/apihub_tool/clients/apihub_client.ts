@@ -5,6 +5,7 @@
  */
 
 import {GoogleAuth} from 'google-auth-library';
+import {NotFoundError} from '../../../errors/not_found_error.js';
 import {parseServiceAccountJson} from './service_account.js';
 
 /** Root of the API Hub REST API that every request is made against. */
@@ -121,7 +122,7 @@ export class APIHubClient implements BaseAPIHubClient {
       const api = await this.getApi(names.apiResourceName);
       const versions = api.versions ?? [];
       if (versions.length === 0) {
-        throw new Error(
+        throw new NotFoundError(
           `No versions found in API Hub resource: ${names.apiResourceName}`,
         );
       }
@@ -132,7 +133,7 @@ export class APIHubClient implements BaseAPIHubClient {
       const apiVersion = await this.getApiVersion(apiVersionResourceName);
       const specs = apiVersion.specs ?? [];
       if (specs.length === 0) {
-        throw new Error(
+        throw new NotFoundError(
           `No specs found in API Hub version: ${apiVersionResourceName}`,
         );
       }

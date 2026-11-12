@@ -328,8 +328,13 @@ describe('OpenApiSpecParser', () => {
           },
         ]),
       ).toThrow(
-        "Unresolved server URL variable 'tld' in 'https://{region}.api.{tld}'. " +
-          'Declare a default under servers[].variables.',
+        expect.objectContaining({
+          name: 'InputValidationError',
+          message: expect.stringContaining(
+            "Unresolved server URL variable 'tld' in 'https://{region}.api.{tld}'. " +
+              'Declare a default under servers[].variables.',
+          ),
+        }),
       );
     });
 

@@ -143,7 +143,14 @@ describe('client_labels', () => {
     it('should throw error for empty label', () => {
       expect(() => {
         runWithClientLabel('', () => {});
-      }).toThrow('Client label must be a non-empty string.');
+      }).toThrow(
+        expect.objectContaining({
+          name: 'InputValidationError',
+          message: expect.stringContaining(
+            'Client label must be a non-empty string.',
+          ),
+        }),
+      );
 
       expect(() => {
         runWithClientLabel('   ', () => {});

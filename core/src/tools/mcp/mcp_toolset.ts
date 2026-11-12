@@ -14,6 +14,7 @@ import type {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import {ReadonlyContext} from '../../agents/readonly_context.js';
+import {NotFoundError} from '../../errors/not_found_error.js';
 import {logger} from '../../utils/logger.js';
 import {BaseTool} from '../base_tool.js';
 import {BaseToolset, ToolPredicate} from '../base_toolset.js';
@@ -128,7 +129,7 @@ export class MCPToolset extends BaseToolset {
    *
    * @param name The advertised name of the resource.
    * @return The matching MCP `Resource`.
-   * @throws If no resource with the given name is advertised by the server.
+   * @throws {NotFoundError} If no resource with the given name is advertised by the server.
    */
   async getResourceInfo(name: string): Promise<Resource> {
     const session = await this.mcpSessionManager.createSession();
@@ -143,7 +144,7 @@ export class MCPToolset extends BaseToolset {
       (candidate) => candidate.name === name,
     );
     if (!resource) {
-      throw new Error(`Resource with name '${name}' not found.`);
+      throw new NotFoundError(`Resource with name '${name}' not found.`);
     }
     return resource;
   }

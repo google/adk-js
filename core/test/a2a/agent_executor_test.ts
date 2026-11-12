@@ -81,9 +81,10 @@ describe('A2AAgentExecutor', () => {
     });
 
     const ctx = createRequestContext({userMessage: undefined});
-    await expect(executor.execute(ctx, mockEventBus)).rejects.toThrow(
-      'message not provided',
-    );
+    await expect(executor.execute(ctx, mockEventBus)).rejects.toMatchObject({
+      name: 'InputValidationError',
+      message: expect.stringContaining('message not provided'),
+    });
   });
 
   it('should get or create a session, run the agent, and publish working and final status events', async () => {

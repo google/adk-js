@@ -988,7 +988,12 @@ describe('RestApiTool Utilities', () => {
           prepareRequestParams(usersEndpoint, userIdParameters, {
             user_id: '..',
           }),
-        ).toThrow(/relative path segments/);
+        ).toThrow(
+          expect.objectContaining({
+            name: 'InputValidationError',
+            message: expect.stringMatching(/relative path segments/),
+          }),
+        );
       });
 
       it('should reject a single-dot path parameter value', () => {
@@ -1891,8 +1896,13 @@ describe('RestApiTool v0.1.0 parity behaviour', () => {
       ).name,
     ).toBe('json_tool');
     expect(() => createRestApiToolFromJson(serialize({type: 'magic'}))).toThrow(
-      'Unsupported security scheme type: "magic". Expected one of: ' +
-        'apiKey, http, oauth2, openIdConnect.',
+      expect.objectContaining({
+        name: 'InputValidationError',
+        message: expect.stringContaining(
+          'Unsupported security scheme type: "magic". Expected one of: ' +
+            'apiKey, http, oauth2, openIdConnect.',
+        ),
+      }),
     );
     expect(() => createRestApiToolFromJson(serialize({}))).toThrow(
       'Unsupported security scheme type: undefined.',

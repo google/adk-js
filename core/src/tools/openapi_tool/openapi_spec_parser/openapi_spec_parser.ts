@@ -6,6 +6,7 @@
 
 import {OpenAPIV3} from 'openapi-types';
 import {AuthCredential} from '../../../auth/auth_credential.js';
+import {InputValidationError} from '../../../errors/input_validation_error.js';
 import {toSnakeCaseName} from '../../../utils/case_utils.js';
 import {experimental} from '../../../utils/experimental.js';
 import {ApiParameter, OperationParser} from './operation_parser.js';
@@ -252,14 +253,14 @@ function sanitizeSchemaTypes(
  * A placeholder with no declared variable is a spec error: left in place it
  * becomes a literal `{name}` in the request host.
  *
- * @throws {Error} If a placeholder has no variable declaring a value for it.
+ * @throws {InputValidationError} If a placeholder has no variable declaring a value for it.
  */
 function resolveServerUrl(server: OpenAPIV3.ServerObject): string {
   return server.url.replace(/\{([^{}]+)\}/g, (_, name: string) => {
     const variable = server.variables?.[name];
     const value = variable?.default || variable?.enum?.[0];
     if (!value) {
-      throw new Error(
+      throw new InputValidationError(
         `Unresolved server URL variable '${name}' in '${server.url}'. ` +
           `Declare a default under servers[].variables.`,
       );
