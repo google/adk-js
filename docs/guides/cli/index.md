@@ -115,6 +115,19 @@ Each helper handles one stage of preparing, observing, or evaluating an agent ru
 
 When `agentParentFolder` is given, `agentName` must be a single path segment inside it. When it is omitted, `agentName` can be a path, but it must not be `.` or contain a `..` segment. `filename` must be a single path segment. Invalid input throws `InputValidationError` before any file is read. These checks compare strings only and do not follow symlinks.
 
+When deploying to Vertex AI Agent Engine (`adk deploy agent_engine`, `adk deploy agent-engine`, `adk deploy reasoning_engine`, or `adk deploy reasoning-engine`), `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` defined in the agent directory's `.env` file are automatically resolved as the target Google Cloud project and region when `--project` or `--region` flags are omitted. If `--project` or `--region` is explicitly specified on the command line, the explicit CLI option takes precedence.
+
+### ADK service options
+
+The ADK CLI commands (`run`, `web`, `api_server` / `api-server`, `deploy cloud_run` / `deploy cloud-run`, `deploy agent_engine` / `deploy agent-engine`, and `deploy reasoning_engine` / `deploy reasoning-engine`) support configurable backend services via `--session-service-uri` (`--session_service_uri`), `--artifact-service-uri` (`--artifact_service_uri`), and `--memory-service-uri` (`--memory_service_uri`):
+
+- `--session-service-uri, --session_service_uri <string>`: Session service URI (e.g. `memory://` for in-memory sessions).
+- `--artifact-service-uri, --artifact_service_uri <string>`: Artifact service URI (e.g. `gs://<bucket>` for Google Cloud Storage).
+- `--memory-service-uri, --memory_service_uri <string>`: Memory service URI. Supported schemes include:
+  - `memory://`: In-memory memory service (`InMemoryMemoryService`).
+  - `rag://<rag_corpus_id>` or `rag://projects/{project}/locations/{location}/ragCorpora/{id}`: Vertex AI RAG memory service (`VertexAiRagMemoryService`).
+  - `agentengine://<agent_engine>`: Agent Engine memory bank (`VertexAiMemoryBankService`), supporting both short resource IDs (`agentengine://123`) with project and region from the environment or `.env`, and full resource names (`agentengine://projects/{project}/locations/{location}/reasoningEngines/{id}`).
+
 ### Session conversion and empty state
 
 `createEmptyState(agent, initializedStates)` walks `agent.subAgents` recursively. For every `LlmAgent` whose `instruction` is a string, it finds `{var}` word placeholders (`/{([\w]+)}/g`) and sets each key to `''`. Keys passed in `initializedStates` are copied on top so caller-supplied values win over the empty defaults.
