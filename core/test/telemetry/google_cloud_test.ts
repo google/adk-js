@@ -11,6 +11,7 @@ import {
   getGcpResource,
   OtelExportersConfig,
 } from '@google/adk';
+import {metrics} from '@opentelemetry/api';
 import {gcpDetector} from '@opentelemetry/resource-detector-gcp';
 import {
   emptyResource,
@@ -18,12 +19,17 @@ import {
   resourceFromAttributes,
 } from '@opentelemetry/resources';
 import {ReadWriteLogRecord} from '@opentelemetry/sdk-logs';
-import {ResourceMetrics} from '@opentelemetry/sdk-metrics';
+import {
+  MeterProvider,
+  PeriodicExportingMetricReader,
+  ResourceMetrics,
+} from '@opentelemetry/sdk-metrics';
 import {ReadableSpan} from '@opentelemetry/sdk-trace-base';
 import {GoogleAuth} from 'google-auth-library';
 import * as fs from 'node:fs';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {
+  agentRuntimeRequestHooks,
   AuthenticatedLogExporter,
   AuthenticatedMetricExporter,
   AuthenticatedTraceExporter,
@@ -32,6 +38,7 @@ import {
   getAgentEngineUserAgentHeader,
   getTelemetryEndpoint,
 } from '../../src/telemetry/export/google_cloud.js';
+import {RequestDrivenMetricReader} from '../../src/telemetry/export/request_driven_metric_reader.js';
 import {logger} from '../../src/utils/logger.js';
 import {version} from '../../src/version.js';
 
@@ -224,6 +231,81 @@ describe('getGcpExporters', () => {
     });
 
     expect(result.logRecordProcessors?.length).toBe(1);
+  });
+
+  describe('metric reader', () => {
+    function createAuth(projectId: string): GoogleAuth {
+      return {
+        getProjectId: vi.fn().mockResolvedValue(projectId),
+        getRequestHeaders: vi
+          .fn()
+          .mockResolvedValue({Authorization: 'Bearer token'}),
+        request: vi
+          .fn()
+          .mockResolvedValue(makeAuthResponse({name: 'projects/1', projectId})),
+      } as unknown as GoogleAuth;
+    }
+
+    afterEach(() => {
+      metrics.disable();
+    });
+
+    it('is request-driven on Agent Runtime', async () => {
+      vi.stubEnv('GOOGLE_CLOUD_AGENT_ENGINE_ID', 'agent-123');
+
+      const result = await getGcpExporters({
+        enableMetrics: true,
+        auth: createAuth('test-project'),
+      });
+
+      expect(result.metricReaders).toHaveLength(1);
+      expect(result.metricReaders?.[0]).toBeInstanceOf(
+        RequestDrivenMetricReader,
+      );
+    });
+
+    it('is periodic on Agent Runtime when a MeterProvider is already installed', async () => {
+      vi.stubEnv('GOOGLE_CLOUD_AGENT_ENGINE_ID', 'agent-123');
+      metrics.setGlobalMeterProvider(new MeterProvider());
+
+      const result = await getGcpExporters({
+        enableMetrics: true,
+        auth: createAuth('test-project'),
+      });
+
+      expect(result.metricReaders?.[0]).toBeInstanceOf(
+        PeriodicExportingMetricReader,
+      );
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('A MeterProvider is already installed'),
+      );
+    });
+
+    it('is periodic off Agent Runtime', async () => {
+      vi.stubEnv('GOOGLE_CLOUD_AGENT_ENGINE_ID', undefined);
+
+      const result = await getGcpExporters({
+        enableMetrics: true,
+        auth: createAuth('test-project'),
+      });
+
+      expect(result.metricReaders?.[0]).toBeInstanceOf(
+        PeriodicExportingMetricReader,
+      );
+    });
+
+    it('re-exports agentRuntimeRequestHooks from the GCP telemetry entrypoint', async () => {
+      vi.stubEnv('GOOGLE_CLOUD_AGENT_ENGINE_ID', 'agent-123');
+
+      const result = await getGcpExporters({
+        enableMetrics: true,
+        auth: createAuth('test-project'),
+      });
+      const hooks = agentRuntimeRequestHooks(result);
+
+      expect(typeof hooks.onRequestStart).toBe('function');
+      expect(typeof hooks.onRequestEnd).toBe('function');
+    });
   });
 });
 
