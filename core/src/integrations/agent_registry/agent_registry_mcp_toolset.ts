@@ -18,6 +18,12 @@ import {MCPTool} from '../../tools/mcp/mcp_tool.js';
 import {logger} from '../../utils/logger.js';
 import {GCP_MCP_SERVER_DESTINATION_ID} from './types.js';
 
+function serializeHeaders(headers: Record<string, string>): string {
+  return JSON.stringify(
+    Object.entries(headers).sort(([a], [b]) => a.localeCompare(b)),
+  );
+}
+
 /**
  * A specialized BaseToolset subclass designed to represent a single registered MCP server.
  *
@@ -36,6 +42,8 @@ export class AgentRegistrySingleMCPToolset extends BaseToolset {
   ) => Promise<Record<string, string>> | Record<string, string>;
   readonly authScheme?: AuthScheme;
   readonly authCredential?: AuthCredential;
+  private sessionManager?: MCPSessionManager;
+  private sessionManagerHeadersKey?: string;
 
   /**
    * @param options - Configuration for the MCP toolset.
@@ -88,23 +96,34 @@ export class AgentRegistrySingleMCPToolset extends BaseToolset {
       Object.assign(headers, providerHeaders);
     }
 
-    // Merge resolved headers into transport request options
-    const connectionParamsCopy: StreamableHTTPConnectionParams = {
-      ...this.connectionParams,
-      transportOptions: {
-        ...this.connectionParams.transportOptions,
-        requestInit: {
-          ...this.connectionParams.transportOptions?.requestInit,
-          headers: {
-            ...this.connectionParams.transportOptions?.requestInit?.headers,
-            ...headers,
-          } as Record<string, string>,
-        },
-      },
-    };
+    const mergedHeaders = {
+      ...this.connectionParams.transportOptions?.requestInit?.headers,
+      ...headers,
+    } as Record<string, string>;
 
-    // Establish session using MCPSessionManager
-    const sessionManager = new MCPSessionManager(connectionParamsCopy);
+    const headersKey = serializeHeaders(mergedHeaders);
+    if (!this.sessionManager || this.sessionManagerHeadersKey !== headersKey) {
+      const previousManager = this.sessionManager;
+      // Merge resolved headers into transport request options
+      const connectionParamsCopy: StreamableHTTPConnectionParams = {
+        ...this.connectionParams,
+        transportOptions: {
+          ...this.connectionParams.transportOptions,
+          requestInit: {
+            ...this.connectionParams.transportOptions?.requestInit,
+            headers: mergedHeaders,
+          },
+        },
+      };
+      this.sessionManager = new MCPSessionManager(connectionParamsCopy);
+      this.sessionManagerHeadersKey = headersKey;
+      if (previousManager) {
+        await previousManager.close();
+      }
+    }
+
+    // Establish session using the cached MCPSessionManager for this header set
+    const sessionManager = this.sessionManager;
     const session = await sessionManager.createSession();
 
     // Retrieve tools from the remote server and close the discovery session
@@ -151,5 +170,10 @@ export class AgentRegistrySingleMCPToolset extends BaseToolset {
     return tools.filter((t) => this.isToolSelected(t, context));
   }
 
-  async close(): Promise<void> {}
+  async close(): Promise<void> {
+    const manager = this.sessionManager;
+    this.sessionManager = undefined;
+    this.sessionManagerHeadersKey = undefined;
+    await manager?.close();
+  }
 }

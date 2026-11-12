@@ -156,25 +156,155 @@ function buildSseTransportOptions(
   };
 }
 
+const CONNECTION_CLOSED_ERROR_CODE = -32000;
+const INVALID_REQUEST_ERROR_CODE = -32600;
+const LEGACY_SESSION_TERMINATED_ERROR_CODE = 32600;
+const HTTP_NOT_FOUND_STATUS = 404;
+
+/**
+ * Returns whether an MCP call error indicates that the server rejected the
+ * request because the session was already terminated or expired (such as HTTP
+ * 404 on Streamable HTTP or JSON-RPC session-terminated codes), meaning the
+ * operation can be safely retried once on a fresh session.
+ *
+ * @internal
+ */
+export function isSessionTerminatedError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) {
+    return false;
+  }
+  const code = (err as {code?: unknown}).code;
+  const message = (err as {message?: unknown}).message;
+  if (
+    code === HTTP_NOT_FOUND_STATUS ||
+    code === LEGACY_SESSION_TERMINATED_ERROR_CODE
+  ) {
+    return true;
+  }
+  return (
+    code === INVALID_REQUEST_ERROR_CODE &&
+    typeof message === 'string' &&
+    message.includes('Session terminated')
+  );
+}
+
+/**
+ * Returns whether an MCP call error indicates that the underlying transport
+ * disconnected or that a Streamable HTTP server no longer recognizes the
+ * session ID, meaning the cached client should be discarded so the next call
+ * reconnects cleanly.
+ *
+ * @internal
+ */
+export function isDisconnectedSessionError(err: unknown): boolean {
+  if (isSessionTerminatedError(err)) {
+    return true;
+  }
+  if (typeof err !== 'object' || err === null) {
+    return false;
+  }
+  const code = (err as {code?: unknown}).code;
+  const message = (err as {message?: unknown}).message;
+  return code === CONNECTION_CLOSED_ERROR_CODE || message === 'Not connected';
+}
+
 /**
  * Manages Model Context Protocol (MCP) client sessions.
  *
- * This class is responsible for establishing and managing connections to MCP
- * servers. It supports different transport protocols like Standard I/O (Stdio)
- * and Server-Sent Events (SSE) over HTTP, determined by the provided
- * connection parameters.
- *
- * The primary purpose of this manager is to abstract away the details of
- * session creation and connection handling, providing a simple interface for
- * creating new MCP client instances that can be used to interact with
- * remote tools.
+ * This class establishes and manages connections to MCP servers across stdio,
+ * Streamable HTTP, and HTTP+SSE transports. Call {@link getSession} to reuse a
+ * single shared session across tool discovery, resource reads, and tool calls
+ * until {@link close} shuts it down, or {@link createSession} when an isolated
+ * client instance is explicitly needed.
  */
 export class MCPSessionManager {
   private readonly connectionParams: MCPConnectionParams;
   private readonly activeSessions = new Set<Client>();
+  private readonly sessionRefCounts = new Map<Client, number>();
+  private readonly closingSessions = new Set<Client>();
+  private sharedSession?: Client;
+  private pendingSession?: Promise<Client>;
+  private closeGeneration = 0;
 
   constructor(connectionParams: MCPConnectionParams) {
     this.connectionParams = connectionParams;
+  }
+
+  /**
+   * Returns a shared MCP client session, connecting lazily on first use,
+   * de-duplicating concurrent connection attempts, and reconnecting if the
+   * previous session closed.
+   */
+  async getSession(): Promise<Client> {
+    if (this.sharedSession && this.activeSessions.has(this.sharedSession)) {
+      return this.sharedSession;
+    }
+    this.sharedSession = undefined;
+
+    if (this.pendingSession) {
+      return this.pendingSession;
+    }
+
+    const generation = this.closeGeneration;
+    const connectPromise: Promise<Client> = this.createSession()
+      .then(async (client) => {
+        if (this.closeGeneration !== generation) {
+          await this.closeSession(client).catch((err) => {
+            logger.warn(
+              'Failed to close canceled MCP session: ' + formatError(err),
+            );
+          });
+          throw new Error('MCP session manager was closed while connecting.');
+        }
+        this.sharedSession = client;
+        return client;
+      })
+      .finally(() => {
+        if (this.pendingSession === connectPromise) {
+          this.pendingSession = undefined;
+        }
+      });
+
+    this.pendingSession = connectPromise;
+    return connectPromise;
+  }
+
+  /**
+   * Marks an active session as currently in use by an operation so {@link close}
+   * defers closing it until all in-flight operations on it finish.
+   *
+   * @internal
+   */
+  retainSession(client: Client): void {
+    if (!this.activeSessions.has(client)) {
+      return;
+    }
+    this.sessionRefCounts.set(
+      client,
+      (this.sessionRefCounts.get(client) ?? 0) + 1,
+    );
+  }
+
+  /**
+   * Releases a session previously retained with {@link retainSession}, closing
+   * it if {@link close} was called while the session was in use.
+   *
+   * @internal
+   */
+  async releaseSession(client: Client): Promise<void> {
+    const count = this.sessionRefCounts.get(client) ?? 0;
+    if (count <= 1) {
+      this.sessionRefCounts.delete(client);
+      if (this.closingSessions.delete(client)) {
+        await this.closeSession(client).catch((err) => {
+          logger.warn(
+            'Failed to close deferred MCP session: ' + formatError(err),
+          );
+        });
+      }
+      return;
+    }
+    this.sessionRefCounts.set(client, count - 1);
   }
 
   async createSession(): Promise<Client> {
@@ -183,6 +313,15 @@ export class MCPSessionManager {
       () => import('@modelcontextprotocol/sdk/client/index.js'),
     );
     const client = new Client({name: 'MCPClient', version: '1.0.0'});
+    const onDisconnect = () => {
+      this.activeSessions.delete(client);
+      this.sessionRefCounts.delete(client);
+      this.closingSessions.delete(client);
+      if (this.sharedSession === client) {
+        this.sharedSession = undefined;
+      }
+    };
+    client.onclose = onDisconnect;
 
     try {
       switch (this.connectionParams.type) {
@@ -241,10 +380,39 @@ export class MCPSessionManager {
   }
 
   async closeSession(client: Client): Promise<void> {
-    if (this.activeSessions.has(client)) {
-      this.activeSessions.delete(client);
+    const wasActive = this.activeSessions.delete(client);
+    this.sessionRefCounts.delete(client);
+    this.closingSessions.delete(client);
+    if (this.sharedSession === client) {
+      this.sharedSession = undefined;
+    }
+    if (wasActive) {
       await client.close();
     }
+  }
+
+  /**
+   * Closes all idle active and in-flight MCP sessions managed by this instance,
+   * and defers closing any session currently held by an in-flight operation
+   * until that operation releases it.
+   */
+  async close(): Promise<void> {
+    this.closeGeneration++;
+    this.sharedSession = undefined;
+    const inFlight = this.pendingSession;
+    this.pendingSession = undefined;
+    const idleSessions: Client[] = [];
+    for (const session of this.activeSessions) {
+      if ((this.sessionRefCounts.get(session) ?? 0) > 0) {
+        this.closingSessions.add(session);
+      } else {
+        idleSessions.push(session);
+      }
+    }
+    await Promise.allSettled([
+      ...idleSessions.map((session) => this.closeSession(session)),
+      ...(inFlight ? [inFlight] : []),
+    ]);
   }
 
   getActiveSessions(): Client[] {
