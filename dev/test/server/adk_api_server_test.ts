@@ -2164,6 +2164,469 @@ describe('AdkWebServer', () => {
         }
       },
     );
+
+    describe('Agent Engine class methods', () => {
+      it.each(['async_create_session', 'create_session'])(
+        'creates a session for %s without appName or running the agent',
+        async (classMethod) => {
+          const spy = vi.spyOn(Runner.prototype, 'runAsync');
+          try {
+            const response = await client.post<{output: Session}>(
+              '/api/reasoning_engine',
+              {class_method: classMethod, input: {user_id: 'u1'}},
+            );
+
+            expect(response.status).toBe(200);
+            expect(response.data?.output.id).toBeTruthy();
+            expect(response.data?.output.appName).toBe('testApp');
+            expect(response.data?.output.userId).toBe('u1');
+            expect(spy).not.toHaveBeenCalled();
+
+            const stored = await sessionService.getSession({
+              appName: 'testApp',
+              userId: 'u1',
+              sessionId: response.data?.output.id ?? '',
+            });
+            expect(stored).toBeDefined();
+          } finally {
+            spy.mockRestore();
+          }
+        },
+      );
+
+      it('creates a session with the requested id and state', async () => {
+        const response = await client.post<{output: Session}>(
+          '/api/reasoning_engine',
+          {
+            classMethod: 'async_create_session',
+            input: {user_id: 'u1', session_id: 's1', state: {count: 1}},
+          },
+        );
+
+        expect(response.data?.output.id).toBe('s1');
+        expect(response.data?.output.state).toEqual({count: 1});
+      });
+
+      it('gets a session with async_get_session', async () => {
+        await sessionService.createSession({
+          appName: 'testApp',
+          userId: 'u1',
+          sessionId: 's1',
+        });
+
+        const response = await client.post<{output: Session}>(
+          '/api/reasoning_engine',
+          {
+            class_method: 'async_get_session',
+            input: {user_id: 'u1', session_id: 's1'},
+          },
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.data?.output.id).toBe('s1');
+        expect(response.data?.output.userId).toBe('u1');
+      });
+
+      it('returns 400 for async_get_session without session_id', async () => {
+        try {
+          await client.post('/api/reasoning_engine', {
+            class_method: 'async_get_session',
+            input: {user_id: 'u1'},
+          });
+          expect.fail('Should fail with 400');
+        } catch (e: unknown) {
+          expect((e as {response: {status: number}}).response.status).toBe(400);
+          expect((e as {message: string}).message).toBe(
+            'session_id is required',
+          );
+        }
+      });
+
+      it('returns 404 for async_get_session with an unknown session', async () => {
+        try {
+          await client.post('/api/reasoning_engine', {
+            class_method: 'async_get_session',
+            input: {user_id: 'u1', session_id: 'missing'},
+          });
+          expect.fail('Should fail with 404');
+        } catch (e: unknown) {
+          expect((e as {response: {status: number}}).response.status).toBe(404);
+          expect((e as {message: string}).message).toBe(
+            'Session not found: missing',
+          );
+        }
+      });
+
+      it('lists sessions with async_list_sessions and hides eval sessions', async () => {
+        await sessionService.createSession({
+          appName: 'testApp',
+          userId: 'u1',
+          sessionId: 's1',
+        });
+        await sessionService.createSession({
+          appName: 'testApp',
+          userId: 'u1',
+          sessionId: `${EVAL_SESSION_ID_PREFIX}hidden`,
+        });
+
+        const response = await client.post<{output: {sessions: Session[]}}>(
+          '/api/reasoning_engine',
+          {class_method: 'async_list_sessions', input: {user_id: 'u1'}},
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.data?.output.sessions.map((s) => s.id)).toEqual(['s1']);
+      });
+
+      it('deletes a session with async_delete_session', async () => {
+        await sessionService.createSession({
+          appName: 'testApp',
+          userId: 'u1',
+          sessionId: 's1',
+        });
+
+        const response = await client.post<{output: null}>(
+          '/api/reasoning_engine',
+          {
+            class_method: 'async_delete_session',
+            input: {user_id: 'u1', session_id: 's1'},
+          },
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.data).toEqual({output: null});
+        expect(
+          await sessionService.getSession({
+            appName: 'testApp',
+            userId: 'u1',
+            sessionId: 's1',
+          }),
+        ).toBeUndefined();
+      });
+
+      it('returns 400 for async_delete_session without session_id', async () => {
+        try {
+          await client.post('/api/reasoning_engine', {
+            class_method: 'async_delete_session',
+            input: {user_id: 'u1'},
+          });
+          expect.fail('Should fail with 400');
+        } catch (e: unknown) {
+          expect((e as {response: {status: number}}).response.status).toBe(400);
+        }
+      });
+
+      it('runs a query with snake_case fields and a string message', async () => {
+        const spy = vi.spyOn(Runner.prototype, 'runAsync');
+        try {
+          const response = await client.post<{output: Event[]}>(
+            '/api/reasoning_engine',
+            {
+              class_method: 'query',
+              input: {user_id: 'u1', session_id: 's1', message: 'Hello'},
+            },
+          );
+
+          expect(response.status).toBe(200);
+          expect(response.data?.output[0].content?.parts?.[0].text).toBe(
+            "Hello user! I'm streaming you events now!",
+          );
+          expect(spy).toHaveBeenCalledTimes(1);
+          expect(spy.mock.calls[0][0]).toMatchObject({
+            userId: 'u1',
+            sessionId: 's1',
+            newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+          });
+        } finally {
+          spy.mockRestore();
+        }
+      });
+
+      it('runs a query with only a message and no class_method or appName', async () => {
+        const response = await client.post<{output: Event[]}>(
+          '/api/reasoning_engine',
+          {input: {user_id: 'u1', message: 'Hello'}},
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.data?.output.length).toBe(3);
+      });
+
+      it('passes a snake_case run_config to the runner in camelCase', async () => {
+        const spy = vi.spyOn(Runner.prototype, 'runAsync');
+        try {
+          await client.post('/api/reasoning_engine', {
+            class_method: 'async_stream_query',
+            input: {
+              user_id: 'u1',
+              message: 'Hello',
+              run_config: {
+                max_llm_calls: 5,
+                speech_config: {language_code: 'en-US'},
+                a2a_metadata: {kept_key: 1},
+              },
+              state_delta: {some_key: 1},
+            },
+          });
+
+          expect(spy.mock.calls[0][0].runConfig).toEqual({
+            maxLlmCalls: 5,
+            speechConfig: {languageCode: 'en-US'},
+            a2aMetadata: {kept_key: 1},
+          });
+          expect(spy.mock.calls[0][0].stateDelta).toEqual({some_key: 1});
+        } finally {
+          spy.mockRestore();
+        }
+      });
+
+      it('does not pass operator-only run_config fields to the runner', async () => {
+        const spy = vi.spyOn(Runner.prototype, 'runAsync');
+        try {
+          await client.post('/api/reasoning_engine', {
+            class_method: 'async_stream_query',
+            input: {
+              user_id: 'u1',
+              message: 'Hello',
+              run_config: {
+                remote_delivered: true,
+                allow_remote_tool_confirmation: true,
+                plain_text_tool_confirmation: true,
+                telemetry: {capture_message_content: true},
+                max_llm_calls: 0,
+                streaming_mode: 'sse',
+              },
+            },
+          });
+
+          expect(spy.mock.calls[0][0].runConfig).toEqual({
+            streamingMode: 'sse',
+          });
+        } finally {
+          spy.mockRestore();
+        }
+      });
+
+      it('passes a snake_case custom_metadata to the runner', async () => {
+        const spy = vi.spyOn(Runner.prototype, 'runAsync');
+        try {
+          await client.post('/api/reasoning_engine', {
+            class_method: 'query',
+            input: {
+              user_id: 'u1',
+              message: 'Hello',
+              custom_metadata: {trace_tag: 'abc'},
+            },
+          });
+
+          expect(spy.mock.calls[0][0].customMetadata).toEqual({
+            trace_tag: 'abc',
+          });
+        } finally {
+          spy.mockRestore();
+        }
+      });
+
+      it('sets the user role on a Content message that has no role', async () => {
+        const spy = vi.spyOn(Runner.prototype, 'runAsync');
+        try {
+          await client.post('/api/reasoning_engine', {
+            class_method: 'query',
+            input: {user_id: 'u1', message: {parts: [{text: 'Hello'}]}},
+          });
+
+          expect(spy.mock.calls[0][0].newMessage).toEqual({
+            role: 'user',
+            parts: [{text: 'Hello'}],
+          });
+        } finally {
+          spy.mockRestore();
+        }
+      });
+
+      it('still requires appName when several apps are loaded', async () => {
+        agentLoader.listAgents = () => Promise.resolve(['appA', 'appB']);
+        try {
+          await client.post('/api/reasoning_engine', {
+            class_method: 'async_create_session',
+            input: {user_id: 'u1'},
+          });
+          expect.fail('Should fail with 400');
+        } catch (e: unknown) {
+          expect((e as {response: {status: number}}).response.status).toBe(400);
+          expect((e as {message: string}).message).toBe(
+            'appName is required in input',
+          );
+        }
+      });
+
+      it('returns 400 for an unsupported class_method', async () => {
+        try {
+          await client.post('/api/reasoning_engine', {
+            class_method: 'bogus',
+            input: {user_id: 'u1'},
+          });
+          expect.fail('Should fail with 400');
+        } catch (e: unknown) {
+          expect((e as {response: {status: number}}).response.status).toBe(400);
+          expect((e as {message: string}).message).toBe(
+            'Unsupported class_method: bogus',
+          );
+        }
+      });
+    });
+
+    describe('stream_reasoning_engine', () => {
+      it('streams newline-delimited JSON events', async () => {
+        const res = await fetch(`${server.url}/api/stream_reasoning_engine`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            class_method: 'async_stream_query',
+            input: {user_id: 'u1', message: 'Hello'},
+          }),
+        });
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('content-type')).toContain('application/json');
+        const lines = (await res.text()).split('\n').filter((l) => l !== '');
+        const events = lines.map((l) => JSON.parse(l) as Event);
+        expect(events.length).toBe(3);
+        expect(events[0].content?.parts?.[0].text).toBe(
+          "Hello user! I'm streaming you events now!",
+        );
+
+        const session = await sessionService.getSession({
+          appName: 'testApp',
+          userId: 'u1',
+          sessionId: 'default-session',
+        });
+        expect(session).toBeDefined();
+      });
+
+      it('returns 400 for an unsupported class_method', async () => {
+        const res = await fetch(`${server.url}/api/stream_reasoning_engine`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            class_method: 'async_create_session',
+            input: {user_id: 'u1', message: 'Hello'},
+          }),
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'Unsupported class_method: async_create_session',
+        });
+      });
+
+      it('requires appName when several apps are loaded', async () => {
+        agentLoader.listAgents = () => Promise.resolve(['appA', 'appB']);
+
+        const res = await fetch(`${server.url}/api/stream_reasoning_engine`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            class_method: 'async_stream_query',
+            input: {user_id: 'u1', message: 'Hello'},
+          }),
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'appName is required in input',
+        });
+      });
+
+      it('returns 500 before streaming when the agent fails to load', async () => {
+        agentLoader.getAgentFile = () =>
+          Promise.reject(new Error('Load failed'));
+
+        const res = await fetch(`${server.url}/api/stream_reasoning_engine`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({input: {user_id: 'u1', message: 'Hello'}}),
+        });
+
+        expect(res.status).toBe(500);
+        const data = (await res.json()) as {error: string};
+        expect(data.error).toContain('Load failed');
+      });
+
+      it.each([
+        {name: 'already-parsed JSON body', contentType: 'application/json'},
+        {
+          name: 'raw request stream body',
+          contentType: 'application/json,application/json',
+        },
+      ])(
+        'does not log request headers or body for $name',
+        async ({contentType}) => {
+          const authSentinel = 'secret-bearer-token-sentinel';
+          const cookieSentinel = 'secret-cookie-value-sentinel';
+          const bodySentinel = 'secret-user-message-sentinel';
+          const loggedMessages: string[] = [];
+          const recordArgs = (...args: unknown[]) => {
+            loggedMessages.push(args.map(String).join(' '));
+          };
+          const spies = [
+            vi
+              .spyOn(AdkLogger.prototype, 'debug')
+              .mockImplementation(recordArgs),
+            vi
+              .spyOn(AdkLogger.prototype, 'info')
+              .mockImplementation(recordArgs),
+            vi
+              .spyOn(AdkLogger.prototype, 'warn')
+              .mockImplementation(recordArgs),
+            vi
+              .spyOn(AdkLogger.prototype, 'error')
+              .mockImplementation(recordArgs),
+            vi
+              .spyOn(AdkLogger.prototype, 'log')
+              .mockImplementation((_level, ...args) => {
+                recordArgs(...args);
+              }),
+          ];
+
+          try {
+            const res = await fetch(
+              `${server.url}/api/stream_reasoning_engine`,
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': contentType,
+                  Authorization: `Bearer ${authSentinel}`,
+                  Cookie: `session=${cookieSentinel}`,
+                },
+                body: JSON.stringify({
+                  class_method: 'async_stream_query',
+                  input: {
+                    user_id: 'testUser',
+                    session_id: 'sentinelSession',
+                    message: bodySentinel,
+                  },
+                }),
+              },
+            );
+
+            expect(res.status).toBe(200);
+            await res.text();
+            expect(loggedMessages).toContain(
+              'POST /api/stream_reasoning_engine',
+            );
+            const allLogs = loggedMessages.join('\n');
+            expect(allLogs).not.toContain(authSentinel);
+            expect(allLogs).not.toContain(cookieSentinel);
+            expect(allLogs).not.toContain(bodySentinel);
+          } finally {
+            for (const spy of spies) {
+              spy.mockRestore();
+            }
+          }
+        },
+      );
+    });
   });
 
   describe('Startup', () => {

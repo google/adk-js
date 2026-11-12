@@ -1528,57 +1528,22 @@ export class AdkApiServer {
       }
     });
 
-    app.post('/api/reasoning_engine', async (req: Request, res: Response) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const executeQuery = async (body: any) => {
-        const input = body.input || {};
-        const appName = input.appName || body.appName;
-        const userId = input.userId || body.userId || 'default-user';
-        const sessionId =
-          input.sessionId || body.sessionId || 'default-session';
-        const newMessage = input.newMessage || body.newMessage;
-        const stateDelta = input.stateDelta || body.stateDelta;
-        const customMetadata = input.customMetadata || body.customMetadata;
-        if (!appName) {
-          res.status(400).json({error: 'appName is required in input'});
-          return;
-        }
-        const events: Event[] = [];
-        try {
-          await this.sessionService.getOrCreateSession({
-            appName,
-            userId,
-            sessionId,
-            state: {},
-          });
-          const abortController = new AbortController();
-          req.on('close', () => {
-            abortController.abort();
-          });
-          for await (const e of this.executeAgentRun({
-            appName,
-            userId,
-            sessionId,
-            newMessage,
-            stateDelta,
-            customMetadata,
-            abortSignal: abortController.signal,
-          })) {
-            events.push(e);
-          }
-          res.json({output: events});
-        } catch (e: unknown) {
-          const error = `Failed to run agent via Reasoning Engine API: ${e}`;
-          res.status(500).json({error, output: events});
-          this.logger.error(error);
-        }
-      };
+    // Agent Engine callers send the remote method in `class_method`, use
+    // snake_case field names, and omit `appName` when the server hosts a single
+    // app. The reasoning engine routes accept both spellings of every field.
+    const isJsonRecord = (value: unknown): value is Record<string, unknown> =>
+      typeof value === 'object' && value !== null && !Array.isArray(value);
 
+    const readReasoningEngineBody = (
+      req: Request,
+      res: Response,
+    ): Promise<Record<string, unknown> | undefined> => {
       const isParsed =
         req.body && (Object.keys(req.body).length > 0 || !req.readable);
       if (isParsed) {
-        await executeQuery(req.body);
-      } else {
+        return Promise.resolve(isJsonRecord(req.body) ? req.body : {});
+      }
+      return new Promise((resolve) => {
         // Some clients send a Content-Type that `express.json` does not
         // match, so read the body here with the same size limit.
         const chunks: Buffer[] = [];
@@ -1594,29 +1559,399 @@ export class AdkApiServer {
             rejected = true;
             chunks.length = 0;
             res.status(413).json({error: 'Request body is too large.'});
+            resolve(undefined);
             return;
           }
           chunks.push(buf);
         });
-        req.on('end', async () => {
+        req.on('end', () => {
           if (rejected) {
             return;
           }
           const rawBody = Buffer.concat(chunks).toString('utf-8');
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          let body: any = {};
+          let body: unknown = {};
           if (rawBody) {
             try {
               body = JSON.parse(rawBody);
             } catch {
               res.status(400).json({error: 'Request body is not valid JSON.'});
+              resolve(undefined);
               return;
             }
           }
-          await executeQuery(body);
+          resolve(isJsonRecord(body) ? body : {});
         });
+      });
+    };
+
+    /** Returns the first value of `keys` found across `sources`, in order. */
+    const pickField = (
+      sources: ReadonlyArray<Record<string, unknown>>,
+      keys: readonly string[],
+    ): unknown => {
+      for (const source of sources) {
+        for (const key of keys) {
+          const value = source[key];
+          if (value !== undefined && value !== null) {
+            return value;
+          }
+        }
+      }
+      return undefined;
+    };
+
+    const pickString = (
+      sources: ReadonlyArray<Record<string, unknown>>,
+      keys: readonly string[],
+    ): string | undefined => {
+      const value = pickField(sources, keys);
+      return typeof value === 'string' && value.length > 0 ? value : undefined;
+    };
+
+    /** Converts snake_case keys to camelCase, leaving `a2aMetadata` as is. */
+    const snakeToCamelKeys = (value: unknown): unknown => {
+      if (Array.isArray(value)) {
+        return value.map(snakeToCamelKeys);
+      }
+      if (!isJsonRecord(value)) {
+        return value;
+      }
+      return Object.fromEntries(
+        Object.entries(value).map(([key, nested]) => {
+          const camelKey = key.replace(/_([a-z])/g, (_match, letter: string) =>
+            letter.toUpperCase(),
+          );
+          return [
+            camelKey,
+            camelKey === 'a2aMetadata' ? nested : snakeToCamelKeys(nested),
+          ];
+        }),
+      );
+    };
+
+    /**
+     * `RunConfig` fields that only the operator or the transport may set. An
+     * HTTP caller must not turn off a tool-confirmation safeguard, claim a
+     * remote origin for its message, or change telemetry capture.
+     */
+    const operatorOnlyRunConfigKeys: readonly string[] = [
+      'allowRemoteToolConfirmation',
+      'plainTextToolConfirmation',
+      'remoteDelivered',
+      'telemetry',
+    ];
+
+    /**
+     * Converts a caller-supplied run config to camelCase and removes the
+     * fields an HTTP caller may not set. It also removes a `maxLlmCalls` that
+     * is not a positive number, because that value removes the call limit.
+     */
+    const toCallerRunConfig = (
+      raw: Record<string, unknown>,
+    ): Record<string, unknown> => {
+      const converted = snakeToCamelKeys(raw) as Record<string, unknown>;
+      const filtered = Object.fromEntries(
+        Object.entries(converted).filter(
+          ([key]) => !operatorOnlyRunConfigKeys.includes(key),
+        ),
+      );
+      const maxLlmCalls = filtered['maxLlmCalls'];
+      if (
+        maxLlmCalls !== undefined &&
+        !(typeof maxLlmCalls === 'number' && maxLlmCalls > 0)
+      ) {
+        delete filtered['maxLlmCalls'];
+      }
+      return filtered;
+    };
+
+    /** Turns a string message into user `Content`, and defaults the role. */
+    const toReasoningEngineContent = (raw: unknown): Content | undefined => {
+      if (typeof raw === 'string') {
+        return {role: 'user', parts: [{text: raw}]};
+      }
+      if (!isJsonRecord(raw)) {
+        return undefined;
+      }
+      // The request body is untrusted JSON; the runner reads only the
+      // `Content` fields it knows.
+      const content = raw as Content;
+      return content.parts && !content.role
+        ? {...content, role: 'user'}
+        : content;
+    };
+
+    const reasoningEngineQueryMethods: ReadonlyArray<string | undefined> = [
+      undefined,
+      'query',
+      'async_query',
+      'stream_query',
+      'async_stream_query',
+    ];
+
+    type ReasoningEngineRequest =
+      | {status: number; error: string}
+      | {
+          status?: undefined;
+          classMethod?: string;
+          appName: string;
+          userId: string;
+          sessionId?: string;
+          newMessage?: Content;
+          stateDelta?: Record<string, unknown>;
+          customMetadata?: Record<string, unknown>;
+          runConfig?: RunConfig;
+          state?: Record<string, unknown>;
+        };
+
+    const resolveReasoningEngineRequest = async (
+      body: Record<string, unknown>,
+    ): Promise<ReasoningEngineRequest> => {
+      const input = isJsonRecord(body['input']) ? body['input'] : {};
+      const sources = [input, body];
+
+      const rawClassMethod = pickField([body], ['class_method', 'classMethod']);
+      if (rawClassMethod !== undefined && typeof rawClassMethod !== 'string') {
+        return {
+          status: 400,
+          error: `Unsupported class_method: ${JSON.stringify(rawClassMethod)}`,
+        };
+      }
+      const classMethod = rawClassMethod;
+
+      let appName = pickString(sources, ['appName', 'app_name']);
+      if (appName === undefined) {
+        const usesAgentEngineProtocol =
+          classMethod !== undefined ||
+          pickField(sources, ['message']) !== undefined;
+        const apps = usesAgentEngineProtocol
+          ? await this.agentLoader.listAgents()
+          : [];
+        if (apps.length !== 1) {
+          return {status: 400, error: 'appName is required in input'};
+        }
+        appName = apps[0];
+      }
+
+      const stateDelta = pickField(sources, ['state_delta', 'stateDelta']);
+      const customMetadata = pickField(sources, [
+        'custom_metadata',
+        'customMetadata',
+      ]);
+      const rawRunConfig = pickField(sources, ['run_config', 'runConfig']);
+      const state = pickField([input], ['state']);
+
+      return {
+        classMethod,
+        appName,
+        userId: pickString(sources, ['user_id', 'userId']) ?? 'default-user',
+        sessionId: pickString(sources, ['session_id', 'sessionId']),
+        newMessage: toReasoningEngineContent(
+          pickField(sources, ['newMessage', 'new_message', 'message']),
+        ),
+        stateDelta: isJsonRecord(stateDelta) ? stateDelta : undefined,
+        customMetadata: isJsonRecord(customMetadata)
+          ? customMetadata
+          : undefined,
+        // The runner reads only the `RunConfig` fields it knows.
+        runConfig: isJsonRecord(rawRunConfig)
+          ? (toCallerRunConfig(rawRunConfig) as RunConfig)
+          : undefined,
+        state: isJsonRecord(state) ? state : undefined,
+      };
+    };
+
+    app.post('/api/reasoning_engine', async (req: Request, res: Response) => {
+      const body = await readReasoningEngineBody(req, res);
+      if (body === undefined) {
+        return;
+      }
+      const events: Event[] = [];
+      try {
+        const request = await resolveReasoningEngineRequest(body);
+        if (request.status !== undefined) {
+          res.status(request.status).json({error: request.error});
+          return;
+        }
+        const {classMethod, appName, userId, sessionId} = request;
+
+        switch (classMethod) {
+          case 'create_session':
+          case 'async_create_session': {
+            const created = await this.sessionService.createSession({
+              appName,
+              userId,
+              state: request.state ?? {},
+              ...(sessionId ? {sessionId} : {}),
+            });
+            res.json({output: publicSession(created)});
+            return;
+          }
+          case 'get_session':
+          case 'async_get_session': {
+            if (!sessionId) {
+              res.status(400).json({error: 'session_id is required'});
+              return;
+            }
+            const session = await this.sessionService.getSession({
+              appName,
+              userId,
+              sessionId,
+            });
+            if (!session) {
+              res.status(404).json({error: `Session not found: ${sessionId}`});
+              return;
+            }
+            res.json({output: publicSession(session)});
+            return;
+          }
+          case 'list_sessions':
+          case 'async_list_sessions': {
+            const listed = await this.sessionService.listSessions({
+              appName,
+              userId,
+            });
+            res.json({
+              output: {
+                ...listed,
+                sessions: listed.sessions
+                  .filter((s) => !s.id.startsWith(EVAL_SESSION_ID_PREFIX))
+                  .map((s) => publicSession(s)),
+              },
+            });
+            return;
+          }
+          case 'delete_session':
+          case 'async_delete_session': {
+            if (!sessionId) {
+              res.status(400).json({error: 'session_id is required'});
+              return;
+            }
+            await this.sessionService.deleteSession({
+              appName,
+              userId,
+              sessionId,
+            });
+            res.json({output: null});
+            return;
+          }
+          default:
+            break;
+        }
+
+        if (!reasoningEngineQueryMethods.includes(classMethod)) {
+          res
+            .status(400)
+            .json({error: `Unsupported class_method: ${classMethod}`});
+          return;
+        }
+
+        const effectiveSessionId = sessionId ?? 'default-session';
+        await this.sessionService.getOrCreateSession({
+          appName,
+          userId,
+          sessionId: effectiveSessionId,
+          state: {},
+        });
+        const abortController = new AbortController();
+        req.on('close', () => {
+          abortController.abort();
+        });
+        for await (const e of this.executeAgentRun({
+          appName,
+          userId,
+          sessionId: effectiveSessionId,
+          // `Runner.runAsync` accepts a run with no new message, which this
+          // route has always allowed.
+          newMessage: request.newMessage as Content,
+          stateDelta: request.stateDelta,
+          customMetadata: request.customMetadata,
+          runConfig: request.runConfig,
+          abortSignal: abortController.signal,
+        })) {
+          events.push(e);
+        }
+        res.json({output: events});
+      } catch (e: unknown) {
+        const error = `Failed to run agent via Reasoning Engine API: ${e}`;
+        res.status(500).json({error, output: events});
+        this.logger.error(error);
       }
     });
+
+    app.post(
+      '/api/stream_reasoning_engine',
+      async (req: Request, res: Response) => {
+        const body = await readReasoningEngineBody(req, res);
+        if (body === undefined) {
+          return;
+        }
+        let streaming = false;
+        try {
+          const request = await resolveReasoningEngineRequest(body);
+          if (request.status !== undefined) {
+            res.status(request.status).json({error: request.error});
+            return;
+          }
+          const {classMethod, appName, userId, sessionId} = request;
+          if (!reasoningEngineQueryMethods.includes(classMethod)) {
+            res
+              .status(400)
+              .json({error: `Unsupported class_method: ${classMethod}`});
+            return;
+          }
+
+          const session = await this.sessionService.getOrCreateSession({
+            appName,
+            userId,
+            sessionId: sessionId ?? 'default-session',
+            state: {},
+          });
+          const abortController = new AbortController();
+          // `req` can emit 'close' as soon as its body is read, so only an
+          // early close of the response aborts the run.
+          res.on('close', () => {
+            if (!res.writableEnded) {
+              abortController.abort();
+            }
+          });
+
+          // Headers go out with the first event, so a failure before it still
+          // gets a clean error status.
+          const startStream = () => {
+            if (!streaming) {
+              streaming = true;
+              res.setHeader('Content-Type', 'application/json');
+              res.setHeader('Cache-Control', 'no-cache');
+            }
+          };
+          for await (const event of this.executeAgentRun({
+            appName,
+            userId,
+            sessionId: session.id,
+            // `Runner.runAsync` accepts a run with no new message.
+            newMessage: request.newMessage as Content,
+            stateDelta: request.stateDelta,
+            customMetadata: request.customMetadata,
+            runConfig: request.runConfig,
+            abortSignal: abortController.signal,
+          })) {
+            startStream();
+            res.write(`${JSON.stringify(event)}\n`);
+          }
+          startStream();
+          res.end();
+        } catch (e: unknown) {
+          const error = `Failed to run agent via Reasoning Engine API: ${e}`;
+          this.logger.error(error);
+          if (!streaming) {
+            res.status(500).json({error});
+          } else if (!res.writableEnded) {
+            res.end(`${JSON.stringify({error})}\n`);
+          }
+        }
+      },
+    );
 
     app.post('/run_sse', async (req: Request, res: Response) => {
       const {
