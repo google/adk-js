@@ -121,7 +121,9 @@ When deploying to Vertex AI Agent Engine (`adk deploy agent_engine`, `adk deploy
 
 The ADK CLI commands (`run`, `web`, `api_server` / `api-server`, `deploy cloud_run` / `deploy cloud-run`, `deploy agent_engine` / `deploy agent-engine`, and `deploy reasoning_engine` / `deploy reasoning-engine`) support configurable backend services via `--session-service-uri` (`--session_service_uri`), `--artifact-service-uri` (`--artifact_service_uri`), and `--memory-service-uri` (`--memory_service_uri`):
 
-- `--session-service-uri, --session_service_uri <string>`: Session service URI (e.g. `memory://` for in-memory sessions).
+- `--session-service-uri, --session_service_uri <string>`: Session service URI. Supported schemes include:
+  - `memory://`: In-memory session service (`InMemorySessionService`).
+  - `agentengine://<agent_engine>`: Agent Engine sessions (`VertexAiSessionService`), supporting both short resource IDs (`agentengine://123`) with project and region from the environment or `.env`, and full resource names (`agentengine://projects/{project}/locations/{location}/reasoningEngines/{id}`).
 - `--artifact-service-uri, --artifact_service_uri <string>`: Artifact service URI (e.g. `gs://<bucket>` for Google Cloud Storage).
 - `--memory-service-uri, --memory_service_uri <string>`: Memory service URI. Supported schemes include:
   - `memory://`: In-memory memory service (`InMemoryMemoryService`).

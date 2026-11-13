@@ -6,7 +6,9 @@
 
 import {
   BaseAgent,
+  BaseCredentialService,
   BaseSessionService,
+  InMemoryCredentialService,
   InMemorySessionService,
   INTERNAL_METADATA_PREFIX,
   isApp,
@@ -1230,6 +1232,67 @@ describe('cli_run', () => {
       expect(closeSpies).toHaveLength(2);
       expect(closeSpies[0]).toHaveBeenCalledTimes(1);
       expect(closeSpies[1]).toHaveBeenCalledTimes(1);
+    });
+
+    it('passes a default InMemoryCredentialService to Runner in interactive, replay, and reload modes', async () => {
+      await runAgent({
+        agentPath: 'agent.ts',
+        sessionService: createMockSessionService(),
+      });
+
+      const interactiveRunnerArgs = (Runner as unknown as Mock).mock
+        .calls[0][0];
+      expect(interactiveRunnerArgs.credentialService).toBeInstanceOf(
+        InMemoryCredentialService,
+      );
+
+      vi.clearAllMocks();
+      (loadFileData as Mock).mockResolvedValue({state: {}, queries: ['Hello']});
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        inputFile: 'input.json',
+        sessionService: createMockSessionService(),
+      });
+
+      const replayRunnerArgs = (Runner as unknown as Mock).mock.calls[0][0];
+      expect(replayRunnerArgs.credentialService).toBeInstanceOf(
+        InMemoryCredentialService,
+      );
+
+      vi.clearAllMocks();
+      const customCredentialService = {
+        loadCredential: vi.fn(),
+        saveCredential: vi.fn(),
+      } as unknown as BaseCredentialService;
+      let reloadAgentFile: (() => Promise<void>) | undefined;
+      vi.mocked(fs.watch).mockImplementationOnce(((
+        _path: fs.PathLike,
+        listener: () => Promise<void>,
+      ) => {
+        reloadAgentFile = listener;
+        return {close: vi.fn()} as unknown as fs.FSWatcher;
+      }) as unknown as typeof fs.watch);
+      (mockRl.question as Mock).mockImplementationOnce(
+        (_query: string, cb: (answer: string) => void) => {
+          void reloadAgentFile?.().then(() => cb('exit'));
+        },
+      );
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        sessionService: createMockSessionService(),
+        credentialService: customCredentialService,
+        reloadAgents: true,
+      });
+
+      expect((Runner as unknown as Mock).mock.calls).toHaveLength(2);
+      expect(
+        (Runner as unknown as Mock).mock.calls[0][0].credentialService,
+      ).toBe(customCredentialService);
+      expect(
+        (Runner as unknown as Mock).mock.calls[1][0].credentialService,
+      ).toBe(customCredentialService);
     });
   });
 });

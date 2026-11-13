@@ -18,6 +18,7 @@ import {
   LogLevel,
   VertexAiMemoryBankService,
   VertexAiRagMemoryService,
+  VertexAiSessionService,
   getArtifactServiceFromUri,
   getEvaluationCriteriaOrDefault,
   getRootAgent,
@@ -76,11 +77,102 @@ function getLogLevelFromOptions(options: {
   return LogLevel.INFO;
 }
 
-function getSessionServiceFromOptions(options: {
-  session_service_uri?: string;
-}): BaseSessionService {
+const AGENT_ENGINE_URI_SCHEME = 'agentengine://';
+
+/** The Agent Engine that an `agentengine://` URI names. */
+interface AgentEngineResource {
+  projectId: string;
+  location: string;
+  agentEngineId: string;
+}
+
+/**
+ * Parses an `agentengine://` URI.
+ *
+ * Accepts a bare resource ID, which reads the project and location from
+ * `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`, or a full resource name
+ * of the form
+ * `projects/{project}/locations/{location}/reasoningEngines/{id}`.
+ *
+ * @param uri A URI that starts with `agentengine://`.
+ * @returns The project, location, and Agent Engine ID.
+ * @throws Error if the URI is empty or malformed, or a bare ID is given
+ *     without the environment variables set.
+ */
+function parseAgentEngineUri(uri: string): AgentEngineResource {
+  const uriPart = uri.slice(AGENT_ENGINE_URI_SCHEME.length);
+  if (!uriPart || uriPart.trim() === '') {
+    throw new Error(
+      'Agent engine resource name or resource id cannot be empty.',
+    );
+  }
+  if (!uriPart.includes('/')) {
+    const projectId = process.env['GOOGLE_CLOUD_PROJECT'];
+    const location = process.env['GOOGLE_CLOUD_LOCATION'];
+    if (!projectId || !location) {
+      throw new Error('GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION not set.');
+    }
+    return {projectId, location, agentEngineId: uriPart};
+  }
+
+  const segments = uriPart.split('/');
+  const [projects, projectId, locations, location, engines, agentEngineId] =
+    segments;
+  if (
+    segments.length !== 6 ||
+    projects !== 'projects' ||
+    !projectId ||
+    locations !== 'locations' ||
+    !location ||
+    engines !== 'reasoningEngines' ||
+    !agentEngineId
+  ) {
+    throw new Error(
+      'Agent engine resource name is mal-formatted. It should be of format: projects/{project_id}/locations/{location}/reasoningEngines/{resource_id}',
+    );
+  }
+  return {projectId, location, agentEngineId};
+}
+
+/** Options that select the session service the CLI commands use. */
+export interface SessionServiceOptions {
+  sessionServiceUri?: string;
+  baseDir?: string;
+}
+
+/**
+ * Resolves a session service instance from command options or URI.
+ * @param optionsOrUri Command options containing `sessionServiceUri` or a URI string.
+ * @param baseDir Optional directory to load `.env` from before resolving GCP-backed services.
+ * @returns An instance of {@link BaseSessionService}.
+ */
+export function getSessionServiceFromOptions(
+  optionsOrUri?: SessionServiceOptions | string,
+  baseDir?: string,
+): BaseSessionService {
+  let uri: string | undefined;
+  let dir = baseDir;
+
+  if (typeof optionsOrUri === 'string') {
+    uri = optionsOrUri;
+  } else if (optionsOrUri) {
+    uri =
+      optionsOrUri.sessionServiceUri ??
+      ((optionsOrUri as Record<string, unknown>)['session_service_uri'] as
+        string | undefined);
+    dir = optionsOrUri.baseDir ?? dir;
+  }
+
+  if (dir) {
+    loadDotenvFromDirectory(dir);
+  }
+
+  if (uri && uri.startsWith(AGENT_ENGINE_URI_SCHEME)) {
+    return new VertexAiSessionService(parseAgentEngineUri(uri));
+  }
+
   return getSessionServiceFromUri(
-    options['session_service_uri'] || process.env.DATABASE_URL || 'memory://',
+    uri || process.env.DATABASE_URL || 'memory://',
   );
 }
 
@@ -163,47 +255,8 @@ export function getMemoryServiceFromOptions(
     return new VertexAiRagMemoryService({ragCorpus: uriPart});
   }
 
-  if (uri.startsWith('agentengine://')) {
-    const uriPart = uri.slice('agentengine://'.length);
-    if (!uriPart || uriPart.trim() === '') {
-      throw new Error(
-        'Agent engine resource name or resource id cannot be empty.',
-      );
-    }
-    if (!uriPart.includes('/')) {
-      const projectId = process.env['GOOGLE_CLOUD_PROJECT'];
-      const location = process.env['GOOGLE_CLOUD_LOCATION'];
-      if (!projectId || !location) {
-        throw new Error(
-          'GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION not set.',
-        );
-      }
-      return new VertexAiMemoryBankService({
-        projectId,
-        location,
-        agentEngineId: uriPart,
-      });
-    }
-
-    const parts = uriPart.split('/');
-    if (
-      parts.length !== 6 ||
-      parts[0] !== 'projects' ||
-      !parts[1] ||
-      parts[2] !== 'locations' ||
-      !parts[3] ||
-      parts[4] !== 'reasoningEngines' ||
-      !parts[5]
-    ) {
-      throw new Error(
-        'Agent engine resource name is mal-formatted. It should be of format: projects/{project_id}/locations/{location}/reasoningEngines/{resource_id}',
-      );
-    }
-    return new VertexAiMemoryBankService({
-      projectId: parts[1],
-      location: parts[3],
-      agentEngineId: parts[5],
-    });
+  if (uri.startsWith(AGENT_ENGINE_URI_SCHEME)) {
+    return new VertexAiMemoryBankService(parseAgentEngineUri(uri));
   }
 
   throw new Error(`Unsupported memory service URI: ${redactUriPassword(uri)}`);
@@ -290,7 +343,7 @@ const LOG_LEVEL_OPTION = new Option(
 ).default('info');
 const SESSION_SERVICE_URI_OPTION = new Option(
   '--session-service-uri, --session_service_uri <string>',
-  'Optional. The URI of the session service. Supported URIs: memory:// for in-memory session service.',
+  'Optional. The URI of the session service. Supported URIs: agentengine://<agent_engine> for Agent Engine session service, memory:// for in-memory session service.',
 );
 const ARTIFACT_SERVICE_URI_OPTION = new Option(
   '--artifact-service-uri, --artifact_service_uri <string>',
@@ -458,7 +511,7 @@ export function createProgram(): Command {
           serveDebugUI: true,
           allowOrigins: options['allow_origins'],
           allowedHosts: getAllowedHosts(options['allowed_hosts']),
-          sessionService: getSessionServiceFromOptions(options),
+          sessionService: getSessionServiceFromOptions(options, absAgentsDir),
           artifactService: getArtifactServiceFromOptions(options),
           memoryService: getMemoryServiceFromOptions(options, absAgentsDir),
           otelToCloud: getBoolean(options['otel_to_cloud']),
@@ -510,7 +563,7 @@ export function createProgram(): Command {
           serveDebugUI: false,
           allowOrigins: options['allow_origins'],
           allowedHosts: getAllowedHosts(options['allowed_hosts']),
-          sessionService: getSessionServiceFromOptions(options),
+          sessionService: getSessionServiceFromOptions(options, absAgentsDir),
           artifactService: getArtifactServiceFromOptions(options),
           memoryService: getMemoryServiceFromOptions(options, absAgentsDir),
           otelToCloud: getBoolean(options['otel_to_cloud']),
@@ -607,7 +660,10 @@ export function createProgram(): Command {
           savedSessionFile: options['resume'],
           saveSession: getBoolean(options['save_session']),
           sessionId: options['session_id'],
-          sessionService: getSessionServiceFromOptions(options),
+          sessionService: getSessionServiceFromOptions(
+            options,
+            path.dirname(absAgentPath),
+          ),
           artifactService: getArtifactServiceFromOptions(options),
           memoryService: getMemoryServiceFromOptions(
             options,
