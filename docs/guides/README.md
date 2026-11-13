@@ -44,6 +44,12 @@ Executors that let an agent answer by writing code and running it, either server
 
 - [Code executors](code_executors/index.md) - Choosing between server-side and client-side execution, what each executor needs and how safe it is, the code execution processors, and writing a custom executor.
 
+### Errors
+
+The error classes ADK throws on its own behalf, where each is thrown, and how to handle it.
+
+- [ADK errors](errors/index.md) - `InputValidationError`, `NotFoundError`, `SessionNotFoundError`, `AlreadyExistsError`, `StaleSessionError`, `ToolExecutionError` with `ToolErrorType`, and `LlmCallsLimitExceededError`.
+
 ### Events
 
 The record of everything that happens during an invocation, and the side effects attached to it.
