@@ -26,6 +26,31 @@ export interface ApiParameter {
 }
 
 /**
+ * Returns the scheme name a security list requires, or `''` if it requires none.
+ *
+ * An empty requirement object is the OpenAPI idiom for optional authentication.
+ * A tool that carries an auth scheme stops and asks the caller for a credential
+ * instead of sending the request, so an optional requirement resolves to no
+ * scheme; a caller that does want to authenticate passes `authScheme` and
+ * `authCredential` to the toolset.
+ */
+export function requiredSchemeName(
+  security?: OpenAPIV3.SecurityRequirementObject[],
+): string {
+  if (!security || security.length === 0) {
+    return '';
+  }
+  if (
+    security.some(
+      (requirement) => !requirement || Object.keys(requirement).length === 0,
+    )
+  ) {
+    return '';
+  }
+  return Object.keys(security[0])[0] ?? '';
+}
+
+/**
  * Parses an OpenAPI OperationObject and extracts its parameters, request body, and return value.
  *
  * It maps OpenAPI parameters and request bodies into a flat list of `ApiParameter` objects
@@ -318,12 +343,11 @@ export class OperationParser {
    * `OpenApiSpecParser` instead.
    *
    * @returns The first declared scheme name, or `''` when the operation
-   *     declares none.
+   *     declares none or allows anonymous access.
    */
   @experimental
   public getAuthSchemeName(): string {
-    const security = this.operation.security ?? [];
-    return security.length > 0 ? (Object.keys(security[0])[0] ?? '') : '';
+    return requiredSchemeName(this.operation.security);
   }
 
   /**

@@ -259,6 +259,102 @@ describe('OpenApiSpecParser', () => {
     expect(postOp?.authScheme?.type).toBe('oauth2');
   });
 
+  it('should not inherit global security when operation declares security: [] or [{}]', () => {
+    const spec: OpenAPIV3.Document = {
+      openapi: '3.0.0',
+      info: {title: 'Security Opt-Out API', version: '1.0.0'},
+      security: [{ApiKeyAuth: []}],
+      paths: {
+        '/health': {
+          get: {
+            operationId: 'health',
+            security: [],
+            responses: {'200': {description: 'OK'}},
+          },
+        },
+        '/optional': {
+          get: {
+            operationId: 'optional',
+            security: [{}],
+            responses: {'200': {description: 'OK'}},
+          },
+        },
+        '/optional_with_scheme': {
+          get: {
+            operationId: 'optionalWithScheme',
+            security: [{}, {ApiKeyAuth: []}],
+            responses: {'200': {description: 'OK'}},
+          },
+        },
+        '/secret': {
+          get: {
+            operationId: 'secret',
+            responses: {'200': {description: 'OK'}},
+          },
+        },
+      },
+      components: {
+        securitySchemes: {
+          ApiKeyAuth: {
+            type: 'apiKey',
+            in: 'header',
+            name: 'X-API-Key',
+          },
+        },
+      },
+    };
+
+    const parsed = new OpenApiSpecParser().parse(spec);
+    expect(parsed.find((o) => o.name === 'health')?.authScheme).toBeUndefined();
+    expect(
+      parsed.find((o) => o.name === 'optional')?.authScheme,
+    ).toBeUndefined();
+    expect(
+      parsed.find((o) => o.name === 'optional_with_scheme')?.authScheme,
+    ).toBeUndefined();
+    expect(parsed.find((o) => o.name === 'secret')?.authScheme).toEqual({
+      type: 'apiKey',
+      in: 'header',
+      name: 'X-API-Key',
+    });
+  });
+
+  it('should leave operations unauthenticated when global security includes an empty requirement', () => {
+    const specFirst: OpenAPIV3.Document = {
+      openapi: '3.0.0',
+      info: {title: 'Optional Global Security API', version: '1.0.0'},
+      security: [{}, {ApiKeyAuth: []}],
+      paths: {
+        '/items': {
+          get: {
+            operationId: 'listItems',
+            responses: {'200': {description: 'OK'}},
+          },
+        },
+      },
+      components: {
+        securitySchemes: {
+          ApiKeyAuth: {
+            type: 'apiKey',
+            in: 'header',
+            name: 'X-API-Key',
+          },
+        },
+      },
+    };
+    const specLast: OpenAPIV3.Document = {
+      ...specFirst,
+      security: [{ApiKeyAuth: []}, {}],
+    };
+
+    expect(
+      new OpenApiSpecParser().parse(specFirst)[0].authScheme,
+    ).toBeUndefined();
+    expect(
+      new OpenApiSpecParser().parse(specLast)[0].authScheme,
+    ).toBeUndefined();
+  });
+
   describe('server URL resolution', () => {
     function parseBaseUrl(servers?: OpenAPIV3.ServerObject[]): string {
       const spec: OpenAPIV3.Document = {

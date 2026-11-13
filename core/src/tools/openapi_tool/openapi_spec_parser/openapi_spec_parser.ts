@@ -8,7 +8,11 @@ import {OpenAPIV3} from 'openapi-types';
 import {AuthCredential} from '../../../auth/auth_credential.js';
 import {toSnakeCaseName} from '../../../utils/case_utils.js';
 import {experimental} from '../../../utils/experimental.js';
-import {ApiParameter, OperationParser} from './operation_parser.js';
+import {
+  ApiParameter,
+  OperationParser,
+  requiredSchemeName,
+} from './operation_parser.js';
 
 const VALID_SCHEMA_TYPES = new Set([
   'array',
@@ -285,11 +289,7 @@ function collectOperations(
   const server = spec.servers?.[0];
   const baseUrl = server ? resolveServerUrl(server) : '';
 
-  const globalSecurity = spec.security || [];
-  let globalSchemeName: string | undefined;
-  if (globalSecurity.length > 0) {
-    globalSchemeName = Object.keys(globalSecurity[0])[0];
-  }
+  const globalSchemeName = requiredSchemeName(spec.security);
 
   const authSchemes =
     (spec.components?.securitySchemes as Record<
@@ -330,11 +330,13 @@ function collectOperations(
         unconstrainedObjectBodyAsParameter,
       });
 
-      let authSchemeName: string | undefined;
-      if (operation.security && operation.security.length > 0) {
-        authSchemeName = Object.keys(operation.security[0])[0];
+      // Check for operation-specific auth scheme. An operation that declares
+      // security of its own overrides the global requirement, including when
+      // it declares that no auth is needed.
+      let authSchemeName = parser.getAuthSchemeName();
+      if (!authSchemeName && operation.security === undefined) {
+        authSchemeName = globalSchemeName;
       }
-      authSchemeName = authSchemeName || globalSchemeName;
 
       const authScheme = authSchemeName
         ? authSchemes[authSchemeName]
