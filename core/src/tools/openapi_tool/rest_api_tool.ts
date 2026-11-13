@@ -176,6 +176,7 @@ export class RestApiTool extends BaseTool {
       this.endpoint,
       this.operationParser.getParameters(),
       args,
+      this.operation.requestBody,
     );
 
     // Handle body
@@ -343,11 +344,29 @@ function appendParamValue(
   }
 }
 
+function hasBodyProperties(
+  requestBody:
+    OpenAPIV3.RequestBodyObject | OpenAPIV3.ReferenceObject | undefined,
+): boolean {
+  if (!requestBody || '$ref' in requestBody) {
+    return false;
+  }
+  const schema = Object.values(requestBody.content ?? {})[0]?.schema;
+  return (
+    schema !== undefined &&
+    !('$ref' in schema) &&
+    schema.type === 'object' &&
+    Object.keys(schema.properties ?? {}).length > 0
+  );
+}
+
 export function prepareRequestParams(
   endpoint: OperationEndpoint,
   parameters: ApiParameter[],
   args: Record<string, unknown>,
+  requestBody?: OpenAPIV3.RequestBodyObject | OpenAPIV3.ReferenceObject,
 ): PreparedParams {
+  const splitBody = hasBodyProperties(requestBody);
   const headers: Record<string, string> = {};
   const queryParams = new URLSearchParams();
   const cookies: Record<string, string> = {};
@@ -387,11 +406,7 @@ export function prepareRequestParams(
         cookies[originalName] = toParamString(argValue);
       }
     } else if (location === 'body') {
-      if (
-        originalName === 'body' ||
-        originalName === 'array' ||
-        originalName === ''
-      ) {
+      if (!splitBody && (originalName === 'array' || originalName === '')) {
         body = argValue;
       } else {
         bodyData[originalName] = argValue;

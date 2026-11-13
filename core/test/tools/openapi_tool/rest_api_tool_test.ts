@@ -134,7 +134,7 @@ describe('RestApiTool', () => {
     (
       tool as unknown as {operationParser: {getParameters: () => unknown[]}}
     ).operationParser.getParameters = () => [
-      {name: 'body', originalName: 'body', paramLocation: 'body'},
+      {name: 'body', originalName: '', paramLocation: 'body'},
     ];
 
     await tool.runAsync({
@@ -665,7 +665,7 @@ describe('RestApiTool', () => {
     (
       tool as unknown as {operationParser: {getParameters: () => unknown[]}}
     ).operationParser.getParameters = () => [
-      {name: 'body', originalName: 'body', paramLocation: 'body'},
+      {name: 'body', originalName: '', paramLocation: 'body'},
     ];
 
     await tool.runAsync({
@@ -1646,6 +1646,84 @@ describe('RestApiTool Utilities', () => {
       expect(prepared.headers).toEqual({
         'Content-Type': 'application/json',
       });
+    });
+  });
+
+  describe('body property named like a whole-body parameter', () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/issues',
+      method: 'POST',
+    };
+
+    function sendBody(
+      requestBody: OpenAPIV3.RequestBodyObject,
+      args: Record<string, unknown>,
+      options?: {unconstrainedObjectBodyAsParameter?: boolean},
+    ): unknown {
+      const operation: OpenAPIV3.OperationObject = {
+        operationId: 'testOp',
+        requestBody,
+        responses: {},
+      };
+      const parameters = new OperationParser(
+        operation,
+        options,
+      ).getParameters();
+      const prepared = prepareRequestParams(
+        endpoint,
+        parameters,
+        args,
+        requestBody,
+      );
+      return prepareRequestBody(
+        requestBody,
+        prepared.body,
+        prepared.bodyData,
+        prepared.headers,
+      );
+    }
+
+    it.each(['body', 'array', ''])(
+      'should keep every property when one is named %j',
+      (propName) => {
+        const result = sendBody(
+          {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    title: {type: 'string'},
+                    [propName]: {type: 'string'},
+                  },
+                },
+              },
+            },
+          },
+          {title: 'Bug', [propName]: 'Steps'},
+        );
+
+        expect(result).toBe(
+          JSON.stringify({title: 'Bug', [propName]: 'Steps'}),
+        );
+      },
+    );
+
+    it.each<[string, OpenAPIV3.SchemaObject, unknown]>([
+      ['array', {type: 'array', items: {type: 'string'}}, ['a', 'b']],
+      ['string', {type: 'string'}, 'raw'],
+      ['unconstrained object', {type: 'object'}, {any: 'payload'}],
+    ])('should still send a whole %s body', (_, schema, value) => {
+      const result = sendBody(
+        {content: {'application/json': {schema}}},
+        {body: value},
+        {unconstrainedObjectBodyAsParameter: true},
+      );
+
+      expect(result).toBe(
+        typeof value === 'string' ? value : JSON.stringify(value),
+      );
     });
   });
 });
