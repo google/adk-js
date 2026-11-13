@@ -4,10 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {type Context, createSession, State} from '@google/adk';
 import {
   BIGQUERY_USER_AGENT,
   type BigQueryAuthClient,
   BigQueryClient,
+  type BigQueryConnectionProperty,
+  type BigQueryDryRunResult,
   executeSql,
   getBigQueryClient,
   getDatasetInfo,
@@ -26,6 +29,29 @@ import type {
   BigQuerySdkModule,
   InternalGetBigQueryClientOptions,
 } from '../../src/bigquery/client.js';
+
+function createSessionToolContext(
+  sessionId: string,
+  initialState: Record<string, unknown> = {},
+  options: {appName?: string; userId?: string} = {},
+): Context {
+  const session = createSession({
+    id: sessionId,
+    appName: options.appName ?? 'test_app',
+    userId: options.userId ?? 'test_user',
+    state: initialState,
+  });
+  return {
+    invocationContext: {session},
+    sessionId: session.id,
+    userId: session.userId,
+    state: new State(session.state),
+    actions: {},
+    getAuthResponse: vi.fn(() => undefined),
+    requestCredential: vi.fn(),
+    requestConfirmation: vi.fn(),
+  } as unknown as Context;
+}
 
 vi.mock('@google-cloud/bigquery', () => {
   throw new Error("Cannot find package '@google-cloud/bigquery'");
@@ -434,6 +460,131 @@ describe('getBigQueryClient and BigQueryClient', () => {
     await expect(client.dryRun({query: 'SELECT 1'})).rejects.toThrow(
       'Dry run failed: table not found',
     );
+  });
+
+  it('forwards createSession and connectionProperties in dryRun and extracts sessionInfo and destinationTable', async () => {
+    let capturedJobOptions: Record<string, unknown> | undefined;
+    const connectionProperties: BigQueryConnectionProperty[] = [
+      {key: 'session_id', value: 'bq-sess-123'},
+    ];
+    const fakeSdkClient: BigQuerySdkClient = {
+      getDatasets: async () => [[]],
+      dataset: () => ({}),
+      query: async () => [[]],
+      createQueryJob: async (options: Record<string, unknown>) => {
+        capturedJobOptions = options;
+        return [
+          {
+            id: 'job-456',
+            metadata: {
+              configuration: {
+                query: {
+                  destinationTable: {
+                    projectId: 'proj',
+                    datasetId: '_anonymous_dataset',
+                    tableId: 'anon_table',
+                  },
+                },
+              },
+              statistics: {
+                sessionInfo: {
+                  sessionId: 'bq-sess-123',
+                },
+                query: {
+                  statementType: 'CREATE_AS_SELECT',
+                },
+              },
+            },
+          },
+        ];
+      },
+    };
+    const fakeModule: BigQuerySdkModule = {
+      BigQuery: class {
+        constructor() {
+          return fakeSdkClient;
+        }
+      } as unknown as BigQuerySdkModule['BigQuery'],
+    };
+
+    const client = getBigQueryClient({
+      projectId: 'proj',
+      location: 'US',
+      sdkLoader: async () => fakeModule,
+    } as InternalGetBigQueryClientOptions);
+
+    const dryRunResult: BigQueryDryRunResult = await client.dryRun({
+      query: 'CREATE TEMP TABLE my_table AS SELECT 1',
+      createSession: true,
+      connectionProperties,
+    });
+
+    expect(capturedJobOptions).toEqual({
+      query: 'CREATE TEMP TABLE my_table AS SELECT 1',
+      dryRun: true,
+      location: 'US',
+      createSession: true,
+      connectionProperties,
+    });
+    expect(dryRunResult).toEqual({
+      statementType: 'CREATE_AS_SELECT',
+      sessionInfo: {sessionId: 'bq-sess-123'},
+      destinationTable: {
+        projectId: 'proj',
+        datasetId: '_anonymous_dataset',
+        tableId: 'anon_table',
+      },
+    });
+  });
+
+  it('extracts ddlTargetTable as destinationTable when configuration.query.destinationTable is absent', async () => {
+    const fakeSdkClient: BigQuerySdkClient = {
+      getDatasets: async () => [[]],
+      dataset: () => ({}),
+      query: async () => [[]],
+      createQueryJob: async () => [
+        {
+          id: 'job-789',
+          metadata: {
+            statistics: {
+              query: {
+                statementType: 'DROP_TABLE',
+                ddlTargetTable: {
+                  projectId: 'proj',
+                  datasetId: '_anonymous_dataset',
+                  tableId: 'my_table',
+                },
+              },
+            },
+          },
+        },
+      ],
+    };
+    const fakeModule: BigQuerySdkModule = {
+      BigQuery: class {
+        constructor() {
+          return fakeSdkClient;
+        }
+      } as unknown as BigQuerySdkModule['BigQuery'],
+    };
+
+    const client = getBigQueryClient({
+      projectId: 'proj',
+      sdkLoader: async () => fakeModule,
+    } as InternalGetBigQueryClientOptions);
+
+    const dryRunResult = await client.dryRun({
+      query: 'DROP TABLE my_table',
+    });
+
+    expect(dryRunResult).toEqual({
+      statementType: 'DROP_TABLE',
+      destinationTable: {
+        projectId: 'proj',
+        datasetId: '_anonymous_dataset',
+        tableId: 'my_table',
+      },
+    });
   });
 });
 
@@ -861,6 +1012,619 @@ describe('executeSql query tool', () => {
     });
     expect(querySpy).not.toHaveBeenCalled();
   });
+
+  it.each([
+    {modeName: 'blocked', writeMode: WriteMode.BLOCKED},
+    {modeName: 'protected', writeMode: WriteMode.PROTECTED},
+    {modeName: 'allowed', writeMode: WriteMode.ALLOWED},
+  ])(
+    'executes SELECT statement when writeMode is $modeName',
+    async ({writeMode}) => {
+      vi.spyOn(BigQueryClient.prototype, 'dryRun').mockImplementation(
+        async (opts) => {
+          if (opts.createSession) {
+            return {
+              statementType: 'SELECT',
+              sessionInfo: {sessionId: 'test-bq-session-id'},
+              destinationTable: {datasetId: '_anonymous_dataset'},
+            };
+          }
+          return {statementType: 'SELECT'};
+        },
+      );
+      const querySpy = vi
+        .spyOn(BigQueryClient.prototype, 'query')
+        .mockResolvedValue([{num: 123}]);
+
+      const result = await executeSql(
+        {
+          project_id: 'my_project',
+          query: 'SELECT 123 AS num',
+          credentials: mockCredentials,
+          config: {writeMode},
+        },
+        createSessionToolContext(`select-${writeMode}`),
+      );
+
+      expect(result).toEqual({
+        status: 'SUCCESS',
+        rows: [{num: 123}],
+      });
+      expect(querySpy).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([
+    {
+      label: 'create as select',
+      query: 'CREATE TABLE my_dataset.my_table AS SELECT 123 AS num',
+      statementType: 'CREATE_AS_SELECT',
+    },
+    {
+      label: 'drop table',
+      query: 'DROP TABLE my_dataset.my_table',
+      statementType: 'DROP_TABLE',
+    },
+    {
+      label: 'create model',
+      query:
+        "CREATE MODEL my_dataset.my_model (model_type='linear_reg', input_label_cols=['label_col']) AS SELECT * FROM my_dataset.my_table",
+      statementType: 'CREATE_MODEL',
+    },
+    {
+      label: 'drop model',
+      query: 'DROP MODEL my_dataset.my_model',
+      statementType: 'DROP_MODEL',
+    },
+  ])(
+    'executes non-SELECT $label query when WriteMode.ALLOWED is configured',
+    async ({query, statementType}) => {
+      vi.spyOn(BigQueryClient.prototype, 'dryRun').mockResolvedValue({
+        statementType,
+      });
+      const querySpy = vi
+        .spyOn(BigQueryClient.prototype, 'query')
+        .mockResolvedValue([]);
+
+      const result = await executeSql(
+        {
+          project_id: 'my_project',
+          query,
+          credentials: mockCredentials,
+          config: {writeMode: WriteMode.ALLOWED},
+        },
+        createSessionToolContext(`allowed-${statementType}`),
+      );
+
+      expect(result).toEqual({status: 'SUCCESS', rows: []});
+      expect(querySpy).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([
+    {
+      label: 'create as select',
+      query: 'CREATE TABLE my_dataset.my_table AS SELECT 123 AS num',
+      statementType: 'CREATE_AS_SELECT',
+    },
+    {
+      label: 'drop table',
+      query: 'DROP TABLE my_dataset.my_table',
+      statementType: 'DROP_TABLE',
+    },
+    {
+      label: 'create model',
+      query:
+        "CREATE MODEL my_dataset.my_model (model_type='linear_reg', input_label_cols=['label_col']) AS SELECT * FROM my_dataset.my_table",
+      statementType: 'CREATE_MODEL',
+    },
+    {
+      label: 'drop model',
+      query: 'DROP MODEL my_dataset.my_model',
+      statementType: 'DROP_MODEL',
+    },
+  ])(
+    'rejects non-SELECT $label query when WriteMode.BLOCKED is configured',
+    async ({query, statementType}) => {
+      vi.spyOn(BigQueryClient.prototype, 'dryRun').mockResolvedValue({
+        statementType,
+      });
+      const querySpy = vi
+        .spyOn(BigQueryClient.prototype, 'query')
+        .mockResolvedValue([]);
+
+      const result = await executeSql(
+        {
+          project_id: 'my_project',
+          query,
+          credentials: mockCredentials,
+          config: {writeMode: WriteMode.BLOCKED},
+        },
+        createSessionToolContext(`blocked-${statementType}`),
+      );
+
+      expect(result).toEqual({
+        status: 'ERROR',
+        error_details: 'Read-only mode only supports SELECT statements.',
+      });
+      expect(querySpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    {
+      label: 'create temp table as select',
+      query: 'CREATE TEMP TABLE my_table AS SELECT 123 AS num',
+      statementType: 'CREATE_AS_SELECT',
+    },
+    {
+      label: 'drop temp table',
+      query: 'DROP TABLE my_table',
+      statementType: 'DROP_TABLE',
+    },
+    {
+      label: 'create temp model',
+      query:
+        "CREATE TEMP MODEL my_model (model_type='linear_reg', input_label_cols=['label_col']) AS SELECT * FROM my_dataset.my_table",
+      statementType: 'CREATE_MODEL',
+    },
+    {
+      label: 'drop temp model',
+      query: 'DROP MODEL my_model',
+      statementType: 'DROP_MODEL',
+    },
+  ])(
+    'allows non-SELECT $label query in the session anonymous dataset when WriteMode.PROTECTED is configured',
+    async ({query, statementType}) => {
+      vi.spyOn(BigQueryClient.prototype, 'dryRun').mockImplementation(
+        async (opts) => {
+          if (opts.createSession) {
+            return {
+              statementType: 'SELECT',
+              sessionInfo: {sessionId: 'test-bq-session-id'},
+              destinationTable: {datasetId: '_anonymous_dataset'},
+            };
+          }
+          return {
+            statementType,
+            destinationTable: {datasetId: '_anonymous_dataset'},
+          };
+        },
+      );
+      const querySpy = vi
+        .spyOn(BigQueryClient.prototype, 'query')
+        .mockResolvedValue([]);
+
+      const result = await executeSql(
+        {
+          project_id: 'my_project',
+          query,
+          credentials: mockCredentials,
+          config: {writeMode: WriteMode.PROTECTED},
+        },
+        createSessionToolContext(`protected-ok-${statementType}`),
+      );
+
+      expect(result).toEqual({status: 'SUCCESS', rows: []});
+      expect(querySpy).toHaveBeenCalledWith({
+        query,
+        projectId: 'my_project',
+        maxResults: 50,
+        connectionProperties: [
+          {key: 'session_id', value: 'test-bq-session-id'},
+        ],
+      });
+    },
+  );
+
+  it.each([
+    {
+      label: 'create permanent table as select',
+      query: 'CREATE TABLE my_dataset.my_table AS SELECT 123 AS num',
+      statementType: 'CREATE_AS_SELECT',
+    },
+    {
+      label: 'drop permanent table',
+      query: 'DROP TABLE my_dataset.my_table',
+      statementType: 'DROP_TABLE',
+    },
+    {
+      label: 'create permanent model',
+      query:
+        "CREATE MODEL my_dataset.my_model (model_type='linear_reg', input_label_cols=['label_col']) AS SELECT * FROM my_dataset.my_table",
+      statementType: 'CREATE_MODEL',
+    },
+    {
+      label: 'drop permanent model',
+      query: 'DROP MODEL my_dataset.my_model',
+      statementType: 'DROP_MODEL',
+    },
+  ])(
+    'rejects non-SELECT $label query targeting a persistent dataset when WriteMode.PROTECTED is configured',
+    async ({query, statementType}) => {
+      vi.spyOn(BigQueryClient.prototype, 'dryRun').mockImplementation(
+        async (opts) => {
+          if (opts.createSession) {
+            return {
+              statementType: 'SELECT',
+              sessionInfo: {sessionId: 'test-bq-session-id'},
+              destinationTable: {datasetId: '_anonymous_dataset'},
+            };
+          }
+          return {
+            statementType,
+            destinationTable: {datasetId: 'my_dataset'},
+          };
+        },
+      );
+      const querySpy = vi
+        .spyOn(BigQueryClient.prototype, 'query')
+        .mockResolvedValue([]);
+
+      const result = await executeSql(
+        {
+          project_id: 'my_project',
+          query,
+          credentials: mockCredentials,
+          config: {writeMode: WriteMode.PROTECTED},
+        },
+        createSessionToolContext(`protected-persist-${statementType}`),
+      );
+
+      expect(result).toEqual({
+        status: 'ERROR',
+        error_details:
+          'Protected write mode only supports SELECT statements, or write operations in the anonymous dataset of a BigQuery session.',
+      });
+      expect(querySpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    {
+      label: 'script',
+      query:
+        'CREATE TEMP TABLE my_table AS SELECT 123 AS num; DROP TABLE my_dataset.my_table',
+      statementType: 'SCRIPT',
+    },
+    {
+      label: 'procedure call',
+      query: 'CALL my_dataset.my_procedure()',
+      statementType: 'CALL',
+    },
+    {
+      label: 'export data',
+      query:
+        "EXPORT DATA OPTIONS (uri = 'gs://my_bucket/*.csv', format = 'CSV') AS SELECT * FROM my_dataset.my_table",
+      statementType: 'EXPORT_DATA',
+    },
+    {
+      label: 'insert without destination',
+      query: 'INSERT INTO my_table (num) VALUES (123)',
+      statementType: 'INSERT',
+    },
+    {
+      label: 'drop table without destination',
+      query: 'DROP TABLE my_table',
+      statementType: 'DROP_TABLE',
+    },
+  ])(
+    'rejects non-SELECT $label query with no dry-run destination table when WriteMode.PROTECTED is configured',
+    async ({query, statementType}) => {
+      vi.spyOn(BigQueryClient.prototype, 'dryRun').mockImplementation(
+        async (opts) => {
+          if (opts.createSession) {
+            return {
+              statementType: 'SELECT',
+              sessionInfo: {sessionId: 'test-bq-session-id'},
+              destinationTable: {datasetId: '_anonymous_dataset'},
+            };
+          }
+          return {
+            statementType,
+            destinationTable: undefined,
+          };
+        },
+      );
+      const querySpy = vi
+        .spyOn(BigQueryClient.prototype, 'query')
+        .mockResolvedValue([]);
+
+      const result = await executeSql(
+        {
+          project_id: 'my_project',
+          query,
+          credentials: mockCredentials,
+          config: {writeMode: WriteMode.PROTECTED},
+        },
+        createSessionToolContext(`protected-undestined-${statementType}`),
+      );
+
+      expect(result).toEqual({
+        status: 'ERROR',
+        error_details:
+          'Protected write mode only supports SELECT statements, or write operations in the anonymous dataset of a BigQuery session.',
+      });
+      expect(querySpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it('ignores BigQuery session info stored in toolContext.state in WriteMode.PROTECTED', async () => {
+    vi.spyOn(BigQueryClient.prototype, 'dryRun').mockImplementation(
+      async (opts) => {
+        if (opts.createSession) {
+          return {
+            statementType: 'SELECT',
+            sessionInfo: {sessionId: 'test-bq-session-id'},
+            destinationTable: {datasetId: '_anonymous_dataset'},
+          };
+        }
+        return {
+          statementType: 'CREATE_AS_SELECT',
+          destinationTable: {datasetId: 'my_dataset'},
+        };
+      },
+    );
+    const querySpy = vi
+      .spyOn(BigQueryClient.prototype, 'query')
+      .mockResolvedValue([]);
+    const toolContext = createSessionToolContext('session-in-state', {
+      bigquery_session_info: ['other-bq-session-id', 'my_dataset'],
+    });
+
+    const result = await executeSql(
+      {
+        project_id: 'my_project',
+        query: 'CREATE TABLE my_dataset.my_table AS SELECT 123 AS num',
+        credentials: mockCredentials,
+        config: {writeMode: WriteMode.PROTECTED},
+      },
+      toolContext,
+    );
+
+    expect(result).toEqual({
+      status: 'ERROR',
+      error_details:
+        'Protected write mode only supports SELECT statements, or write operations in the anonymous dataset of a BigQuery session.',
+    });
+    expect(querySpy).not.toHaveBeenCalled();
+  });
+
+  it('returns an error when BigQuery does not create a session in WriteMode.PROTECTED', async () => {
+    vi.spyOn(BigQueryClient.prototype, 'dryRun').mockResolvedValue({
+      statementType: 'SELECT',
+      sessionInfo: undefined,
+    });
+    const querySpy = vi.spyOn(BigQueryClient.prototype, 'query');
+    const toolContext = createSessionToolContext('session-without-bq-session');
+
+    const result = await executeSql(
+      {
+        project_id: 'my_project',
+        query: 'CREATE TEMP TABLE my_table AS SELECT 123 AS num',
+        credentials: mockCredentials,
+        config: {writeMode: WriteMode.PROTECTED},
+      },
+      toolContext,
+    );
+
+    expect(result).toEqual({
+      status: 'ERROR',
+      error_details: 'BigQuery did not create a session for the query.',
+    });
+    expect(querySpy).not.toHaveBeenCalled();
+  });
+
+  it('reuses the BigQuery session across subsequent queries in the same ADK session', async () => {
+    const dryRunSpy = vi
+      .spyOn(BigQueryClient.prototype, 'dryRun')
+      .mockImplementation(async (opts) => {
+        if (opts.createSession) {
+          return {
+            statementType: 'SELECT',
+            sessionInfo: {sessionId: 'test-bq-session-id'},
+            destinationTable: {datasetId: '_anonymous_dataset'},
+          };
+        }
+        return {
+          statementType: 'SELECT',
+        };
+      });
+    const querySpy = vi
+      .spyOn(BigQueryClient.prototype, 'query')
+      .mockResolvedValue([]);
+    const toolContext = createSessionToolContext('session-reused');
+
+    await executeSql(
+      {
+        project_id: 'my_project',
+        query: 'SELECT 123 AS num',
+        credentials: mockCredentials,
+        config: {writeMode: WriteMode.PROTECTED},
+      },
+      toolContext,
+    );
+    await executeSql(
+      {
+        project_id: 'my_project',
+        query: 'SELECT 123 AS num',
+        credentials: mockCredentials,
+        config: {writeMode: WriteMode.PROTECTED},
+      },
+      toolContext,
+    );
+
+    expect(dryRunSpy).toHaveBeenCalledTimes(3);
+    expect(dryRunSpy).toHaveBeenNthCalledWith(1, {
+      query: 'SELECT 1',
+      projectId: 'my_project',
+      createSession: true,
+    });
+    expect(dryRunSpy).toHaveBeenNthCalledWith(2, {
+      query: 'SELECT 123 AS num',
+      projectId: 'my_project',
+      connectionProperties: [{key: 'session_id', value: 'test-bq-session-id'}],
+    });
+    expect(dryRunSpy).toHaveBeenNthCalledWith(3, {
+      query: 'SELECT 123 AS num',
+      projectId: 'my_project',
+      connectionProperties: [{key: 'session_id', value: 'test-bq-session-id'}],
+    });
+    expect(querySpy).toHaveBeenCalledTimes(2);
+    for (const call of querySpy.mock.calls) {
+      expect(call[0]?.connectionProperties).toEqual([
+        {key: 'session_id', value: 'test-bq-session-id'},
+      ]);
+    }
+  });
+
+  it('creates a separate BigQuery session when the same session ID is used under a different userId or appName', async () => {
+    const createdSessionIds = [
+      'test-bq-session-id',
+      'other-user-bq-session-id',
+      'other-app-bq-session-id',
+    ];
+    let createSessionCallCount = 0;
+    const dryRunSpy = vi
+      .spyOn(BigQueryClient.prototype, 'dryRun')
+      .mockImplementation(async (opts) => {
+        if (opts.createSession) {
+          const sessionId =
+            createdSessionIds[createSessionCallCount] ?? 'fallback-session-id';
+          createSessionCallCount += 1;
+          return {
+            statementType: 'SELECT',
+            sessionInfo: {sessionId},
+            destinationTable: {datasetId: `_anon_${sessionId}`},
+          };
+        }
+        return {
+          statementType: 'SELECT',
+        };
+      });
+    const querySpy = vi
+      .spyOn(BigQueryClient.prototype, 'query')
+      .mockResolvedValue([]);
+
+    await executeSql(
+      {
+        project_id: 'my_project',
+        query: 'SELECT 123 AS num',
+        credentials: mockCredentials,
+        config: {writeMode: WriteMode.PROTECTED},
+      },
+      createSessionToolContext(
+        'shared-session-id',
+        {},
+        {appName: 'app_one', userId: 'user_one'},
+      ),
+    );
+    await executeSql(
+      {
+        project_id: 'my_project',
+        query: 'SELECT 123 AS num',
+        credentials: mockCredentials,
+        config: {writeMode: WriteMode.PROTECTED},
+      },
+      createSessionToolContext(
+        'shared-session-id',
+        {},
+        {appName: 'app_one', userId: 'user_two'},
+      ),
+    );
+    await executeSql(
+      {
+        project_id: 'my_project',
+        query: 'SELECT 123 AS num',
+        credentials: mockCredentials,
+        config: {writeMode: WriteMode.PROTECTED},
+      },
+      createSessionToolContext(
+        'shared-session-id',
+        {},
+        {appName: 'app_two', userId: 'user_one'},
+      ),
+    );
+
+    expect(createSessionCallCount).toBe(3);
+    expect(dryRunSpy).toHaveBeenCalledTimes(6);
+    expect(querySpy).toHaveBeenCalledTimes(3);
+    expect(querySpy.mock.calls[0]?.[0]?.connectionProperties).toEqual([
+      {key: 'session_id', value: 'test-bq-session-id'},
+    ]);
+    expect(querySpy.mock.calls[1]?.[0]?.connectionProperties).toEqual([
+      {key: 'session_id', value: 'other-user-bq-session-id'},
+    ]);
+    expect(querySpy.mock.calls[2]?.[0]?.connectionProperties).toEqual([
+      {key: 'session_id', value: 'other-app-bq-session-id'},
+    ]);
+  });
+
+  it.each([
+    {modeName: 'blocked', writeMode: WriteMode.BLOCKED},
+    {modeName: 'protected', writeMode: WriteMode.PROTECTED},
+    {modeName: 'allowed', writeMode: WriteMode.ALLOWED},
+  ])(
+    'executes query with configured credentials without falling back to default auth in $modeName mode',
+    async ({writeMode}) => {
+      let capturedClientOptions: Record<string, unknown> | undefined;
+      const fakeSdkClient: BigQuerySdkClient = {
+        getDatasets: async () => [[]],
+        dataset: () => ({}),
+        query: async () => [[{num: 123}]],
+        createQueryJob: async () => [
+          {
+            id: 'job-1',
+            metadata: {
+              configuration: {
+                query: {destinationTable: {datasetId: '_anonymous_dataset'}},
+              },
+              statistics: {
+                sessionInfo: {sessionId: 'test-bq-session-id'},
+                query: {statementType: 'SELECT'},
+              },
+            },
+          },
+        ],
+      };
+      const fakeModule: BigQuerySdkModule = {
+        BigQuery: class {
+          constructor(options: Record<string, unknown>) {
+            capturedClientOptions = options;
+            return fakeSdkClient;
+          }
+        } as unknown as BigQuerySdkModule['BigQuery'],
+      };
+      const clientWithFakeSdk = getBigQueryClient({
+        projectId: 'my_project',
+        credentials: mockCredentials,
+        sdkLoader: async () => fakeModule,
+      } as InternalGetBigQueryClientOptions);
+
+      vi.restoreAllMocks();
+      const originalDryRun = BigQueryClient.prototype.dryRun;
+      const originalQuery = BigQueryClient.prototype.query;
+      vi.spyOn(BigQueryClient.prototype, 'dryRun').mockImplementation((opts) =>
+        originalDryRun.call(clientWithFakeSdk, opts),
+      );
+      vi.spyOn(BigQueryClient.prototype, 'query').mockImplementation((opts) =>
+        originalQuery.call(clientWithFakeSdk, opts),
+      );
+
+      const result = await executeSql(
+        {
+          project_id: 'my_project',
+          query: 'SELECT 123 AS num',
+          credentials: mockCredentials,
+          config: {writeMode},
+        },
+        createSessionToolContext(`no-default-auth-${writeMode}`),
+      );
+
+      expect(result).toEqual({status: 'SUCCESS', rows: [{num: 123}]});
+      expect(capturedClientOptions?.['authClient']).toBeDefined();
+    },
+  );
 });
 
 describe('getExecuteSql and getExecuteSqlDescription', () => {
@@ -874,6 +1638,9 @@ describe('getExecuteSql and getExecuteSqlDescription', () => {
   });
 
   it('returns base description for default or WriteMode.BLOCKED config', () => {
+    expect(getExecuteSqlDescription()).toContain(
+      'Run a BigQuery or BigQuery ML SQL query in the project and return the result.',
+    );
     expect(getExecuteSqlDescription()).toContain('At most 50 rows');
     expect(getExecuteSqlDescription()).not.toContain('CREATE TABLE');
     expect(
@@ -885,7 +1652,25 @@ describe('getExecuteSql and getExecuteSqlDescription', () => {
     const desc = getExecuteSqlDescription({writeMode: WriteMode.ALLOWED});
     expect(desc).toContain('At most 50 rows');
     expect(desc).toContain('CREATE TABLE');
+    expect(desc).toContain('INSERT INTO');
     expect(desc).toContain('DROP TABLE');
+    expect(desc).toContain('CREATE MODEL');
+    expect(desc).toContain('ML.EVALUATE');
+    expect(desc).toContain('ML.PREDICT');
+    expect(desc).toContain('DROP MODEL');
+  });
+
+  it('returns protected write examples in description when WriteMode.PROTECTED', () => {
+    const desc = getExecuteSqlDescription({writeMode: WriteMode.PROTECTED});
+    expect(desc).toContain('At most 50 rows');
+    expect(desc).toContain('CREATE TEMP TABLE');
+    expect(desc).toContain('CREATE TEMP MODEL');
+    expect(desc).toContain('ML.EVALUATE(MODEL my_model)');
+    expect(desc).toContain('ML.PREDICT(MODEL my_model');
+    expect(desc).toContain('DROP MODEL my_model');
+    expect(desc).toContain(
+      'Only temporary tables can be created, inserted into or deleted.',
+    );
   });
 
   it('enforces bound config precedence over args.config in getExecuteSql', async () => {
@@ -926,6 +1711,46 @@ describe('getExecuteSql and getExecuteSqlDescription', () => {
     expect(result).toEqual({status: 'SUCCESS', rows: []});
     expect(dryRunSpy).not.toHaveBeenCalled();
     expect(querySpy).toHaveBeenCalledOnce();
+  });
+
+  it('forwards toolContext and enforces WriteMode.PROTECTED in getExecuteSql', async () => {
+    vi.spyOn(BigQueryClient.prototype, 'dryRun').mockImplementation(
+      async (opts) => {
+        if (opts.createSession) {
+          return {
+            statementType: 'SELECT',
+            sessionInfo: {sessionId: 'executor-bq-session'},
+            destinationTable: {datasetId: '_anonymous_dataset'},
+          };
+        }
+        return {
+          statementType: 'CREATE_AS_SELECT',
+          destinationTable: {datasetId: '_anonymous_dataset'},
+        };
+      },
+    );
+    const querySpy = vi
+      .spyOn(BigQueryClient.prototype, 'query')
+      .mockResolvedValue([]);
+
+    const protectedExecutor = getExecuteSql({writeMode: WriteMode.PROTECTED});
+    const toolContext = createSessionToolContext('executor-protected-session');
+    const result = await protectedExecutor(
+      {
+        project_id: 'my_project',
+        query: 'CREATE TEMP TABLE my_table AS SELECT 1',
+        credentials: mockCredentials,
+      },
+      toolContext,
+    );
+
+    expect(result).toEqual({status: 'SUCCESS', rows: []});
+    expect(querySpy).toHaveBeenCalledWith({
+      query: 'CREATE TEMP TABLE my_table AS SELECT 1',
+      projectId: 'my_project',
+      maxResults: 50,
+      connectionProperties: [{key: 'session_id', value: 'executor-bq-session'}],
+    });
   });
 });
 

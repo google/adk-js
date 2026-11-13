@@ -7,7 +7,7 @@ This sample demonstrates how to equip an `LlmAgent` with `BigQueryToolset`, `Big
 `bigquery_data_assistant` is an `LlmAgent` configured with:
 
 1. `BigQueryCredentialsConfig` for OAuth2 client credentials and default `BIGQUERY_SCOPES` (BigQuery and Dataplex read-write; `@google/adk-integrations` also exports `BIGQUERY_DEFAULT_SCOPE`, `['https://www.googleapis.com/auth/bigquery']`, for BigQuery-only access).
-2. `BigQueryToolConfig` specifying the write permissions for BigQuery tools. By default, or with `WriteMode.BLOCKED`, `execute_sql` enforces read-only mode via a dry-run check before query execution, rejecting statements that are not `SELECT`. To allow DML and DDL writes, set `writeMode: WriteMode.ALLOWED`.
+2. `BigQueryToolConfig` specifying the write permissions for BigQuery tools. By default, or with `WriteMode.BLOCKED`, `execute_sql` enforces read-only mode via a dry-run check before query execution, rejecting statements that are not `SELECT`. Set `writeMode: WriteMode.PROTECTED` to allow temporary table and model writes inside the anonymous dataset of a BigQuery session while rejecting writes to permanent datasets, or `writeMode: WriteMode.ALLOWED` to allow all DML and DDL writes.
 3. `BigQueryToolset` exposing `list_dataset_ids`, `get_dataset_info`, `list_table_ids`, `get_table_info`, and `execute_sql`.
 4. A custom `BigQueryTool` (`summarize_bigquery_target`) that receives resolved credentials and configuration while stripping internal parameters from the model's `FunctionDeclaration`.
 
@@ -27,10 +27,14 @@ export GOOGLE_OAUTH_CLIENT_ID="your-oauth-client-id"
 export GOOGLE_OAUTH_CLIENT_SECRET="your-oauth-client-secret"
 ```
 
-To enable write queries (such as `CREATE TABLE` or `DROP TABLE`), configure `BigQueryToolConfig`:
+To enable session-scoped temporary table or model writes (`WriteMode.PROTECTED`) or unrestricted write queries (`WriteMode.ALLOWED`), configure `BigQueryToolConfig`:
 
 ```ts
 import {BigQueryToolConfig, WriteMode} from '@google/adk-integrations';
+
+const protectedWriteConfig = new BigQueryToolConfig({
+  writeMode: WriteMode.PROTECTED,
+});
 
 const writeAllowedConfig = new BigQueryToolConfig({
   writeMode: WriteMode.ALLOWED,

@@ -14,6 +14,17 @@ export enum WriteMode {
   BLOCKED = 'blocked',
 
   /**
+   * Only protected write operations are allowed in a BigQuery session.
+   *
+   * Write operations in the anonymous dataset of a BigQuery session (such as
+   * temporary tables and models) are permitted while permanent datasets are
+   * protected. Non-SELECT statements with no destination dataset (such as
+   * scripts, procedure calls, or exports) or targeting a permanent dataset are
+   * rejected.
+   */
+  PROTECTED = 'protected',
+
+  /**
    * All write operations (including DML and DDL) are permitted.
    */
   ALLOWED = 'allowed',
@@ -53,7 +64,7 @@ export class BigQueryToolConfig {
   readonly [BIGQUERY_TOOL_CONFIG_SIGNATURE_SYMBOL] = true;
 
   /**
-   * Write mode specifying whether write queries are blocked or allowed.
+   * Write mode specifying whether write queries are blocked, protected, or allowed.
    */
   readonly writeMode: WriteMode;
 

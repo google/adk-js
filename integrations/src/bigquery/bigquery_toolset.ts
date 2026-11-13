@@ -141,8 +141,10 @@ function createBigQueryTools(
  * and `execute_sql`.
  *
  * In default read-only mode, `execute_sql` verifies that queries are SELECT
- * statements before running. Configure `toolConfig` with `writeMode: WriteMode.ALLOWED`
- * to permit DDL and DML write queries.
+ * statements before running. Configure `toolConfig` with
+ * `writeMode: WriteMode.PROTECTED` to allow session-scoped anonymous dataset
+ * writes, or `writeMode: WriteMode.ALLOWED` to permit all DDL and DML write
+ * queries.
  */
 export class BigQueryToolset extends BaseToolset {
   readonly [BIGQUERY_TOOLSET_SIGNATURE_SYMBOL] = true;
