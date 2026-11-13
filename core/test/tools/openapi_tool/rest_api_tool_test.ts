@@ -1649,7 +1649,7 @@ describe('RestApiTool Utilities', () => {
     });
   });
 
-  describe('body property named like a whole-body parameter', () => {
+  describe('body property named like a whole body parameter', () => {
     const endpoint = {
       baseUrl: 'http://api.example.com',
       path: '/issues',
