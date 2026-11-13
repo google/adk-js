@@ -457,6 +457,16 @@ export {
 export {LOAD_MEMORY, LoadMemoryTool} from './tools/load_memory_tool.js';
 export {LongRunningFunctionTool} from './tools/long_running_tool.js';
 export {
+  ModelConsultContextConfig,
+  ModelConsultTool,
+  isModelConsultContextConfig,
+} from './tools/model_consult/index.js';
+export type {
+  ModelConsultContextConfigOptions,
+  ModelConsultToolOptions,
+  ThinkingLevelName,
+} from './tools/model_consult/index.js';
+export {
   PRELOAD_MEMORY,
   PreloadMemoryTool,
 } from './tools/preload_memory_tool.js';
