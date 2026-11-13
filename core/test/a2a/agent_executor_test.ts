@@ -398,6 +398,59 @@ describe('A2AAgentExecutor', () => {
     );
   });
 
+  it('keys the session by the A2A context id and derives the user from it', async () => {
+    mockSessionService.getSession.mockResolvedValue(undefined);
+    mockSessionService.createSession.mockResolvedValue(
+      createSession({
+        id: 'test-context',
+        userId: 'A2A_USER_test-context',
+        appName: 'test-app',
+      }),
+    );
+
+    const mockRunAsync = vi.fn(async function* () {
+      yield createEvent({
+        author: 'model',
+        content: {role: 'model', parts: [{text: 'response'}]},
+        partial: false,
+        actions: createEventActions(),
+      });
+    });
+
+    vi.mocked(Runner).mockImplementation(function (config: RunnerConfig) {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: mockRunAsync,
+      } as unknown as Runner;
+    });
+
+    const executor = new A2AAgentExecutor({
+      runner: {appName: 'test-app', sessionService: mockSessionService},
+    });
+
+    await executor.execute(createRequestContext(), mockEventBus);
+
+    const expectedSessionKey = {
+      appName: 'test-app',
+      userId: 'A2A_USER_test-context',
+      sessionId: 'test-context',
+    };
+    expect(mockSessionService.getSession).toHaveBeenCalledWith(
+      expectedSessionKey,
+    );
+    expect(mockSessionService.createSession).toHaveBeenCalledWith(
+      expectedSessionKey,
+    );
+    expect(mockRunAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'A2A_USER_test-context',
+        sessionId: 'test-context',
+        newMessage: {role: 'user', parts: [{text: 'hello', thought: false}]},
+      }),
+    );
+  });
+
   it('should fail cancelTask because it is not implemented', async () => {
     const executor = new A2AAgentExecutor({
       runner: {
