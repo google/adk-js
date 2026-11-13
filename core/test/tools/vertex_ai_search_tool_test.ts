@@ -119,6 +119,41 @@ describe('VertexAiSearchTool', () => {
     });
   });
 
+  it('should add vertexAiSearch config with dataStoreSpecs for path-based Gemini model', async () => {
+    const dataStoreSpecs = [
+      {
+        dataStore:
+          'projects/my-project/locations/global/collections/default_collection/dataStores/ds-1',
+      },
+    ];
+    const tool = new VertexAiSearchTool({
+      searchEngineId:
+        'projects/my-project/locations/global/collections/default_collection/engines/se-1',
+      dataStoreSpecs,
+      filter: 'status = "ACTIVE"',
+      maxResults: 5,
+    });
+    const llmRequest = makeLlmRequest(
+      'projects/my-project/locations/us-central1/publishers/google/models/gemini-2.5-flash',
+    );
+    const toolContext = {} as Context;
+
+    await tool.processLlmRequest({toolContext, llmRequest});
+
+    expect(llmRequest.config?.tools).toHaveLength(1);
+    expect(
+      (llmRequest.config?.tools?.[0] as unknown as TestTool).retrieval
+        ?.vertexAiSearch,
+    ).toEqual({
+      datastore: undefined,
+      dataStoreSpecs,
+      engine:
+        'projects/my-project/locations/global/collections/default_collection/engines/se-1',
+      filter: 'status = "ACTIVE"',
+      maxResults: 5,
+    });
+  });
+
   it('should throw error for Gemini 1.x if other tools are present and bypass is false', async () => {
     const tool = new VertexAiSearchTool({dataStoreId: 'ds'});
     const llmRequest = makeLlmRequest('gemini-1.5-pro', {

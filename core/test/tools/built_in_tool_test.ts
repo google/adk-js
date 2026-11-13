@@ -315,9 +315,13 @@ describe('the declaration-less tool surface', () => {
           : value instanceof BaseTool
             ? (value.constructor as ToolClass)
             : undefined;
-      // `BuiltInTool` itself is abstract, so it holds neither side of the
-      // invariant.
-      if (ctor && (ctor as unknown) !== BuiltInTool) {
+      // `BuiltInTool` and `BaseAuthenticatedTool` are abstract, so they hold
+      // neither side of the invariant; their concrete subclasses are checked.
+      if (
+        ctor &&
+        (ctor as unknown) !== BuiltInTool &&
+        (ctor as unknown) !== adk.BaseAuthenticatedTool
+      ) {
         classes.set(ctor.name, ctor);
       }
     }

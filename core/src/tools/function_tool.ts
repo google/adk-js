@@ -292,12 +292,30 @@ export class FunctionTool<
         return pending;
       }
 
-      return await this.execute(validatedArgs, req.toolContext);
+      return await this.invokeExecute(validatedArgs, req);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       throw new Error(`Error in tool '${this.name}': ${errorMessage}`);
     }
+  }
+
+  /**
+   * Calls the user-defined `execute` function for one {@link runAsync} call,
+   * after argument validation and the confirmation gate.
+   *
+   * A subclass overrides this to pass values that belong to one call, carried
+   * on `req`, to its own callback without storing them on the instance.
+   *
+   * @param input The validated arguments.
+   * @param req The request passed to {@link runAsync}.
+   * @returns The return value of the `execute` function.
+   */
+  protected invokeExecute(
+    input: ToolExecuteArgument<TParameters>,
+    req: RunAsyncToolRequest,
+  ): Promise<unknown> | unknown {
+    return this.execute(input, req.toolContext);
   }
 
   /**

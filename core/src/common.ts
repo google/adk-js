@@ -371,6 +371,22 @@ export type {
 } from './telemetry/api/instrumentation.js';
 export {AgentTool, isAgentTool} from './tools/agent_tool.js';
 export type {AgentToolConfig} from './tools/agent_tool.js';
+export {
+  AuthenticatedFunctionTool,
+  isAuthenticatedFunctionTool,
+} from './tools/authenticated_function_tool.js';
+export type {
+  AuthenticatedFunctionToolOptions,
+  AuthenticatedToolExecuteFunction,
+} from './tools/authenticated_function_tool.js';
+export {
+  BaseAuthenticatedTool,
+  isBaseAuthenticatedTool,
+} from './tools/base_authenticated_tool.js';
+export type {
+  BaseAuthenticatedToolParams,
+  RunAsyncAuthenticatedToolRequest,
+} from './tools/base_authenticated_tool.js';
 export {BaseTool, isBaseTool} from './tools/base_tool.js';
 export type {
   BaseToolParams,

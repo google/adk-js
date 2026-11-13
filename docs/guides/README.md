@@ -102,9 +102,9 @@ Conversations and their state: the events of each session, and the `app:`, `user
 
 ### Tools
 
-Function, agent, ecosystem-adapter, and built-in model tools (`BaseTool`, `FunctionTool`, `LongRunningFunctionTool`, `AgentTool`, `ToolContext`, `ToolboxToolset`, and built-in grounding and control-flow tools).
+Function, authenticated, agent, ecosystem-adapter, and built-in model tools (`BaseTool`, `BaseAuthenticatedTool`, `FunctionTool`, `AuthenticatedFunctionTool`, `LongRunningFunctionTool`, `AgentTool`, `ToolContext`, `ToolboxToolset`, and built-in grounding and control-flow tools).
 
-- [Tools](tools/index.md) - `BaseTool`, `FunctionTool` (with `response` schema and `_callLive` streaming), `LongRunningFunctionTool`, `AgentTool` (with `inputSchema` and `outputSchema`), `ToolContext`, `ToolboxToolset`, and built-in utility tools.
+- [Tools](tools/index.md) - `BaseTool`, `BaseAuthenticatedTool`, `FunctionTool` (with `response` schema and `_callLive` streaming), `AuthenticatedFunctionTool`, `LongRunningFunctionTool`, `AgentTool` (with `inputSchema` and `outputSchema`), `ToolContext`, `ToolboxToolset`, and built-in utility tools.
 
 #### Retrieval
 

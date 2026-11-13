@@ -5,12 +5,14 @@
  */
 
 /**
- * Tools (`FunctionTool`, `LongRunningFunctionTool`, `AgentTool`, `ExitLoopTool`, `CrewaiTool`, `LangchainTool`, `ToolboxToolset`, and `ToolContext`)
+ * Tools (`FunctionTool`, `AuthenticatedFunctionTool`, `BaseAuthenticatedTool`, `LongRunningFunctionTool`, `AgentTool`, `ExitLoopTool`, `CrewaiTool`, `LangchainTool`, `ToolboxToolset`, and `ToolContext`)
  * ../../docs/guides/tools/index.md
  *
  * A deterministic `BaseAgent` that exercises the `tools` subsystem end-to-end:
  * - `FunctionTool` with a `response` schema and bidirectional live streaming via
  *   `_callLive` with an `AsyncQueue` registered on `ctx.activeStreamingTools`
+ * - `AuthenticatedFunctionTool` and `BaseAuthenticatedTool` resolving
+ *   `AuthCredential` values through `CredentialManager`
  * - `LongRunningFunctionTool` with `isLongRunning: true`
  * - `AgentTool` wrapping a child `LlmAgent` configured with `inputSchema` and
  *   `outputSchema` (removing nullish fields on both input and output)
@@ -33,7 +35,11 @@
 import {
   ActiveStreamingTool,
   AgentTool,
+  AuthCredentialTypes,
+  AuthenticatedFunctionTool,
+  AuthSchemeType,
   BaseAgent,
+  BaseAuthenticatedTool,
   BaseLlm,
   BaseLlmConnection,
   Context,
@@ -52,12 +58,13 @@ import {
   LlmRequest,
   LlmResponse,
   LongRunningFunctionTool,
+  RunAsyncAuthenticatedToolRequest,
   stringifyContent,
   ToolboxToolset,
   ToolContext,
 } from '@google/adk';
 import {CrewaiTool, LangchainTool} from '@google/adk-integrations';
-import {Type} from '@google/genai';
+import {FunctionDeclaration, Type} from '@google/genai';
 import {fileURLToPath} from 'node:url';
 import {z} from 'zod';
 
@@ -158,6 +165,81 @@ const approvalTicketTool = new LongRunningFunctionTool({
     status: 'PENDING_APPROVAL',
   }),
 });
+
+const authenticatedDiscountTool = new AuthenticatedFunctionTool({
+  name: 'lookup_partner_discount',
+  description:
+    'Looks up a partner discount tier using an authenticated API key.',
+  parameters: z.object({
+    sku: z.string(),
+  }),
+  authConfig: {
+    authScheme: {
+      type: AuthSchemeType.API_KEY,
+      in: 'header',
+      name: 'X-Partner-Key',
+    },
+    rawAuthCredential: {
+      authType: AuthCredentialTypes.API_KEY,
+      apiKey: 'sample-partner-key',
+    },
+    credentialKey: 'partner_discount_key',
+  },
+  execute: async ({sku}, _toolContext, credential) => ({
+    sku,
+    authenticatedWith: credential?.authType ?? 'none',
+    discountPercent: credential?.apiKey ? 10 : 0,
+  }),
+});
+
+/**
+ * A `BaseAuthenticatedTool` subclass: the base class resolves the HTTP bearer
+ * credential before `runAsyncImpl` runs.
+ */
+class LoyaltyBalanceTool extends BaseAuthenticatedTool {
+  constructor() {
+    super({
+      name: 'lookup_loyalty_balance',
+      description: 'Looks up a loyalty point balance using a bearer token.',
+      authConfig: {
+        authScheme: {type: AuthSchemeType.HTTP, scheme: 'bearer'},
+        rawAuthCredential: {
+          authType: AuthCredentialTypes.HTTP,
+          http: {
+            scheme: 'bearer',
+            credentials: {token: 'sample-loyalty-token'},
+          },
+        },
+        credentialKey: 'loyalty_balance_token',
+      },
+    });
+  }
+
+  override _getDeclaration(): FunctionDeclaration {
+    return {
+      name: this.name,
+      description: this.description,
+      parameters: {
+        type: Type.OBJECT,
+        properties: {customerId: {type: Type.STRING}},
+        required: ['customerId'],
+      },
+    };
+  }
+
+  protected override async runAsyncImpl({
+    args,
+    credential,
+  }: RunAsyncAuthenticatedToolRequest): Promise<unknown> {
+    return {
+      customerId: args['customerId'],
+      authenticatedWith: credential?.authType ?? 'none',
+      points: credential?.http?.credentials.token ? 1200 : 0,
+    };
+  }
+}
+
+const loyaltyBalanceTool = new LoyaltyBalanceTool();
 
 const quoteSpecialistAgent = new LlmAgent({
   name: 'quote_specialist',
@@ -336,6 +418,16 @@ class ToolsShowcaseAgent extends BaseAgent {
       toolContext,
     });
 
+    const discountResult = await authenticatedDiscountTool.runAsync({
+      args: {sku},
+      toolContext,
+    });
+
+    const loyaltyResult = await loyaltyBalanceTool.runAsync({
+      args: {customerId: 'CUST-42'},
+      toolContext,
+    });
+
     const stockResult = await crewInventoryTool.runAsync({
       args: {sku, warehouse: 'eu-west'},
       toolContext,
@@ -376,6 +468,8 @@ class ToolsShowcaseAgent extends BaseAgent {
       conversionResult,
       streamedSnapshots,
       approvalResult,
+      discountResult,
+      loyaltyResult,
       stockResult,
       taxResult,
       shippingResult,
