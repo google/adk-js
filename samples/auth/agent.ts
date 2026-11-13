@@ -13,7 +13,8 @@
  * auth request and its authorization URI, `AuthSchemeType` and
  * `getOAuthGrantTypeFromFlow` classify the scheme, and
  * `AutoAuthCredentialExchanger` and `generateAuthToken` turn an access token
- * into an HTTP bearer credential.
+ * into an HTTP bearer credential. `SessionStateCredentialService` keeps a
+ * credential in session state under its `credentialKey`.
  *
  * Easy to get wrong: the credential has no `redirectUri`, so the URI carries
  * no `redirect_uri` at all and the provider uses the redirect registered for
@@ -46,6 +47,7 @@ import {
   getOAuthGrantTypeFromFlow,
   InMemoryCredentialService,
   InvocationContext,
+  SessionStateCredentialService,
 } from '@google/adk';
 
 const PLACEHOLDER_ACCESS_TOKEN = 'placeholder-access-token';
@@ -159,6 +161,38 @@ async function describeCredentialManager(
   ];
 }
 
+/** Describes how `SessionStateCredentialService` keeps a credential in session state. */
+async function describeSessionStateCredentialService(
+  ctx: InvocationContext,
+): Promise<string[]> {
+  const credentialService = new SessionStateCredentialService();
+  const toolContext = new Context({
+    invocationContext: ctx,
+    functionCallId: 'sample-session-state-call',
+  });
+  const sessionAuthConfig: AuthConfig = {
+    ...authConfig,
+    credentialKey: 'example_session_state',
+    exchangedAuthCredential: {
+      authType: AuthCredentialTypes.OAUTH2,
+      oauth2: {accessToken: PLACEHOLDER_ACCESS_TOKEN},
+    },
+  };
+
+  await credentialService.saveCredential(sessionAuthConfig, toolContext);
+  const loaded = await credentialService.loadCredential(
+    sessionAuthConfig,
+    toolContext,
+  );
+
+  return [
+    `SessionStateCredentialService state key: ${sessionAuthConfig.credentialKey}`,
+    `SessionStateCredentialService loaded: ${loaded?.authType} ${redact(
+      loaded?.oauth2?.accessToken,
+    )}`,
+  ];
+}
+
 class AuthShowcaseAgent extends BaseAgent {
   constructor() {
     super({
@@ -177,6 +211,7 @@ class AuthShowcaseAgent extends BaseAgent {
       ...describeAuthRequest(),
       ...(await describeExchange()),
       ...(await describeCredentialManager(ctx)),
+      ...(await describeSessionStateCredentialService(ctx)),
     ];
 
     yield createEvent({

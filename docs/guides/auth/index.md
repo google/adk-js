@@ -1,6 +1,6 @@
 # Auth
 
-The auth units describe a credential, ask the user for one when a tool needs it, and turn what the user or the configuration supplies into the credential a request carries. This guide covers the credential and config shapes, `CredentialManager`, `InMemoryCredentialService`, `AuthHandler`, the scheme helpers, and the credential exchangers and refreshers.
+The auth units describe a credential, ask the user for one when a tool needs it, and turn what the user or the configuration supplies into the credential a request carries. This guide covers the credential and config shapes, `CredentialManager`, `InMemoryCredentialService`, `SessionStateCredentialService`, `AuthHandler`, the scheme helpers, and the credential exchangers and refreshers.
 
 ## Introduction
 
@@ -14,6 +14,7 @@ Some credentials work as configured, such as an API key. Others have to be excha
 | `AuthSchemeType`, `OAuthGrantType`                         | Runtime values for the OpenAPI scheme types and the OAuth2 grant types.                      |
 | `CredentialManager`                                        | Loads, exchanges, refreshes, and persists credentials through `BaseCredentialService`.       |
 | `BaseCredentialService`, `InMemoryCredentialService`       | Stores and loads exchanged credentials scoped by application, user, and `credentialKey`.     |
+| `SessionStateCredentialService`                            | Stores and loads exchanged credentials in session state under `credentialKey`.               |
 | `CredentialExchangerRegistry`, `OAuth2CredentialExchanger` | Maps credential types to `BaseCredentialExchanger` instances and exchanges OAuth2 responses. |
 | `CredentialRefresherRegistry`, `OAuth2CredentialRefresher` | Maps credential types to `BaseCredentialRefresher` instances and refreshes expired tokens.   |
 | `AuthHandler`                                              | Builds the auth request for the client and stores the client's response.                     |
@@ -104,6 +105,23 @@ The copy matters because the client fills in the request. When the user finishes
 6. When the credential came from an auth response, was exchanged, or was refreshed (and is not a `SERVICE_ACCOUNT` raw credential), it saves the updated credential to `credentialService` without mutating the shared `AuthConfig`.
 
 `CredentialManager` never returns `authConfig.exchangedAuthCredential` as a cached credential, because one `AuthConfig` is shared by every user of a tool. Parallel `getAuthCredential` calls for the same app, user, and `credentialKey` run one at a time, so a later call reuses the credential an earlier call saved instead of exchanging or refreshing the token again. Calls for other keys or users do not wait.
+
+### Storing credentials in session state
+
+`SessionStateCredentialService` is a `BaseCredentialService` that keeps the exchanged credential in the session state of the context it is given, under the config's `credentialKey`. A credential saved in one session is not visible from another. `saveCredential` strips `oauth2.clientSecret` on a copy before writing to session state, and `loadCredential` validates the stored value with `isAuthCredential` (ignoring non-credential entries) and restores the configured `rawAuthCredential.oauth2.clientSecret` onto a copy. `saveCredential` writes nothing when the config has no `exchangedAuthCredential`, so it never clears a credential that is already stored.
+
+Session state is not secure storage. Depending on the session service and the runner environment, it is returned by session-read endpoints and may be persisted in plaintext, logged, or reachable through XSS; the end user's own access and refresh tokens remain in clear text. Use a secure vault or encrypted storage for production applications.
+
+```ts
+import {Runner, SessionStateCredentialService} from '@google/adk';
+
+const runner = new Runner({
+  appName: 'items',
+  agent,
+  sessionService,
+  credentialService: new SessionStateCredentialService(),
+});
+```
 
 ### Exchanging credentials
 
