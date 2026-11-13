@@ -96,6 +96,65 @@ describe('event_converter_utils', () => {
         },
       });
     });
+
+    it('converts event without content to message with empty parts and session metadata', () => {
+      vi.mocked(envAwareUtils.randomUUID).mockReturnValue('test-uuid-3');
+      const event = createEvent({
+        invocationId: 'inv3',
+        author: 'agent_1',
+        content: undefined,
+      });
+
+      const message = toA2AMessage(event, {
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session',
+      });
+      expect(message).toMatchObject({
+        kind: 'message',
+        messageId: 'test-uuid-3',
+        role: 'agent',
+        parts: [],
+        metadata: {
+          'adk_app_name': 'test-app',
+          'adk_user_id': 'test-user',
+          'adk_session_id': 'test-session',
+          'adk_invocation_id': 'inv3',
+          'adk_author': 'agent_1',
+        },
+      });
+    });
+
+    it('converts event with empty parts to message with empty parts and session metadata', () => {
+      vi.mocked(envAwareUtils.randomUUID).mockReturnValue('test-uuid-4');
+      const event = createEvent({
+        invocationId: 'inv4',
+        author: 'agent_1',
+        content: {
+          role: 'model',
+          parts: [],
+        },
+      });
+
+      const message = toA2AMessage(event, {
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session',
+      });
+      expect(message).toMatchObject({
+        kind: 'message',
+        messageId: 'test-uuid-4',
+        role: 'agent',
+        parts: [],
+        metadata: {
+          'adk_app_name': 'test-app',
+          'adk_user_id': 'test-user',
+          'adk_session_id': 'test-session',
+          'adk_invocation_id': 'inv4',
+          'adk_author': 'agent_1',
+        },
+      });
+    });
   });
 
   describe('toAdkEvent', () => {

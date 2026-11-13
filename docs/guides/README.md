@@ -8,6 +8,12 @@ This index is the only table of contents. A guide that is not listed here is unr
 
 ## Index
 
+### A2A (Agent-to-Agent)
+
+Exposing ADK agents as A2A servers and calling remote A2A peers (`toA2a`, `bearerTokenUserBuilder`, `getA2AAgentCard`, `A2AAgentExecutor`, `AdkDefaultRequestHandler`, `getA2aRequestMetadata`, `RemoteA2AAgent`, and `AGENT_CARD_PATH`).
+
+- [A2A](a2a/index.md) - `toA2a`, `ToA2aOptions`, `bearerTokenUserBuilder`, `A2aUserBuilder`, `getA2AAgentCard`, `ResolveAgentCardOptions`, `A2AAgentExecutor`, `AgentExecutorConfig`, `ExecutorContext`, `AdkDefaultRequestHandler`, `getA2aRequestMetadata`, `RemoteA2AAgent`, `RemoteA2AAgentConfig`, and `AGENT_CARD_PATH`.
+
 ### Agents
 
 Model-backed, workflow, and graph-backed agents (`BaseAgent`, `LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, and `LangGraphAgent`), along with invocation contexts and `RunConfig`.

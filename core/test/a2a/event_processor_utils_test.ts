@@ -86,6 +86,21 @@ describe('event_processor_utils', () => {
       expect((parts?.[0] as TextPart)?.text).toContain('Just a message');
     });
 
+    it('returns TaskFailedEvent falling back to errorCode when errorMessage is undefined', () => {
+      const events: AdkEvent[] = [
+        createEvent({
+          errorCode: 'ERROR_001',
+          errorMessage: undefined,
+        }),
+      ];
+      const result = getFinalTaskStatusUpdate(events, mockContext);
+
+      expect(result.kind).toBe('status-update');
+      expect(result.status?.state).toBe('failed');
+      const parts = result.status?.message?.parts;
+      expect((parts?.[0] as TextPart)?.text).toBe('ERROR_001');
+    });
+
     it('merges escalate and transferToAgent from actions and returns TaskCompletedEvent', () => {
       const events: AdkEvent[] = [
         createEvent({

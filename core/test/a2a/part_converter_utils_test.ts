@@ -138,6 +138,26 @@ describe('part_converter_utils', () => {
       expect(toA2ADataPart(genAiPart, ['function_call_id'])).toEqual(expected);
     });
 
+    it('does not mark functionCall as long-running when ID does not match', () => {
+      const genAiPart: GenAIPart = {
+        functionCall: {
+          id: 'tool-456',
+          name: 'getWeather',
+          args: {location: 'London'},
+        },
+      };
+      const expected: A2APart = {
+        kind: 'data',
+        data: {
+          id: 'tool-456',
+          name: 'getWeather',
+          args: {location: 'London'},
+        },
+        metadata: {'adk_type': 'function_call'},
+      };
+      expect(toA2ADataPart(genAiPart, ['tool-123'])).toEqual(expected);
+    });
+
     it('converts functionResponse', () => {
       const genAiPart: GenAIPart = {
         functionResponse: {
@@ -229,6 +249,11 @@ describe('part_converter_utils', () => {
       expect(toA2APart(genAiPart)).toEqual({kind: 'text', text: 'hello'});
     });
 
+    it('preserves empty text part as text rather than falling through to data', () => {
+      const genAiPart: GenAIPart = {text: ''};
+      expect(toA2APart(genAiPart)).toEqual({kind: 'text', text: ''});
+    });
+
     it('delegates fileData part', () => {
       const genAiPart: GenAIPart = {
         fileData: {mimeType: 'image/jpeg', fileUri: 'gs://foo'},
@@ -299,6 +324,12 @@ describe('part_converter_utils', () => {
       const a2aPart: A2ATextPart = {kind: 'text', text: 'hello'};
       const expected: GenAIPart = {text: 'hello', thought: false};
       expect(toGenAIPartText(a2aPart)).toEqual(expected);
+    });
+
+    it('converts empty text part', () => {
+      const a2aPart: A2ATextPart = {kind: 'text', text: ''};
+      const expected: GenAIPart = {text: '', thought: false};
+      expect(toGenAIPart(a2aPart)).toEqual(expected);
     });
 
     it('converts thought text part', () => {
@@ -439,6 +470,48 @@ describe('part_converter_utils', () => {
         text: '{"customData":123}',
       };
       expect(toGenAIPartData(a2aPart)).toEqual(expected);
+    });
+
+    it('serializes data part to JSON text when metadata has no adk_type', () => {
+      const data = {key: 'value', number: 123};
+      const a2aPart: A2ADataPart = {
+        kind: 'data',
+        data,
+        metadata: {other: 'metadata'},
+      };
+      expect(toGenAIPartData(a2aPart)).toEqual({
+        text: JSON.stringify(data),
+      });
+    });
+
+    it('serializes data part to JSON text when metadata is empty', () => {
+      const data = {key: 'value'};
+      const a2aPart: A2ADataPart = {
+        kind: 'data',
+        data,
+        metadata: {},
+      };
+      expect(toGenAIPartData(a2aPart)).toEqual({
+        text: JSON.stringify(data),
+      });
+    });
+
+    it('serializes data part with nested arrays, booleans, null, and unicode to JSON text', () => {
+      const complexData = {
+        nested: {
+          array: [1, 2, {inner: 'value'}],
+          boolean: true,
+          nullValue: null,
+        },
+        unicode: 'Hello 世界 🌍',
+      };
+      const a2aPart: A2ADataPart = {
+        kind: 'data',
+        data: complexData,
+      };
+      expect(toGenAIPartData(a2aPart)).toEqual({
+        text: JSON.stringify(complexData),
+      });
     });
   });
 
