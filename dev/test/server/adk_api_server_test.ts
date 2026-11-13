@@ -3058,6 +3058,345 @@ describe('AdkWebServer', () => {
           );
         }
       });
+
+      it('forwards ttl and expire_time on async_create_session', async () => {
+        const spy = vi.spyOn(sessionService, 'createSession');
+        try {
+          const response = await client.post<{output: Session}>(
+            '/api/reasoning_engine',
+            {
+              class_method: 'async_create_session',
+              input: {
+                user_id: 'u1',
+                session_id: 's-ttl',
+                ttl: '3600s',
+                expire_time: '2030-01-01T00:00:00Z',
+              },
+            },
+          );
+
+          expect(response.status).toBe(200);
+          expect(spy).toHaveBeenCalledWith({
+            appName: 'testApp',
+            userId: 'u1',
+            sessionId: 's-ttl',
+            state: {},
+            ttl: '3600s',
+            expireTime: '2030-01-01T00:00:00Z',
+          });
+        } finally {
+          spy.mockRestore();
+        }
+      });
+
+      it('adds a session to memory and searches memory via async_add_session_to_memory and async_search_memory', async () => {
+        const addRes = await client.post<{output: null}>(
+          '/api/reasoning_engine',
+          {
+            class_method: 'async_add_session_to_memory',
+            input: {
+              session: {
+                id: 's-mem-1',
+                app_name: 'testApp',
+                user_id: 'u1',
+                state: {},
+                events: [
+                  {
+                    id: 'e1',
+                    invocation_id: 'inv1',
+                    author: 'user',
+                    timestamp: 1700000000000,
+                    content: {
+                      role: 'user',
+                      parts: [{text: 'My favorite planet is Saturn'}],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        );
+        expect(addRes.status).toBe(200);
+        expect(addRes.data).toEqual({output: null});
+
+        const searchRes = await client.post<{
+          output: {memories: Array<{content: {parts: Array<{text: string}>}}>};
+        }>('/api/reasoning_engine', {
+          class_method: 'async_search_memory',
+          input: {user_id: 'u1', query: 'Saturn'},
+        });
+        expect(searchRes.status).toBe(200);
+        expect(searchRes.data?.output.memories.length).toBe(1);
+        expect(
+          searchRes.data?.output.memories[0].content.parts[0].text,
+        ).toContain('Saturn');
+      });
+
+      it('loads stored session events when async_add_session_to_memory receives a session without events', async () => {
+        const created = await sessionService.createSession({
+          appName: 'testApp',
+          userId: 'u1',
+          sessionId: 's-stored',
+        });
+        await sessionService.appendEvent({
+          session: created,
+          event: createEvent({
+            author: 'user',
+            content: {
+              role: 'user',
+              parts: [{text: 'Stored session memory keyword Neptune'}],
+            },
+          }),
+        });
+
+        const addRes = await client.post<{output: null}>(
+          '/api/reasoning_engine',
+          {
+            class_method: 'async_add_session_to_memory',
+            input: {session: {id: 's-stored', user_id: 'u1', events: []}},
+          },
+        );
+        expect(addRes.status).toBe(200);
+
+        const searchRes = await client.post<{
+          output: {memories: Array<{content: {parts: Array<{text: string}>}}>};
+        }>('/api/reasoning_engine', {
+          class_method: 'async_search_memory',
+          input: {user_id: 'u1', query: 'Neptune'},
+        });
+        expect(searchRes.status).toBe(200);
+        expect(searchRes.data?.output.memories.length).toBe(1);
+      });
+
+      it('returns 400 when session or query is missing on memory class methods', async () => {
+        try {
+          await client.post('/api/reasoning_engine', {
+            class_method: 'async_add_session_to_memory',
+            input: {user_id: 'u1'},
+          });
+          expect.fail('Should fail with 400');
+        } catch (e: unknown) {
+          expect((e as {response: {status: number}}).response.status).toBe(400);
+          expect((e as {message: string}).message).toBe('session is required');
+        }
+
+        try {
+          await client.post('/api/reasoning_engine', {
+            class_method: 'async_search_memory',
+            input: {user_id: 'u1'},
+          });
+          expect.fail('Should fail with 400');
+        } catch (e: unknown) {
+          expect((e as {response: {status: number}}).response.status).toBe(400);
+          expect((e as {message: string}).message).toBe('query is required');
+        }
+      });
+
+      it('supports all 7 artifact class methods on /api/reasoning_engine', async () => {
+        const saveRes0 = await client.post<{output: number}>(
+          '/api/reasoning_engine',
+          {
+            class_method: 'async_save_artifact',
+            input: {
+              user_id: 'u1',
+              session_id: 's-art',
+              filename: 'doc.txt',
+              artifact: {text: 'version zero'},
+              custom_metadata: {tag: 'v0'},
+            },
+          },
+        );
+        expect(saveRes0.status).toBe(200);
+        expect(saveRes0.data).toEqual({output: 0});
+
+        const saveRes1 = await client.post<{output: number}>(
+          '/api/reasoning_engine',
+          {
+            class_method: 'async_save_artifact',
+            input: {
+              user_id: 'u1',
+              session_id: 's-art',
+              filename: 'doc.txt',
+              artifact: {
+                inline_data: {
+                  mime_type: 'text/plain',
+                  data: Buffer.from('version one').toString('base64'),
+                },
+              },
+              custom_metadata: {tag: 'v1'},
+            },
+          },
+        );
+        expect(saveRes1.status).toBe(200);
+        expect(saveRes1.data).toEqual({output: 1});
+
+        const loadLatest = await client.post<{
+          output: {inlineData?: {mimeType: string; data: string}};
+        }>('/api/reasoning_engine', {
+          class_method: 'async_load_artifact',
+          input: {user_id: 'u1', session_id: 's-art', filename: 'doc.txt'},
+        });
+        expect(loadLatest.status).toBe(200);
+        expect(loadLatest.data?.output.inlineData?.mimeType).toBe('text/plain');
+
+        const loadV0 = await client.post<{output: {text?: string}}>(
+          '/api/reasoning_engine',
+          {
+            class_method: 'async_load_artifact',
+            input: {
+              user_id: 'u1',
+              session_id: 's-art',
+              filename: 'doc.txt',
+              version: 0,
+            },
+          },
+        );
+        expect(loadV0.status).toBe(200);
+        expect(loadV0.data).toEqual({output: {text: 'version zero'}});
+
+        const listKeys = await client.post<{output: string[]}>(
+          '/api/reasoning_engine',
+          {
+            class_method: 'async_list_artifact_keys',
+            input: {user_id: 'u1', session_id: 's-art'},
+          },
+        );
+        expect(listKeys.status).toBe(200);
+        expect(listKeys.data).toEqual({output: ['doc.txt']});
+
+        const listVersions = await client.post<{output: number[]}>(
+          '/api/reasoning_engine',
+          {
+            class_method: 'async_list_versions',
+            input: {user_id: 'u1', session_id: 's-art', filename: 'doc.txt'},
+          },
+        );
+        expect(listVersions.status).toBe(200);
+        expect(listVersions.data).toEqual({output: [0, 1]});
+
+        const listArtifactVersions = await client.post<{
+          output: Array<{
+            version: number;
+            customMetadata?: Record<string, unknown>;
+          }>;
+        }>('/api/reasoning_engine', {
+          class_method: 'async_list_artifact_versions',
+          input: {user_id: 'u1', session_id: 's-art', filename: 'doc.txt'},
+        });
+        expect(listArtifactVersions.status).toBe(200);
+        expect(listArtifactVersions.data?.output.map((v) => v.version)).toEqual(
+          [0, 1],
+        );
+        expect(listArtifactVersions.data?.output[0].customMetadata).toEqual({
+          tag: 'v0',
+        });
+
+        const getArtifactVersion = await client.post<{
+          output: {version: number; customMetadata?: Record<string, unknown>};
+        }>('/api/reasoning_engine', {
+          class_method: 'async_get_artifact_version',
+          input: {
+            user_id: 'u1',
+            session_id: 's-art',
+            filename: 'doc.txt',
+            version: 0,
+          },
+        });
+        expect(getArtifactVersion.status).toBe(200);
+        expect(getArtifactVersion.data?.output.version).toBe(0);
+        expect(getArtifactVersion.data?.output.customMetadata).toEqual({
+          tag: 'v0',
+        });
+
+        const deleteRes = await client.post<{output: null}>(
+          '/api/reasoning_engine',
+          {
+            class_method: 'async_delete_artifact',
+            input: {user_id: 'u1', session_id: 's-art', filename: 'doc.txt'},
+          },
+        );
+        expect(deleteRes.status).toBe(200);
+        expect(deleteRes.data).toEqual({output: null});
+
+        const afterDelete = await client.post<{output: unknown}>(
+          '/api/reasoning_engine',
+          {
+            class_method: 'async_load_artifact',
+            input: {user_id: 'u1', session_id: 's-art', filename: 'doc.txt'},
+          },
+        );
+        expect(afterDelete.data).toEqual({output: null});
+      });
+
+      it('uses the session.id returned by getOrCreateSession on /api/reasoning_engine', async () => {
+        const origCreate = sessionService.createSession.bind(sessionService);
+        const spy = vi
+          .spyOn(sessionService, 'createSession')
+          .mockImplementation(async (req) =>
+            origCreate({...req, sessionId: 'server-assigned-id'}),
+          );
+        try {
+          const response = await client.post<{output: Event[]}>(
+            '/api/reasoning_engine',
+            {
+              class_method: 'query',
+              input: {user_id: 'u1', message: 'Hello'},
+            },
+          );
+          expect(response.status).toBe(200);
+          expect(response.data?.output.length).toBe(3);
+        } finally {
+          spy.mockRestore();
+        }
+      });
+
+      it('runs a query with session_events in a temporary session and deletes it afterwards', async () => {
+        const response = await client.post<{output: Event[]}>(
+          '/api/reasoning_engine',
+          {
+            class_method: 'query',
+            input: {
+              user_id: 'u-temp',
+              session_events: [
+                {
+                  author: 'user',
+                  content: {role: 'user', parts: [{text: 'prior turn'}]},
+                  actions: {state_delta: {prior_key: 'prior_val'}},
+                },
+              ],
+              message: 'Hello',
+            },
+          },
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.data?.output.length).toBe(3);
+        const listed = await sessionService.listSessions({
+          appName: 'testApp',
+          userId: 'u-temp',
+        });
+        expect(listed.sessions).toEqual([]);
+      });
+
+      it('returns 400 when both session_id and session_events are provided', async () => {
+        try {
+          await client.post('/api/reasoning_engine', {
+            class_method: 'async_stream_query',
+            input: {
+              user_id: 'u1',
+              session_id: 's1',
+              session_events: [],
+              message: 'Hello',
+            },
+          });
+          expect.fail('Should fail with 400');
+        } catch (e: unknown) {
+          expect((e as {response: {status: number}}).response.status).toBe(400);
+          expect((e as {message: string}).message).toBe(
+            'Only one of session_id and session_events should be specified.',
+          );
+        }
+      });
     });
 
     describe('stream_reasoning_engine', () => {
@@ -3086,6 +3425,132 @@ describe('AdkWebServer', () => {
           sessionId: 'default-session',
         });
         expect(session).toBeDefined();
+      });
+
+      it('streams _StreamRunResponse chunks for streaming_agent_run_with_events and cleans up temporary sessions', async () => {
+        const res = await fetch(`${server.url}/api/stream_reasoning_engine`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            class_method: 'streaming_agent_run_with_events',
+            input: {
+              request_json: JSON.stringify({
+                user_id: 'u-playground',
+                message: {role: 'user', parts: [{text: 'Hello playground'}]},
+                events: [
+                  {
+                    author: 'user',
+                    content: {role: 'user', parts: [{text: 'Earlier turn'}]},
+                  },
+                ],
+                artifacts: [
+                  {
+                    file_name: 'input.txt',
+                    versions: [{version: 0, data: 'hello file'}],
+                  },
+                ],
+                authorizations: {
+                  google_oauth: {access_token: 'tok-123'},
+                },
+              }),
+            },
+          }),
+        });
+
+        expect(res.status).toBe(200);
+        const lines = (await res.text()).split('\n').filter((l) => l !== '');
+        const chunks = lines.map(
+          (l) =>
+            JSON.parse(l) as {
+              events: Event[];
+              session_id: string;
+              artifacts?: unknown[];
+            },
+        );
+        expect(chunks.length).toBe(3);
+        expect(chunks[0].events.length).toBe(1);
+        expect(chunks[0].events[0].content?.parts?.[0].text).toBe(
+          "Hello user! I'm streaming you events now!",
+        );
+        expect(typeof chunks[0].session_id).toBe('string');
+
+        const listed = await sessionService.listSessions({
+          appName: 'testApp',
+          userId: 'u-playground',
+        });
+        expect(listed.sessions).toEqual([]);
+      });
+
+      it('creates a session with agent_engine:upstream_session_id when streaming_agent_run_with_events receives an unknown session_id', async () => {
+        const res = await fetch(`${server.url}/api/stream_reasoning_engine`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            class_method: 'streaming_agent_run_with_events',
+            input: {
+              request_json: JSON.stringify({
+                user_id: 'u-upstream',
+                session_id: 'upstream-sess-42',
+                message: 'Hello upstream',
+                events: [
+                  {
+                    author: 'user',
+                    content: {role: 'user', parts: [{text: 'History item'}]},
+                  },
+                ],
+                artifacts: [
+                  {
+                    file_name: 'context.json',
+                    versions: [{version: 0, data: {k: 'v'}}],
+                  },
+                ],
+              }),
+            },
+          }),
+        });
+
+        expect(res.status).toBe(200);
+        const lines = (await res.text()).split('\n').filter((l) => l !== '');
+        const chunks = lines.map(
+          (l) => JSON.parse(l) as {events: Event[]; session_id: string},
+        );
+        expect(chunks.length).toBe(3);
+        const generatedSessionId = chunks[0].session_id;
+        expect(typeof generatedSessionId).toBe('string');
+
+        const created = await sessionService.getSession({
+          appName: 'testApp',
+          userId: 'u-upstream',
+          sessionId: generatedSessionId,
+        });
+        expect(created).toBeDefined();
+        expect(created?.state['agent_engine:upstream_session_id']).toBe(
+          'upstream-sess-42',
+        );
+
+        const savedArtifact = await artifactService.loadArtifact({
+          appName: 'testApp',
+          userId: 'u-upstream',
+          sessionId: generatedSessionId,
+          filename: 'context.json',
+        });
+        expect(savedArtifact?.inlineData?.mimeType).toBe('application/json');
+      });
+
+      it('returns 400 when request_json is not a valid JSON object', async () => {
+        const res = await fetch(`${server.url}/api/stream_reasoning_engine`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            class_method: 'streaming_agent_run_with_events',
+            input: {request_json: '{bad json'},
+          }),
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'request_json must be a valid JSON object',
+        });
       });
 
       it('returns 400 for an unsupported class_method', async () => {
