@@ -10,6 +10,7 @@ This sample shows how an OAuth2 authorization-code config becomes an auth reques
 - `AuthHandler.generateAuthRequest` builds the auth request. The credential has no `redirectUri`, so the generated URI carries no `redirect_uri` parameter. The request holds a copy of the raw credential, not the raw credential itself.
 - `AutoAuthCredentialExchanger` lists its registered exchangers. It turns an OAuth2 credential that holds an access token into an HTTP bearer credential with `wasExchanged: true`, and returns the credential with `wasExchanged: false` when there is no token yet.
 - `generateAuthToken` does the same conversion directly.
+- `CredentialManager` returns `undefined` before an auth response is available, then loads the credential from the session auth response and persists it to `InMemoryCredentialService`.
 
 The access token is a placeholder string, and the reply shows it only in redacted form.
 

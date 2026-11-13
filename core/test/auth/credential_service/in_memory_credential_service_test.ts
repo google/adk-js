@@ -56,6 +56,72 @@ describe('InMemoryCredentialService', () => {
     expect(loaded).toEqual(credential);
   });
 
+  it('should update an existing credential when saved again under the same key', async () => {
+    const service = new InMemoryCredentialService();
+    const context = createMockContext('testApp', 'user1');
+    const initialCredential: AuthCredential = {
+      authType: AuthCredentialTypes.OAUTH2,
+      oauth2: {
+        clientId: 'initial-client-id',
+        clientSecret: 'initial-client-secret',
+      },
+    };
+    const updatedCredential: AuthCredential = {
+      authType: AuthCredentialTypes.OAUTH2,
+      oauth2: {
+        clientId: 'updated-client-id',
+        clientSecret: 'updated-client-secret',
+      },
+    };
+    const authConfig: AuthConfig = {
+      credentialKey: 'key1',
+      authScheme: {} as AuthScheme,
+      exchangedAuthCredential: initialCredential,
+    };
+
+    await service.saveCredential(authConfig, context);
+    await service.saveCredential(
+      {...authConfig, exchangedAuthCredential: updatedCredential},
+      context,
+    );
+
+    const loaded = await service.loadCredential(authConfig, context);
+    expect(loaded).toEqual(updatedCredential);
+  });
+
+  it('should store multiple credentials under different keys in the same context', async () => {
+    const service = new InMemoryCredentialService();
+    const context = createMockContext('testApp', 'user1');
+    const credential1: AuthCredential = {
+      authType: AuthCredentialTypes.API_KEY,
+      apiKey: 'secret-1',
+    };
+    const credential2: AuthCredential = {
+      authType: AuthCredentialTypes.API_KEY,
+      apiKey: 'secret-2',
+    };
+    const authConfig1: AuthConfig = {
+      credentialKey: 'key1',
+      authScheme: {} as AuthScheme,
+      exchangedAuthCredential: credential1,
+    };
+    const authConfig2: AuthConfig = {
+      credentialKey: 'key2',
+      authScheme: {} as AuthScheme,
+      exchangedAuthCredential: credential2,
+    };
+
+    await service.saveCredential(authConfig1, context);
+    await service.saveCredential(authConfig2, context);
+
+    expect(await service.loadCredential(authConfig1, context)).toEqual(
+      credential1,
+    );
+    expect(await service.loadCredential(authConfig2, context)).toEqual(
+      credential2,
+    );
+  });
+
   it('should isolate by appName and userId', async () => {
     const service = new InMemoryCredentialService();
     const context1 = createMockContext('app1', 'user1');

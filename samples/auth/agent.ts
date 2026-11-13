@@ -38,10 +38,13 @@ import {
   AuthSchemeType,
   AutoAuthCredentialExchanger,
   BaseAgent,
+  Context,
   createEvent,
+  CredentialManager,
   Event,
   generateAuthToken,
   getOAuthGrantTypeFromFlow,
+  InMemoryCredentialService,
   InvocationContext,
 } from '@google/adk';
 
@@ -123,6 +126,39 @@ async function describeExchange(): Promise<string[]> {
   ];
 }
 
+/** Describes how `CredentialManager` loads and persists credentials via `InMemoryCredentialService`. */
+async function describeCredentialManager(
+  ctx: InvocationContext,
+): Promise<string[]> {
+  const credentialService = new InMemoryCredentialService();
+  const toolContext = new Context({
+    invocationContext: ctx.clone({credentialService}),
+    functionCallId: 'sample-auth-call',
+  });
+  const manager = new CredentialManager(authConfig);
+  const beforeResponse = await manager.getAuthCredential(toolContext);
+
+  toolContext.state.set(`temp:${authConfig.credentialKey}`, {
+    authType: AuthCredentialTypes.OAUTH2,
+    oauth2: {accessToken: PLACEHOLDER_ACCESS_TOKEN},
+  });
+  const afterResponse = await manager.getAuthCredential(toolContext);
+  const stored = await credentialService.loadCredential(
+    authConfig,
+    toolContext,
+  );
+
+  return [
+    `CredentialManager before response: ${beforeResponse ?? 'undefined'}`,
+    `CredentialManager after response: ${afterResponse?.authType} ${redact(
+      afterResponse?.oauth2?.accessToken,
+    )}`,
+    `Saved in InMemoryCredentialService: ${Boolean(
+      stored?.oauth2?.accessToken,
+    )}`,
+  ];
+}
+
 class AuthShowcaseAgent extends BaseAgent {
   constructor() {
     super({
@@ -140,6 +176,7 @@ class AuthShowcaseAgent extends BaseAgent {
       `Grant type: ${getOAuthGrantTypeFromFlow(flows)}`,
       ...describeAuthRequest(),
       ...(await describeExchange()),
+      ...(await describeCredentialManager(ctx)),
     ];
 
     yield createEvent({

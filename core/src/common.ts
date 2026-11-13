@@ -143,6 +143,7 @@ export {
 export type {AuthScheme, OpenIdConnectWithConfig} from './auth/auth_schemes.js';
 export type {AuthConfig} from './auth/auth_tool.js';
 export type {BaseAuthProvider} from './auth/base_auth_provider.js';
+export {CredentialManager} from './auth/credential_manager.js';
 export type {BaseCredentialService} from './auth/credential_service/base_credential_service.js';
 export {InMemoryCredentialService} from './auth/credential_service/in_memory_credential_service.js';
 export {SessionStateCredentialService} from './auth/credential_service/session_state_credential_service.js';
@@ -151,8 +152,11 @@ export type {
   BaseCredentialExchanger,
   ExchangeResult,
 } from './auth/exchanger/base_credential_exchanger.js';
+export {CredentialExchangerRegistry} from './auth/exchanger/credential_exchanger_registry.js';
 export {OAuth2CredentialExchanger} from './auth/oauth2/oauth2_credential_exchanger.js';
+export {OAuth2CredentialRefresher} from './auth/oauth2/oauth2_credential_refresher.js';
 export {OAuth2DiscoveryManager} from './auth/oauth2/oauth2_discovery.js';
+export {CredentialRefresherError} from './auth/refresher/base_credential_refresher.js';
 export type {BaseCredentialRefresher} from './auth/refresher/base_credential_refresher.js';
 export {CredentialRefresherRegistry} from './auth/refresher/credential_refresher_registry.js';
 export {BaseCodeExecutor} from './code_executors/base_code_executor.js';
