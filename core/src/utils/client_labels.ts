@@ -19,7 +19,8 @@ const TRACKING_HEADER_NAMES = ['x-goog-api-client', 'user-agent'] as const;
  * `HeadersInit`, which is not used by name because the lint configuration
  * defines only Node globals and its `no-undef` rule rejects it.
  */
-type HeadersInput = Headers | Array<[string, string]> | Record<string, string>;
+export type HeadersInput =
+  Headers | Array<[string, string]> | Record<string, string>;
 
 const clientLabelLocalStorage = new AsyncLocalStorage<string>();
 
@@ -116,7 +117,13 @@ function isHeaders(
   return typeof headers.forEach === 'function';
 }
 
-function headerEntries(headers?: HeadersInput): Array<[string, string]> {
+/**
+ * Lists the name and value pairs of `headers`, in any `HeadersInit` shape.
+ *
+ * Names keep the caller's casing, except for a `Headers` object, which stores
+ * them in lower case.
+ */
+export function headerEntries(headers?: HeadersInput): Array<[string, string]> {
   if (!headers) {
     return [];
   }

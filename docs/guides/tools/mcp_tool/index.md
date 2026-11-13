@@ -118,11 +118,16 @@ strings become Gemini `Type` enum values, nullable unions such as
 `integer` or `number`, `'date-time'` and `'enum'` on `string`) are preserved
 while unsupported formats are dropped.
 
-**4. Each tool call runs in its own session.** When the model invokes an
-`MCPTool`, `runAsync` opens a session through `MCPSessionManager.createSession()`,
-calls `session.callTool` with the unprefixed `originalName`, the model's
-arguments, and `this.mcpSessionManager.getRequestOptions(toolContext.abortSignal)`,
-returns the `CallToolResult`, and closes the session in `finally`. Calling
+**4. Each tool call runs in its own session.** `MCPTool` extends
+`BaseAuthenticatedTool`. When the model invokes it, `runAsync` first resolves a
+credential if the tool has an `authConfig` (see
+[Authenticating tool calls](#authenticating-tool-calls)); without one it goes
+straight to the call. The call opens a session through
+`MCPSessionManager.createSession(headers)`, with the authentication headers if
+there are any, calls `session.callTool` with the unprefixed `originalName`, the
+model's arguments, and
+`this.mcpSessionManager.getRequestOptions(toolContext.abortSignal)`, returns the
+`CallToolResult`, and closes the session in `finally`. Calling
 `mcpToolset.close()` closes any sessions that are still active on the session
 manager.
 
@@ -130,13 +135,20 @@ manager.
 
 ### MCPToolset
 
-`MCPToolset` takes three positional arguments: `new MCPToolset(connectionParams, toolFilter, prefix)`.
+`MCPToolset` takes an `MCPToolsetOptions` object,
+`new MCPToolset({connectionParams, toolFilter, prefix, authConfig})`, or the
+positional arguments `new MCPToolset(connectionParams, toolFilter, prefix)`.
+Only the options object accepts the authentication options.
 
-| Argument           | Type                        | Default     | Description                                                                                                   |
-| :----------------- | :-------------------------- | :---------- | :------------------------------------------------------------------------------------------------------------ |
-| `connectionParams` | `MCPConnectionParams`       | required    | Transport parameters for `StdioConnectionParams`, `StreamableHTTPConnectionParams`, or `SseConnectionParams`. |
-| `toolFilter`       | `ToolPredicate \| string[]` | `[]`        | Selects which discovered tools `getTools()` returns.                                                          |
-| `prefix`           | `string`                    | `undefined` | Prepends `${prefix}_` to the tool name exposed to the model.                                                  |
+| Option             | Type                        | Default     | Description                                                                                                    |
+| :----------------- | :-------------------------- | :---------- | :------------------------------------------------------------------------------------------------------------- |
+| `connectionParams` | `MCPConnectionParams`       | required    | Transport parameters for `StdioConnectionParams`, `StreamableHTTPConnectionParams`, or `SseConnectionParams`.  |
+| `toolFilter`       | `ToolPredicate \| string[]` | `[]`        | Selects which discovered tools `getTools()` returns.                                                           |
+| `prefix`           | `string`                    | `undefined` | Prepends `${prefix}_` to the tool name exposed to the model.                                                   |
+| `authConfig`       | `AuthConfig`                | `undefined` | Experimental. Authentication configuration given to every discovered `MCPTool`; applies to tool calls only.    |
+| `authScheme`       | `AuthScheme`                | `undefined` | Experimental. Alternative to `authConfig`: the auth scheme for every discovered `MCPTool`.                     |
+| `authCredential`   | `AuthCredential`            | `undefined` | The raw credential for `authScheme`. Requires `authScheme`.                                                    |
+| `credentialKey`    | `string`                    | derived     | The credential service key for `authScheme`. Defaults to a key derived from `authScheme` and `authCredential`. |
 
 `toolFilter` accepts either a list of tool names or a `(tool, readonlyContext?) => boolean`
 predicate. A `string[]` filter matches against the tool's exposed name, which
@@ -242,6 +254,121 @@ appends system instructions naming them and telling the model to call
 `mcpToolset.readResource(name)` and appends the text or base64-encoded binary
 `inlineData` parts to the outgoing `LlmRequest`.
 
+### Authenticating tool calls
+
+Authentication is experimental. Give `MCPToolset` an `authConfig` to send a
+credential with each tool call. Every `MCPTool` that `getTools()` returns
+carries the same `authConfig`, and resolves the credential through the
+`BaseAuthenticatedTool` flow before it opens the session for the call. If no
+credential is available yet, for example before the user completes an OAuth2
+consent, the tool asks the client for one with `toolContext.requestCredential`
+and returns `'Pending User Authorization.'` instead of calling the server.
+
+The example below sends an API key in the `X-API-Key` header of a Streamable
+HTTP server. An API key, like other simple credentials, goes in
+`rawAuthCredential` and needs no exchange.
+
+```ts
+import {AuthCredentialTypes, MCPToolset} from '@google/adk';
+
+const apiKeyToolset = new MCPToolset({
+  connectionParams: {
+    type: 'StreamableHTTPConnectionParams',
+    url: 'http://localhost:8788/mcp',
+  },
+  authConfig: {
+    authScheme: {type: 'apiKey', in: 'header', name: 'X-API-Key'},
+    rawAuthCredential: {
+      authType: AuthCredentialTypes.API_KEY,
+      apiKey: process.env.MCP_API_KEY,
+    },
+    credentialKey: 'mcp-api-key',
+  },
+});
+```
+
+For OAuth2, give the scheme and the client credentials. The client runs the
+consent flow; ADK exchanges the authorization code and sends the access token.
+
+```ts
+import {AuthCredentialTypes, MCPToolset} from '@google/adk';
+
+const oauthToolset = new MCPToolset({
+  connectionParams: {
+    type: 'SseConnectionParams',
+    url: 'https://mcp.example.com/sse',
+  },
+  authConfig: {
+    authScheme: {
+      type: 'oauth2',
+      flows: {
+        authorizationCode: {
+          authorizationUrl: 'https://auth.example.com/authorize',
+          tokenUrl: 'https://auth.example.com/token',
+          scopes: {'tools.read': 'Call the MCP tools'},
+        },
+      },
+    },
+    rawAuthCredential: {
+      authType: AuthCredentialTypes.OAUTH2,
+      oauth2: {
+        clientId: process.env.MCP_CLIENT_ID,
+        clientSecret: process.env.MCP_CLIENT_SECRET,
+      },
+    },
+    credentialKey: 'mcp-oauth2',
+  },
+});
+```
+
+Instead of an `authConfig`, you can give `authScheme` and `authCredential`, as
+the OpenAPI and API Hub toolsets take them. Without a `credentialKey`, the
+toolset derives one from the scheme and the credential, leaving out the OAuth2
+fields that change during sign-in (`state`, `authCode`, `accessToken` and the
+like), so the key stays the same before and after the user signs in. Giving
+`authConfig` together with any of `authScheme`, `authCredential` or
+`credentialKey` throws an error, and so does `authCredential` or
+`credentialKey` without `authScheme`.
+
+```ts
+import {AuthCredentialTypes, MCPToolset} from '@google/adk';
+
+const schemeToolset = new MCPToolset({
+  connectionParams: {
+    type: 'StreamableHTTPConnectionParams',
+    url: 'http://localhost:8788/mcp',
+  },
+  authScheme: {type: 'apiKey', in: 'header', name: 'X-API-Key'},
+  authCredential: {
+    authType: AuthCredentialTypes.API_KEY,
+    apiKey: process.env.MCP_API_KEY,
+  },
+});
+```
+
+`MCPTool` turns the resolved credential into HTTP headers:
+
+| Credential                                     | Headers sent                                                       |
+| :--------------------------------------------- | :----------------------------------------------------------------- |
+| OAuth2 with `accessToken`                      | `Authorization: Bearer <accessToken>`; no header without a token   |
+| HTTP `bearer` with `token`                     | `Authorization: Bearer <token>`                                    |
+| HTTP `basic` with `username` and `password`    | `Authorization: Basic <base64(username:password)>`                 |
+| HTTP with another scheme and `token`           | `Authorization: <scheme> <token>`                                  |
+| HTTP `additionalHeaders`                       | Added to the headers above; replaces a header of the same name     |
+| API key with an `apiKey` scheme `in: 'header'` | `<scheme name>: <apiKey>`; another location or a blank name throws |
+| Service account                                | None; a warning is logged, because it must be exchanged beforehand |
+
+The headers are added on top of the connection's own headers
+(`transportOptions.requestInit.headers`, or `header`/`headers` when
+`requestInit` is absent). Header names are compared case-insensitively, so one
+header is never sent twice in different casings, and the authentication header
+wins. The ADK tracking headers are still merged in.
+
+`MCPTool` also takes an `MCPToolOptions` object,
+`new MCPTool({mcpTool, mcpSessionManager, originalName, authConfig})`, when you
+build tools yourself. It accepts the same `authScheme`, `authCredential` and
+`credentialKey` options as `MCPToolset`.
+
 ### Exposing an ADK tool schema from an MCP server
 
 When you already have an ADK `BaseTool`, such as a `FunctionTool`, and want to
@@ -314,6 +441,12 @@ resolving the resource name to a URI via `getResourceInfo(name)` and reading the
 resource contents open two sequential sessions. A stdio MCP server therefore
 starts a fresh subprocess for each discovery or tool call unless the server is
 hosted externally over Streamable HTTP or SSE.
+
+**Authentication is experimental and covers tool calls only.**
+`MCPToolset.getTools()`, `listResources()`, `getResourceInfo()`, and
+`readResource()` send no authentication headers, so configure discovery
+credentials on the connection parameters. Stdio connections ignore the
+authentication headers. API keys are supported only in a header.
 
 **Predicate filter evaluates with optional context.** Passing a `ToolPredicate` function as
 `toolFilter` evaluates the predicate for every discovered tool. When `getTools()` is called without
