@@ -13,6 +13,101 @@ const ADK_METADATA_KEY_PREFIX = 'adk_';
 const A2A_METADATA_KEY_PREFIX = 'a2a:';
 
 /**
+ * First segment of an A2A context id built by {@link toA2AContextId}.
+ */
+export const ADK_CONTEXT_ID_PREFIX = 'ADK';
+
+/**
+ * Separator between the segments of an A2A context id built by
+ * {@link toA2AContextId}.
+ */
+export const ADK_CONTEXT_ID_SEPARATOR = '/';
+
+/**
+ * The ADK session fields that an A2A context id carries.
+ */
+export interface A2AContextIdParts {
+  readonly appName: string;
+  readonly userId: string;
+  readonly sessionId: string;
+}
+
+/**
+ * Builds an A2A context id of the form `ADK/<appName>/<userId>/<sessionId>`.
+ *
+ * Each field is percent-encoded, so a field that contains the separator still
+ * round-trips through {@link fromA2AContextId}.
+ *
+ * @param parts - The app name, user ID and session ID. All must be non-empty.
+ * @returns The A2A context id.
+ * @throws Error if any field is empty.
+ */
+export function toA2AContextId({
+  appName,
+  userId,
+  sessionId,
+}: A2AContextIdParts): string {
+  if (!appName || !userId || !sessionId) {
+    throw new Error(
+      'All parameters (appName, userId, sessionId) must be non-empty',
+    );
+  }
+
+  return [
+    ADK_CONTEXT_ID_PREFIX,
+    encodeURIComponent(appName),
+    encodeURIComponent(userId),
+    encodeURIComponent(sessionId),
+  ].join(ADK_CONTEXT_ID_SEPARATOR);
+}
+
+/**
+ * Parses an A2A context id built by {@link toA2AContextId}.
+ *
+ * The context id can come from a remote peer, so this never throws: any input
+ * that does not match the format, including malformed percent-encoding, gives
+ * `undefined`.
+ *
+ * @param contextId - The A2A context id.
+ * @returns The app name, user ID and session ID, or `undefined` if the context
+ *   id is missing or not in the expected format.
+ */
+export function fromA2AContextId(
+  contextId?: string,
+): A2AContextIdParts | undefined {
+  if (!contextId) {
+    return undefined;
+  }
+
+  const segments = contextId.split(ADK_CONTEXT_ID_SEPARATOR);
+  if (segments.length !== 4) {
+    return undefined;
+  }
+
+  const [prefix, ...fields] = segments;
+  if (prefix !== ADK_CONTEXT_ID_PREFIX) {
+    return undefined;
+  }
+
+  let decoded: string[];
+  try {
+    decoded = fields.map((field) => decodeURIComponent(field));
+  } catch (e) {
+    if (e instanceof URIError) {
+      return undefined;
+    }
+    throw e;
+  }
+
+  const [appName, userId, sessionId] = decoded;
+  if (!appName || !userId || !sessionId) {
+    return undefined;
+  }
+
+  return {appName, userId, sessionId};
+}
+
+/**
  * Keys for metadata that will be stored in A2A message metadata and related to ADK events.
  */
 export enum A2AMetadataKeys {

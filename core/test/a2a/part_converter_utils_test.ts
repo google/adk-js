@@ -90,6 +90,25 @@ describe('part_converter_utils', () => {
       expect(toA2AFilePart(genAiPart)).toEqual(expected);
     });
 
+    it('converts inlineData part with videoMetadata', () => {
+      const genAiPart: GenAIPart = {
+        inlineData: {mimeType: 'video/mp4', data: 'base64video'},
+        videoMetadata: {
+          fps: 30,
+        },
+      };
+      const expected: A2APart = {
+        kind: 'file',
+        file: {bytes: 'base64video', mimeType: 'video/mp4'},
+        metadata: {
+          'adk_video_metadata': {
+            fps: 30,
+          },
+        },
+      };
+      expect(toA2AFilePart(genAiPart)).toEqual(expected);
+    });
+
     it('throws on invalid file part', () => {
       expect(() => toA2AFilePart({text: 'not file'})).toThrow(
         'Not a file part',
@@ -387,6 +406,25 @@ describe('part_converter_utils', () => {
       expect(toGenAIPartFile(a2aPart)).toEqual(expected);
     });
 
+    it('converts from file with bytes and videoMetadata', () => {
+      const a2aPart: A2AFilePart = {
+        kind: 'file',
+        file: {bytes: 'base64video', mimeType: 'video/mp4'},
+        metadata: {
+          'adk_video_metadata': {
+            fps: 30,
+          },
+        },
+      };
+      const expected: GenAIPart = {
+        inlineData: {data: 'base64video', mimeType: 'video/mp4'},
+        videoMetadata: {
+          fps: 30,
+        },
+      };
+      expect(toGenAIPartFile(a2aPart)).toEqual(expected);
+    });
+
     it('throws if neither uri nor bytes', () => {
       const a2aPart = {kind: 'file', file: {}} as unknown as A2AFilePart;
       expect(() => toGenAIPartFile(a2aPart)).toThrow(
@@ -607,6 +645,19 @@ describe('part_converter_utils', () => {
           'adk_video_metadata': {
             startOffset: '0s',
             endOffset: '10s',
+          },
+        },
+      };
+      expect(toA2APart(toGenAIPart(a2aPart))).toEqual(a2aPart);
+    });
+
+    it('toA2APart(toGenAIPart(part)) equals part for file base64 with videoMetadata', () => {
+      const a2aPart: A2APart = {
+        kind: 'file',
+        file: {bytes: 'base64video', mimeType: 'video/mp4'},
+        metadata: {
+          'adk_video_metadata': {
+            fps: 30,
           },
         },
       };
