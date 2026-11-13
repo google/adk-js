@@ -71,6 +71,7 @@ export class AdkApiClient {
     userId: string;
     sessionId?: string;
     state?: Record<string, unknown>;
+    events?: Event[];
   }): Promise<Session> {
     let url = `${this.backendUrl}/apps/${params.appName}/users/${params.userId}/sessions`;
     if (params.sessionId) {
@@ -83,6 +84,7 @@ export class AdkApiClient {
       },
       body: JSON.stringify({
         state: params.state,
+        ...(params.events !== undefined ? {events: params.events} : {}),
       }),
     });
   }

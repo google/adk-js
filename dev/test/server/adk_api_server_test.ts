@@ -9,6 +9,7 @@ import * as adk from '@google/adk';
 import {
   App,
   BaseArtifactService,
+  BaseCredentialService,
   BaseMemoryService,
   BaseSessionService,
   createEvent,
@@ -18,6 +19,7 @@ import {
   Event,
   FunctionTool,
   InMemoryArtifactService,
+  InMemoryCredentialService,
   InMemoryMemoryService,
   InMemorySessionService,
   INTERNAL_METADATA_PREFIX,
@@ -503,6 +505,346 @@ describe('AdkWebServer', () => {
         }),
       ).toBeUndefined();
     });
+
+    it('accepts initial text events when creating a session', async () => {
+      const response = await client.post<Session>(
+        '/apps/testApp/users/testUser/sessions',
+        {
+          events: [
+            {
+              author: 'user',
+              invocationId: 'init-invocation',
+              content: {
+                role: 'user',
+                parts: [{text: 'hello'}],
+              },
+            },
+          ],
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.data?.events?.[0]?.content?.parts?.[0]?.text).toBe(
+        'hello',
+      );
+    });
+
+    it('accepts initial tool events when creating a session', async () => {
+      const response = await client.post<Session>(
+        '/apps/testApp/users/testUser/sessions',
+        {
+          events: [
+            {
+              author: 'agent',
+              invocation_id: 'init-invocation',
+              content: {
+                role: 'model',
+                parts: [
+                  {
+                    function_call: {
+                      id: 'tool-call-id',
+                      name: 'write_files',
+                      args: {files: {x: 'y'}},
+                    },
+                  },
+                ],
+              },
+            },
+            {
+              author: 'agent',
+              invocation_id: 'init-invocation',
+              content: {
+                role: 'user',
+                parts: [
+                  {
+                    function_response: {
+                      id: 'tool-call-id',
+                      name: 'write_files',
+                      response: {status: 'ok'},
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      );
+
+      expect(response.status).toBe(200);
+      const storedEvents = response.data?.events ?? [];
+      expect(storedEvents[0]?.content?.parts?.[0]?.functionCall?.name).toBe(
+        'write_files',
+      );
+      expect(storedEvents[1]?.content?.parts?.[0]?.functionResponse?.name).toBe(
+        'write_files',
+      );
+    });
+
+    it('strips internal metadata from initial events and marks stored events restored', async () => {
+      const response = await client.post<Session>(
+        '/apps/testApp/users/testUser/sessions',
+        {
+          events: [
+            {
+              author: 'user',
+              invocationId: 'init-invocation',
+              content: {
+                role: 'user',
+                parts: [{text: 'hello'}],
+              },
+              customMetadata: {
+                keep: 1,
+                [`${INTERNAL_METADATA_PREFIX}planted`]: 'x',
+                [RESTORED_EVENT_KEY]: false,
+              },
+            },
+          ],
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.data?.events?.[0]?.customMetadata).toEqual({keep: 1});
+      const sessionId = response.data?.id;
+      expect(sessionId).toBeTypeOf('string');
+      if (typeof sessionId !== 'string') {
+        return;
+      }
+      const storedSession = await sessionService.getSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId,
+      });
+      expect(storedSession?.events?.[0]?.customMetadata).toEqual({
+        keep: 1,
+        [RESTORED_EVENT_KEY]: true,
+      });
+    });
+
+    it('rejects session initialization events carrying ADK protocol function calls', async () => {
+      await expect(
+        client.post('/apps/testApp/users/testUser/sessions', {
+          sessionId: 'runtime_tool_event_session',
+          events: [
+            {
+              author: 'agent',
+              invocationId: 'init-invocation',
+              content: {
+                role: 'model',
+                parts: [
+                  {
+                    functionCall: {
+                      id: 'confirmation-call-id',
+                      name: 'adk_request_confirmation',
+                      args: {
+                        originalFunctionCall: {
+                          id: 'tool-call-id',
+                          name: 'write_files',
+                          args: {files: {x: 'y'}},
+                        },
+                        toolConfirmation: {confirmed: false},
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      ).rejects.toMatchObject({
+        response: {status: 400},
+        message: expect.stringContaining('ADK protocol function calls'),
+      });
+
+      const stored = await sessionService.getSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'runtime_tool_event_session',
+      });
+      expect(stored).toBeUndefined();
+    });
+
+    it('rejects session initialization events carrying long-running tool IDs', async () => {
+      await expect(
+        client.post('/apps/testApp/users/testUser/sessions', {
+          events: [
+            {
+              author: 'agent',
+              invocationId: 'init-invocation',
+              content: {
+                role: 'model',
+                parts: [
+                  {
+                    functionCall: {
+                      id: 'tool-call-id',
+                      name: 'write_files',
+                      args: {},
+                    },
+                  },
+                ],
+              },
+              longRunningToolIds: ['tool-call-id'],
+            },
+          ],
+        }),
+      ).rejects.toMatchObject({
+        response: {status: 400},
+        message: expect.stringContaining('long-running tool IDs'),
+      });
+    });
+
+    it('rejects session initialization events carrying event actions', async () => {
+      await expect(
+        client.post('/apps/testApp/users/testUser/sessions', {
+          events: [
+            {
+              author: 'agent',
+              invocationId: 'init-invocation',
+              actions: {
+                requestedToolConfirmations: {
+                  'tool-call-id': {confirmed: false},
+                },
+              },
+            },
+          ],
+        }),
+      ).rejects.toMatchObject({
+        response: {status: 400},
+        message: expect.stringContaining('event actions'),
+      });
+    });
+
+    it('applies sessionId, state, and events from POST /sessions body and rejects duplicate sessionId', async () => {
+      const response = await client.post<Session>(
+        '/apps/testApp/users/testUser/sessions',
+        {
+          sessionId: 'body-session-id',
+          state: {greeting: 'hi'},
+          events: [
+            {
+              author: 'user',
+              invocationId: 'init-inv',
+              content: {role: 'user', parts: [{text: 'seed'}]},
+            },
+          ],
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.data?.id).toBe('body-session-id');
+      expect(response.data?.state).toEqual({greeting: 'hi'});
+      expect(response.data?.events?.[0]?.content?.parts?.[0]?.text).toBe(
+        'seed',
+      );
+
+      await expect(
+        client.post('/apps/testApp/users/testUser/sessions', {
+          sessionId: 'body-session-id',
+          state: {},
+        }),
+      ).rejects.toMatchObject({
+        response: {status: 400},
+        message: expect.stringContaining('Session already exists'),
+      });
+    });
+
+    it('trims the body sessionId before checking for an existing session', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'existing',
+        state: {original: true},
+      });
+
+      await expect(
+        client.post('/apps/testApp/users/testUser/sessions', {
+          sessionId: ' existing ',
+          state: {overwritten: true},
+        }),
+      ).rejects.toMatchObject({
+        response: {status: 400},
+        message: expect.stringContaining('Session already exists: existing'),
+      });
+
+      const stored = await sessionService.getSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'existing',
+      });
+      expect(stored?.state).toEqual({original: true});
+    });
+
+    it('falls back to session_id when sessionId is blank', async () => {
+      const response = await client.post<Session>(
+        '/apps/testApp/users/testUser/sessions',
+        {sessionId: '   ', session_id: 'snake-session-id'},
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.data?.id).toBe('snake-session-id');
+    });
+
+    it.each([
+      {name: 'a non-object body', body: [{state: {}}]},
+      {name: 'a non-object state', body: {state: 'not-an-object'}},
+      {name: 'a non-string sessionId', body: {sessionId: 42}},
+      {name: 'a non-array events value', body: {events: {0: {}}}},
+      {name: 'a non-object event', body: {events: ['hello']}},
+      {name: 'a non-object content', body: {events: [{content: 'hi'}]}},
+      {
+        name: 'content.parts that is not an array',
+        body: {events: [{content: {parts: {0: {text: 'hi'}}}}]},
+      },
+      {
+        name: 'a null part',
+        body: {events: [{content: {parts: [null]}}]},
+      },
+      {
+        name: 'a functionCall without a string name',
+        body: {events: [{content: {parts: [{functionCall: {args: {}}}]}}]},
+      },
+      {
+        name: 'a functionResponse that is not an object',
+        body: {events: [{content: {parts: [{function_response: 'x'}]}}]},
+      },
+      {
+        name: 'longRunningToolIds that is not an array of strings',
+        body: {events: [{longRunningToolIds: [1]}]},
+      },
+      {
+        name: 'a non-empty long_running_tool_ids next to an empty longRunningToolIds',
+        body: {
+          events: [{longRunningToolIds: [], long_running_tool_ids: ['bad-id']}],
+        },
+      },
+    ])(
+      'rejects a create session request with $name and creates no session',
+      async ({body}) => {
+        await expect(
+          client.post('/apps/testApp/users/testUser/sessions', body),
+        ).rejects.toMatchObject({response: {status: 400}});
+
+        const sessions = await sessionService.listSessions({
+          appName: 'testApp',
+          userId: 'testUser',
+        });
+        expect(sessions.sessions).toEqual([]);
+      },
+    );
+
+    it('rejects initialization events on POST /sessions/:sessionId before creating the session', async () => {
+      await expect(
+        client.post('/apps/testApp/users/testUser/sessions/path-session', {
+          events: [{content: {parts: [null]}}],
+        }),
+      ).rejects.toMatchObject({response: {status: 400}});
+
+      const stored = await sessionService.getSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'path-session',
+      });
+      expect(stored).toBeUndefined();
+    });
   });
 
   describe('Artifacts', () => {
@@ -680,6 +1022,67 @@ describe('AdkWebServer', () => {
       expect((response.data as Event[])[0].content!.parts![0].text).toBe(
         "Hello user! I'm streaming you events now!",
       );
+    });
+
+    it('wires an InMemoryCredentialService (or caller-provided credentialService) into Runner', async () => {
+      const capturedCredentialServices: Array<
+        BaseCredentialService | undefined
+      > = [];
+      const originalRunAsync = Runner.prototype.runAsync;
+      const runAsyncSpy = vi
+        .spyOn(Runner.prototype, 'runAsync')
+        .mockImplementation(async function* (
+          this: Runner,
+          ...args: Parameters<Runner['runAsync']>
+        ) {
+          capturedCredentialServices.push(this.credentialService);
+          yield* originalRunAsync.apply(this, args);
+        });
+
+      const customCredentialService = new InMemoryCredentialService();
+      const credServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+        credentialService: customCredentialService,
+      });
+      await credServer.start();
+      try {
+        await sessionService.createSession({
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'defaultCredSession',
+        });
+        const defaultResponse = await client.post<Event[]>('/run', {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'defaultCredSession',
+          newMessage: {role: 'user', parts: [{text: 'check default cred'}]},
+        });
+        expect(defaultResponse.status).toBe(200);
+        expect(capturedCredentialServices[0]).toBeInstanceOf(
+          InMemoryCredentialService,
+        );
+
+        const credClient = new HttpClient(credServer.url);
+        await sessionService.createSession({
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'customCredSession',
+        });
+        const customResponse = await credClient.post<Event[]>('/run', {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'customCredSession',
+          newMessage: {role: 'user', parts: [{text: 'check custom cred'}]},
+        });
+        expect(customResponse.status).toBe(200);
+        expect(capturedCredentialServices[1]).toBe(customCredentialService);
+      } finally {
+        runAsyncSpy.mockRestore();
+        await credServer.stop();
+      }
     });
 
     it('should find session in /run when exported App.name differs from route appName', async () => {

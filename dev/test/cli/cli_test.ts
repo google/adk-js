@@ -6,12 +6,14 @@
 
 import {
   InMemoryMemoryService,
+  InMemorySessionService,
   LocalEvalSetResultsManager,
   LogLevel,
   logToTmpFolder,
   setupAdkLogger,
   VertexAiMemoryBankService,
   VertexAiRagMemoryService,
+  VertexAiSessionService,
 } from '@google/adk';
 import {Command, CommanderError} from 'commander';
 import * as fs from 'node:fs';
@@ -22,6 +24,7 @@ import {
   adkServicesOptions,
   createProgram,
   getMemoryServiceFromOptions,
+  getSessionServiceFromOptions,
 } from '../../src/cli/cli.js';
 import {createAgent} from '../../src/cli/cli_create.js';
 import {runAgent} from '../../src/cli/cli_run.js';
@@ -69,10 +72,43 @@ vi.mock('../../src/version', () => ({
   version: '1.0.0-test',
 }));
 
+const {vertexAiSessionServiceOptions, vertexAiMemoryBankServiceOptions} =
+  vi.hoisted(() => ({
+    vertexAiSessionServiceOptions: vi.fn(),
+    vertexAiMemoryBankServiceOptions: vi.fn(),
+  }));
+
 vi.mock('@google/adk', async (importOriginal) => {
-  const actual = await importOriginal();
+  const actual = await importOriginal<typeof import('@google/adk')>();
+
+  // Subclasses keep `instanceof` checks working and record the options each
+  // service is constructed with.
+  class RecordingVertexAiSessionService extends actual.VertexAiSessionService {
+    constructor(
+      options: ConstructorParameters<typeof actual.VertexAiSessionService>[0],
+    ) {
+      super(options);
+      vertexAiSessionServiceOptions(options);
+    }
+  }
+
+  class RecordingVertexAiMemoryBankService
+    extends actual.VertexAiMemoryBankService
+  {
+    constructor(
+      options: ConstructorParameters<
+        typeof actual.VertexAiMemoryBankService
+      >[0],
+    ) {
+      super(options);
+      vertexAiMemoryBankServiceOptions(options);
+    }
+  }
+
   return {
-    ...(actual as object),
+    ...actual,
+    VertexAiSessionService: RecordingVertexAiSessionService,
+    VertexAiMemoryBankService: RecordingVertexAiMemoryBankService,
     setupAdkLogger: vi.fn(),
     logToTmpFolder: vi.fn(),
   };
@@ -239,6 +275,22 @@ describe('CLI Entrypoint', () => {
 
       const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
       expect(args.memoryService).toBeInstanceOf(VertexAiRagMemoryService);
+    });
+
+    it('passes a VertexAiSessionService for an agentengine:// --session_service_uri', async () => {
+      await parse([
+        'web',
+        '--session_service_uri',
+        'agentengine://projects/test-proj/locations/us-central1/reasoningEngines/123',
+      ]);
+
+      const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+      expect(args.sessionService).toBeInstanceOf(VertexAiSessionService);
+      expect(vertexAiSessionServiceOptions).toHaveBeenCalledWith({
+        projectId: 'test-proj',
+        location: 'us-central1',
+        agentEngineId: '123',
+      });
     });
 
     it('should start AdkApiServer with a2a: true when --a2a is set', async () => {
@@ -1777,6 +1829,10 @@ describe('adkServicesOptions', () => {
 });
 
 describe('getMemoryServiceFromOptions', () => {
+  beforeEach(() => {
+    vertexAiMemoryBankServiceOptions.mockClear();
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
   });
@@ -1830,6 +1886,11 @@ describe('getMemoryServiceFromOptions', () => {
       memoryServiceUri: 'agentengine://123',
     });
     expect(service).toBeInstanceOf(VertexAiMemoryBankService);
+    expect(vertexAiMemoryBankServiceOptions).toHaveBeenCalledWith({
+      projectId: 'test-proj',
+      location: 'us-central1',
+      agentEngineId: '123',
+    });
   });
 
   it('throws error when agentengine:// short ID has no GOOGLE_CLOUD_PROJECT in environment', () => {
@@ -1867,11 +1928,18 @@ describe('getMemoryServiceFromOptions', () => {
   });
 
   it('returns VertexAiMemoryBankService when URI is agentengine:// with full resource name', () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', '');
     const service = getMemoryServiceFromOptions({
       memoryServiceUri:
         'agentengine://projects/test-proj/locations/us-central1/reasoningEngines/123',
     });
     expect(service).toBeInstanceOf(VertexAiMemoryBankService);
+    expect(vertexAiMemoryBankServiceOptions).toHaveBeenCalledWith({
+      projectId: 'test-proj',
+      location: 'us-central1',
+      agentEngineId: '123',
+    });
   });
 
   it('rejects empty or whitespace-only agentengine:// URIs', () => {
@@ -1904,5 +1972,116 @@ describe('getMemoryServiceFromOptions', () => {
     ).toThrow(
       'Unsupported memory service URI: unsupported://host/db?access_token=***',
     );
+  });
+});
+
+describe('getSessionServiceFromOptions', () => {
+  beforeEach(() => {
+    vertexAiSessionServiceOptions.mockClear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('returns InMemorySessionService when URI is empty or memory://', () => {
+    vi.stubEnv('DATABASE_URL', '');
+    expect(getSessionServiceFromOptions({})).toBeInstanceOf(
+      InMemorySessionService,
+    );
+    expect(
+      getSessionServiceFromOptions({sessionServiceUri: 'memory://'}),
+    ).toBeInstanceOf(InMemorySessionService);
+  });
+
+  it('returns VertexAiSessionService when URI is agentengine:// with short ID', () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'test-proj');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'us-central1');
+    const service = getSessionServiceFromOptions({
+      sessionServiceUri: 'agentengine://123',
+    });
+    expect(service).toBeInstanceOf(VertexAiSessionService);
+    expect(vertexAiSessionServiceOptions).toHaveBeenCalledWith({
+      projectId: 'test-proj',
+      location: 'us-central1',
+      agentEngineId: '123',
+    });
+  });
+
+  it('loads GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION from .env when baseDir is provided', () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', '');
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'adk-cli-session-dotenv-'),
+    );
+    const childDir = path.join(tempDir, 'nested', 'sub');
+    fs.mkdirSync(childDir, {recursive: true});
+    fs.writeFileSync(
+      path.join(tempDir, '.env'),
+      'GOOGLE_CLOUD_PROJECT=dotenv-proj\nGOOGLE_CLOUD_LOCATION=us-west1\n',
+      'utf-8',
+    );
+    const originalCwd = process.cwd();
+    try {
+      process.chdir(childDir);
+      const service = getSessionServiceFromOptions('agentengine://123', '.');
+      expect(service).toBeInstanceOf(VertexAiSessionService);
+      expect(vertexAiSessionServiceOptions).toHaveBeenCalledWith({
+        projectId: 'dotenv-proj',
+        location: 'us-west1',
+        agentEngineId: '123',
+      });
+      expect(process.env['GOOGLE_CLOUD_PROJECT']).toBe('dotenv-proj');
+      expect(process.env['GOOGLE_CLOUD_LOCATION']).toBe('us-west1');
+    } finally {
+      process.chdir(originalCwd);
+      fs.rmSync(tempDir, {recursive: true, force: true});
+    }
+  });
+
+  it('returns VertexAiSessionService when URI is agentengine:// with full resource name', () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', '');
+    const service = getSessionServiceFromOptions({
+      sessionServiceUri:
+        'agentengine://projects/test-proj/locations/us-central1/reasoningEngines/123',
+    });
+    expect(service).toBeInstanceOf(VertexAiSessionService);
+    expect(vertexAiSessionServiceOptions).toHaveBeenCalledWith({
+      projectId: 'test-proj',
+      location: 'us-central1',
+      agentEngineId: '123',
+    });
+  });
+
+  it('rejects empty or whitespace-only agentengine:// URIs', () => {
+    expect(() =>
+      getSessionServiceFromOptions({
+        sessionServiceUri: 'agentengine://',
+      }),
+    ).toThrow('Agent engine resource name or resource id cannot be empty.');
+    expect(() =>
+      getSessionServiceFromOptions({
+        sessionServiceUri: 'agentengine://   ',
+      }),
+    ).toThrow('Agent engine resource name or resource id cannot be empty.');
+  });
+
+  it('rejects malformed agentengine:// URIs', () => {
+    expect(() =>
+      getSessionServiceFromOptions({
+        sessionServiceUri: 'agentengine://projects/test-proj/invalid',
+      }),
+    ).toThrow(/Agent engine resource name is mal-formatted/);
+  });
+
+  it('throws error when agentengine:// short ID has no GOOGLE_CLOUD_PROJECT in environment', () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', '');
+    expect(() =>
+      getSessionServiceFromOptions({
+        sessionServiceUri: 'agentengine://123',
+      }),
+    ).toThrow('GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION not set.');
   });
 });

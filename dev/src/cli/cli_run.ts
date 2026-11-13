@@ -7,12 +7,14 @@
 import {
   App,
   BaseArtifactService,
+  BaseCredentialService,
   BaseMemoryService,
   BaseSessionService,
   Event,
   getPendingUserInputRequests,
   getUserInputRequests,
   InMemoryArtifactService,
+  InMemoryCredentialService,
   InMemoryMemoryService,
   InMemorySessionService,
   isApp,
@@ -224,6 +226,7 @@ interface RunFromInputFileOptions {
   artifactService: BaseArtifactService;
   sessionService: BaseSessionService;
   memoryService?: BaseMemoryService;
+  credentialService?: BaseCredentialService;
   fileContent: InputFile | undefined;
 }
 async function runFromInputFile(
@@ -283,6 +286,7 @@ interface RunInteractivelyOptions {
   artifactService: BaseArtifactService;
   sessionService: BaseSessionService;
   memoryService?: BaseMemoryService;
+  credentialService?: BaseCredentialService;
   onAgentFileReloaded?: (subscribe: (newAgent: RunnableRoot) => void) => void;
 }
 async function runInteractively(
@@ -300,6 +304,7 @@ async function runInteractively(
     artifactService: options.artifactService,
     sessionService: options.sessionService,
     memoryService: options.memoryService,
+    credentialService: options.credentialService,
   });
   let turnInFlight = false;
   const retiredRunners: Runner[] = [];
@@ -321,6 +326,7 @@ async function runInteractively(
       artifactService: options.artifactService,
       sessionService: options.sessionService,
       memoryService: options.memoryService,
+      credentialService: options.credentialService,
     });
     if (turnInFlight) {
       retiredRunners.push(previousRunner);
@@ -385,6 +391,7 @@ export interface RunAgentOptions {
   artifactService?: BaseArtifactService;
   sessionService?: BaseSessionService;
   memoryService?: BaseMemoryService;
+  credentialService?: BaseCredentialService;
   otelToCloud?: boolean;
   agentFileLoadOptions?: AgentFileOptions;
   reloadAgents?: boolean;
@@ -395,6 +402,8 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
     options.artifactService || new InMemoryArtifactService();
   const sessionService = options.sessionService || new InMemorySessionService();
   const memoryService = options.memoryService || new InMemoryMemoryService();
+  const credentialService =
+    options.credentialService ?? new InMemoryCredentialService();
 
   // The whole run is wrapped so a failure loading, building or running the
   // agent is reported (with a readable stack) on stderr and marks the process
@@ -460,6 +469,7 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
           artifactService,
           sessionService,
           memoryService,
+          credentialService,
           fileContent: inputFileContent,
         })) || session;
     } else if (options.savedSessionFile) {
@@ -490,6 +500,7 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
         artifactService,
         sessionService,
         memoryService,
+        credentialService,
         session,
         onAgentFileReloaded: options.reloadAgents
           ? onAgentFileReloaded
@@ -505,6 +516,7 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
         artifactService,
         sessionService,
         memoryService,
+        credentialService,
         session,
         onAgentFileReloaded: options.reloadAgents
           ? onAgentFileReloaded

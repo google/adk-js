@@ -9,6 +9,7 @@ import {
   type AgentRuntimeRequestHooks,
   App,
   BaseArtifactService,
+  BaseCredentialService,
   BaseMemoryService,
   BaseSessionService,
   bearerTokenUserBuilder,
@@ -23,6 +24,7 @@ import {
   getFunctionCalls,
   getFunctionResponses,
   InMemoryArtifactService,
+  InMemoryCredentialService,
   InMemoryMemoryService,
   InMemorySessionService,
   InputValidationError,
@@ -34,6 +36,7 @@ import {
   LocalEvalSetsManager,
   Logger,
   LogLevel,
+  markRestored,
   normalizeEvalCase,
   NotFoundError,
   publicEvent,
@@ -90,6 +93,7 @@ import {
   createOriginCheckMiddleware,
   parseAllowedOrigins,
 } from './origin_check.js';
+import {parseCreateSessionBody} from './session_event_utils.js';
 import {renderStructureGraphAsDot} from './structure_graph.js';
 
 /**
@@ -106,6 +110,7 @@ interface ServerOptions {
   sessionService?: BaseSessionService;
   memoryService?: BaseMemoryService;
   artifactService?: BaseArtifactService;
+  credentialService?: BaseCredentialService;
   agentLoader?: AgentLoader;
   agentFileLoadOptions?: AgentFileOptions;
   serveDebugUI?: boolean;
@@ -215,6 +220,7 @@ export class AdkApiServer {
   private readonly sessionService: BaseSessionService;
   private readonly memoryService: BaseMemoryService;
   private readonly artifactService: BaseArtifactService;
+  private readonly credentialService: BaseCredentialService;
   private readonly evalSetsManager: LocalEvalSetsManager;
   private readonly evalSetResultsManager: LocalEvalSetResultsManager;
   private readonly serveDebugUI: boolean;
@@ -244,6 +250,8 @@ export class AdkApiServer {
     this.memoryService = options.memoryService ?? new InMemoryMemoryService();
     this.artifactService =
       options.artifactService ?? new InMemoryArtifactService();
+    this.credentialService =
+      options.credentialService ?? new InMemoryCredentialService();
     const configuredAgentsDir = options.agentsDir ?? process.cwd();
     const evalBaseDir =
       fs.existsSync(configuredAgentsDir) &&
@@ -774,8 +782,13 @@ export class AdkApiServer {
         try {
           const appName = req.params['appName'];
           const userId = req.params['userId'];
-          const sessionId = req.params['sessionId'];
-          const state = req.body['state'] || {};
+          // Session services trim the ID they store, so the existence check
+          // must use the trimmed ID too.
+          const sessionId = req.params['sessionId'].trim();
+          if (!sessionId) {
+            throw new InputValidationError('Session ID cannot be empty.');
+          }
+          const {state, events} = parseCreateSessionBody(req.body);
 
           const existingSession = await this.sessionService.getSession({
             appName,
@@ -797,8 +810,19 @@ export class AdkApiServer {
             sessionId,
           });
 
+          for (const event of events) {
+            await this.sessionService.appendEvent({
+              session: createdSession,
+              event: markRestored(event),
+            });
+          }
+
           res.json(publicSession(createdSession));
         } catch (e: unknown) {
+          if (e instanceof InputValidationError) {
+            res.status(400).json({error: e.message});
+            return;
+          }
           const error = `Failed to create session: ${e}`;
 
           res.status(500).json({error});
@@ -813,16 +837,42 @@ export class AdkApiServer {
         try {
           const appName = req.params['appName'];
           const userId = req.params['userId'];
-          const state = req.body['state'] || {};
+          const {state, sessionId, events} = parseCreateSessionBody(req.body);
+
+          if (sessionId) {
+            const existingSession = await this.sessionService.getSession({
+              appName,
+              userId,
+              sessionId,
+            });
+            if (existingSession) {
+              res
+                .status(400)
+                .json({error: `Session already exists: ${sessionId}`});
+              return;
+            }
+          }
 
           const createdSession = await this.sessionService.createSession({
             appName,
             userId,
             state,
+            ...(sessionId ? {sessionId} : {}),
           });
+
+          for (const event of events) {
+            await this.sessionService.appendEvent({
+              session: createdSession,
+              event: markRestored(event),
+            });
+          }
 
           res.json(publicSession(createdSession));
         } catch (e: unknown) {
+          if (e instanceof InputValidationError) {
+            res.status(400).json({error: e.message});
+            return;
+          }
           const error = `Failed to create session: ${e}`;
 
           res.status(500).json({error});
@@ -2455,6 +2505,7 @@ export class AdkApiServer {
         memoryService: this.memoryService,
         sessionService: this.sessionService,
         artifactService: this.artifactService,
+        credentialService: this.credentialService,
       });
     }
 
