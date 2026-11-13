@@ -72,11 +72,15 @@ vi.mock('../../src/version', () => ({
   version: '1.0.0-test',
 }));
 
-const {vertexAiSessionServiceOptions, vertexAiMemoryBankServiceOptions} =
-  vi.hoisted(() => ({
-    vertexAiSessionServiceOptions: vi.fn(),
-    vertexAiMemoryBankServiceOptions: vi.fn(),
-  }));
+const {
+  vertexAiSessionServiceOptions,
+  vertexAiMemoryBankServiceOptions,
+  createGcsEvalManagersFromUriMock,
+} = vi.hoisted(() => ({
+  vertexAiSessionServiceOptions: vi.fn(),
+  vertexAiMemoryBankServiceOptions: vi.fn(),
+  createGcsEvalManagersFromUriMock: vi.fn(),
+}));
 
 vi.mock('@google/adk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@google/adk')>();
@@ -109,6 +113,7 @@ vi.mock('@google/adk', async (importOriginal) => {
     ...actual,
     VertexAiSessionService: RecordingVertexAiSessionService,
     VertexAiMemoryBankService: RecordingVertexAiMemoryBankService,
+    createGcsEvalManagersFromUri: createGcsEvalManagersFromUriMock,
     setupAdkLogger: vi.fn(),
     logToTmpFolder: vi.fn(),
   };
@@ -1181,6 +1186,253 @@ describe('CLI Entrypoint', () => {
         stdoutSpy.mockRestore();
         fs.rmSync(tempDir, {recursive: true, force: true});
       }
+    });
+  });
+
+  describe('option: --eval_storage_uri', () => {
+    const evalSetsManager = {
+      getEvalSet: vi.fn(),
+      createEvalSet: vi.fn(),
+      listEvalSets: vi.fn(),
+      getEvalCase: vi.fn(),
+      addEvalCase: vi.fn(),
+      updateEvalCase: vi.fn(),
+      deleteEvalCase: vi.fn(),
+    };
+    const evalSetResultsManager = {
+      saveEvalSetResult: vi.fn(),
+      getEvalSetResult: vi.fn(),
+      listEvalSetResults: vi.fn(),
+    };
+
+    beforeEach(() => {
+      process.exitCode = undefined;
+      createGcsEvalManagersFromUriMock.mockResolvedValue({
+        evalSetsManager,
+        evalSetResultsManager,
+      });
+    });
+
+    it.each([['web'], ['api_server']])(
+      '%s passes the GCS eval managers to AdkApiServer',
+      async (command) => {
+        await parse([command, '--eval_storage_uri', 'gs://eval-bucket']);
+
+        expect(createGcsEvalManagersFromUriMock).toHaveBeenCalledWith(
+          'gs://eval-bucket',
+        );
+        const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+        expect(args.evalSetsManager).toBe(evalSetsManager);
+        expect(args.evalSetResultsManager).toBe(evalSetResultsManager);
+      },
+    );
+
+    it('passes no eval managers to AdkApiServer when the option is absent', async () => {
+      await parse(['web']);
+
+      expect(createGcsEvalManagersFromUriMock).not.toHaveBeenCalled();
+      const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+      expect(args.evalSetsManager).toBeUndefined();
+      expect(args.evalSetResultsManager).toBeUndefined();
+    });
+
+    describe('command: eval', () => {
+      let tempDir: string;
+      let agentDir: string;
+
+      it('documents that positional values are eval set IDs with storage', () => {
+        const evalCommand = program.commands.find((c) => c.name() === 'eval');
+        const evalSetArgument = evalCommand?.registeredArguments[1];
+
+        expect(evalSetArgument?.name()).toBe('eval_set_file_path_or_id');
+        expect(evalSetArgument?.description).toContain('--eval_storage_uri');
+        expect(evalSetArgument?.description).toContain('eval set IDs');
+      });
+
+      beforeEach(() => {
+        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adk-cli-gcs-eval-'));
+        agentDir = path.join(tempDir, 'my_eval_app');
+        fs.mkdirSync(agentDir, {recursive: true});
+        fs.writeFileSync(
+          path.join(agentDir, 'agent.js'),
+          [
+            `import {BaseAgent, createEvent} from '@google/adk';`,
+            `class EvalAgent extends BaseAgent {`,
+            `  constructor() { super({name: 'my_eval_agent'}); }`,
+            `  async *runAsyncImpl(ctx) {`,
+            `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'pong'}]}});`,
+            `  }`,
+            `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+            `}`,
+            `export const rootAgent = new EvalAgent();`,
+          ].join('\n'),
+          'utf-8',
+        );
+        vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      });
+
+      afterEach(() => {
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      });
+
+      it('reads eval sets by ID and saves results through the GCS managers', async () => {
+        evalSetsManager.getEvalSet.mockResolvedValue({
+          evalSetId: 'remote_set',
+          evalCases: [
+            {
+              evalId: 'case_1',
+              conversation: [
+                {
+                  invocationId: 'inv-1',
+                  userContent: {role: 'user', parts: [{text: 'ping'}]},
+                  finalResponse: {role: 'model', parts: [{text: 'pong'}]},
+                  creationTimestamp: 1,
+                },
+              ],
+            },
+            {evalId: 'case_2', conversation: []},
+          ],
+        });
+
+        await parse([
+          'eval',
+          agentDir,
+          'remote_set:case_1',
+          '--eval_storage_uri',
+          'gs://eval-bucket',
+        ]);
+
+        expect(process.exitCode).toBeUndefined();
+        expect(evalSetsManager.getEvalSet).toHaveBeenCalledWith(
+          'my_eval_app',
+          'remote_set',
+        );
+        expect(evalSetResultsManager.saveEvalSetResult).toHaveBeenCalledTimes(
+          1,
+        );
+        const saved = evalSetResultsManager.saveEvalSetResult.mock.calls[0][0];
+        expect(saved).toMatchObject({
+          appName: 'my_eval_app',
+          evalSetId: 'remote_set',
+        });
+        expect(
+          saved.evalCaseResults.map((r: {eval_id: string}) => r.eval_id),
+        ).toEqual(['case_1']);
+        expect(fs.existsSync(path.join(agentDir, '.adk'))).toBe(false);
+      });
+
+      it('loads an existing local eval set file and saves results through the GCS results manager', async () => {
+        const evalSetPath = path.join(tempDir, 'local_set.evalset.json');
+        fs.writeFileSync(
+          evalSetPath,
+          JSON.stringify({
+            evalSetId: 'local_set',
+            evalCases: [
+              {
+                evalId: 'case_1',
+                conversation: [
+                  {
+                    invocationId: 'inv-1',
+                    userContent: {role: 'user', parts: [{text: 'ping'}]},
+                    finalResponse: {role: 'model', parts: [{text: 'pong'}]},
+                    creationTimestamp: 1,
+                  },
+                ],
+              },
+              {evalId: 'case_2', conversation: []},
+            ],
+          }),
+          'utf-8',
+        );
+
+        await parse([
+          'eval',
+          agentDir,
+          `${evalSetPath}:case_1`,
+          '--eval_storage_uri',
+          'gs://eval-bucket',
+        ]);
+
+        expect(process.exitCode).toBeUndefined();
+        expect(evalSetsManager.getEvalSet).not.toHaveBeenCalled();
+        expect(evalSetResultsManager.saveEvalSetResult).toHaveBeenCalledTimes(
+          1,
+        );
+        const saved = evalSetResultsManager.saveEvalSetResult.mock.calls[0][0];
+        expect(saved).toMatchObject({
+          appName: 'my_eval_app',
+          evalSetId: 'local_set',
+        });
+        expect(
+          saved.evalCaseResults.map((r: {eval_id: string}) => r.eval_id),
+        ).toEqual(['case_1']);
+        expect(fs.existsSync(path.join(agentDir, '.adk'))).toBe(false);
+      });
+
+      it('fails when the eval storage has no eval set with the ID', async () => {
+        evalSetsManager.getEvalSet.mockResolvedValue(undefined);
+
+        await parse([
+          'eval',
+          agentDir,
+          'missing_set',
+          '--eval_storage_uri',
+          'gs://eval-bucket',
+        ]);
+
+        expect(process.exitCode).toBe(1);
+        expect(evalSetResultsManager.saveEvalSetResult).not.toHaveBeenCalled();
+      });
+
+      it('fails when the eval managers cannot be created', async () => {
+        createGcsEvalManagersFromUriMock.mockRejectedValueOnce(
+          new Error('Unsupported eval storage URI scheme'),
+        );
+
+        await parse([
+          'eval',
+          agentDir,
+          'remote_set',
+          '--eval_storage_uri',
+          's3://eval-bucket',
+        ]);
+
+        expect(process.exitCode).toBe(1);
+        expect(evalSetsManager.getEvalSet).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  describe('option: --memory_service_uri agentengine://', () => {
+    beforeEach(() => {
+      process.exitCode = undefined;
+    });
+
+    it('web builds a VertexAiMemoryBankService from the environment', async () => {
+      vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'env-project');
+      vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'us-central1');
+
+      await parse(['web', '--memory_service_uri', 'agentengine://123']);
+
+      const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+      expect(args.memoryService).toBeInstanceOf(VertexAiMemoryBankService);
+      expect(vertexAiMemoryBankServiceOptions).toHaveBeenCalledWith({
+        projectId: 'env-project',
+        location: 'us-central1',
+        agentEngineId: '123',
+      });
+    });
+
+    it('run exits non-zero for an empty agent engine ID', async () => {
+      await parse([
+        'run',
+        'agent.ts',
+        '--memory_service_uri',
+        'agentengine://',
+      ]);
+
+      expect(process.exitCode).toBe(1);
+      expect(runAgent).not.toHaveBeenCalled();
     });
   });
 

@@ -10,9 +10,13 @@
 export class NotFoundError extends Error {
   /**
    * @param message An optional custom message to describe the error.
+   * @param options Standard error options, e.g. `{cause}`.
    */
-  constructor(message = 'The requested item was not found.') {
-    super(message);
+  constructor(
+    message = 'The requested item was not found.',
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
     this.name = 'NotFoundError';
   }
 }

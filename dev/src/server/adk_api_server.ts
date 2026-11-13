@@ -20,6 +20,8 @@ import {
   EvalCase,
   EvalCaseResult,
   EvalMetric,
+  EvalSetResultsManager,
+  EvalSetsManager,
   Event,
   getFunctionCalls,
   getFunctionResponses,
@@ -111,6 +113,16 @@ interface ServerOptions {
   memoryService?: BaseMemoryService;
   artifactService?: BaseArtifactService;
   credentialService?: BaseCredentialService;
+  /**
+   * Store for eval sets. Defaults to a {@link LocalEvalSetsManager} on the
+   * agents directory.
+   */
+  evalSetsManager?: EvalSetsManager;
+  /**
+   * Store for eval set results. Defaults to a
+   * {@link LocalEvalSetResultsManager} on the agents directory.
+   */
+  evalSetResultsManager?: EvalSetResultsManager;
   agentLoader?: AgentLoader;
   agentFileLoadOptions?: AgentFileOptions;
   serveDebugUI?: boolean;
@@ -221,8 +233,8 @@ export class AdkApiServer {
   private readonly memoryService: BaseMemoryService;
   private readonly artifactService: BaseArtifactService;
   private readonly credentialService: BaseCredentialService;
-  private readonly evalSetsManager: LocalEvalSetsManager;
-  private readonly evalSetResultsManager: LocalEvalSetResultsManager;
+  private readonly evalSetsManager: EvalSetsManager;
+  private readonly evalSetResultsManager: EvalSetResultsManager;
   private readonly serveDebugUI: boolean;
   private readonly allowedOrigins: string[];
   private readonly allowedHosts?: string[];
@@ -258,8 +270,11 @@ export class AdkApiServer {
       fs.statSync(configuredAgentsDir).isFile()
         ? path.dirname(path.resolve(configuredAgentsDir))
         : path.resolve(configuredAgentsDir);
-    this.evalSetsManager = new LocalEvalSetsManager(evalBaseDir);
-    this.evalSetResultsManager = new LocalEvalSetResultsManager(evalBaseDir);
+    this.evalSetsManager =
+      options.evalSetsManager ?? new LocalEvalSetsManager(evalBaseDir);
+    this.evalSetResultsManager =
+      options.evalSetResultsManager ??
+      new LocalEvalSetResultsManager(evalBaseDir);
     this.agentLoader =
       options.agentLoader ??
       new AgentLoader(
@@ -1098,11 +1113,11 @@ export class AdkApiServer {
         '/apps/:appName/eval_sets/:evalSetId',
         '/dev/apps/:appName/eval_sets/:evalSetId',
       ],
-      (req: Request, res: Response) => {
+      async (req: Request, res: Response) => {
         try {
           const appName = req.params['appName'];
           const evalSetId = req.params['evalSetId'];
-          this.evalSetsManager.createEvalSet(appName, evalSetId);
+          await this.evalSetsManager.createEvalSet(appName, evalSetId);
           return res.status(200).json({});
         } catch (e: unknown) {
           if (e instanceof InputValidationError) {
@@ -1117,13 +1132,18 @@ export class AdkApiServer {
 
     app.get(
       ['/apps/:appName/eval_sets', '/dev/apps/:appName/eval_sets'],
-      (req: Request, res: Response) => {
+      async (req: Request, res: Response) => {
         try {
           const appName = req.params['appName'];
-          return res.json(this.evalSetsManager.listEvalSets(appName));
+          return res.json(await this.evalSetsManager.listEvalSets(appName));
         } catch (e: unknown) {
           if (e instanceof InputValidationError) {
             return res.status(400).json({error: e.message});
+          }
+          if (e instanceof NotFoundError) {
+            // A missing storage location means the app has no eval sets yet.
+            this.logger.warn(`Listing eval sets: ${e.message}`);
+            return res.json([]);
           }
           const error = `Failed to list eval sets: ${getErrorMessage(e)}`;
           this.logger.error(error);
@@ -1149,7 +1169,7 @@ export class AdkApiServer {
           const userId = String(body['userId'] ?? body['user_id'] ?? '');
 
           // `addEvalCase` validates the eval ID format below.
-          const existingEvalSet = this.evalSetsManager.getEvalSet(
+          const existingEvalSet = await this.evalSetsManager.getEvalSet(
             appName,
             evalSetId,
           );
@@ -1198,7 +1218,11 @@ export class AdkApiServer {
             creationTimestamp: Date.now() / 1000,
           };
 
-          this.evalSetsManager.addEvalCase(appName, evalSetId, newEvalCase);
+          await this.evalSetsManager.addEvalCase(
+            appName,
+            evalSetId,
+            newEvalCase,
+          );
           return res.status(200).json({});
         } catch (e: unknown) {
           if (e instanceof InputValidationError || e instanceof NotFoundError) {
@@ -1216,11 +1240,11 @@ export class AdkApiServer {
         '/apps/:appName/eval_sets/:evalSetId/evals',
         '/dev/apps/:appName/eval_sets/:evalSetId/evals',
       ],
-      (req: Request, res: Response) => {
+      async (req: Request, res: Response) => {
         try {
           const appName = req.params['appName'];
           const evalSetId = req.params['evalSetId'];
-          const evalSetData = this.evalSetsManager.getEvalSet(
+          const evalSetData = await this.evalSetsManager.getEvalSet(
             appName,
             evalSetId,
           );
@@ -1247,12 +1271,12 @@ export class AdkApiServer {
         '/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
         '/dev/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
       ],
-      (req: Request, res: Response) => {
+      async (req: Request, res: Response) => {
         try {
           const appName = req.params['appName'];
           const evalSetId = req.params['evalSetId'];
           const evalCaseId = req.params['evalCaseId'];
-          const evalCaseToFind = this.evalSetsManager.getEvalCase(
+          const evalCaseToFind = await this.evalSetsManager.getEvalCase(
             appName,
             evalSetId,
             evalCaseId,
@@ -1279,7 +1303,7 @@ export class AdkApiServer {
         '/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
         '/dev/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
       ],
-      (req: Request, res: Response) => {
+      async (req: Request, res: Response) => {
         try {
           const appName = req.params['appName'];
           const evalSetId = req.params['evalSetId'];
@@ -1319,7 +1343,7 @@ export class AdkApiServer {
             ...body,
             evalId: evalCaseId,
           });
-          this.evalSetsManager.updateEvalCase(
+          await this.evalSetsManager.updateEvalCase(
             appName,
             evalSetId,
             updatedEvalCase,
@@ -1344,12 +1368,16 @@ export class AdkApiServer {
         '/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
         '/dev/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
       ],
-      (req: Request, res: Response) => {
+      async (req: Request, res: Response) => {
         try {
           const appName = req.params['appName'];
           const evalSetId = req.params['evalSetId'];
           const evalCaseId = req.params['evalCaseId'];
-          this.evalSetsManager.deleteEvalCase(appName, evalSetId, evalCaseId);
+          await this.evalSetsManager.deleteEvalCase(
+            appName,
+            evalSetId,
+            evalCaseId,
+          );
           return res.status(200).json({});
         } catch (e: unknown) {
           if (e instanceof NotFoundError || e instanceof InputValidationError) {
@@ -1371,7 +1399,10 @@ export class AdkApiServer {
         try {
           const appName = req.params['appName'];
           const evalSetId = req.params['evalSetId'];
-          const evalSet = this.evalSetsManager.getEvalSet(appName, evalSetId);
+          const evalSet = await this.evalSetsManager.getEvalSet(
+            appName,
+            evalSetId,
+          );
           if (!evalSet) {
             return res.status(400).json({
               error: `Eval set ${evalSetId} not found.`,
@@ -1449,7 +1480,7 @@ export class AdkApiServer {
             evalCaseResults.push(evalResult);
           }
 
-          this.evalSetResultsManager.saveEvalSetResult({
+          await this.evalSetResultsManager.saveEvalSetResult({
             appName,
             evalSetId,
             evalCaseResults,
@@ -1473,14 +1504,15 @@ export class AdkApiServer {
         '/apps/:appName/eval_results/:evalResultId',
         '/dev/apps/:appName/eval_results/:evalResultId',
       ],
-      (req: Request, res: Response) => {
+      async (req: Request, res: Response) => {
         try {
           const appName = req.params['appName'];
           const evalResultId = req.params['evalResultId'];
-          const evalSetResult = this.evalSetResultsManager.getEvalSetResult(
-            appName,
-            evalResultId,
-          );
+          const evalSetResult =
+            await this.evalSetResultsManager.getEvalSetResult(
+              appName,
+              evalResultId,
+            );
           return res.json(evalSetResult);
         } catch (e: unknown) {
           if (e instanceof NotFoundError || e instanceof InputValidationError) {
@@ -1495,11 +1527,11 @@ export class AdkApiServer {
 
     app.get(
       ['/apps/:appName/eval_results', '/dev/apps/:appName/eval_results'],
-      (req: Request, res: Response) => {
+      async (req: Request, res: Response) => {
         try {
           const appName = req.params['appName'];
           return res.json(
-            this.evalSetResultsManager.listEvalSetResults(appName),
+            await this.evalSetResultsManager.listEvalSetResults(appName),
           );
         } catch (e: unknown) {
           if (e instanceof InputValidationError) {

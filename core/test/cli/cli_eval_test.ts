@@ -1162,6 +1162,11 @@ describe('cli/cli_eval', () => {
         conversation: [],
         creationTimestamp: 456,
       });
+      manager.addEvalCase('test_app', 'test_eval_set', {
+        evalId: 'second_eval_case',
+        conversation: [],
+        creationTimestamp: 789,
+      });
 
       const updatedEvalCase: EvalCase = {
         evalId: 'test_eval_case',
@@ -1180,6 +1185,11 @@ describe('cli/cli_eval', () => {
       expect(
         manager.getEvalCase('test_app', 'test_eval_set', 'test_eval_case'),
       ).toEqual(updatedEvalCase);
+      expect(
+        manager
+          .getEvalSet('test_app', 'test_eval_set')
+          ?.evalCases.map((c) => c.evalId),
+      ).toEqual(['test_eval_case', 'second_eval_case']);
     });
 
     it('throws NotFoundError when updating a nonexistent eval case', () => {

@@ -15,6 +15,11 @@ import {
   createEvent,
   createSession,
   EVAL_SESSION_ID_PREFIX,
+  EvalCase,
+  EvalSet,
+  EvalSetResult,
+  EvalSetResultsManager,
+  EvalSetsManager,
   EvalStatus,
   Event,
   FunctionTool,
@@ -28,6 +33,7 @@ import {
   LocalEvalSetResultsManager,
   LocalEvalSetsManager,
   node,
+  NotFoundError,
   RESTORED_EVENT_KEY,
   Runner,
   Session,
@@ -252,6 +258,126 @@ const TEST_AGENT = new TestAgent({
     }),
   ],
 });
+
+/** An in-memory {@link EvalSetsManager} whose methods all resolve later. */
+class AsyncFakeEvalSetsManager implements EvalSetsManager {
+  readonly evalSets = new Map<string, EvalSet>();
+
+  async getEvalSet(
+    appName: string,
+    evalSetId: string,
+  ): Promise<EvalSet | undefined> {
+    return this.evalSets.get(`${appName}/${evalSetId}`);
+  }
+
+  async createEvalSet(appName: string, evalSetId: string): Promise<EvalSet> {
+    const evalSet: EvalSet = {evalSetId, evalCases: []};
+    this.evalSets.set(`${appName}/${evalSetId}`, evalSet);
+    return evalSet;
+  }
+
+  async listEvalSets(appName: string): Promise<string[]> {
+    return [...this.evalSets.keys()]
+      .filter((key) => key.startsWith(`${appName}/`))
+      .map((key) => key.slice(appName.length + 1))
+      .sort();
+  }
+
+  async getEvalCase(
+    appName: string,
+    evalSetId: string,
+    evalCaseId: string,
+  ): Promise<EvalCase | undefined> {
+    return (await this.getEvalSet(appName, evalSetId))?.evalCases.find(
+      (c) => c.evalId === evalCaseId,
+    );
+  }
+
+  async addEvalCase(
+    appName: string,
+    evalSetId: string,
+    evalCase: EvalCase,
+  ): Promise<void> {
+    (await this.requireEvalSet(appName, evalSetId)).evalCases.push(evalCase);
+  }
+
+  async updateEvalCase(
+    appName: string,
+    evalSetId: string,
+    updatedEvalCase: EvalCase,
+  ): Promise<void> {
+    const evalSet = await this.requireEvalSet(appName, evalSetId);
+    evalSet.evalCases = evalSet.evalCases.map((c) =>
+      c.evalId === updatedEvalCase.evalId ? updatedEvalCase : c,
+    );
+  }
+
+  async deleteEvalCase(
+    appName: string,
+    evalSetId: string,
+    evalCaseId: string,
+  ): Promise<void> {
+    const evalSet = await this.requireEvalSet(appName, evalSetId);
+    if (!evalSet.evalCases.some((c) => c.evalId === evalCaseId)) {
+      throw new NotFoundError(`Fake eval case ${evalCaseId} not found.`);
+    }
+    evalSet.evalCases = evalSet.evalCases.filter(
+      (c) => c.evalId !== evalCaseId,
+    );
+  }
+
+  private async requireEvalSet(
+    appName: string,
+    evalSetId: string,
+  ): Promise<EvalSet> {
+    const evalSet = await this.getEvalSet(appName, evalSetId);
+    if (!evalSet) {
+      throw new NotFoundError(`Fake eval set ${evalSetId} not found.`);
+    }
+    return evalSet;
+  }
+}
+
+/** An in-memory {@link EvalSetResultsManager} whose methods resolve later. */
+class AsyncFakeEvalSetResultsManager implements EvalSetResultsManager {
+  readonly results = new Map<string, EvalSetResult>();
+
+  async saveEvalSetResult({
+    appName,
+    evalSetId,
+  }: {
+    appName: string;
+    evalSetId: string;
+  }): Promise<EvalSetResult> {
+    const result: EvalSetResult = {
+      evalSetResultId: `${appName}_${evalSetId}_1`,
+      evalSetResultName: `${appName}_${evalSetId}_1`,
+      evalSetId,
+      evalCaseResults: [],
+      creationTimestamp: 1,
+    };
+    this.results.set(`${appName}/${result.evalSetResultId}`, result);
+    return result;
+  }
+
+  async getEvalSetResult(
+    appName: string,
+    evalSetResultId: string,
+  ): Promise<EvalSetResult> {
+    const result = this.results.get(`${appName}/${evalSetResultId}`);
+    if (!result) {
+      throw new NotFoundError(`Fake eval result ${evalSetResultId} not found.`);
+    }
+    return result;
+  }
+
+  async listEvalSetResults(appName: string): Promise<string[]> {
+    return [...this.results.keys()]
+      .filter((key) => key.startsWith(`${appName}/`))
+      .map((key) => key.slice(appName.length + 1))
+      .sort();
+  }
+}
 
 describe('AdkWebServer', () => {
   let agentLoader: AgentLoader;
@@ -3834,6 +3960,135 @@ describe('AdkWebServer', () => {
       } finally {
         agentLoader.getAgentFile = originalGetAgentFile;
       }
+    });
+  });
+
+  describe('Injected eval managers', () => {
+    let tempAgentsDir: string;
+    let evalSetsManager: AsyncFakeEvalSetsManager;
+    let evalSetResultsManager: AsyncFakeEvalSetResultsManager;
+    let evalServer: AdkApiServer;
+    let evalClient: HttpClient;
+
+    beforeEach(async () => {
+      tempAgentsDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-injected-eval-test-'),
+      );
+      evalSetsManager = new AsyncFakeEvalSetsManager();
+      evalSetResultsManager = new AsyncFakeEvalSetResultsManager();
+      evalServer = new AdkApiServer({
+        agentsDir: tempAgentsDir,
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+        evalSetsManager,
+        evalSetResultsManager,
+      });
+      await evalServer.start();
+      evalClient = new HttpClient(evalServer.url);
+    });
+
+    afterEach(async () => {
+      await evalServer.stop();
+      fs.rmSync(tempAgentsDir, {recursive: true, force: true});
+    });
+
+    it('creates and lists eval sets through the injected manager', async () => {
+      await evalClient.post('/apps/testApp/eval_sets/set_b', {});
+      await evalClient.post('/apps/testApp/eval_sets/set_a', {});
+
+      const listed = await evalClient.get<string[]>('/apps/testApp/eval_sets');
+
+      expect(listed.data).toEqual(['set_a', 'set_b']);
+      expect([...evalSetsManager.evalSets.keys()]).toEqual([
+        'testApp/set_b',
+        'testApp/set_a',
+      ]);
+      expect(fs.readdirSync(tempAgentsDir)).toEqual([]);
+    });
+
+    it('reads, updates, and deletes eval cases through the injected manager', async () => {
+      evalSetsManager.evalSets.set('testApp/set_a', {
+        evalSetId: 'set_a',
+        evalCases: [
+          {evalId: 'case_2', conversation: []},
+          {evalId: 'case_1', conversation: []},
+        ],
+      });
+
+      const evalIds = await evalClient.get<string[]>(
+        '/apps/testApp/eval_sets/set_a/evals',
+      );
+      const evalCase = await evalClient.get<EvalCase>(
+        '/apps/testApp/eval_sets/set_a/evals/case_1',
+      );
+      await evalClient.put('/apps/testApp/eval_sets/set_a/evals/case_1', {
+        evalId: 'case_1',
+        conversation: [],
+        creationTimestamp: 7,
+      });
+      await evalClient.delete('/apps/testApp/eval_sets/set_a/evals/case_2');
+
+      expect(evalIds.data).toEqual(['case_1', 'case_2']);
+      expect(evalCase.data?.evalId).toBe('case_1');
+      expect(
+        (await evalSetsManager.getEvalSet('testApp', 'set_a'))?.evalCases,
+      ).toEqual([
+        expect.objectContaining({evalId: 'case_1', creationTimestamp: 7}),
+      ]);
+    });
+
+    it('returns an empty list when the injected manager cannot find eval sets', async () => {
+      vi.spyOn(evalSetsManager, 'listEvalSets').mockRejectedValue(
+        new NotFoundError('Fake eval set storage not found.'),
+      );
+
+      const listed = await evalClient.get<string[]>('/apps/testApp/eval_sets');
+
+      expect(listed.status).toBe(200);
+      expect(listed.data).toEqual([]);
+    });
+
+    it('maps a NotFoundError from an injected manager to 404', async () => {
+      evalSetsManager.evalSets.set('testApp/set_a', {
+        evalSetId: 'set_a',
+        evalCases: [],
+      });
+
+      await expect(
+        evalClient.delete('/apps/testApp/eval_sets/set_a/evals/missing'),
+      ).rejects.toMatchObject({
+        response: {
+          status: 404,
+          data: {error: 'Fake eval case missing not found.'},
+        },
+      });
+      await expect(
+        evalClient.get('/apps/testApp/eval_results/missing'),
+      ).rejects.toMatchObject({
+        response: {
+          status: 404,
+          data: {error: 'Fake eval result missing not found.'},
+        },
+      });
+    });
+
+    it('reads eval results through the injected results manager', async () => {
+      const saved = await evalSetResultsManager.saveEvalSetResult({
+        appName: 'testApp',
+        evalSetId: 'set_a',
+      });
+
+      const listed = await evalClient.get<string[]>(
+        '/apps/testApp/eval_results',
+      );
+      const fetched = await evalClient.get<EvalSetResult>(
+        `/apps/testApp/eval_results/${saved.evalSetResultId}`,
+      );
+
+      expect(listed.data).toEqual([saved.evalSetResultId]);
+      expect(fetched.data).toEqual(saved);
     });
   });
 

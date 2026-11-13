@@ -170,6 +170,40 @@ The ADK CLI commands (`run`, `web`, `api_server` / `api-server`, `deploy cloud_r
 
 `LocalEvalSetResultsManager(agentsDir)` persists, loads, and lists `EvalSetResult` records under `<agentsDir>/<appName>/.adk/eval_history/<evalSetResultName>.evalset_result.json`. `saveEvalSetResult({appName, evalSetId, evalCaseResults})` converts case results to camelCase `RunEvalResult` entries, strips internal session metadata with `publicSession`, writes a new record, and returns it; `getEvalSetResult(appName, evalSetResultId)` and `listEvalSetResults(appName)` read records back. It rejects an `appName`, `evalSetId`, or `evalSetResultId` that contains path separators or traversal segments. It writes each record as camelCase JSON (`evalSetResultId`, `evalSetResultName`, `evalSetId`, `evalCaseResults`, `creationTimestamp` in seconds). It reads files with camelCase or snake_case keys, including legacy double-encoded JSON strings.
 
+`LocalEvalSetsManager` implements the `EvalSetsManager` interface and `LocalEvalSetResultsManager` implements the `EvalSetResultsManager` interface. Each interface method can return its value directly or as a promise, so callers `await` every call. The development server (`AdkApiServer`) accepts any implementation through its `evalSetsManager` and `evalSetResultsManager` options, and uses the local managers when you do not set them.
+
+### Storing eval data in Google Cloud Storage
+
+`adk web`, `adk api_server`, and `adk eval` accept `--eval-storage-uri, --eval_storage_uri <string>`. The only supported form is `gs://<bucket name>`. When the URI has a path, such as `gs://my-bucket/some/path`, only the bucket is used. Without the option, the commands keep eval data in the agents directory.
+
+```bash
+export GOOGLE_CLOUD_PROJECT=my-project
+adk web --eval_storage_uri gs://my-bucket path/to/agents
+adk eval path/to/agents/my_app my_eval_set:case_1,case_2 --eval_storage_uri gs://my-bucket
+```
+
+With the option, `adk eval` treats its positional arguments as eval set IDs, unless the first one is an existing file. It reads each eval set from the bucket and fails when an ID is not there. It saves the results to the bucket in both cases.
+
+The bucket uses this layout:
+
+| Data            | Blob name                                                            |
+| :-------------- | :------------------------------------------------------------------- |
+| Eval set        | `<appName>/evals/eval_sets/<evalSetId>.evalset.json`                 |
+| Eval set result | `<appName>/evals/eval_history/<evalSetResultId>.evalset_result.json` |
+
+`createGcsEvalManagersFromUri(evalStorageUri, storageOptions?)` builds the two managers that the commands use: a `GcsEvalSetsManager` and a `GcsEvalSetResultsManager`, returned as `GcsEvalManagers`. It takes the project from `storageOptions.projectId`, or else from `GOOGLE_CLOUD_PROJECT`. It throws `InputValidationError` when the URI has another scheme, when no project is set, or when the bucket does not exist. The error messages do not repeat the URI.
+
+```ts
+import {createGcsEvalManagersFromUri} from '@google/adk';
+
+const {evalSetsManager, evalSetResultsManager} =
+  await createGcsEvalManagersFromUri('gs://my-bucket');
+const evalSetIds = await evalSetsManager.listEvalSets('my_app');
+const resultIds = await evalSetResultsManager.listEvalSetResults('my_app');
+```
+
+The GCS managers implement the same interfaces as the local managers, with async methods. They validate app names and IDs before they call the storage service, and they map a storage 404 response on a list call to `NotFoundError`. They need the optional peer dependency `@google-cloud/storage`. If it is not installed, the first call fails with an error that names the install command, `npm install @google-cloud/storage`.
+
 `closeRunners(runners)` invokes `runner.close()` concurrently across all provided `Runner` instances and waits up to `RUNNER_CLEANUP_TIMEOUT_MS` (`30000` ms), logging a warning if any runner close task does not complete in time.
 
 ## Configuration options
@@ -229,7 +263,7 @@ const mapping = parseAndGetEvalsToRun([
 ## Limitations
 
 - `createEmptyState` only inspects `LlmAgent` instances whose `instruction` is a static `string`. Placeholders inside an `InstructionProvider` function are not extracted statically.
-- `loadDotenvForAgent`, `logToTmpFolder`, `setupAdkLogger`, and `runEvals` use Node.js filesystem and process modules (`node:fs`, `node:os`, `node:path`) and are exported from the Node `@google/adk` entrypoint, not the browser bundle.
+- `loadDotenvForAgent`, `logToTmpFolder`, `setupAdkLogger`, `runEvals`, and the GCS eval managers use Node.js filesystem and process modules (`node:fs`, `node:os`, `node:path`) and are exported from the Node `@google/adk` entrypoint, not the browser bundle.
 - `getAgentGraph(rootAgent, highlightsPairs, true)` requires the Graphviz `dot` binary to be installed on `PATH` when rendering a PNG buffer.
 
 ## Related samples

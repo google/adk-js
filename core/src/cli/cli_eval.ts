@@ -1165,7 +1165,7 @@ export function parseEvalSetResultJson(
   };
 }
 
-/** Parameters for {@link LocalEvalSetResultsManager.saveEvalSetResult}. */
+/** Parameters for {@link EvalSetResultsManager.saveEvalSetResult}. */
 export interface SaveEvalSetResultParams {
   appName: string;
   evalSetId: string;
@@ -1173,10 +1173,37 @@ export interface SaveEvalSetResultParams {
 }
 
 /**
+ * Stores and reads {@link EvalSetResult} objects for an app.
+ *
+ * Each method may return its value directly or as a promise, so synchronous
+ * stores such as {@link LocalEvalSetResultsManager} and remote stores such as
+ * `GcsEvalSetResultsManager` share one contract. Callers always `await`.
+ */
+export interface EvalSetResultsManager {
+  /** Creates and saves a new {@link EvalSetResult} for `evalCaseResults`. */
+  saveEvalSetResult(
+    params: SaveEvalSetResultParams,
+  ): EvalSetResult | Promise<EvalSetResult>;
+
+  /**
+   * Returns the {@link EvalSetResult} for `appName` and `evalSetResultId`.
+   *
+   * @throws {NotFoundError} If the result does not exist.
+   */
+  getEvalSetResult(
+    appName: string,
+    evalSetResultId: string,
+  ): EvalSetResult | Promise<EvalSetResult>;
+
+  /** Returns the IDs of all saved eval set results for `appName`. */
+  listEvalSetResults(appName: string): string[] | Promise<string[]>;
+}
+
+/**
  * Manages persistence of {@link EvalSetResult} objects on the local filesystem
  * under `<agentsDir>/<appName>/.adk/eval_history/`.
  */
-export class LocalEvalSetResultsManager {
+export class LocalEvalSetResultsManager implements EvalSetResultsManager {
   constructor(private readonly agentsDir: string) {}
 
   /**
@@ -1267,7 +1294,12 @@ export class LocalEvalSetResultsManager {
 const EVAL_SET_FILE_EXTENSION = '.evalset.json';
 const VALID_EVAL_ID_PATTERN = /^[a-zA-Z0-9_]+$/;
 
-function validateEvalId(idName: string, idValue: string): void {
+/**
+ * Checks that an eval set ID or eval case ID matches `^[a-zA-Z0-9_]+$`.
+ *
+ * @throws {InputValidationError} If `idValue` does not match.
+ */
+export function validateEvalId(idName: string, idValue: string): void {
   if (!VALID_EVAL_ID_PATTERN.test(idValue)) {
     const formattedName =
       idName.length > 0 ? idName[0].toUpperCase() + idName.slice(1) : idName;
@@ -1786,18 +1818,17 @@ function parseEvalSetObject(raw: Record<string, unknown>): EvalSet {
 }
 
 /**
- * Loads an {@link EvalSet} from a file on disk, supporting both the structured
+ * Parses an {@link EvalSet} from JSON text, supporting both the structured
  * {@link EvalSet} JSON format and the legacy {@link EvalEntry} array format.
  *
- * @param evalSetFilePath Path to the `.evalset.json` file.
+ * @param content The JSON text of an eval set.
  * @param evalSetId Fallback eval set ID used when converting legacy arrays.
  * @returns The parsed {@link EvalSet}.
+ *
+ * Internal to the framework: not part of the public API. Shared by the local
+ * and GCS eval sets managers.
  */
-export function loadEvalSetFromFile(
-  evalSetFilePath: string,
-  evalSetId: string,
-): EvalSet {
-  const content = fs.readFileSync(evalSetFilePath, 'utf-8');
+export function parseEvalSetJson(content: string, evalSetId: string): EvalSet {
   const parsed: unknown = JSON.parse(content);
   if (
     typeof parsed === 'object' &&
@@ -1814,10 +1845,210 @@ export function loadEvalSetFromFile(
 }
 
 /**
+ * Loads an {@link EvalSet} from a file on disk, supporting both the structured
+ * {@link EvalSet} JSON format and the legacy {@link EvalEntry} array format.
+ *
+ * @param evalSetFilePath Path to the `.evalset.json` file.
+ * @param evalSetId Fallback eval set ID used when converting legacy arrays.
+ * @returns The parsed {@link EvalSet}.
+ */
+export function loadEvalSetFromFile(
+  evalSetFilePath: string,
+  evalSetId: string,
+): EvalSet {
+  return parseEvalSetJson(fs.readFileSync(evalSetFilePath, 'utf-8'), evalSetId);
+}
+
+/**
+ * Stores and reads {@link EvalSet} objects and their {@link EvalCase} entries
+ * for an app.
+ *
+ * Each method may return its value directly or as a promise, so synchronous
+ * stores such as {@link LocalEvalSetsManager} and remote stores such as
+ * `GcsEvalSetsManager` share one contract. Callers always `await`.
+ */
+export interface EvalSetsManager {
+  /** Returns the eval set, or `undefined` if it does not exist. */
+  getEvalSet(
+    appName: string,
+    evalSetId: string,
+  ): EvalSet | undefined | Promise<EvalSet | undefined>;
+
+  /**
+   * Creates an empty eval set.
+   *
+   * @throws {InputValidationError} If `evalSetId` is invalid or the eval set
+   *     already exists.
+   */
+  createEvalSet(appName: string, evalSetId: string): EvalSet | Promise<EvalSet>;
+
+  /** Returns the IDs of all eval sets of `appName`, sorted alphabetically. */
+  listEvalSets(appName: string): string[] | Promise<string[]>;
+
+  /** Returns the eval case, or `undefined` if it or its eval set is missing. */
+  getEvalCase(
+    appName: string,
+    evalSetId: string,
+    evalCaseId: string,
+  ): EvalCase | undefined | Promise<EvalCase | undefined>;
+
+  /**
+   * Adds `evalCase` to an existing eval set.
+   *
+   * @throws {NotFoundError} If the eval set does not exist.
+   * @throws {InputValidationError} If the eval case ID is invalid or exists.
+   */
+  addEvalCase(
+    appName: string,
+    evalSetId: string,
+    evalCase: EvalCase,
+  ): void | Promise<void>;
+
+  /**
+   * Replaces the eval case that has the ID of `updatedEvalCase`.
+   *
+   * @throws {NotFoundError} If the eval set or the eval case is not found.
+   */
+  updateEvalCase(
+    appName: string,
+    evalSetId: string,
+    updatedEvalCase: EvalCase,
+  ): void | Promise<void>;
+
+  /**
+   * Deletes an eval case.
+   *
+   * @throws {NotFoundError} If the eval set or the eval case is not found.
+   */
+  deleteEvalCase(
+    appName: string,
+    evalSetId: string,
+    evalCaseId: string,
+  ): void | Promise<void>;
+}
+
+/**
+ * Parameters for the eval case edit helpers.
+ *
+ * Internal to the framework: not part of the public API. Shared by the local
+ * and GCS eval sets managers.
+ */
+export interface EvalCaseEditParams {
+  /** The loaded eval set, or `undefined` when it does not exist. */
+  evalSet: EvalSet | undefined;
+  /** The requested eval set ID, used in error messages. */
+  evalSetId: string;
+}
+
+/**
+ * Returns a copy of `evalSet` with `evalCase` appended.
+ *
+ * `evalCase` must already be normalized and have a valid ID.
+ *
+ * @throws {NotFoundError} If the eval set does not exist.
+ * @throws {InputValidationError} If the eval case ID already exists.
+ *
+ * Internal to the framework: not part of the public API. Shared by the local
+ * and GCS eval sets managers.
+ */
+export function addEvalCaseToEvalSet({
+  evalSet,
+  evalSetId,
+  evalCase,
+}: EvalCaseEditParams & {evalCase: EvalCase}): EvalSet {
+  if (!evalSet) {
+    throw new NotFoundError(`Eval set \`${evalSetId}\` not found.`);
+  }
+  if (evalSet.evalCases.some((c) => c.evalId === evalCase.evalId)) {
+    throw new InputValidationError(
+      `Eval id \`${evalCase.evalId}\` already exists in \`${evalSetId}\` eval set.`,
+    );
+  }
+  return {...evalSet, evalCases: [...evalSet.evalCases, evalCase]};
+}
+
+/**
+ * Returns the eval case with `evalCaseId` from `evalSet`, or `undefined`.
+ *
+ * Internal to the framework: not part of the public API. Shared by the local
+ * and GCS eval sets managers.
+ */
+export function getEvalCaseFromEvalSet(
+  evalSet: EvalSet | undefined,
+  evalCaseId: string,
+): EvalCase | undefined {
+  return evalSet?.evalCases.find((c) => c.evalId === evalCaseId);
+}
+
+/**
+ * Returns a copy of `evalSet` in which `evalCase` replaces the eval case with
+ * the same ID.
+ *
+ * @throws {NotFoundError} If the eval set or the eval case is not found.
+ *
+ * Internal to the framework: not part of the public API. Shared by the local
+ * and GCS eval sets managers.
+ */
+export function updateEvalCaseInEvalSet({
+  evalSet,
+  evalSetId,
+  evalCase,
+}: EvalCaseEditParams & {evalCase: EvalCase}): EvalSet {
+  const existing = requireEvalCase({
+    evalSet,
+    evalSetId,
+    evalCaseId: evalCase.evalId,
+  });
+  return {
+    ...existing,
+    evalCases: existing.evalCases.map((c) =>
+      c.evalId === evalCase.evalId ? evalCase : c,
+    ),
+  };
+}
+
+/**
+ * Returns a copy of `evalSet` without the eval case that has `evalCaseId`.
+ *
+ * @throws {NotFoundError} If the eval set or the eval case is not found.
+ *
+ * Internal to the framework: not part of the public API. Shared by the local
+ * and GCS eval sets managers.
+ */
+export function deleteEvalCaseFromEvalSet({
+  evalSet,
+  evalSetId,
+  evalCaseId,
+}: EvalCaseEditParams & {evalCaseId: string}): EvalSet {
+  const existing = requireEvalCase({evalSet, evalSetId, evalCaseId});
+  logger.info(
+    `EvalCase \`${evalCaseId}\` was found in the eval set. It will be removed permanently.`,
+  );
+  return {
+    ...existing,
+    evalCases: existing.evalCases.filter((c) => c.evalId !== evalCaseId),
+  };
+}
+
+/** Returns `evalSet` when it holds an eval case with `evalCaseId`. */
+function requireEvalCase({
+  evalSet,
+  evalSetId,
+  evalCaseId,
+}: EvalCaseEditParams & {evalCaseId: string}): EvalSet {
+  if (!evalSet || !evalSet.evalCases.some((c) => c.evalId === evalCaseId)) {
+    throw new NotFoundError(
+      `Eval Set \`${evalSetId}\` or Eval id \`${evalCaseId}\` not found.`,
+    );
+  }
+  return evalSet;
+}
+
+/**
  * Manages local {@link EvalSet} files on disk under
  * `<agentsDir>/<appName>/<evalSetId>.evalset.json`.
  */
-export class LocalEvalSetsManager {
+export class LocalEvalSetsManager implements EvalSetsManager {
   constructor(private readonly agentsDir: string) {}
 
   /**
@@ -1889,23 +2120,16 @@ export class LocalEvalSetsManager {
    */
   addEvalCase(appName: string, evalSetId: string, evalCase: EvalCase): void {
     const normalizedCase = normalizeEvalCase(evalCase);
-    const evalCaseId = normalizedCase.evalId;
-    validateEvalId('Eval Case ID', evalCaseId);
-
-    const evalSet = this.getEvalSet(appName, evalSetId);
-    if (!evalSet) {
-      throw new NotFoundError(`Eval set \`${evalSetId}\` not found.`);
-    }
-
-    if (evalSet.evalCases.some((x) => x.evalId === evalCaseId)) {
-      throw new InputValidationError(
-        `Eval id \`${evalCaseId}\` already exists in \`${evalSetId}\` eval set.`,
-      );
-    }
-
-    evalSet.evalCases.push(normalizedCase);
-    const evalSetFilePath = this.getEvalSetFilePath(appName, evalSetId);
-    this.writeEvalSet(evalSetFilePath, evalSet);
+    validateEvalId('Eval Case ID', normalizedCase.evalId);
+    const updatedEvalSet = addEvalCaseToEvalSet({
+      evalSet: this.getEvalSet(appName, evalSetId),
+      evalSetId,
+      evalCase: normalizedCase,
+    });
+    this.writeEvalSet(
+      this.getEvalSetFilePath(appName, evalSetId),
+      updatedEvalSet,
+    );
   }
 
   /**
@@ -1917,11 +2141,10 @@ export class LocalEvalSetsManager {
     evalSetId: string,
     evalCaseId: string,
   ): EvalCase | undefined {
-    const evalSet = this.getEvalSet(appName, evalSetId);
-    if (!evalSet) {
-      return undefined;
-    }
-    return evalSet.evalCases.find((c) => c.evalId === evalCaseId);
+    return getEvalCaseFromEvalSet(
+      this.getEvalSet(appName, evalSetId),
+      evalCaseId,
+    );
   }
 
   /**
@@ -1936,21 +2159,15 @@ export class LocalEvalSetsManager {
     updatedEvalCase: EvalCase,
   ): void {
     const normalizedCase = normalizeEvalCase(updatedEvalCase);
-    const evalCaseId = normalizedCase.evalId;
-    const evalSet = this.getEvalSet(appName, evalSetId);
-    if (!evalSet || !evalSet.evalCases.some((c) => c.evalId === evalCaseId)) {
-      throw new NotFoundError(
-        `Eval Set \`${evalSetId}\` or Eval id \`${evalCaseId}\` not found.`,
-      );
-    }
-
-    evalSet.evalCases = evalSet.evalCases.filter(
-      (c) => c.evalId !== evalCaseId,
+    const updatedEvalSet = updateEvalCaseInEvalSet({
+      evalSet: this.getEvalSet(appName, evalSetId),
+      evalSetId,
+      evalCase: normalizedCase,
+    });
+    this.writeEvalSet(
+      this.getEvalSetFilePath(appName, evalSetId),
+      updatedEvalSet,
     );
-    evalSet.evalCases.push(normalizedCase);
-
-    const evalSetFilePath = this.getEvalSetFilePath(appName, evalSetId);
-    this.writeEvalSet(evalSetFilePath, evalSet);
   }
 
   /**
@@ -1960,22 +2177,15 @@ export class LocalEvalSetsManager {
    * @throws {NotFoundError} If the eval set or eval case to delete is not found.
    */
   deleteEvalCase(appName: string, evalSetId: string, evalCaseId: string): void {
-    const evalSet = this.getEvalSet(appName, evalSetId);
-    if (!evalSet || !evalSet.evalCases.some((c) => c.evalId === evalCaseId)) {
-      throw new NotFoundError(
-        `Eval Set \`${evalSetId}\` or Eval id \`${evalCaseId}\` not found.`,
-      );
-    }
-
-    logger.info(
-      `EvalCase \`${evalCaseId}\` was found in the eval set. It will be removed permanently.`,
+    const updatedEvalSet = deleteEvalCaseFromEvalSet({
+      evalSet: this.getEvalSet(appName, evalSetId),
+      evalSetId,
+      evalCaseId,
+    });
+    this.writeEvalSet(
+      this.getEvalSetFilePath(appName, evalSetId),
+      updatedEvalSet,
     );
-    evalSet.evalCases = evalSet.evalCases.filter(
-      (c) => c.evalId !== evalCaseId,
-    );
-
-    const evalSetFilePath = this.getEvalSetFilePath(appName, evalSetId);
-    this.writeEvalSet(evalSetFilePath, evalSet);
   }
 
   private getEvalSetFilePath(appName: string, evalSetId: string): string {

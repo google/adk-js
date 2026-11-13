@@ -44,6 +44,16 @@ To use the browser UI instead, serve the file with `adk web`:
 node dev/dist/esm/cli_entrypoint.js web samples/cli/agent.ts
 ```
 
+To keep eval sets and eval results in a Google Cloud Storage bucket instead of the agents directory, add `--eval_storage_uri`. The bucket must exist, `GOOGLE_CLOUD_PROJECT` must name its project, and the optional peer `@google-cloud/storage` must be installed:
+
+```bash
+npm install @google-cloud/storage
+export GOOGLE_CLOUD_PROJECT=<your project>
+node dev/dist/esm/cli_entrypoint.js web samples/cli/agent.ts --eval_storage_uri gs://<bucket name>
+```
+
+The UI then saves eval sets to `<appName>/evals/eval_sets/` and eval results to `<appName>/evals/eval_history/` in the bucket.
+
 `samples/` is not an npm workspace, so it is type-checked separately:
 
 ```bash
@@ -52,4 +62,4 @@ npm run ts:check:samples
 
 ## Related Guides
 
-- [CLI and Evaluation Utilities](../../docs/guides/cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalInvocations`, `setupAdkLogger`, `logToTmpFolder`, `closeRunners`, `LocalEvalSetsManager`, `LocalEvalSetResultsManager`, and `runEvals`.
+- [CLI and Evaluation Utilities](../../docs/guides/cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalInvocations`, `setupAdkLogger`, `logToTmpFolder`, `closeRunners`, `LocalEvalSetsManager`, `LocalEvalSetResultsManager`, `createGcsEvalManagersFromUri`, and `runEvals`.
