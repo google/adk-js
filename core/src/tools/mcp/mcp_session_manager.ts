@@ -11,10 +11,16 @@ import type {StreamableHTTPClientTransportOptions} from '@modelcontextprotocol/s
 import type {RequestOptions} from '@modelcontextprotocol/sdk/shared/protocol.js';
 
 import {instrumentMcpFetch} from '../../telemetry/api/instrumentation.js';
-import {mergeTrackingHeaders} from '../../utils/client_labels.js';
+import {
+  headerEntries,
+  HeadersInput,
+  mergeTrackingHeaders,
+} from '../../utils/client_labels.js';
 import {formatError} from '../../utils/error_utils.js';
 import {logger} from '../../utils/logger.js';
 import {loadOptionalPeer, OptionalPeer} from '../../utils/optional_peer.js';
+
+import {mergeHeaders} from './mcp_auth_utils.js';
 
 /**
  * The optional peer backing every MCP connection.
@@ -114,8 +120,36 @@ export type MCPConnectionParams =
   StdioConnectionParams | SseConnectionParams | StreamableHTTPConnectionParams;
 
 /**
- * Builds the options for a streamable HTTP transport, with the ADK tracking
- * headers merged into `requestInit.headers`.
+ * Returns `headers` with each of `extraHeaders` added on top.
+ *
+ * Header names are compared case-insensitively, so an extra header replaces a
+ * caller header of the same name in any casing, and two extra headers that
+ * differ only in casing collapse to the later one. Caller headers that are not
+ * replaced keep their original names. When there are no extra headers,
+ * `headers` is returned as is.
+ */
+function overlayHeaders(
+  headers: HeadersInput | undefined,
+  extraHeaders: Record<string, string> | undefined,
+): HeadersInput | undefined {
+  if (!extraHeaders || Object.keys(extraHeaders).length === 0) {
+    return headers;
+  }
+  const extra = mergeHeaders(extraHeaders);
+  const replaced = new Set(
+    Object.keys(extra).map((name) => name.toLowerCase()),
+  );
+  return [
+    ...headerEntries(headers).filter(
+      ([name]) => !replaced.has(name.toLowerCase()),
+    ),
+    ...Object.entries(extra),
+  ];
+}
+
+/**
+ * Builds the options for a streamable HTTP transport, with `extraHeaders` and
+ * the ADK tracking headers merged into `requestInit.headers`.
  *
  * The deprecated `header` field is used only when
  * `transportOptions.requestInit` is undefined. The result is a new object, so
@@ -123,6 +157,7 @@ export type MCPConnectionParams =
  */
 function buildTransportOptions(
   params: StreamableHTTPConnectionParams,
+  extraHeaders?: Record<string, string>,
 ): StreamableHTTPClientTransportOptions {
   const {transportOptions, header} = params;
   const callerHeaders =
@@ -133,18 +168,21 @@ function buildTransportOptions(
     ...transportOptions,
     requestInit: {
       ...transportOptions?.requestInit,
-      headers: mergeTrackingHeaders(callerHeaders),
+      headers: mergeTrackingHeaders(
+        overlayHeaders(callerHeaders, extraHeaders),
+      ),
     },
     fetch: instrumentMcpFetch(transportOptions?.fetch),
   };
 }
 
 /**
- * Builds the options for an SSE transport, with the ADK tracking headers
- * merged into `requestInit.headers`.
+ * Builds the options for an SSE transport, with `extraHeaders` and the ADK
+ * tracking headers merged into `requestInit.headers`.
  */
 function buildSseTransportOptions(
   params: SseConnectionParams,
+  extraHeaders?: Record<string, string>,
 ): SSEClientTransportOptions {
   const {transportOptions, header, headers} = params;
   const callerHeaders =
@@ -155,7 +193,9 @@ function buildSseTransportOptions(
     ...transportOptions,
     requestInit: {
       ...transportOptions?.requestInit,
-      headers: mergeTrackingHeaders(callerHeaders),
+      headers: mergeTrackingHeaders(
+        overlayHeaders(callerHeaders, extraHeaders),
+      ),
     },
     fetch: instrumentMcpFetch(transportOptions?.fetch),
   };
@@ -173,6 +213,10 @@ function buildSseTransportOptions(
  * session creation and connection handling, providing a simple interface for
  * creating new MCP client instances that can be used to interact with
  * remote tools.
+ *
+ * Each call to {@link MCPSessionManager.createSession} opens a new session.
+ * HTTP-based sessions can carry extra headers, such as the authentication
+ * headers of one tool call; stdio sessions ignore them.
  */
 export class MCPSessionManager {
   private readonly connectionParams: MCPConnectionParams;
@@ -203,7 +247,15 @@ export class MCPSessionManager {
     return options;
   }
 
-  async createSession(): Promise<Client> {
+  /**
+   * Opens a new MCP client session.
+   *
+   * @param headers Extra HTTP headers for this session. They are added on top
+   *     of the connection's own headers, and replace a connection header of
+   *     the same name in any casing. Stdio connections ignore them.
+   * @return The connected MCP client.
+   */
+  async createSession(headers?: Record<string, string>): Promise<Client> {
     const {Client} = await loadOptionalPeer(
       MCP_SDK,
       () => import('@modelcontextprotocol/sdk/client/index.js'),
@@ -231,7 +283,7 @@ export class MCPSessionManager {
           );
           const transport = new StreamableHTTPClientTransport(
             new URL(this.connectionParams.url),
-            buildTransportOptions(this.connectionParams),
+            buildTransportOptions(this.connectionParams, headers),
           );
           transport.onerror = logTransportError;
           await client.connect(transport);
@@ -244,7 +296,7 @@ export class MCPSessionManager {
           );
           const transport = new SSEClientTransport(
             new URL(this.connectionParams.url),
-            buildSseTransportOptions(this.connectionParams),
+            buildSseTransportOptions(this.connectionParams, headers),
           );
           transport.onerror = logTransportError;
           await client.connect(transport);

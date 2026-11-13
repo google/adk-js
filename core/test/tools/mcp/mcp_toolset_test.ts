@@ -8,10 +8,18 @@ import type {SseConnectionParams, SseServerParams} from '@google/adk';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {SSEClientTransport} from '@modelcontextprotocol/sdk/client/sse.js';
 import {describe, expect, it, vi} from 'vitest';
+import {Context} from '../../../src/agents/context.js';
+import {InvocationContext} from '../../../src/agents/invocation_context.js';
 import {ReadonlyContext} from '../../../src/agents/readonly_context.js';
+import {AuthCredentialTypes} from '../../../src/auth/auth_credential.js';
+import {AuthConfig} from '../../../src/auth/auth_tool.js';
+import {isBaseAuthenticatedTool} from '../../../src/tools/base_authenticated_tool.js';
 import {isBaseToolset} from '../../../src/tools/base_toolset.js';
 import {MCPConnectionParams} from '../../../src/tools/mcp/mcp_session_manager.js';
-import {MCPToolset} from '../../../src/tools/mcp/mcp_toolset.js';
+import {
+  MCPToolset,
+  MCPToolsetOptions,
+} from '../../../src/tools/mcp/mcp_toolset.js';
 
 vi.hoisted(() => {
   vi.resetModules();
@@ -558,6 +566,151 @@ describe('MCPToolset', () => {
 
       finishListTools.resolve({tools: []});
       await Promise.all([pendingTools1, pendingTools2]);
+    });
+  });
+
+  describe('options constructor', () => {
+    const apiKeyAuthConfig: AuthConfig = {
+      authScheme: {type: 'apiKey', in: 'header', name: 'X-Api-Token'},
+      rawAuthCredential: {
+        authType: AuthCredentialTypes.API_KEY,
+        apiKey: 'secret-key',
+      },
+      credentialKey: 'toolset-api-key',
+    };
+
+    it('honours toolFilter and prefix', async () => {
+      const toolset = new MCPToolset({
+        connectionParams: stdioParams,
+        toolFilter: ['opts_other-tool'],
+        prefix: 'opts',
+      });
+
+      const tools = await toolset.getTools();
+
+      expect(tools).toHaveLength(1);
+      expect(tools[0].name).toBe('opts_other-tool');
+    });
+
+    it('gives every discovered tool the authConfig, which sends the key header on calls', async () => {
+      const callTool = vi.fn().mockResolvedValue({content: []});
+      vi.mocked(Client)
+        .mockImplementationOnce(function () {
+          return {
+            connect: noop(),
+            close: noop(),
+            listTools: vi.fn().mockResolvedValue({
+              tools: [{name: 'test-tool', inputSchema: {}}],
+            }),
+          } as unknown as Client;
+        })
+        .mockImplementationOnce(function () {
+          return {
+            connect: noop(),
+            close: noop(),
+            callTool,
+          } as unknown as Client;
+        });
+      const toolset = new MCPToolset({
+        connectionParams: {
+          type: 'SseConnectionParams',
+          url: 'http://localhost:8090/sse',
+        },
+        authConfig: apiKeyAuthConfig,
+      });
+
+      const tools = await toolset.getTools();
+      expect(tools).toHaveLength(1);
+      expect(isBaseAuthenticatedTool(tools[0])).toBe(true);
+      // Discovery sends no auth headers.
+      expect(
+        vi.mocked(SSEClientTransport).mock.lastCall?.[1]?.requestInit?.headers,
+      ).not.toHaveProperty('X-Api-Token');
+
+      const invocationContext = {
+        abortSignal: new AbortController().signal,
+        session: {state: {}},
+      } as unknown as InvocationContext;
+      await tools[0].runAsync({
+        args: {q: 'x'},
+        toolContext: new Context({invocationContext}),
+      });
+
+      expect(
+        vi.mocked(SSEClientTransport).mock.lastCall?.[1]?.requestInit?.headers,
+      ).toMatchObject({'X-Api-Token': 'secret-key'});
+      expect(callTool).toHaveBeenCalledWith(
+        {name: 'test-tool', arguments: {q: 'x'}},
+        undefined,
+        expect.anything(),
+      );
+    });
+
+    it('sends the key header on calls when built from authScheme and authCredential', async () => {
+      vi.mocked(Client)
+        .mockImplementationOnce(function () {
+          return {
+            connect: noop(),
+            close: noop(),
+            listTools: vi.fn().mockResolvedValue({
+              tools: [{name: 'test-tool', inputSchema: {}}],
+            }),
+          } as unknown as Client;
+        })
+        .mockImplementationOnce(function () {
+          return {
+            connect: noop(),
+            close: noop(),
+            callTool: vi.fn().mockResolvedValue({content: []}),
+          } as unknown as Client;
+        });
+      const toolset = new MCPToolset({
+        connectionParams: {
+          type: 'SseConnectionParams',
+          url: 'http://localhost:8090/sse',
+        },
+        authScheme: apiKeyAuthConfig.authScheme,
+        authCredential: apiKeyAuthConfig.rawAuthCredential,
+      });
+
+      const [tool] = await toolset.getTools();
+      const invocationContext = {
+        abortSignal: new AbortController().signal,
+        session: {state: {}},
+      } as unknown as InvocationContext;
+      await tool.runAsync({
+        args: {},
+        toolContext: new Context({invocationContext}),
+      });
+
+      expect(isBaseAuthenticatedTool(tool)).toBe(true);
+      expect(
+        vi.mocked(SSEClientTransport).mock.lastCall?.[1]?.requestInit?.headers,
+      ).toMatchObject({'X-Api-Token': 'secret-key'});
+    });
+
+    it('rejects authConfig given together with authScheme', () => {
+      expect(
+        () =>
+          new MCPToolset({
+            connectionParams: stdioParams,
+            authConfig: apiKeyAuthConfig,
+            authScheme: apiKeyAuthConfig.authScheme,
+          }),
+      ).toThrow(
+        'MCPToolset takes either authConfig or authScheme, authCredential and credentialKey, not both.',
+      );
+    });
+
+    it('rejects options without connectionParams', () => {
+      // A caller without type checking can leave out a required field.
+      const options = {
+        connectionParams: undefined,
+      } as unknown as MCPToolsetOptions;
+
+      expect(() => new MCPToolset(options)).toThrow(
+        'MCPToolset needs connectionParams.',
+      );
     });
   });
 });

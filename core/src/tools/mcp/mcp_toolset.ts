@@ -14,10 +14,14 @@ import type {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import {ReadonlyContext} from '../../agents/readonly_context.js';
+import {AuthCredential} from '../../auth/auth_credential.js';
+import {AuthScheme} from '../../auth/auth_schemes.js';
+import {AuthConfig} from '../../auth/auth_tool.js';
 import {logger} from '../../utils/logger.js';
 import {BaseTool} from '../base_tool.js';
 import {BaseToolset, ToolPredicate} from '../base_toolset.js';
 
+import {resolveAuthConfig} from './mcp_auth_utils.js';
 import {MCPConnectionParams, MCPSessionManager} from './mcp_session_manager.js';
 import {MCPTool} from './mcp_tool.js';
 
@@ -25,6 +29,43 @@ export type {
   SseConnectionParams,
   SseServerParams,
 } from './mcp_session_manager.js';
+
+/**
+ * Options for the {@link MCPToolset} constructor.
+ */
+export interface MCPToolsetOptions {
+  /** How to connect to the MCP server. */
+  connectionParams: MCPConnectionParams;
+  /** Restricts which tools reach the model, by name or predicate. */
+  toolFilter?: ToolPredicate | string[];
+  /** Prefixes every discovered tool name with `${prefix}_`. */
+  prefix?: string;
+  /**
+   * The authentication configuration given to every discovered
+   * {@link MCPTool}. It applies to tool calls only, not to tool discovery or
+   * resource reads. Give either this or `authScheme`, not both.
+   */
+  authConfig?: AuthConfig;
+  /**
+   * The auth scheme given to every discovered {@link MCPTool}. With
+   * `authCredential` and `credentialKey`, an alternative to `authConfig`.
+   */
+  authScheme?: AuthScheme;
+  /** The raw credential for `authScheme`. Requires `authScheme`. */
+  authCredential?: AuthCredential;
+  /**
+   * The key the credential is saved under in the credential service. Requires
+   * `authScheme`. Defaults to a key derived from `authScheme` and
+   * `authCredential`.
+   */
+  credentialKey?: string;
+}
+
+function isMCPToolsetOptions(
+  arg: MCPConnectionParams | MCPToolsetOptions,
+): arg is MCPToolsetOptions {
+  return typeof arg === 'object' && arg !== null && 'connectionParams' in arg;
+}
 
 /**
  * A toolset that dynamically discovers and provides tools from a Model Context
@@ -69,17 +110,67 @@ export type {
  * const sseToolset = new MCPToolset(sseParams);
  * const sseTools = await sseToolset.getTools();
  * ```
+ *
+ * @example
+ * ```ts
+ * import {AuthCredentialTypes, MCPToolset} from '@google/adk';
+ *
+ * const authToolset = new MCPToolset({
+ *   connectionParams: {
+ *     type: 'StreamableHTTPConnectionParams',
+ *     url: 'http://localhost:8788/mcp',
+ *   },
+ *   authConfig: {
+ *     authScheme: {type: 'apiKey', in: 'header', name: 'X-API-Key'},
+ *     rawAuthCredential: {
+ *       authType: AuthCredentialTypes.API_KEY,
+ *       apiKey: process.env.MCP_API_KEY,
+ *     },
+ *     credentialKey: 'mcp-api-key',
+ *   },
+ * });
+ * ```
+ *
+ * Instead of `authConfig`, the options can give `authScheme`, an optional
+ * `authCredential` and an optional `credentialKey`.
+ *
+ * Authentication is experimental. With an `authConfig`, each tool call sends
+ * the resolved credential as HTTP headers; see {@link MCPTool}.
  */
 export class MCPToolset extends BaseToolset {
   private readonly mcpSessionManager: MCPSessionManager;
+  private readonly authConfig?: AuthConfig;
 
+  /**
+   * @param options The connection parameters, tool filter, prefix and
+   *     optional authentication configuration.
+   */
+  constructor(options: MCPToolsetOptions);
+  /**
+   * @param connectionParams How to connect to the MCP server.
+   * @param toolFilter Restricts which tools reach the model, by name or
+   *     predicate.
+   * @param prefix Prefixes every discovered tool name with `${prefix}_`.
+   */
   constructor(
     connectionParams: MCPConnectionParams,
+    toolFilter?: ToolPredicate | string[],
+    prefix?: string,
+  );
+  constructor(
+    paramsOrOptions: MCPConnectionParams | MCPToolsetOptions,
     toolFilter: ToolPredicate | string[] = [],
     prefix?: string,
   ) {
-    super(toolFilter, prefix);
-    this.mcpSessionManager = new MCPSessionManager(connectionParams);
+    const options = isMCPToolsetOptions(paramsOrOptions)
+      ? paramsOrOptions
+      : {connectionParams: paramsOrOptions, toolFilter, prefix};
+    if (!options.connectionParams) {
+      throw new Error('MCPToolset needs connectionParams.');
+    }
+    super(options.toolFilter ?? [], options.prefix);
+    this.mcpSessionManager = new MCPSessionManager(options.connectionParams);
+    this.authConfig = resolveAuthConfig(options, 'MCPToolset');
   }
 
   async getTools(context?: ReadonlyContext): Promise<BaseTool[]> {
@@ -105,7 +196,12 @@ export class MCPToolset extends BaseToolset {
         ...tool,
         name: this.prefix ? `${this.prefix}_${tool.name}` : tool.name,
       };
-      return new MCPTool(toolWithPrefix, this.mcpSessionManager, tool.name);
+      return new MCPTool({
+        mcpTool: toolWithPrefix,
+        mcpSessionManager: this.mcpSessionManager,
+        originalName: tool.name,
+        authConfig: this.authConfig,
+      });
     });
 
     return tools.filter((tool) => this.isToolSelected(tool, context));
