@@ -13,7 +13,15 @@ import {
   VertexAiSessionService,
 } from '@google/adk';
 import {ApiError} from '@google/genai';
-import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from 'vitest';
 import {
   isFastForwardable,
   reconstructNodeStates,
@@ -455,6 +463,32 @@ describe('VertexAiSessionService', () => {
       );
 
       loggerSpy.mockRestore();
+    });
+
+    it('throws error if session does not belong to user when agentEngineId is configured', async () => {
+      const serviceWithEngineId = new VertexAiSessionService({
+        sessions: mockClient as unknown as Sessions,
+        agentEngineId: '123',
+      });
+      mockClient.get.mockResolvedValue({
+        name: 'reasoningEngines/123/sessions/my-session-id',
+        userId: 'otherUser',
+      });
+      const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+      onTestFinished(() => loggerSpy.mockRestore());
+
+      await expect(
+        serviceWithEngineId.getSession({
+          appName: '12345',
+          userId: 'testUser',
+          sessionId: 'my-session-id',
+        }),
+      ).rejects.toThrow(
+        'Session my-session-id does not belong to user testUser',
+      );
+      expect(mockClient.get).toHaveBeenCalledWith({
+        name: 'reasoningEngines/123/sessions/my-session-id',
+      });
     });
 
     it('parses events from API response including compaction and usage metadata', async () => {

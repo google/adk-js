@@ -1053,6 +1053,64 @@ describe('Runner.runLive', () => {
     expect(liveConfig?.enableAffectiveDialog).toBe(true);
   });
 
+  it.each([
+    {
+      name: 'outputAudioTranscription only',
+      runConfig: {outputAudioTranscription: {}},
+      expected: {outputAudioTranscription: {}},
+    },
+    {
+      name: 'inputAudioTranscription only',
+      runConfig: {inputAudioTranscription: {}},
+      expected: {inputAudioTranscription: {}},
+    },
+    {
+      name: 'enableAffectiveDialog set to true',
+      runConfig: {enableAffectiveDialog: true},
+      expected: {enableAffectiveDialog: true},
+    },
+    {
+      name: 'enableAffectiveDialog set to false',
+      runConfig: {enableAffectiveDialog: false},
+      expected: {enableAffectiveDialog: false},
+    },
+    {
+      name: 'proactivity configuration',
+      runConfig: {proactivity: {proactiveAudio: true}},
+      expected: {proactivity: {proactiveAudio: true}},
+    },
+  ])(
+    'forwards $name from RunConfig onto liveConnectConfig',
+    async ({runConfig, expected}) => {
+      const llm = new FakeLiveLlm([{turnComplete: true}]);
+      const agent = new LlmAgent({name: 'agent', model: llm});
+      const runner = new Runner({
+        appName: TEST_APP_ID,
+        agent,
+        sessionService,
+        artifactService,
+      });
+
+      const queue = new LiveRequestQueue();
+      queue.sendRealtime({data: 'AP8=', mimeType: 'audio/pcm'});
+      queue.close();
+      const events: Event[] = [];
+      for await (const event of runner.runLive({
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+        liveRequestQueue: queue,
+        runConfig,
+      })) {
+        events.push(event);
+      }
+
+      expect(events.length).toBeGreaterThan(0);
+      expect(llm.llmRequestSeen?.liveConnectConfig).toEqual(
+        expect.objectContaining(expected),
+      );
+    },
+  );
+
   it.each([1006, 1011, 1012])(
     'reconnects with session handle on websocket close code %i with non-matching message',
     async (code) => {

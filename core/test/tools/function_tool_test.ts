@@ -1650,5 +1650,62 @@ describe('FunctionTool', () => {
       });
       expect(emptyObjectResult).toEqual({});
     });
+
+    it('filters out unexpected arguments such as parameters when running a function', async () => {
+      let receivedArgs: Record<string, unknown> | undefined;
+      const tool = new FunctionTool({
+        name: 'sample_func',
+        description: 'Sample function with one expected argument.',
+        parameters: z4.object({
+          expectedArg: z4.string(),
+        }),
+        execute: (args) => {
+          receivedArgs = args;
+          return {receivedArg: args.expectedArg};
+        },
+      });
+
+      const result = await tool.runAsync({
+        args: {expectedArg: 'hello', parameters: 'should_be_filtered'},
+        toolContext: emptyContext,
+      });
+
+      expect(result).toEqual({receivedArg: 'hello'});
+      expect(receivedArgs).toEqual({expectedArg: 'hello'});
+      expect(receivedArgs).not.toHaveProperty('parameters');
+    });
+
+    it('filters out unexpected arguments and passes toolContext when running a function with toolContext', async () => {
+      let receivedArgs: Record<string, unknown> | undefined;
+      const tool = new FunctionTool({
+        name: 'sample_func_with_context',
+        description: 'Sample function receiving toolContext.',
+        parameters: z4.object({
+          expectedArg: z4.string(),
+        }),
+        execute: (args, toolContext) => {
+          receivedArgs = args;
+          return {
+            receivedArg: args.expectedArg,
+            contextPresent: Boolean(toolContext),
+          };
+        },
+      });
+
+      const toolContext = new Context({
+        invocationContext: createTestInvocationContext(),
+      });
+      const result = await tool.runAsync({
+        args: {expectedArg: 'world', parameters: 'should_also_be_filtered'},
+        toolContext,
+      });
+
+      expect(result).toEqual({
+        receivedArg: 'world',
+        contextPresent: true,
+      });
+      expect(receivedArgs).toEqual({expectedArg: 'world'});
+      expect(receivedArgs).not.toHaveProperty('parameters');
+    });
   });
 });

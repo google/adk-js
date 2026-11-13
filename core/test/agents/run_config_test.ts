@@ -90,4 +90,29 @@ describe('createRunConfig', () => {
       expect(config.inputAudioTranscription).toBe(inputAudioTranscription);
     });
   });
+
+  it('preserves all live audio, VAD, affective dialog, and proactivity configurations', () => {
+    const outputAudioTranscription = {};
+    const inputAudioTranscription = {};
+    const realtimeInputConfig = {
+      automaticActivityDetection: {disabled: false},
+    };
+    const proactivity = {proactiveAudio: true};
+    const config = createRunConfig({
+      outputAudioTranscription,
+      inputAudioTranscription,
+      realtimeInputConfig,
+      enableAffectiveDialog: true,
+      proactivity,
+    });
+
+    expect(config.outputAudioTranscription).toBe(outputAudioTranscription);
+    expect(config.inputAudioTranscription).toBe(inputAudioTranscription);
+    expect(config.realtimeInputConfig).toBe(realtimeInputConfig);
+    expect(
+      config.realtimeInputConfig?.automaticActivityDetection?.disabled,
+    ).toBe(false);
+    expect(config.enableAffectiveDialog).toBe(true);
+    expect(config.proactivity).toBe(proactivity);
+  });
 });
