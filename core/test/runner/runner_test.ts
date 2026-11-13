@@ -15,6 +15,7 @@ import {
   determineAgentForResumption,
   Event,
   InMemoryArtifactService,
+  InMemoryCredentialService,
   InMemoryRunner,
   InMemorySessionService,
   INTERNAL_METADATA_PREFIX,
@@ -2432,6 +2433,68 @@ describe('Runner.close', () => {
     expect(warnSpy).toHaveBeenCalledTimes(2);
     expect(warnSpy).toHaveBeenCalledWith(
       'Toolset MockCleanupToolset cleanup timed out',
+    );
+  });
+});
+
+describe('Runner credentialService', () => {
+  it('keeps the credential service passed to the constructor', () => {
+    const credentialService = new InMemoryCredentialService();
+    const sessionService = new InMemorySessionService();
+    const agent = new MockLlmAgent('agent_credential_service');
+
+    const withService = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      credentialService,
+    });
+    const withoutService = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+    });
+
+    expect(withService.credentialService).toBe(credentialService);
+    expect(withoutService.credentialService).toBeUndefined();
+  });
+
+  it('passes the credential service into the invocation context', async () => {
+    const credentialService = new InMemoryCredentialService();
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: new MockLlmAgent('agent_credential_service'),
+      sessionService: new InMemorySessionService(),
+      credentialService,
+    });
+
+    let capturedInvocationContext: InvocationContext | undefined;
+    const plugin = new (class extends BasePlugin {
+      constructor() {
+        super('capture_context_plugin');
+      }
+      override async onUserMessageCallback({
+        invocationContext,
+      }: {
+        invocationContext: InvocationContext;
+        userMessage: Content;
+      }) {
+        capturedInvocationContext = invocationContext;
+        return undefined;
+      }
+    })();
+    runner.pluginManager.registerPlugin(plugin);
+
+    for await (const _ of runner.runEphemeral({
+      userId: TEST_USER_ID,
+      newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+    })) {
+      // iterate
+    }
+
+    expect(capturedInvocationContext).toBeDefined();
+    expect(capturedInvocationContext?.credentialService).toBe(
+      credentialService,
     );
   });
 });
