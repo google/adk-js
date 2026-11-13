@@ -9,28 +9,33 @@ import {
   BaseArtifactService,
   BaseMemoryService,
   BaseSessionService,
+  createGcsEvalManagersFromUri,
   EvalCase,
   EvalMetric,
   EvalResult,
+  EvalSet,
+  EvalSetResultsManager,
+  EvalSetsManager,
   EvalStatus,
-  InMemoryMemoryService,
-  LocalEvalSetResultsManager,
-  LogLevel,
-  VertexAiMemoryBankService,
-  VertexAiRagMemoryService,
-  VertexAiSessionService,
+  GcsEvalManagers,
   getArtifactServiceFromUri,
   getEvaluationCriteriaOrDefault,
   getRootAgent,
   getSessionServiceFromUri,
+  InMemoryMemoryService,
   loadDotenvForAgent,
   loadEvalSetFromFile,
+  LocalEvalSetResultsManager,
+  LogLevel,
   logToTmpFolder,
   parseAndGetEvalsToRun,
   runEvals,
   setLogLevel as setAdkCoreLogLevel,
   setupAdkLogger,
   tryGetResetFunc,
+  VertexAiMemoryBankService,
+  VertexAiRagMemoryService,
+  VertexAiSessionService,
   walkToRootUntilFound,
 } from '@google/adk';
 import {Argument, Command, Option} from 'commander';
@@ -262,6 +267,80 @@ export function getMemoryServiceFromOptions(
   throw new Error(`Unsupported memory service URI: ${redactUriPassword(uri)}`);
 }
 
+/**
+ * Builds the GCS eval managers that `--eval_storage_uri` names, or returns
+ * `undefined` when the option is not set.
+ */
+async function getEvalManagersFromOptions(options: {
+  eval_storage_uri?: string;
+}): Promise<GcsEvalManagers | undefined> {
+  const uri = options['eval_storage_uri'];
+  return uri ? createGcsEvalManagersFromUri(uri) : undefined;
+}
+
+/**
+ * Reads an eval set by ID from `evalSetsManager`.
+ *
+ * @throws Error if the eval set does not exist.
+ */
+async function getStoredEvalSet({
+  evalSetsManager,
+  appName,
+  evalSetId,
+}: {
+  evalSetsManager: EvalSetsManager;
+  appName: string;
+  evalSetId: string;
+}): Promise<EvalSet> {
+  const evalSet = await evalSetsManager.getEvalSet(appName, evalSetId);
+  if (!evalSet) {
+    throw new Error(
+      `Eval set '${evalSetId}' was not found in the eval storage for app '${appName}'.`,
+    );
+  }
+  return evalSet;
+}
+
+/**
+ * Loads the eval cases that `adk eval` runs, keyed by eval set ID.
+ *
+ * Each key of `evalSetToEvals` is an eval set file path. When an
+ * `evalSetsManager` is given and the first key is not an existing file, the
+ * keys are eval set IDs that the manager reads instead. An empty case list
+ * runs every case of the eval set.
+ */
+async function loadEvalCasesToRun({
+  evalSetToEvals,
+  evalSetsManager,
+  appName,
+}: {
+  evalSetToEvals: Record<string, string[]>;
+  evalSetsManager?: EvalSetsManager;
+  appName: string;
+}): Promise<Record<string, EvalCase[]>> {
+  const keys = Object.keys(evalSetToEvals);
+  const readFromStore =
+    evalSetsManager !== undefined &&
+    keys.length > 0 &&
+    !fs.existsSync(getAbsolutePath(keys[0]));
+  const evalSets = await Promise.all(
+    keys.map(async (key) =>
+      readFromStore
+        ? getStoredEvalSet({evalSetsManager, appName, evalSetId: key})
+        : loadEvalSetFromFile(getAbsolutePath(key), key),
+    ),
+  );
+  const evalCasesByEvalSetId: Record<string, EvalCase[]> = {};
+  evalSets.forEach((evalSet, i) => {
+    const evalsToRun = evalSetToEvals[keys[i]];
+    evalCasesByEvalSetId[evalSet.evalSetId] =
+      evalsToRun.length > 0
+        ? evalSet.evalCases.filter((e) => evalsToRun.includes(e.evalId))
+        : evalSet.evalCases;
+  });
+  return evalCasesByEvalSetId;
+}
+
 function getAgentFileOptions(options: {
   compile?: boolean;
   bundle?: boolean;
@@ -365,6 +444,10 @@ export function adkServicesOptions(cmd: Command): Command {
     .addOption(ARTIFACT_SERVICE_URI_OPTION)
     .addOption(MEMORY_SERVICE_URI_OPTION);
 }
+const EVAL_STORAGE_URI_OPTION = new Option(
+  '--eval-storage-uri, --eval_storage_uri <string>',
+  'Optional. The evals storage URI to store agent evals, supported URIs: gs://<bucket name>.',
+);
 const OTEL_TO_CLOUD_OPTION = new Option(
   '--otel-to-cloud, --otel_to_cloud [boolean]',
   'Optional. Whether to send otel traces to cloud.',
@@ -488,6 +571,7 @@ export function createProgram(): Command {
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION);
   adkServicesOptions(webCommand)
+    .addOption(EVAL_STORAGE_URI_OPTION)
     .addOption(OTEL_TO_CLOUD_OPTION)
     .addOption(COMPILE_AGENT_FILE)
     .addOption(BUNDLE_AGENT_FILE)
@@ -514,6 +598,7 @@ export function createProgram(): Command {
           sessionService: getSessionServiceFromOptions(options, absAgentsDir),
           artifactService: getArtifactServiceFromOptions(options),
           memoryService: getMemoryServiceFromOptions(options, absAgentsDir),
+          ...(await getEvalManagersFromOptions(options)),
           otelToCloud: getBoolean(options['otel_to_cloud']),
           agentFileLoadOptions: getAgentFileOptions(options),
           a2a: getBoolean(options['a2a']),
@@ -540,6 +625,7 @@ export function createProgram(): Command {
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION);
   adkServicesOptions(apiServerCommand)
+    .addOption(EVAL_STORAGE_URI_OPTION)
     .addOption(OTEL_TO_CLOUD_OPTION)
     .addOption(COMPILE_AGENT_FILE)
     .addOption(BUNDLE_AGENT_FILE)
@@ -566,6 +652,7 @@ export function createProgram(): Command {
           sessionService: getSessionServiceFromOptions(options, absAgentsDir),
           artifactService: getArtifactServiceFromOptions(options),
           memoryService: getMemoryServiceFromOptions(options, absAgentsDir),
+          ...(await getEvalManagersFromOptions(options)),
           otelToCloud: getBoolean(options['otel_to_cloud']),
           agentFileLoadOptions: getAgentFileOptions(options),
           a2a: getBoolean(options['a2a']),
@@ -687,8 +774,10 @@ export function createProgram(): Command {
       'The path to the agent directory or file that contains the rootAgent.',
     )
     .argument(
-      '[eval_set_file_path...]',
-      'Specify one or more eval set file paths, optionally followed by :eval_1,eval_2.',
+      '[eval_set_file_path_or_id...]',
+      'One or more eval set file paths, each optionally followed by ' +
+        ':eval_1,eval_2. With --eval_storage_uri, the values are eval set ' +
+        'IDs read from the storage, unless the first value is an existing file.',
     )
     .option(
       '--config-file-path, --config_file_path <string>',
@@ -699,6 +788,7 @@ export function createProgram(): Command {
       'Optional. Whether to print detailed results on console or not.',
       false,
     )
+    .addOption(EVAL_STORAGE_URI_OPTION)
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION)
     .addOption(COMPILE_AGENT_FILE)
@@ -707,7 +797,7 @@ export function createProgram(): Command {
     .action(
       async (
         agentModuleFilePath: string,
-        evalSetFilePaths: string[],
+        evalSetFilePathsOrIds: string[],
         options: Record<string, string>,
       ) => {
         setAdkCoreLogLevel(getLogLevelFromOptions(options));
@@ -732,21 +822,17 @@ export function createProgram(): Command {
           const rootAgent = await getRootAgent(absAgentPath);
           const resetFunc = await tryGetResetFunc(absAgentPath);
 
-          const evalSetToEvals = parseAndGetEvalsToRun(evalSetFilePaths);
-          const evalCasesByEvalSetId: Record<string, EvalCase[]> = {};
-
-          for (const [evalSetFile, evalsToRun] of Object.entries(
-            evalSetToEvals,
-          )) {
-            const evalSet = loadEvalSetFromFile(
-              getAbsolutePath(evalSetFile),
-              evalSetFile,
-            );
-            evalCasesByEvalSetId[evalSet.evalSetId] =
-              evalsToRun.length > 0
-                ? evalSet.evalCases.filter((e) => evalsToRun.includes(e.evalId))
-                : evalSet.evalCases;
-          }
+          const isAgentFile =
+            fs.existsSync(absAgentPath) && fs.statSync(absAgentPath).isFile();
+          const appName = isAgentFile
+            ? path.basename(absAgentPath, path.extname(absAgentPath))
+            : path.basename(absAgentPath);
+          const evalManagers = await getEvalManagersFromOptions(options);
+          const evalCasesByEvalSetId = await loadEvalCasesToRun({
+            evalSetToEvals: parseAndGetEvalsToRun(evalSetFilePathsOrIds),
+            evalSetsManager: evalManagers?.evalSetsManager,
+            appName,
+          });
 
           const evalResults: EvalResult[] = [];
           for await (const result of runEvals(
@@ -759,15 +845,9 @@ export function createProgram(): Command {
             evalResults.push(result);
           }
 
-          const isAgentFile =
-            fs.existsSync(absAgentPath) && fs.statSync(absAgentPath).isFile();
-          const appName = isAgentFile
-            ? path.basename(absAgentPath, path.extname(absAgentPath))
-            : path.basename(absAgentPath);
-          const agentsDir = path.dirname(absAgentPath);
-          const localEvalSetResultsManager = new LocalEvalSetResultsManager(
-            agentsDir,
-          );
+          const evalSetResultsManager: EvalSetResultsManager =
+            evalManagers?.evalSetResultsManager ??
+            new LocalEvalSetResultsManager(path.dirname(absAgentPath));
           const evalSetIdToEvalResults: Record<string, EvalResult[]> = {};
           for (const evalResult of evalResults) {
             const rawSetId = evalResult.eval_set_id;
@@ -785,15 +865,16 @@ export function createProgram(): Command {
             }
             evalSetIdToEvalResults[evalSetId].push(evalResult);
           }
-          for (const [evalSetId, evalCaseResults] of Object.entries(
-            evalSetIdToEvalResults,
-          )) {
-            localEvalSetResultsManager.saveEvalSetResult({
-              appName,
-              evalSetId,
-              evalCaseResults,
-            });
-          }
+          await Promise.all(
+            Object.entries(evalSetIdToEvalResults).map(
+              async ([evalSetId, evalCaseResults]) =>
+                evalSetResultsManager.saveEvalSetResult({
+                  appName,
+                  evalSetId,
+                  evalCaseResults,
+                }),
+            ),
+          );
 
           process.stdout.write(
             '*********************************************************************\n',

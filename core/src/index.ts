@@ -224,12 +224,20 @@ export type {
   EvalResult,
   EvalSetItem,
   EvalSetResult,
+  EvalSetResultsManager,
+  EvalSetsManager,
   InvocationEvalMetricResult,
   RunEvalRequest,
   RunEvalResult,
   RunEvalsOptions,
   SaveEvalSetResultParams,
 } from './cli/cli_eval.js';
+export {
+  createGcsEvalManagersFromUri,
+  GcsEvalSetResultsManager,
+  GcsEvalSetsManager,
+} from './cli/gcs_eval_managers.js';
+export type {GcsEvalManagers} from './cli/gcs_eval_managers.js';
 export {loadDotenvForAgent, walkToRootUntilFound} from './cli/utils/envs.js';
 export {
   LOGGING_FORMAT,
