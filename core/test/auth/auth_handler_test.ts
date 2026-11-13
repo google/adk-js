@@ -820,3 +820,31 @@ describe('AuthHandler generateAuthUri optional parameters', () => {
     expect(params.get('redirect_uri')).toBe('https://redirect.com');
   });
 });
+
+describe('AuthHandler exchangeAuthToken', () => {
+  it('exchanges the credential in exchangedAuthCredential and returns the resulting credential', async () => {
+    const authConfig: AuthConfig = {
+      ...authConfigWithOAuth2({}),
+      exchangedAuthCredential: {
+        authType: AuthCredentialTypes.OAUTH2,
+        oauth2: {authCode: 'auth-code-1'},
+      },
+    };
+    const handler = new AuthHandler(authConfig);
+
+    const exchanged = await handler.exchangeAuthToken();
+
+    expect(exchanged).toEqual({
+      authType: 'oauth2',
+      oauth2: {accessToken: 'mockAccessToken'},
+    });
+  });
+
+  it('returns undefined when exchangedAuthCredential is not set', async () => {
+    const handler = new AuthHandler(authConfigWithOAuth2({}));
+
+    const exchanged = await handler.exchangeAuthToken();
+
+    expect(exchanged).toBeUndefined();
+  });
+});

@@ -105,4 +105,20 @@ describe('CredentialRefresherRegistry', () => {
     );
     expect(registry2.getRefresher(AuthCredentialTypes.API_KEY)).toBeUndefined();
   });
+
+  it('should overwrite an existing refresher when registered for the same credential type', () => {
+    const registry = new CredentialRefresherRegistry();
+    const firstRefresher = new MockRefresher();
+    const secondRefresher = new MockRefresher();
+
+    registry.register(AuthCredentialTypes.OAUTH2, firstRefresher);
+    expect(registry.getRefresher(AuthCredentialTypes.OAUTH2)).toBe(
+      firstRefresher,
+    );
+
+    registry.register(AuthCredentialTypes.OAUTH2, secondRefresher);
+    expect(registry.getRefresher(AuthCredentialTypes.OAUTH2)).toBe(
+      secondRefresher,
+    );
+  });
 });

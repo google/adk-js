@@ -1,22 +1,26 @@
 # Auth
 
-The auth units describe a credential, ask the user for one when a tool needs it, and turn what the user or the configuration supplies into the credential a request carries. This guide covers the credential and config shapes, `AuthHandler`, the scheme helpers, and the credential exchangers that OpenAPI tools use.
+The auth units describe a credential, ask the user for one when a tool needs it, and turn what the user or the configuration supplies into the credential a request carries. This guide covers the credential and config shapes, `CredentialManager`, `InMemoryCredentialService`, `AuthHandler`, the scheme helpers, and the credential exchangers and refreshers.
 
 ## Introduction
 
 A tool that calls a protected API needs two things: a description of how the API authenticates, and a credential that satisfies it. adk-js models the first as an `AuthScheme`, which is an OpenAPI security scheme object or an `OpenIdConnectWithConfig`. It models the second as an `AuthCredential`. An `AuthConfig` pairs the two under a `credentialKey`, and it is the object that travels to the client when the agent has to ask the user for a credential.
 
-Some credentials work as configured, such as an API key. Others have to be exchanged first. An OAuth2 client ID and secret become an authorization URI the user visits, the user's sign-in becomes an access token, and the access token becomes an HTTP bearer credential. A service account key becomes an access token in the same way. The units below each own one step of that chain:
+Some credentials work as configured, such as an API key. Others have to be exchanged or refreshed first. An OAuth2 client ID and secret become an authorization URI the user visits, the user's sign-in becomes an access token, an expired token is refreshed with its refresh token, and the access token becomes an HTTP bearer credential. A service account key becomes an access token in the same way. The units below each own one step of that chain:
 
-| Unit                                | Step                                                                                         |
-| :---------------------------------- | :------------------------------------------------------------------------------------------- |
-| `AuthCredential`, `AuthConfig`      | The shapes every other unit reads and writes.                                                |
-| `AuthSchemeType`, `OAuthGrantType`  | Runtime values for the OpenAPI scheme types and the OAuth2 grant types.                      |
-| `AuthHandler`                       | Builds the auth request for the client and stores the client's response.                     |
-| `AuthPreprocessor`                  | Hands a credential response from the client to `AuthHandler` and resumes the tool.           |
-| `AutoAuthCredentialExchanger`       | Picks the exchanger for a credential type. OpenAPI tools use it by default.                  |
-| `OAuth2BearerExchanger`             | Turns an OAuth2 or OpenID Connect access token into an HTTP bearer credential.               |
-| `ServiceAccountCredentialExchanger` | Turns a Google service account key, or application default credentials, into a bearer token. |
+| Unit                                                       | Step                                                                                         |
+| :--------------------------------------------------------- | :------------------------------------------------------------------------------------------- |
+| `AuthCredential`, `AuthConfig`                             | The shapes every other unit reads and writes.                                                |
+| `AuthSchemeType`, `OAuthGrantType`                         | Runtime values for the OpenAPI scheme types and the OAuth2 grant types.                      |
+| `CredentialManager`                                        | Loads, exchanges, refreshes, and persists credentials through `BaseCredentialService`.       |
+| `BaseCredentialService`, `InMemoryCredentialService`       | Stores and loads exchanged credentials scoped by application, user, and `credentialKey`.     |
+| `CredentialExchangerRegistry`, `OAuth2CredentialExchanger` | Maps credential types to `BaseCredentialExchanger` instances and exchanges OAuth2 responses. |
+| `CredentialRefresherRegistry`, `OAuth2CredentialRefresher` | Maps credential types to `BaseCredentialRefresher` instances and refreshes expired tokens.   |
+| `AuthHandler`                                              | Builds the auth request for the client and stores the client's response.                     |
+| `AuthPreprocessor`                                         | Hands a credential response from the client to `AuthHandler` and resumes the tool.           |
+| `AutoAuthCredentialExchanger`                              | Picks the exchanger for a credential type. OpenAPI tools use it by default.                  |
+| `OAuth2BearerExchanger`                                    | Turns an OAuth2 or OpenID Connect access token into an HTTP bearer credential.               |
+| `ServiceAccountCredentialExchanger`                        | Turns a Google service account key, or application default credentials, into a bearer token. |
 
 ## Get started
 
@@ -86,7 +90,20 @@ The copy matters because the client fills in the request. When the user finishes
 
 ### Storing the response
 
-`AuthPreprocessor` runs before each model call of an `LlmAgent`. When the latest event holds a response to an `adk_request_credential` function call that the agent raised, it binds the response to the original request, calls `AuthHandler.parseAndStoreAuthResponse`, and runs the tool call that was waiting for the credential again. `parseAndStoreAuthResponse` stores the credential in session state under `temp:` plus the `credentialKey`. For `oauth2` and `openIdConnect` it first exchanges the authorization response for tokens. `getAuthResponse` reads the stored credential back.
+`AuthPreprocessor` runs before each model call of an `LlmAgent`. When the latest event holds a response to an `adk_request_credential` function call that the agent raised, it binds the response to the original request, calls `AuthHandler.parseAndStoreAuthResponse`, and runs the tool call that was waiting for the credential again. `parseAndStoreAuthResponse` stores the credential in session state under `temp:` plus the `credentialKey`. For `oauth2` and `openIdConnect` it first calls `AuthHandler.exchangeAuthToken` to exchange the authorization response for tokens. `getAuthResponse` reads the stored credential back.
+
+### Managing credentials with `CredentialManager`
+
+`CredentialManager` coordinates loading, exchanging, refreshing, and persisting a credential for one `AuthConfig`:
+
+1. It validates that an `oauth2` or `openIdConnect` scheme has a `rawAuthCredential` with an `oauth2` block.
+2. For simple credentials (`API_KEY` and `HTTP`), `getAuthCredential(context)` returns a deep copy of `rawAuthCredential` immediately.
+3. For other types, it loads an existing credential from `context.invocationContext.credentialService` (skipped when `rawAuthCredential` is `SERVICE_ACCOUNT`), falling back to `context.getAuthResponse(authConfig)`.
+4. When no stored or auth-response credential exists, it uses a deep copy of `rawAuthCredential` for OAuth2/OIDC client-credentials flows, or returns `undefined` so the caller can call `requestCredential(context)`.
+5. It runs the `BaseCredentialExchanger` registered for `credential.authType` (defaulting `OAUTH2` and `OPEN_ID_CONNECT` to `OAuth2CredentialExchanger`). When the credential was not exchanged in that step, it checks the registered `BaseCredentialRefresher` (defaulting `OAUTH2` and `OPEN_ID_CONNECT` to `OAuth2CredentialRefresher`) and refreshes expired tokens.
+6. When the credential came from an auth response, was exchanged, or was refreshed (and is not a `SERVICE_ACCOUNT` raw credential), it saves the updated credential to `credentialService` without mutating the shared `AuthConfig`.
+
+`CredentialManager` never returns `authConfig.exchangedAuthCredential` as a cached credential, because one `AuthConfig` is shared by every user of a tool. Parallel `getAuthCredential` calls for the same app, user, and `credentialKey` run one at a time, so a later call reuses the credential an earlier call saved instead of exchanging or refreshing the token again. Calls for other keys or users do not wait.
 
 ### Exchanging credentials
 

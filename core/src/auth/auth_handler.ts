@@ -40,6 +40,25 @@ export class AuthHandler {
   }
 
   /**
+   * Exchanges the authorization response in {@link authConfig} for tokens.
+   *
+   * @return The exchanged credential, or `undefined` if no exchanged credential
+   *     is present.
+   */
+  async exchangeAuthToken(): Promise<AuthCredential | undefined> {
+    if (!this.authConfig.exchangedAuthCredential) {
+      return undefined;
+    }
+
+    const exchanger = new OAuth2CredentialExchanger();
+    const exchangedCredential = await exchanger.exchange({
+      authCredential: this.authConfig.exchangedAuthCredential,
+      authScheme: this.authConfig.authScheme,
+    });
+    return exchangedCredential.credential;
+  }
+
+  /**
    * Stores the exchanged credential in the session state.
    *
    * @param state The session state to store the credential in.
@@ -60,12 +79,7 @@ export class AuthHandler {
     }
 
     if (this.authConfig.exchangedAuthCredential) {
-      const exchanger = new OAuth2CredentialExchanger();
-      const exchangedCredential = await exchanger.exchange({
-        authCredential: this.authConfig.exchangedAuthCredential,
-        authScheme: this.authConfig.authScheme,
-      });
-      state.set(credentialKey, exchangedCredential.credential);
+      state.set(credentialKey, await this.exchangeAuthToken());
     }
   }
 
