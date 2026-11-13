@@ -15,6 +15,7 @@ import {
   closeRunners,
   convertSessionToEvalInvocations,
   createEmptyState,
+  createEvent,
   EVAL_SESSION_ID_PREFIX,
   EvalCase,
   EvalCaseResult,
@@ -45,12 +46,13 @@ import {
   RunnableRoot,
   Runner,
   runWithAgentEngineContext,
+  Session,
   StreamingMode,
   toA2a,
   tryGetResetFunc,
   validatePathSegment,
 } from '@google/adk';
-import {Content} from '@google/genai';
+import {Content, Part} from '@google/genai';
 import {trace, TracerProvider} from '@opentelemetry/api';
 import {SimpleSpanProcessor} from '@opentelemetry/sdk-trace-base';
 import cors from 'cors';
@@ -1631,7 +1633,34 @@ export class AdkApiServer {
       return typeof value === 'string' && value.length > 0 ? value : undefined;
     };
 
-    /** Converts snake_case keys to camelCase, leaving `a2aMetadata` as is. */
+    const pickInteger = (
+      sources: ReadonlyArray<Record<string, unknown>>,
+      keys: readonly string[],
+    ): number | undefined => {
+      const value = pickField(sources, keys);
+      if (typeof value === 'number' && Number.isInteger(value)) {
+        return value;
+      }
+      if (typeof value === 'string' && value.length > 0) {
+        const parsed = Number(value);
+        if (Number.isInteger(parsed)) {
+          return parsed;
+        }
+      }
+      return undefined;
+    };
+
+    const preservedDictKeys = new Set([
+      'a2aMetadata',
+      'stateDelta',
+      'artifactDelta',
+      'customMetadata',
+    ]);
+
+    /**
+     * Converts snake_case keys to camelCase, leaving user-keyed dictionaries
+     * (`a2aMetadata`, `stateDelta`, `artifactDelta`, `customMetadata`) as is.
+     */
     const snakeToCamelKeys = (value: unknown): unknown => {
       if (Array.isArray(value)) {
         return value.map(snakeToCamelKeys);
@@ -1646,7 +1675,7 @@ export class AdkApiServer {
           );
           return [
             camelKey,
-            camelKey === 'a2aMetadata' ? nested : snakeToCamelKeys(nested),
+            preservedDictKeys.has(camelKey) ? nested : snakeToCamelKeys(nested),
           ];
         }),
       );
@@ -1704,6 +1733,59 @@ export class AdkApiServer {
         : content;
     };
 
+    /** Normalizes a serialized event object into an ADK `Event`. */
+    const toReasoningEngineEvent = (raw: unknown): Event | undefined => {
+      if (!isJsonRecord(raw)) {
+        return undefined;
+      }
+      const converted = snakeToCamelKeys(raw) as Record<string, unknown>;
+      return createEvent(converted as Parameters<typeof createEvent>[0]);
+    };
+
+    /** Normalizes a string or JSON object into a GenAI `Part`. */
+    const toReasoningEngineArtifactPart = (raw: unknown): Part | undefined => {
+      if (typeof raw === 'string') {
+        return {text: raw};
+      }
+      if (!isJsonRecord(raw)) {
+        return undefined;
+      }
+      return snakeToCamelKeys(raw) as Part;
+    };
+
+    /**
+     * Normalizes an artifact version's `data` field from a
+     * `streaming_agent_run_with_events` request into a GenAI `Part`.
+     */
+    const toStreamRunArtifactPart = (raw: unknown): Part | undefined => {
+      if (typeof raw === 'string') {
+        return {
+          inlineData: {
+            mimeType: 'text/plain',
+            data: Buffer.from(raw, 'utf-8').toString('base64'),
+          },
+        };
+      }
+      if (!isJsonRecord(raw)) {
+        return undefined;
+      }
+      if (
+        'text' in raw ||
+        'inlineData' in raw ||
+        'inline_data' in raw ||
+        'fileData' in raw ||
+        'file_data' in raw
+      ) {
+        return snakeToCamelKeys(raw) as Part;
+      }
+      return {
+        inlineData: {
+          mimeType: 'application/json',
+          data: Buffer.from(JSON.stringify(raw), 'utf-8').toString('base64'),
+        },
+      };
+    };
+
     const reasoningEngineQueryMethods: ReadonlyArray<string | undefined> = [
       undefined,
       'query',
@@ -1725,13 +1807,22 @@ export class AdkApiServer {
           customMetadata?: Record<string, unknown>;
           runConfig?: RunConfig;
           state?: Record<string, unknown>;
+          ttl?: string;
+          expireTime?: string;
+          query?: string;
+          filename?: string;
+          version?: number;
+          artifact?: Part;
+          rawSession?: Record<string, unknown>;
+          sessionEvents?: Event[];
+          runEvents?: Event[];
+          runArtifacts?: Array<Record<string, unknown>>;
         };
 
     const resolveReasoningEngineRequest = async (
       body: Record<string, unknown>,
     ): Promise<ReasoningEngineRequest> => {
       const input = isJsonRecord(body['input']) ? body['input'] : {};
-      const sources = [input, body];
 
       const rawClassMethod = pickField([body], ['class_method', 'classMethod']);
       if (rawClassMethod !== undefined && typeof rawClassMethod !== 'string') {
@@ -1741,6 +1832,42 @@ export class AdkApiServer {
         };
       }
       const classMethod = rawClassMethod;
+
+      let requestJsonRecord: Record<string, unknown> | undefined;
+      const rawRequestJson = pickField(
+        [input, body],
+        ['request_json', 'requestJson'],
+      );
+      if (rawRequestJson !== undefined) {
+        if (typeof rawRequestJson === 'string') {
+          try {
+            const parsed: unknown = JSON.parse(rawRequestJson);
+            if (!isJsonRecord(parsed)) {
+              return {
+                status: 400,
+                error: 'request_json must be a valid JSON object',
+              };
+            }
+            requestJsonRecord = parsed;
+          } catch {
+            return {
+              status: 400,
+              error: 'request_json must be a valid JSON object',
+            };
+          }
+        } else if (isJsonRecord(rawRequestJson)) {
+          requestJsonRecord = rawRequestJson;
+        } else {
+          return {
+            status: 400,
+            error: 'request_json must be a valid JSON object',
+          };
+        }
+      }
+
+      const sources = requestJsonRecord
+        ? [requestJsonRecord, input, body]
+        : [input, body];
 
       let appName = pickString(sources, ['appName', 'app_name']);
       if (appName === undefined) {
@@ -1756,23 +1883,80 @@ export class AdkApiServer {
         appName = apps[0];
       }
 
+      const sessionId = pickString(sources, ['session_id', 'sessionId']);
+      const rawSessionEvents = pickField(sources, [
+        'session_events',
+        'sessionEvents',
+      ]);
+      let sessionEvents: Event[] | undefined;
+      if (rawSessionEvents !== undefined) {
+        if (!Array.isArray(rawSessionEvents)) {
+          return {status: 400, error: 'session_events must be an array'};
+        }
+        if (sessionId !== undefined) {
+          return {
+            status: 400,
+            error:
+              'Only one of session_id and session_events should be specified.',
+          };
+        }
+        sessionEvents = rawSessionEvents
+          .map((item) => toReasoningEngineEvent(item))
+          .filter((item): item is Event => item !== undefined);
+      }
+
+      const rawRunEvents = pickField(sources, ['events']);
+      const runEvents = Array.isArray(rawRunEvents)
+        ? rawRunEvents
+            .map((item) => toReasoningEngineEvent(item))
+            .filter((item): item is Event => item !== undefined)
+        : undefined;
+
+      const rawRunArtifacts = pickField(sources, ['artifacts']);
+      const runArtifacts = Array.isArray(rawRunArtifacts)
+        ? rawRunArtifacts.filter(isJsonRecord)
+        : undefined;
+
       const stateDelta = pickField(sources, ['state_delta', 'stateDelta']);
+      let mergedStateDelta = isJsonRecord(stateDelta)
+        ? {...stateDelta}
+        : undefined;
+      const rawAuthorizations = pickField(sources, ['authorizations']);
+      if (isJsonRecord(rawAuthorizations)) {
+        for (const [authId, authVal] of Object.entries(rawAuthorizations)) {
+          if (isJsonRecord(authVal)) {
+            const token = pickString(
+              [authVal],
+              ['access_token', 'accessToken'],
+            );
+            if (token) {
+              mergedStateDelta = mergedStateDelta ?? {};
+              mergedStateDelta[`temp:${authId}`] = token;
+            }
+          }
+        }
+      }
+
       const customMetadata = pickField(sources, [
         'custom_metadata',
         'customMetadata',
       ]);
       const rawRunConfig = pickField(sources, ['run_config', 'runConfig']);
-      const state = pickField([input], ['state']);
+      const state = pickField(
+        requestJsonRecord ? [requestJsonRecord, input] : [input],
+        ['state'],
+      );
+      const rawSession = pickField(sources, ['session']);
 
       return {
         classMethod,
         appName,
         userId: pickString(sources, ['user_id', 'userId']) ?? 'default-user',
-        sessionId: pickString(sources, ['session_id', 'sessionId']),
+        sessionId,
         newMessage: toReasoningEngineContent(
           pickField(sources, ['newMessage', 'new_message', 'message']),
         ),
-        stateDelta: isJsonRecord(stateDelta) ? stateDelta : undefined,
+        stateDelta: mergedStateDelta,
         customMetadata: isJsonRecord(customMetadata)
           ? customMetadata
           : undefined,
@@ -1781,6 +1965,177 @@ export class AdkApiServer {
           ? (toCallerRunConfig(rawRunConfig) as RunConfig)
           : undefined,
         state: isJsonRecord(state) ? state : undefined,
+        ttl: pickString(sources, ['ttl']),
+        expireTime: pickString(sources, ['expire_time', 'expireTime']),
+        query: pickString(sources, ['query']),
+        filename: pickString(sources, [
+          'filename',
+          'file_name',
+          'fileName',
+          'artifact_name',
+          'artifactName',
+        ]),
+        version: pickInteger(sources, ['version']),
+        artifact: toReasoningEngineArtifactPart(
+          pickField(sources, ['artifact']),
+        ),
+        rawSession: isJsonRecord(rawSession) ? rawSession : undefined,
+        sessionEvents,
+        runEvents,
+        runArtifacts,
+      };
+    };
+
+    const prepareQuerySession = async (
+      request: Extract<ReasoningEngineRequest, {status?: undefined}>,
+    ): Promise<{session: Session; cleanup: () => Promise<void>}> => {
+      const {appName, userId, sessionId, sessionEvents, state} = request;
+      if (sessionEvents !== undefined) {
+        const scratch = await this.sessionService.createSession({
+          appName,
+          userId,
+          state: state ?? {},
+        });
+        for (const event of sessionEvents) {
+          await this.sessionService.appendEvent({session: scratch, event});
+        }
+        return {
+          session: scratch,
+          cleanup: async () => {
+            await this.sessionService.deleteSession({
+              appName,
+              userId,
+              sessionId: scratch.id,
+            });
+          },
+        };
+      }
+      const session = await this.sessionService.getOrCreateSession({
+        appName,
+        userId,
+        sessionId: sessionId ?? 'default-session',
+        state: {},
+      });
+      return {session, cleanup: async () => {}};
+    };
+
+    const prepareStreamRunWithEventsSession = async (
+      request: Extract<ReasoningEngineRequest, {status?: undefined}>,
+    ): Promise<{session: Session; cleanup: () => Promise<void>}> => {
+      const {appName, userId, sessionId, state, runEvents, runArtifacts} =
+        request;
+
+      const saveRequestArtifacts = async (targetSessionId: string) => {
+        for (const artifactItem of runArtifacts ?? []) {
+          const fileName = pickString(
+            [artifactItem],
+            ['file_name', 'fileName', 'filename'],
+          );
+          if (!fileName) {
+            continue;
+          }
+          const rawVersions = Array.isArray(artifactItem['versions'])
+            ? artifactItem['versions'].filter(isJsonRecord)
+            : [];
+          const sortedVersions = [...rawVersions].sort(
+            (a, b) =>
+              (pickInteger([a], ['version']) ?? 0) -
+              (pickInteger([b], ['version']) ?? 0),
+          );
+          for (const ver of sortedVersions) {
+            const part = toStreamRunArtifactPart(ver['data']);
+            if (!part) {
+              continue;
+            }
+            await this.artifactService.saveArtifact({
+              appName,
+              userId,
+              sessionId: targetSessionId,
+              filename: fileName,
+              artifact: part,
+            });
+          }
+        }
+      };
+
+      if (sessionId) {
+        let existing: Session | undefined;
+        try {
+          existing = await this.sessionService.getSession({
+            appName,
+            userId,
+            sessionId,
+          });
+        } catch {
+          existing = undefined;
+        }
+        if (existing) {
+          await saveRequestArtifacts(existing.id);
+          return {session: existing, cleanup: async () => {}};
+        }
+        const created = await this.sessionService.createSession({
+          appName,
+          userId,
+          state: {
+            ...(state ?? {}),
+            'agent_engine:upstream_session_id': sessionId,
+          },
+        });
+        for (const event of runEvents ?? []) {
+          await this.sessionService.appendEvent({session: created, event});
+        }
+        await saveRequestArtifacts(created.id);
+        return {session: created, cleanup: async () => {}};
+      }
+
+      const scratch = await this.sessionService.createSession({
+        appName,
+        userId,
+        state: state ?? {},
+      });
+      for (const event of runEvents ?? []) {
+        await this.sessionService.appendEvent({session: scratch, event});
+      }
+      await saveRequestArtifacts(scratch.id);
+      return {
+        session: scratch,
+        cleanup: async () => {
+          await this.sessionService.deleteSession({
+            appName,
+            userId,
+            sessionId: scratch.id,
+          });
+        },
+      };
+    };
+
+    const buildStreamRunWithEventsChunk = async (
+      appName: string,
+      userId: string,
+      activeSessionId: string,
+      event: Event,
+    ): Promise<Record<string, unknown>> => {
+      const artifactDelta = event.actions?.artifactDelta ?? {};
+      const artifacts: Array<Record<string, unknown>> = [];
+      for (const [fileName, versionNum] of Object.entries(artifactDelta)) {
+        const loaded = await this.artifactService.loadArtifact({
+          appName,
+          userId,
+          sessionId: activeSessionId,
+          filename: fileName,
+          ...(typeof versionNum === 'number' ? {version: versionNum} : {}),
+        });
+        if (loaded !== undefined) {
+          artifacts.push({
+            file_name: fileName,
+            versions: [{version: versionNum, data: loaded}],
+          });
+        }
+      }
+      return {
+        events: [publicEvent(event)],
+        ...(artifacts.length > 0 ? {artifacts} : {}),
+        session_id: activeSessionId,
       };
     };
 
@@ -1806,6 +2161,8 @@ export class AdkApiServer {
               userId,
               state: request.state ?? {},
               ...(sessionId ? {sessionId} : {}),
+              ...(request.ttl ? {ttl: request.ttl} : {}),
+              ...(request.expireTime ? {expireTime: request.expireTime} : {}),
             });
             res.json({output: publicSession(created)});
             return;
@@ -1858,6 +2215,245 @@ export class AdkApiServer {
             res.json({output: null});
             return;
           }
+          case 'add_session_to_memory':
+          case 'async_add_session_to_memory': {
+            const rawSession = request.rawSession;
+            if (!rawSession && !sessionId) {
+              res.status(400).json({error: 'session is required'});
+              return;
+            }
+            const sessionRecord = rawSession ?? {};
+            const targetSessionId =
+              pickString([sessionRecord], ['id', 'session_id', 'sessionId']) ??
+              sessionId;
+            const targetUserId =
+              pickString([sessionRecord], ['userId', 'user_id']) ?? userId;
+            const targetAppName =
+              pickString([sessionRecord], ['appName', 'app_name']) ?? appName;
+            const rawEvents = Array.isArray(sessionRecord['events'])
+              ? sessionRecord['events']
+                  .map((item) => toReasoningEngineEvent(item))
+                  .filter((item): item is Event => item !== undefined)
+              : [];
+
+            let sessionToAdd: Session | undefined;
+            if (rawEvents.length > 0) {
+              sessionToAdd = {
+                id: targetSessionId ?? 'default-session',
+                appName: targetAppName,
+                userId: targetUserId,
+                state: isJsonRecord(sessionRecord['state'])
+                  ? sessionRecord['state']
+                  : {},
+                events: rawEvents,
+                lastUpdateTime:
+                  typeof sessionRecord['lastUpdateTime'] === 'number'
+                    ? sessionRecord['lastUpdateTime']
+                    : typeof sessionRecord['last_update_time'] === 'number'
+                      ? sessionRecord['last_update_time']
+                      : Date.now(),
+              };
+            } else if (targetSessionId) {
+              sessionToAdd = await this.sessionService.getSession({
+                appName: targetAppName,
+                userId: targetUserId,
+                sessionId: targetSessionId,
+              });
+            }
+
+            if (!sessionToAdd) {
+              if (!rawSession) {
+                res
+                  .status(404)
+                  .json({error: `Session not found: ${targetSessionId}`});
+                return;
+              }
+              sessionToAdd = {
+                id: targetSessionId ?? 'default-session',
+                appName: targetAppName,
+                userId: targetUserId,
+                state: isJsonRecord(sessionRecord['state'])
+                  ? sessionRecord['state']
+                  : {},
+                events: [],
+                lastUpdateTime:
+                  typeof sessionRecord['lastUpdateTime'] === 'number'
+                    ? sessionRecord['lastUpdateTime']
+                    : typeof sessionRecord['last_update_time'] === 'number'
+                      ? sessionRecord['last_update_time']
+                      : Date.now(),
+              };
+            }
+
+            await this.memoryService.addSessionToMemory(sessionToAdd);
+            res.json({output: null});
+            return;
+          }
+          case 'search_memory':
+          case 'async_search_memory': {
+            if (!request.query) {
+              res.status(400).json({error: 'query is required'});
+              return;
+            }
+            const result = await this.memoryService.searchMemory({
+              appName,
+              userId,
+              query: request.query,
+            });
+            res.json({output: result});
+            return;
+          }
+          case 'save_artifact':
+          case 'async_save_artifact': {
+            if (!request.filename) {
+              res.status(400).json({error: 'filename is required'});
+              return;
+            }
+            if (!request.artifact) {
+              res.status(400).json({error: 'artifact is required'});
+              return;
+            }
+            const savedVersion = await this.artifactService.saveArtifact({
+              appName,
+              userId,
+              sessionId: sessionId ?? 'default-session',
+              filename: request.filename,
+              artifact: request.artifact,
+              ...(request.customMetadata
+                ? {customMetadata: request.customMetadata}
+                : {}),
+            });
+            res.json({output: savedVersion});
+            return;
+          }
+          case 'load_artifact':
+          case 'async_load_artifact': {
+            if (!request.filename) {
+              res.status(400).json({error: 'filename is required'});
+              return;
+            }
+            const loaded = await this.artifactService.loadArtifact({
+              appName,
+              userId,
+              sessionId: sessionId ?? 'default-session',
+              filename: request.filename,
+              ...(request.version !== undefined
+                ? {version: request.version}
+                : {}),
+            });
+            res.json({output: loaded ?? null});
+            return;
+          }
+          case 'list_artifact_keys':
+          case 'async_list_artifact_keys': {
+            const keys = await this.artifactService.listArtifactKeys({
+              appName,
+              userId,
+              sessionId: sessionId ?? 'default-session',
+            });
+            res.json({output: keys});
+            return;
+          }
+          case 'delete_artifact':
+          case 'async_delete_artifact': {
+            if (!request.filename) {
+              res.status(400).json({error: 'filename is required'});
+              return;
+            }
+            await this.artifactService.deleteArtifact({
+              appName,
+              userId,
+              sessionId: sessionId ?? 'default-session',
+              filename: request.filename,
+            });
+            res.json({output: null});
+            return;
+          }
+          case 'list_versions':
+          case 'async_list_versions': {
+            if (!request.filename) {
+              res.status(400).json({error: 'filename is required'});
+              return;
+            }
+            const versions = await this.artifactService.listVersions({
+              appName,
+              userId,
+              sessionId: sessionId ?? 'default-session',
+              filename: request.filename,
+            });
+            res.json({output: versions});
+            return;
+          }
+          case 'list_artifact_versions':
+          case 'async_list_artifact_versions': {
+            if (!request.filename) {
+              res.status(400).json({error: 'filename is required'});
+              return;
+            }
+            const artifactVersions =
+              await this.artifactService.listArtifactVersions({
+                appName,
+                userId,
+                sessionId: sessionId ?? 'default-session',
+                filename: request.filename,
+              });
+            res.json({output: artifactVersions});
+            return;
+          }
+          case 'get_artifact_version':
+          case 'async_get_artifact_version': {
+            if (!request.filename) {
+              res.status(400).json({error: 'filename is required'});
+              return;
+            }
+            const artifactVersion =
+              await this.artifactService.getArtifactVersion({
+                appName,
+                userId,
+                sessionId: sessionId ?? 'default-session',
+                filename: request.filename,
+                ...(request.version !== undefined
+                  ? {version: request.version}
+                  : {}),
+              });
+            res.json({output: artifactVersion ?? null});
+            return;
+          }
+          case 'streaming_agent_run_with_events': {
+            const {session, cleanup} =
+              await prepareStreamRunWithEventsSession(request);
+            try {
+              const abortController = new AbortController();
+              req.on('close', () => {
+                abortController.abort();
+              });
+              const chunks: Array<Record<string, unknown>> = [];
+              for await (const e of this.executeAgentRun({
+                appName,
+                userId,
+                sessionId: session.id,
+                newMessage: request.newMessage as Content,
+                stateDelta: request.stateDelta,
+                customMetadata: request.customMetadata,
+                runConfig: request.runConfig,
+                abortSignal: abortController.signal,
+              })) {
+                events.push(e);
+                chunks.push(
+                  await buildStreamRunWithEventsChunk(
+                    appName,
+                    userId,
+                    session.id,
+                    e,
+                  ),
+                );
+              }
+              res.json({output: chunks});
+            } finally {
+              await cleanup();
+            }
+            return;
+          }
           default:
             break;
         }
@@ -1869,32 +2465,30 @@ export class AdkApiServer {
           return;
         }
 
-        const effectiveSessionId = sessionId ?? 'default-session';
-        await this.sessionService.getOrCreateSession({
-          appName,
-          userId,
-          sessionId: effectiveSessionId,
-          state: {},
-        });
-        const abortController = new AbortController();
-        req.on('close', () => {
-          abortController.abort();
-        });
-        for await (const e of this.executeAgentRun({
-          appName,
-          userId,
-          sessionId: effectiveSessionId,
-          // `Runner.runAsync` accepts a run with no new message, which this
-          // route has always allowed.
-          newMessage: request.newMessage as Content,
-          stateDelta: request.stateDelta,
-          customMetadata: request.customMetadata,
-          runConfig: request.runConfig,
-          abortSignal: abortController.signal,
-        })) {
-          events.push(e);
+        const {session, cleanup} = await prepareQuerySession(request);
+        try {
+          const abortController = new AbortController();
+          req.on('close', () => {
+            abortController.abort();
+          });
+          for await (const e of this.executeAgentRun({
+            appName,
+            userId,
+            sessionId: session.id,
+            // `Runner.runAsync` accepts a run with no new message, which this
+            // route has always allowed.
+            newMessage: request.newMessage as Content,
+            stateDelta: request.stateDelta,
+            customMetadata: request.customMetadata,
+            runConfig: request.runConfig,
+            abortSignal: abortController.signal,
+          })) {
+            events.push(e);
+          }
+          res.json({output: events});
+        } finally {
+          await cleanup();
         }
-        res.json({output: events});
       } catch (e: unknown) {
         const error = `Failed to run agent via Reasoning Engine API: ${e}`;
         res.status(500).json({error, output: events});
@@ -1916,54 +2510,68 @@ export class AdkApiServer {
             res.status(request.status).json({error: request.error});
             return;
           }
-          const {classMethod, appName, userId, sessionId} = request;
-          if (!reasoningEngineQueryMethods.includes(classMethod)) {
+          const {classMethod, appName, userId} = request;
+          const isStreamRunWithEvents =
+            classMethod === 'streaming_agent_run_with_events';
+          if (
+            !isStreamRunWithEvents &&
+            !reasoningEngineQueryMethods.includes(classMethod)
+          ) {
             res
               .status(400)
               .json({error: `Unsupported class_method: ${classMethod}`});
             return;
           }
 
-          const session = await this.sessionService.getOrCreateSession({
-            appName,
-            userId,
-            sessionId: sessionId ?? 'default-session',
-            state: {},
-          });
-          const abortController = new AbortController();
-          // `req` can emit 'close' as soon as its body is read, so only an
-          // early close of the response aborts the run.
-          res.on('close', () => {
-            if (!res.writableEnded) {
-              abortController.abort();
-            }
-          });
+          const {session, cleanup} = isStreamRunWithEvents
+            ? await prepareStreamRunWithEventsSession(request)
+            : await prepareQuerySession(request);
+          try {
+            const abortController = new AbortController();
+            // `req` can emit 'close' as soon as its body is read, so only an
+            // early close of the response aborts the run.
+            res.on('close', () => {
+              if (!res.writableEnded) {
+                abortController.abort();
+              }
+            });
 
-          // Headers go out with the first event, so a failure before it still
-          // gets a clean error status.
-          const startStream = () => {
-            if (!streaming) {
-              streaming = true;
-              res.setHeader('Content-Type', 'application/json');
-              res.setHeader('Cache-Control', 'no-cache');
+            // Headers go out with the first event, so a failure before it still
+            // gets a clean error status.
+            const startStream = () => {
+              if (!streaming) {
+                streaming = true;
+                res.setHeader('Content-Type', 'application/json');
+                res.setHeader('Cache-Control', 'no-cache');
+              }
+            };
+            for await (const event of this.executeAgentRun({
+              appName,
+              userId,
+              sessionId: session.id,
+              // `Runner.runAsync` accepts a run with no new message.
+              newMessage: request.newMessage as Content,
+              stateDelta: request.stateDelta,
+              customMetadata: request.customMetadata,
+              runConfig: request.runConfig,
+              abortSignal: abortController.signal,
+            })) {
+              const payload = isStreamRunWithEvents
+                ? await buildStreamRunWithEventsChunk(
+                    appName,
+                    userId,
+                    session.id,
+                    event,
+                  )
+                : event;
+              startStream();
+              res.write(`${JSON.stringify(payload)}\n`);
             }
-          };
-          for await (const event of this.executeAgentRun({
-            appName,
-            userId,
-            sessionId: session.id,
-            // `Runner.runAsync` accepts a run with no new message.
-            newMessage: request.newMessage as Content,
-            stateDelta: request.stateDelta,
-            customMetadata: request.customMetadata,
-            runConfig: request.runConfig,
-            abortSignal: abortController.signal,
-          })) {
             startStream();
-            res.write(`${JSON.stringify(event)}\n`);
+            res.end();
+          } finally {
+            await cleanup();
           }
-          startStream();
-          res.end();
         } catch (e: unknown) {
           const error = `Failed to run agent via Reasoning Engine API: ${e}`;
           this.logger.error(error);
