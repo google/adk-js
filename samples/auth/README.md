@@ -1,4 +1,4 @@
-# Auth Sample (`AuthHandler`, `AuthSchemeType` and `AutoAuthCredentialExchanger`)
+# Auth Sample (`AuthHandler`, `AuthSchemeType`, `AutoAuthCredentialExchanger` and `SessionStateCredentialService`)
 
 This sample shows how an OAuth2 authorization-code config becomes an auth request, and how an access token becomes the HTTP bearer credential a request carries. It runs offline and calls no model.
 
@@ -11,6 +11,7 @@ This sample shows how an OAuth2 authorization-code config becomes an auth reques
 - `AutoAuthCredentialExchanger` lists its registered exchangers. It turns an OAuth2 credential that holds an access token into an HTTP bearer credential with `wasExchanged: true`, and returns the credential with `wasExchanged: false` when there is no token yet.
 - `generateAuthToken` does the same conversion directly.
 - `CredentialManager` returns `undefined` before an auth response is available, then loads the credential from the session auth response and persists it to `InMemoryCredentialService`.
+- `SessionStateCredentialService` saves a placeholder credential in session state under its `credentialKey` and loads it back. Session state is not secure storage, so use it only where that is acceptable.
 
 The access token is a placeholder string, and the reply shows it only in redacted form.
 
