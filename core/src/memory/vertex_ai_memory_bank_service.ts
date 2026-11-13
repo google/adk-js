@@ -11,6 +11,7 @@ import {
   GenerateAgentEngineMemoriesConfig,
   GenerateMemoriesRequestDirectContentsSourceEvent,
   MemoryMetadataValue,
+  MemoryProfile,
 } from '@google-cloud/vertexai/build/src/genai/types.js';
 import {Content, createUserContent} from '@google/genai';
 import {Event} from '../events/event.js';
@@ -26,6 +27,16 @@ import {
   SearchMemoryResponse,
 } from './base_memory_service.js';
 import {MemoryEntry} from './memory_entry.js';
+
+export type {MemoryProfile};
+
+/**
+ * Request parameters for retrieving user profiles from Vertex AI Memory Bank.
+ */
+export interface RetrieveProfilesRequest {
+  appName: string;
+  userId: string;
+}
 
 const GENERATE_MEMORIES_KNOWN_FIELDS = [
   'disableConsolidation',
@@ -252,6 +263,32 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     }
 
     return {memories: memoryEvents};
+  }
+
+  /**
+   * Retrieves user profiles for a given scope.
+   *
+   * @param request The request containing `appName` and `userId`.
+   * @returns A list of `MemoryProfile` instances retrieved from Vertex AI
+   *   Memory Bank.
+   */
+  async retrieveProfiles(
+    request: RetrieveProfilesRequest,
+  ): Promise<MemoryProfile[]> {
+    const response = await this.memories.retrieveProfiles({
+      name: `reasoningEngines/${this.agentEngineId}`,
+      scope: {
+        app_name: request.appName,
+        user_id: request.userId,
+      },
+    });
+    const profiles = Object.values(response.profiles || {});
+    if (profiles.length > 0) {
+      logger.info(`Retrieved ${profiles.length} memory profiles.`);
+    } else {
+      logger.info('Retrieved no memory profiles.');
+    }
+    return profiles;
   }
 
   private async addEventsToMemoryFromEvents(request: {
