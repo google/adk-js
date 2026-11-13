@@ -12,7 +12,9 @@ import {
   BaseTool,
   Event,
   InMemoryArtifactService,
+  InMemoryCredentialService,
   InMemorySessionService,
+  InvocationContext,
   LiveRequestQueue,
   LlmAgent,
   LlmRequest,
@@ -21,7 +23,13 @@ import {
   Runner,
   SequentialAgent,
 } from '@google/adk';
-import {Blob, Content, FunctionDeclaration, Modality} from '@google/genai';
+import {
+  Blob,
+  Content,
+  FunctionDeclaration,
+  Modality,
+  RealtimeInputConfig,
+} from '@google/genai';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 
 const TEST_APP_ID = 'test_app_id';
@@ -707,6 +715,94 @@ describe('Runner.runLive', () => {
     }
 
     expect(llm.connection!.contentCalls).toEqual([content]);
+    expect(llm.connection!.realtimeCalls).toEqual([]);
+  });
+
+  it.each<{name: string; realtimeInputConfig: RealtimeInputConfig}>([
+    {
+      name: 'automatic activity detection is disabled',
+      realtimeInputConfig: {automaticActivityDetection: {disabled: true}},
+    },
+    {
+      name: 'automatic activity detection is enabled',
+      realtimeInputConfig: {automaticActivityDetection: {disabled: false}},
+    },
+    {
+      name: 'the input config has no automatic activity detection',
+      realtimeInputConfig: {},
+    },
+  ])(
+    'forwards realtime blobs unchanged when $name',
+    async ({realtimeInputConfig}) => {
+      const llm = new FakeLiveLlm([{turnComplete: true}]);
+      const agent = new LlmAgent({name: 'agent', model: llm});
+      const runner = new Runner({
+        appName: TEST_APP_ID,
+        agent,
+        sessionService,
+        artifactService,
+      });
+
+      const queue = new LiveRequestQueue();
+      const blob: Blob = {data: 'AP8A/w==', mimeType: 'audio/pcm'};
+      queue.sendRealtime(blob);
+      queue.close();
+      for await (const _ of runner.runLive({
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+        liveRequestQueue: queue,
+        runConfig: {realtimeInputConfig},
+      })) {
+        // drain
+      }
+
+      expect(llm.connection!.realtimeCalls).toEqual([blob]);
+      expect(llm.connection!.contentCalls).toEqual([]);
+      expect(
+        llm.llmRequestSeen?.liveConnectConfig?.realtimeInputConfig,
+      ).toEqual(realtimeInputConfig);
+    },
+  );
+
+  it('passes the runner credential service into the invocation context', async () => {
+    const llm = new FakeLiveLlm([{turnComplete: true}]);
+    const agent = new LlmAgent({name: 'agent', model: llm});
+    const credentialService = new InMemoryCredentialService();
+    let capturedContext: InvocationContext | undefined;
+    const plugin = new (class extends BasePlugin {
+      constructor() {
+        super('capture_context_plugin');
+      }
+      override async beforeRunCallback({
+        invocationContext,
+      }: {
+        invocationContext: InvocationContext;
+      }) {
+        capturedContext = invocationContext;
+        return undefined;
+      }
+    })();
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+      credentialService,
+      plugins: [plugin],
+    });
+
+    const queue = new LiveRequestQueue();
+    queue.close();
+    for await (const _ of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+    })) {
+      // drain
+    }
+
+    expect(capturedContext).toBeDefined();
+    expect(capturedContext?.credentialService).toBe(credentialService);
   });
 
   it('stops early when the abort signal is already aborted', async () => {
@@ -951,6 +1047,7 @@ describe('Runner.runLive', () => {
     expect(liveConfig?.speechConfig).toEqual({languageCode: 'en-US'});
     expect(liveConfig?.inputAudioTranscription).toBeDefined();
     expect(liveConfig?.outputAudioTranscription).toBeDefined();
+    expect(liveConfig?.realtimeInputConfig).toEqual({});
     expect(liveConfig?.contextWindowCompression).toEqual({slidingWindow: {}});
     expect(liveConfig?.proactivity).toEqual({proactiveAudio: true});
     expect(liveConfig?.enableAffectiveDialog).toBe(true);
