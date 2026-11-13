@@ -17,6 +17,8 @@ import {
   BaseCredentialExchanger,
   ExchangeResult,
 } from '../../../auth/exchanger/base_credential_exchanger.js';
+import {OAuth2CredentialRefresher} from '../../../auth/oauth2/oauth2_credential_refresher.js';
+import {formatError} from '../../../utils/error_utils.js';
 import {experimental} from '../../../utils/experimental.js';
 import {stableHash} from '../../../utils/hash_utils.js';
 import {logger} from '../../../utils/logger.js';
@@ -189,17 +191,24 @@ export class ToolAuthHandler {
       return {state: 'done'};
     }
 
-    const existingCredential = this.credentialStore.getCredential(
-      this.authScheme,
-      this.authCredential,
-    );
+    const existingCredential = await this.getExistingCredential();
 
     if (existingCredential) {
-      return {
-        state: 'done',
-        authScheme: this.authScheme,
-        authCredential: existingCredential,
-      };
+      if (!existingCredential.oauth2 || existingCredential.http) {
+        return {
+          state: 'done',
+          authScheme: this.authScheme,
+          authCredential: existingCredential,
+        };
+      }
+      const exchanged = await this.tryExchange(existingCredential);
+      if (exchanged) {
+        return {
+          state: 'done',
+          authScheme: this.authScheme,
+          authCredential: exchanged.credential,
+        };
+      }
     }
 
     const authConfig: AuthConfig = {
@@ -239,7 +248,19 @@ export class ToolAuthHandler {
         this.authScheme,
         this.authCredential,
       );
-      this.credentialStore.storeCredential(key, exchanged.credential);
+      // Keep the OAuth2 form of a redeemed auth response, so its refresh
+      // token and expiry survive for a later refresh. An auth response that
+      // holds no token yet carries a single-use authorization code, which the
+      // exchange above has already spent, so cache the exchanged credential
+      // instead.
+      const oauth2 = authResponseCredential?.oauth2;
+      const hasToken = Boolean(oauth2?.accessToken || oauth2?.refreshToken);
+      this.credentialStore.storeCredential(
+        key,
+        authResponseCredential && hasToken
+          ? authResponseCredential
+          : exchanged.credential,
+      );
     }
 
     return {
@@ -247,6 +268,85 @@ export class ToolAuthHandler {
       authScheme: this.authScheme,
       authCredential: exchanged.credential,
     };
+  }
+
+  /**
+   * Loads a cached credential from the credential store, refreshing and
+   * persisting it when it carries an expired OAuth2 token.
+   */
+  private async getExistingCredential(): Promise<AuthCredential | undefined> {
+    let existingCredential = this.credentialStore.getCredential(
+      this.authScheme,
+      this.authCredential,
+    );
+    if (!existingCredential?.oauth2) {
+      return existingCredential;
+    }
+
+    const refresher = new OAuth2CredentialRefresher();
+    if (!(await refresher.isRefreshNeeded(existingCredential))) {
+      return existingCredential;
+    }
+
+    // The stored credential may omit the client configuration, and the
+    // refresher needs it to call the token endpoint.
+    const configured = this.authCredential?.oauth2;
+    const toRefresh: AuthCredential = {
+      ...existingCredential,
+      oauth2: {
+        ...existingCredential.oauth2,
+        clientId: existingCredential.oauth2.clientId ?? configured?.clientId,
+        clientSecret:
+          existingCredential.oauth2.clientSecret ?? configured?.clientSecret,
+      },
+    };
+
+    const {
+      accessToken: oldAccessToken,
+      refreshToken: oldRefreshToken,
+      expiresAt: oldExpiresAt,
+    } = existingCredential.oauth2;
+    let refreshed: AuthCredential;
+    try {
+      refreshed = await refresher.refresh(toRefresh, this.authScheme);
+    } catch (e: unknown) {
+      logger.warn(`OAuth2 token refresh failed: ${formatError(e)}`);
+      return existingCredential;
+    }
+
+    if (refreshed.oauth2 && !refreshed.oauth2.refreshToken && oldRefreshToken) {
+      refreshed.oauth2.refreshToken = oldRefreshToken;
+    }
+
+    const newAccessToken =
+      Boolean(refreshed.oauth2?.accessToken) &&
+      refreshed.oauth2?.accessToken !== oldAccessToken;
+    const rotatedRefreshToken =
+      Boolean(refreshed.oauth2?.refreshToken) &&
+      refreshed.oauth2?.refreshToken !== oldRefreshToken;
+    const newExpiry = refreshed.oauth2?.expiresAt !== oldExpiresAt;
+    if (
+      refreshed.oauth2?.accessToken &&
+      (newAccessToken || rotatedRefreshToken || newExpiry)
+    ) {
+      const key = this.credentialStore.getCredentialKey(
+        this.authScheme,
+        this.authCredential,
+      );
+      // Persist only the client configuration the store already held, so a
+      // refresh does not copy the configured client secret into session state.
+      existingCredential = {
+        ...refreshed,
+        oauth2: {
+          ...refreshed.oauth2,
+          clientId: existingCredential.oauth2.clientId,
+          clientSecret: existingCredential.oauth2.clientSecret,
+        },
+      };
+      this.credentialStore.storeCredential(key, existingCredential);
+    }
+
+    return existingCredential;
   }
 
   /**

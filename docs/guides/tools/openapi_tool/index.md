@@ -298,7 +298,12 @@ credential:
 
 1. **No scheme.** `{state: 'done'}`, no credential.
 2. **The store.** A credential cached under this scheme and credential pair is
-   returned as it is. Nothing is exchanged and nothing is written.
+   loaded from `ToolContextCredentialStore`. If it carries `oauth2`,
+   `ToolAuthHandler` checks `OAuth2CredentialRefresher.isRefreshNeeded()` and
+   refreshes expired tokens, using the `clientId` and `clientSecret` of the
+   configured credential when the stored one omits them. It persists the
+   refreshed OAuth2 credential back to the store before converting it into an
+   HTTP bearer credential for the request.
 3. **A credential to work with.** `Context.getAuthResponse` returns what the
    client supplied interactively; with none, the handler falls back to the
    credential the tool was configured with, because `apiKey`, `http` and
@@ -318,7 +323,12 @@ The handler writes to the store only when the credential cost something to
 obtain — it came from an auth response, which is readable once, or the exchanger
 reported `wasExchanged`. A statically configured credential is available on
 every invocation already, so caching it would copy a secret into session state
-for no gain. The cache key is derived from both the scheme and the credential:
+for no gain. An OAuth2 auth response that already holds an access or refresh
+token is stored in its OAuth2 form, so the refresh token and expiry stay
+available to step 2. An auth response that holds only an authorization code is
+not stored, because the exchange has spent that code; the handler stores the
+exchanged HTTP bearer credential instead. The cache key is derived from both
+the scheme and the credential:
 
 ```
 ${scheme.type}_${hash(scheme)}_${credential.authType}_${hash(credential)}_existing_exchanged_credential
@@ -442,7 +452,7 @@ adk-python, where the service-account exchanger raises
 `AuthCredentialMissingError` and `oauth2_exchanger.py` raises `ValueError`
 (`:37`, `:46`, `:52`), and a Python-only error type becomes a plain `Error`
 here. A missing OAuth2 **client secret** is separate again and does raise
-`AuthCredentialMissingError`, from `tool_auth_handler.ts:276` and `:281`, so the
+`AuthCredentialMissingError`, in `ToolAuthHandler.requestCredential`, so the
 retry-catch warning above still holds for that case.
 
 ## Configuration options
@@ -678,11 +688,12 @@ percent-encoded dot segment exactly like a literal one.
 
 **Credentials.** Basic authentication is not supported: `credentialToParam`
 throws for a credential carrying a username or password rather than encoding
-them. The credential cache lives in session state, which is not a secret store,
-and has no expiry — an expired OAuth2 token is not detected and not refreshed,
-so a tool holding one has to clear it. A `pending` result needs a client that
-can resume; nothing happens until the application reads the parked auth request
-and starts a new run.
+them. The credential cache lives in session state, which is not a secret store;
+cached OAuth2 and OpenID Connect credentials with `expiresAt` and `refreshToken`
+are refreshed automatically via `OAuth2CredentialRefresher`, while non-OAuth2
+credentials have no expiry and must be cleared manually if revoked. A `pending`
+result needs a client that can resume; nothing happens until the application
+reads the parked auth request and starts a new run.
 
 `ServiceAccountCredentialExchanger` ignores `tokenUri`, because
 `google-auth-library` hardcodes `https://oauth2.googleapis.com/token` as both
