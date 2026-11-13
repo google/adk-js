@@ -14,6 +14,7 @@ import {describe, expect, it} from 'vitest';
 describe('BigQueryToolConfig and WriteMode', () => {
   it('exposes the expected string values for WriteMode', () => {
     expect(WriteMode.BLOCKED).toBe('blocked');
+    expect(WriteMode.PROTECTED).toBe('protected');
     expect(WriteMode.ALLOWED).toBe('allowed');
   });
 
@@ -23,6 +24,11 @@ describe('BigQueryToolConfig and WriteMode', () => {
   });
 
   it('accepts a custom writeMode', () => {
+    const protectedConfig = new BigQueryToolConfig({
+      writeMode: WriteMode.PROTECTED,
+    });
+    expect(protectedConfig.writeMode).toBe(WriteMode.PROTECTED);
+
     const allowedConfig = new BigQueryToolConfig({
       writeMode: WriteMode.ALLOWED,
     });

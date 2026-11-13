@@ -55,6 +55,50 @@ export interface BigQueryTableReference {
 }
 
 /**
+ * Connection property passed to a BigQuery query job (for example, to bind a
+ * query to an existing BigQuery session).
+ */
+export interface BigQueryConnectionProperty {
+  /**
+   * Connection property name (such as `'session_id'`).
+   */
+  key: string;
+
+  /**
+   * Connection property value.
+   */
+  value: string;
+}
+
+/**
+ * Dry-run metadata returned by {@link BigQueryClient.dryRun}.
+ */
+export interface BigQueryDryRunResult {
+  /**
+   * SQL statement type reported by BigQuery (such as `'SELECT'`,
+   * `'CREATE_AS_SELECT'`, or `'DROP_TABLE'`).
+   */
+  statementType?: string;
+
+  /**
+   * Session metadata when a BigQuery session was created or used by the
+   * dry-run job.
+   */
+  sessionInfo?: {
+    sessionId?: string;
+  };
+
+  /**
+   * Destination table or DDL target table reported by the dry-run job.
+   */
+  destinationTable?: {
+    projectId?: string;
+    datasetId?: string;
+    tableId?: string;
+  };
+}
+
+/**
  * Structural interface for a table handle in `@google-cloud/bigquery`.
  */
 export interface BigQuerySdkTable {
@@ -69,9 +113,26 @@ export interface BigQuerySdkTable {
 export interface BigQuerySdkJob {
   id?: string;
   metadata?: {
+    configuration?: {
+      query?: {
+        destinationTable?: {
+          projectId?: string;
+          datasetId?: string;
+          tableId?: string;
+        };
+      };
+    };
     statistics?: {
+      sessionInfo?: {
+        sessionId?: string;
+      };
       query?: {
         statementType?: string;
+        ddlTargetTable?: {
+          projectId?: string;
+          datasetId?: string;
+          tableId?: string;
+        };
       };
     };
   };
@@ -146,6 +207,16 @@ export interface BigQueryQueryOptions {
    * Maximum number of result rows to return.
    */
   maxResults?: number;
+
+  /**
+   * Whether to create a new BigQuery session on this query job.
+   */
+  createSession?: boolean;
+
+  /**
+   * Session or connection properties applied to the query job.
+   */
+  connectionProperties?: BigQueryConnectionProperty[];
 }
 
 /**
@@ -354,11 +425,10 @@ export class BigQueryClient {
   }
 
   /**
-   * Performs a dry run of a query to determine its statement type and validate syntax.
+   * Performs a dry run of a query to determine its statement type, session info,
+   * and destination table.
    */
-  async dryRun(
-    options: BigQueryQueryOptions,
-  ): Promise<{statementType?: string}> {
+  async dryRun(options: BigQueryQueryOptions): Promise<BigQueryDryRunResult> {
     const effectiveProjectId = options.projectId || this.projectId;
     const sdk = await this.getSdkClient(effectiveProjectId);
     const jobOptions: Record<string, unknown> = {
@@ -369,11 +439,28 @@ export class BigQueryClient {
     if (effectiveLocation !== undefined) {
       jobOptions['location'] = effectiveLocation;
     }
+    if (options.createSession !== undefined) {
+      jobOptions['createSession'] = options.createSession;
+    }
+    if (options.connectionProperties !== undefined) {
+      jobOptions['connectionProperties'] = options.connectionProperties;
+    }
     const response = await sdk.createQueryJob(jobOptions);
     const job = response[0];
-    return {
+    const result: BigQueryDryRunResult = {
       statementType: job?.metadata?.statistics?.query?.statementType,
     };
+    const sessionInfo = job?.metadata?.statistics?.sessionInfo;
+    if (sessionInfo !== undefined) {
+      result.sessionInfo = sessionInfo;
+    }
+    const destinationTable =
+      job?.metadata?.configuration?.query?.destinationTable ??
+      job?.metadata?.statistics?.query?.ddlTargetTable;
+    if (destinationTable !== undefined) {
+      result.destinationTable = destinationTable;
+    }
+    return result;
   }
 
   private getSdkClient(projectId?: string): Promise<BigQuerySdkClient> {

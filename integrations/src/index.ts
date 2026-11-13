@@ -36,7 +36,9 @@ export {
   getBigQueryClient,
 } from './bigquery/client.js';
 export type {
+  BigQueryConnectionProperty,
   BigQueryDatasetReference,
+  BigQueryDryRunResult,
   BigQueryQueryOptions,
   BigQueryTableReference,
   GetBigQueryClientOptions,

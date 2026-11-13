@@ -222,12 +222,44 @@ describe('BigQueryToolset', () => {
     const executeSql = tools.find((tool) => tool.name === 'execute_sql');
 
     const description = executeSql?._getDeclaration()?.description;
+    expect(description).toContain(
+      'Run a BigQuery or BigQuery ML SQL query in the project and return the result.',
+    );
     expect(description).toContain("{status: 'SUCCESS', rows}");
     expect(description).toContain('At most 50 rows');
     expect(description).toContain('result_is_likely_truncated');
     expect(description).toContain('CREATE TABLE');
+    expect(description).toContain('INSERT INTO');
     expect(description).toContain('DROP TABLE');
     expect(description).toContain('CLONE');
+    expect(description).toContain('CREATE MODEL');
+    expect(description).toContain('ML.EVALUATE');
+    expect(description).toContain('ML.PREDICT');
+    expect(description).toContain('DROP MODEL');
+  });
+
+  it('describes execute_sql with protected write examples when configured with WriteMode.PROTECTED', async () => {
+    const toolset = new BigQueryToolset({
+      toolConfig: new BigQueryToolConfig({writeMode: WriteMode.PROTECTED}),
+    });
+    const tools = await toolset.getTools();
+    const executeSql = tools.find((tool) => tool.name === 'execute_sql');
+
+    const description = executeSql?._getDeclaration()?.description;
+    expect(description).toContain(
+      'Run a BigQuery or BigQuery ML SQL query in the project and return the result.',
+    );
+    expect(description).toContain("{status: 'SUCCESS', rows}");
+    expect(description).toContain('At most 50 rows');
+    expect(description).toContain('result_is_likely_truncated');
+    expect(description).toContain('CREATE TEMP TABLE');
+    expect(description).toContain('CREATE TEMP MODEL');
+    expect(description).toContain('ML.EVALUATE(MODEL my_model)');
+    expect(description).toContain('ML.PREDICT(MODEL my_model');
+    expect(description).toContain('DROP MODEL my_model');
+    expect(description).toContain(
+      'Only temporary tables can be created, inserted into or deleted.',
+    );
   });
 
   it('executes execute_sql through BigQueryToolset in default read-only mode', async () => {
@@ -241,9 +273,11 @@ describe('BigQueryToolset', () => {
     const toolset = new BigQueryToolset();
     const tools = await toolset.getTools();
     const executeSql = tools.find((t) => t.name === 'execute_sql');
-    expect(executeSql).toBeDefined();
+    if (!executeSql) {
+      throw new Error('Expected execute_sql tool');
+    }
 
-    const result = await executeSql!.runAsync({
+    const result = await executeSql.runAsync({
       args: {
         project_id: 'my_project',
         query: 'SELECT COUNT(*) FROM my_dataset.my_table',
@@ -259,6 +293,64 @@ describe('BigQueryToolset', () => {
     expect(querySpy).toHaveBeenCalledOnce();
   });
 
+  it('executes execute_sql through BigQueryToolset in WriteMode.PROTECTED with session connection properties', async () => {
+    const dryRunSpy = vi
+      .spyOn(BigQueryClient.prototype, 'dryRun')
+      .mockImplementation(async (opts) => {
+        if (opts.createSession) {
+          return {
+            statementType: 'SELECT',
+            sessionInfo: {sessionId: 'toolset-bq-session'},
+            destinationTable: {datasetId: '_anonymous_dataset'},
+          };
+        }
+        return {
+          statementType: 'CREATE_AS_SELECT',
+          destinationTable: {datasetId: '_anonymous_dataset'},
+        };
+      });
+    const querySpy = vi
+      .spyOn(BigQueryClient.prototype, 'query')
+      .mockResolvedValue([]);
+
+    const toolset = new BigQueryToolset({
+      toolConfig: {writeMode: WriteMode.PROTECTED},
+    });
+    const tools = await toolset.getTools();
+    const executeSql = tools.find((t) => t.name === 'execute_sql');
+    if (!executeSql) {
+      throw new Error('Expected execute_sql tool');
+    }
+
+    const toolContext = createMockToolContext();
+    const result = await executeSql.runAsync({
+      args: {
+        project_id: 'my_project',
+        query: 'CREATE TEMP TABLE my_table AS SELECT 1',
+      },
+      toolContext,
+    });
+
+    expect(result).toEqual({status: 'SUCCESS', rows: []});
+    expect(dryRunSpy).toHaveBeenCalledTimes(2);
+    expect(dryRunSpy).toHaveBeenNthCalledWith(1, {
+      query: 'SELECT 1',
+      projectId: 'my_project',
+      createSession: true,
+    });
+    expect(dryRunSpy).toHaveBeenNthCalledWith(2, {
+      query: 'CREATE TEMP TABLE my_table AS SELECT 1',
+      projectId: 'my_project',
+      connectionProperties: [{key: 'session_id', value: 'toolset-bq-session'}],
+    });
+    expect(querySpy).toHaveBeenCalledWith({
+      query: 'CREATE TEMP TABLE my_table AS SELECT 1',
+      projectId: 'my_project',
+      maxResults: 50,
+      connectionProperties: [{key: 'session_id', value: 'toolset-bq-session'}],
+    });
+  });
+
   it('executes execute_sql through BigQueryToolset in WriteMode.ALLOWED without dry-run check', async () => {
     const dryRunSpy = vi.spyOn(BigQueryClient.prototype, 'dryRun');
     const querySpy = vi
@@ -270,9 +362,11 @@ describe('BigQueryToolset', () => {
     });
     const tools = await toolset.getTools();
     const executeSql = tools.find((t) => t.name === 'execute_sql');
-    expect(executeSql).toBeDefined();
+    if (!executeSql) {
+      throw new Error('Expected execute_sql tool');
+    }
 
-    const result = await executeSql!.runAsync({
+    const result = await executeSql.runAsync({
       args: {
         project_id: 'my_project',
         query: 'CREATE TABLE my_dataset.new_table AS SELECT 1',
