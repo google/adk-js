@@ -1,0 +1,750 @@
+[
+  {
+    "key": "88b93229ef267433",
+    "instructionAgnosticKey": "e440daafec41e463",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Please add 2 apples to my cart."
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"shopping_assistant\".\n\nYou are a shopping assistant. The user's cart is: . When the user asks to add items, call add_to_cart once per item, with singular lowercase item names. Then answer in one short sentence.",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "add_to_cart",
+                "description": "Adds an item to the user's shopping cart.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "item": {
+                      "type": "STRING",
+                      "description": "Singular, lowercase item name."
+                    },
+                    "quantity": {
+                      "type": "INTEGER",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["item", "quantity"]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "shopping_assistant"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "add_to_cart",
+                  "args": {
+                    "quantity": 2,
+                    "item": "apple"
+                  },
+                  "id": "adk-8ccaa54c-23cd-435d-afb2-b023516adf39"
+                },
+                "thoughtSignature": "AY89a19jtqzJPhW5JEHTFxxTkaJDByhtn0vipPHuyBjTjQXx/xhCfFwaKO0QTfVhiuy7ZGoOtCp8goioCDJfu3zdeHsqA7oSxhYcd7cq3ipoJODPSsgBo7vIWSnWpnf/Aye9Lq5Ys6tlB2InGHCpYx/nvlKtybJ5YFIfupTwTuub6EPHEEGtY7go0FgUnWB4hDg6+ohvTPWqBf83+dXdaM3vH8zsaVYZKq7AFfEolrVj6fZX01FboGlplwi2X/hyPgLf14AEUpoE8njTVJI80F0C+/bTXYcjkhQVhxDN0VEIZpRvZW32vzRqDTYPolJLhenYU6032PQs+c/a8niqqroCu8cpzoIbPaa06ilsEbjJcJr0v/+KafZsSYzKxD9pv7tHVdQcMRGAML3S9eAQD7krOEVsTLiMfDz7Pzhawp24u/kfXRx9/TN0PCkfOLC1/nz1AVt8q4kwjA=="
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 99,
+        "candidatesTokenCount": 20,
+        "totalTokenCount": 185,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 99
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 20
+          }
+        ],
+        "thoughtsTokenCount": 66
+      }
+    }
+  },
+  {
+    "key": "d47a1d6696a885d8",
+    "instructionAgnosticKey": "46775dc540b5c7c5",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Please add 2 apples to my cart."
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "functionCall": {
+                "name": "add_to_cart",
+                "args": {
+                  "quantity": 2,
+                  "item": "apple"
+                }
+              },
+              "thoughtSignature": "AY89a19jtqzJPhW5JEHTFxxTkaJDByhtn0vipPHuyBjTjQXx/xhCfFwaKO0QTfVhiuy7ZGoOtCp8goioCDJfu3zdeHsqA7oSxhYcd7cq3ipoJODPSsgBo7vIWSnWpnf/Aye9Lq5Ys6tlB2InGHCpYx/nvlKtybJ5YFIfupTwTuub6EPHEEGtY7go0FgUnWB4hDg6+ohvTPWqBf83+dXdaM3vH8zsaVYZKq7AFfEolrVj6fZX01FboGlplwi2X/hyPgLf14AEUpoE8njTVJI80F0C+/bTXYcjkhQVhxDN0VEIZpRvZW32vzRqDTYPolJLhenYU6032PQs+c/a8niqqroCu8cpzoIbPaa06ilsEbjJcJr0v/+KafZsSYzKxD9pv7tHVdQcMRGAML3S9eAQD7krOEVsTLiMfDz7Pzhawp24u/kfXRx9/TN0PCkfOLC1/nz1AVt8q4kwjA=="
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "functionResponse": {
+                "name": "add_to_cart",
+                "response": {
+                  "cart": {
+                    "apple": 2
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"shopping_assistant\".\n\nYou are a shopping assistant. The user's cart is: {\"apple\":2}. When the user asks to add items, call add_to_cart once per item, with singular lowercase item names. Then answer in one short sentence.",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "add_to_cart",
+                "description": "Adds an item to the user's shopping cart.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "item": {
+                      "type": "STRING",
+                      "description": "Singular, lowercase item name."
+                    },
+                    "quantity": {
+                      "type": "INTEGER",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["item", "quantity"]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "shopping_assistant"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "I've added 2 apples to your cart."
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 186,
+        "candidatesTokenCount": 11,
+        "totalTokenCount": 197,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 186
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 11
+          }
+        ]
+      }
+    }
+  },
+  {
+    "key": "a8d573697e034307",
+    "instructionAgnosticKey": "a5b7c7c8ef5c7d4a",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Please add 2 apples to my cart."
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "functionCall": {
+                "name": "add_to_cart",
+                "args": {
+                  "quantity": 2,
+                  "item": "apple"
+                }
+              },
+              "thoughtSignature": "AY89a19jtqzJPhW5JEHTFxxTkaJDByhtn0vipPHuyBjTjQXx/xhCfFwaKO0QTfVhiuy7ZGoOtCp8goioCDJfu3zdeHsqA7oSxhYcd7cq3ipoJODPSsgBo7vIWSnWpnf/Aye9Lq5Ys6tlB2InGHCpYx/nvlKtybJ5YFIfupTwTuub6EPHEEGtY7go0FgUnWB4hDg6+ohvTPWqBf83+dXdaM3vH8zsaVYZKq7AFfEolrVj6fZX01FboGlplwi2X/hyPgLf14AEUpoE8njTVJI80F0C+/bTXYcjkhQVhxDN0VEIZpRvZW32vzRqDTYPolJLhenYU6032PQs+c/a8niqqroCu8cpzoIbPaa06ilsEbjJcJr0v/+KafZsSYzKxD9pv7tHVdQcMRGAML3S9eAQD7krOEVsTLiMfDz7Pzhawp24u/kfXRx9/TN0PCkfOLC1/nz1AVt8q4kwjA=="
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "functionResponse": {
+                "name": "add_to_cart",
+                "response": {
+                  "cart": {
+                    "apple": 2
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "text": "I've added 2 apples to your cart."
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Also add a loaf of bread, then tell me everything in my cart."
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"shopping_assistant\".\n\nYou are a shopping assistant. The user's cart is: {\"apple\":2}. When the user asks to add items, call add_to_cart once per item, with singular lowercase item names. Then answer in one short sentence.",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "add_to_cart",
+                "description": "Adds an item to the user's shopping cart.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "item": {
+                      "type": "STRING",
+                      "description": "Singular, lowercase item name."
+                    },
+                    "quantity": {
+                      "type": "INTEGER",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["item", "quantity"]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "shopping_assistant"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "add_to_cart",
+                  "args": {
+                    "item": "bread",
+                    "quantity": 1
+                  },
+                  "id": "adk-46e93a34-f1c9-41af-83b8-b56a54fec383"
+                },
+                "thoughtSignature": "AY89a19gSKDG10C/YJjC/f4Vd2ZHWY/oIRNTxlTncba4EuR3a+3otJqrb9gWNqclEoDcj1M5gILr6jX/IxaP+cxnH3dNt/yzLnDm6/e8Jtgbiu4QFkwvNNQxcOu1XkojmtDg9NP0xRPJpOD8m+xtQ0sIfakzPM2wFu1FL5tt/kGP5mpEZSEkl7msI00Cqe6uXcJL1jyYrpmdbVrW2te0XzsTyrZAvhaUWC+2Xlz+aFTlRroCtnRVsn0tvcYFqFNqJilwTl8AfUCCObT70RWF0lsv4XteiDmsG6M/UMKXcZYscalwNuHrV+/ftbOVbks/10q2npypM9QcJbeK+Ay4l9NFbo/aY7AHnXU2IbYZy5xhRbbKIZ5H9uK4q5ieOqce86ROm7hiuKa6OYojJY9ugahzIvSYbCrWBKrspkzVoo2S26U3/wVXGNqqdqT4cy9/Fvhso1H9Ik92vgbpQCwbFmUV+8mWyAlUPfJot7zoSTiZoupWIlTQoeYhFYPkkzAzM8UmtLXW3h/XKvWjneuUHp6cXB4s8NAVefHe2VERQeSd7UvkF2nL8pEyvskwhzFK2RqobJ2zhiZQyCq/W2/8yjQr8XHZ5cAuVDzUONshJZQKy0ow6XRji6+Su8iQbLtzuuNBjKm2JMUf5CGlhJ5NMJZt6s6OZ5aekFDI5YPzTVuZtpu9X/7NOp06pMpldg/47VBMzPiZ9/BHQs0ZCg=="
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 146,
+        "candidatesTokenCount": 22,
+        "totalTokenCount": 287,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 146
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 22
+          }
+        ],
+        "thoughtsTokenCount": 119
+      }
+    }
+  },
+  {
+    "key": "72d0039c5e69611f",
+    "instructionAgnosticKey": "cfcbb19cdaf4a94a",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Please add 2 apples to my cart."
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "functionCall": {
+                "name": "add_to_cart",
+                "args": {
+                  "quantity": 2,
+                  "item": "apple"
+                }
+              },
+              "thoughtSignature": "AY89a19jtqzJPhW5JEHTFxxTkaJDByhtn0vipPHuyBjTjQXx/xhCfFwaKO0QTfVhiuy7ZGoOtCp8goioCDJfu3zdeHsqA7oSxhYcd7cq3ipoJODPSsgBo7vIWSnWpnf/Aye9Lq5Ys6tlB2InGHCpYx/nvlKtybJ5YFIfupTwTuub6EPHEEGtY7go0FgUnWB4hDg6+ohvTPWqBf83+dXdaM3vH8zsaVYZKq7AFfEolrVj6fZX01FboGlplwi2X/hyPgLf14AEUpoE8njTVJI80F0C+/bTXYcjkhQVhxDN0VEIZpRvZW32vzRqDTYPolJLhenYU6032PQs+c/a8niqqroCu8cpzoIbPaa06ilsEbjJcJr0v/+KafZsSYzKxD9pv7tHVdQcMRGAML3S9eAQD7krOEVsTLiMfDz7Pzhawp24u/kfXRx9/TN0PCkfOLC1/nz1AVt8q4kwjA=="
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "functionResponse": {
+                "name": "add_to_cart",
+                "response": {
+                  "cart": {
+                    "apple": 2
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "text": "I've added 2 apples to your cart."
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Also add a loaf of bread, then tell me everything in my cart."
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "functionCall": {
+                "name": "add_to_cart",
+                "args": {
+                  "item": "bread",
+                  "quantity": 1
+                }
+              },
+              "thoughtSignature": "AY89a19gSKDG10C/YJjC/f4Vd2ZHWY/oIRNTxlTncba4EuR3a+3otJqrb9gWNqclEoDcj1M5gILr6jX/IxaP+cxnH3dNt/yzLnDm6/e8Jtgbiu4QFkwvNNQxcOu1XkojmtDg9NP0xRPJpOD8m+xtQ0sIfakzPM2wFu1FL5tt/kGP5mpEZSEkl7msI00Cqe6uXcJL1jyYrpmdbVrW2te0XzsTyrZAvhaUWC+2Xlz+aFTlRroCtnRVsn0tvcYFqFNqJilwTl8AfUCCObT70RWF0lsv4XteiDmsG6M/UMKXcZYscalwNuHrV+/ftbOVbks/10q2npypM9QcJbeK+Ay4l9NFbo/aY7AHnXU2IbYZy5xhRbbKIZ5H9uK4q5ieOqce86ROm7hiuKa6OYojJY9ugahzIvSYbCrWBKrspkzVoo2S26U3/wVXGNqqdqT4cy9/Fvhso1H9Ik92vgbpQCwbFmUV+8mWyAlUPfJot7zoSTiZoupWIlTQoeYhFYPkkzAzM8UmtLXW3h/XKvWjneuUHp6cXB4s8NAVefHe2VERQeSd7UvkF2nL8pEyvskwhzFK2RqobJ2zhiZQyCq/W2/8yjQr8XHZ5cAuVDzUONshJZQKy0ow6XRji6+Su8iQbLtzuuNBjKm2JMUf5CGlhJ5NMJZt6s6OZ5aekFDI5YPzTVuZtpu9X/7NOp06pMpldg/47VBMzPiZ9/BHQs0ZCg=="
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "functionResponse": {
+                "name": "add_to_cart",
+                "response": {
+                  "cart": {
+                    "apple": 2,
+                    "bread": 1
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"shopping_assistant\".\n\nYou are a shopping assistant. The user's cart is: {\"apple\":2,\"bread\":1}. When the user asks to add items, call add_to_cart once per item, with singular lowercase item names. Then answer in one short sentence.",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "add_to_cart",
+                "description": "Adds an item to the user's shopping cart.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "item": {
+                      "type": "STRING",
+                      "description": "Singular, lowercase item name."
+                    },
+                    "quantity": {
+                      "type": "INTEGER",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["item", "quantity"]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "shopping_assistant"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "I've added 1 bread to your cart. Your cart now contains 2 apples and 1 bread."
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 288,
+        "candidatesTokenCount": 23,
+        "totalTokenCount": 311,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 288
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 23
+          }
+        ]
+      }
+    }
+  },
+  {
+    "key": "135f123d17ca65e5",
+    "instructionAgnosticKey": "a72e66168c9685a4",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "What's in my cart?"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"shopping_assistant\".\n\nYou are a shopping assistant. The user's cart is: {\"apple\":2,\"bread\":1}. When the user asks to add items, call add_to_cart once per item, with singular lowercase item names. Then answer in one short sentence.",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "add_to_cart",
+                "description": "Adds an item to the user's shopping cart.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "item": {
+                      "type": "STRING",
+                      "description": "Singular, lowercase item name."
+                    },
+                    "quantity": {
+                      "type": "INTEGER",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["item", "quantity"]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "shopping_assistant"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "You have 2 apples and 1 bread in your cart.",
+                "thoughtSignature": "AY89a18umkLviAlTBQFSGr8hVbTxpOZ//QTt3B3WyX51FprVP9xu53AvbC7O0yuTBjHD1rdB8rPiud61Fn0Kr5nDKKi/xYiOWpsBHx5iCZg+QIKwxM38jTt3UTRwAqfTp2wghqHHDIMsU8NAjzXLNG+H1etzpOzNnNBCSUMnsOwsBK/BwQYxRhdzXuSIggDtInko6xeGEJWqGB1ivLD0D7HXP1q37hrrpr0BBQVQDkKVkXGRYBODBOQ8X92f9/ckY/7/TjKmEkXvD6HmXZUmWrHwuOJ+C5CYv783/EOhtd2Wc4Ie6keC/8H1gbFnBv9eRjJImlVMuEuoEf/Xj6Y08Qhz0+TyjP5N"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 105,
+        "candidatesTokenCount": 13,
+        "totalTokenCount": 159,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 105
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 13
+          }
+        ],
+        "thoughtsTokenCount": 41
+      }
+    }
+  },
+  {
+    "key": "0487f536fc95bcc7",
+    "instructionAgnosticKey": "89b0caff25bf9efb",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Please add 2 apples to my cart."
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "functionCall": {
+                "name": "add_to_cart",
+                "args": {
+                  "quantity": 2,
+                  "item": "apple"
+                }
+              },
+              "thoughtSignature": "AY89a19jtqzJPhW5JEHTFxxTkaJDByhtn0vipPHuyBjTjQXx/xhCfFwaKO0QTfVhiuy7ZGoOtCp8goioCDJfu3zdeHsqA7oSxhYcd7cq3ipoJODPSsgBo7vIWSnWpnf/Aye9Lq5Ys6tlB2InGHCpYx/nvlKtybJ5YFIfupTwTuub6EPHEEGtY7go0FgUnWB4hDg6+ohvTPWqBf83+dXdaM3vH8zsaVYZKq7AFfEolrVj6fZX01FboGlplwi2X/hyPgLf14AEUpoE8njTVJI80F0C+/bTXYcjkhQVhxDN0VEIZpRvZW32vzRqDTYPolJLhenYU6032PQs+c/a8niqqroCu8cpzoIbPaa06ilsEbjJcJr0v/+KafZsSYzKxD9pv7tHVdQcMRGAML3S9eAQD7krOEVsTLiMfDz7Pzhawp24u/kfXRx9/TN0PCkfOLC1/nz1AVt8q4kwjA=="
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "functionResponse": {
+                "name": "add_to_cart",
+                "response": {
+                  "cart": {
+                    "apple": 2
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "text": "I've added 2 apples to your cart."
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Also add a loaf of bread, then tell me everything in my cart."
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "functionCall": {
+                "name": "add_to_cart",
+                "args": {
+                  "item": "bread",
+                  "quantity": 1
+                }
+              },
+              "thoughtSignature": "AY89a19gSKDG10C/YJjC/f4Vd2ZHWY/oIRNTxlTncba4EuR3a+3otJqrb9gWNqclEoDcj1M5gILr6jX/IxaP+cxnH3dNt/yzLnDm6/e8Jtgbiu4QFkwvNNQxcOu1XkojmtDg9NP0xRPJpOD8m+xtQ0sIfakzPM2wFu1FL5tt/kGP5mpEZSEkl7msI00Cqe6uXcJL1jyYrpmdbVrW2te0XzsTyrZAvhaUWC+2Xlz+aFTlRroCtnRVsn0tvcYFqFNqJilwTl8AfUCCObT70RWF0lsv4XteiDmsG6M/UMKXcZYscalwNuHrV+/ftbOVbks/10q2npypM9QcJbeK+Ay4l9NFbo/aY7AHnXU2IbYZy5xhRbbKIZ5H9uK4q5ieOqce86ROm7hiuKa6OYojJY9ugahzIvSYbCrWBKrspkzVoo2S26U3/wVXGNqqdqT4cy9/Fvhso1H9Ik92vgbpQCwbFmUV+8mWyAlUPfJot7zoSTiZoupWIlTQoeYhFYPkkzAzM8UmtLXW3h/XKvWjneuUHp6cXB4s8NAVefHe2VERQeSd7UvkF2nL8pEyvskwhzFK2RqobJ2zhiZQyCq/W2/8yjQr8XHZ5cAuVDzUONshJZQKy0ow6XRji6+Su8iQbLtzuuNBjKm2JMUf5CGlhJ5NMJZt6s6OZ5aekFDI5YPzTVuZtpu9X/7NOp06pMpldg/47VBMzPiZ9/BHQs0ZCg=="
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "functionResponse": {
+                "name": "add_to_cart",
+                "response": {
+                  "cart": {
+                    "apple": 2,
+                    "bread": 1
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "text": "I've added 1 bread to your cart. Your cart now contains 2 apples and 1 bread."
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Thanks, that is all."
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"shopping_assistant\".\n\nYou are a shopping assistant. The user's cart is: {\"apple\":2,\"bread\":1}. When the user asks to add items, call add_to_cart once per item, with singular lowercase item names. Then answer in one short sentence.",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "add_to_cart",
+                "description": "Adds an item to the user's shopping cart.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "item": {
+                      "type": "STRING",
+                      "description": "Singular, lowercase item name."
+                    },
+                    "quantity": {
+                      "type": "INTEGER",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["item", "quantity"]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "shopping_assistant"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "You're welcome! Have a great day!",
+                "thoughtSignature": "AY89a18eGucHdTVY6f/jONtNcdsb92kappwmOS8dWP+82wR2TqLOlJVu9zBA8Ue6AOY+UUwd0CQ6PcnLgprEp3BEByU2wAJeb590yNgSq4Gh5Xh/Yu0SQQrw9RBfh6BnYgDZg3OTxneipb1oxAfwFEmUbTTOqVBtyag7mm8TkC9GV1EHASyrr5T+441tw0fW8vAZZ7vCryss/PHUpUqL+LbTocJS+yBN3MyX83wvMUtQ79/eMk8FqmrnsdyFf9mhO10oWEXyipGvxDP5Rrpkpfy4oREmamqe5XzQy/fIeNqZLDp8RkQz+kjhSNzH8JaTxCXD5d2e0OjN0PJTwubqdUPZ1h6fMkS7QXE+YNDz"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 198,
+        "candidatesTokenCount": 10,
+        "totalTokenCount": 239,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 198
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 10
+          }
+        ],
+        "thoughtsTokenCount": 31
+      }
+    }
+  }
+]
