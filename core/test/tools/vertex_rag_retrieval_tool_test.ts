@@ -145,6 +145,30 @@ describe('VertexRagRetrievalTool', () => {
       expect(llmRequest.config.tools).toHaveLength(2);
       expect(toolAt(llmRequest, 1).retrieval).toBeDefined();
     });
+
+    it('adds retrieval.vertexRagStore for project-based Gemini model paths', async () => {
+      const tool = new VertexRagRetrievalTool({
+        ragResources: [{ragCorpus: RAG_CORPUS}],
+      });
+      const llmRequest = makeLlmRequest(
+        'projects/my-project/locations/us-central1/publishers/google/models/gemini-2.0-flash-001',
+      );
+
+      await tool.processLlmRequest({
+        llmRequest,
+        toolContext: makeToolContext(),
+      });
+
+      expect(llmRequest.config.tools).toEqual([
+        {
+          retrieval: {
+            vertexRagStore: {
+              ragResources: [{ragCorpus: RAG_CORPUS}],
+            },
+          },
+        },
+      ]);
+    });
   });
 
   describe('runAsync', () => {

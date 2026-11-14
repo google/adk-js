@@ -1,20 +1,20 @@
 # Google API tool
 
-`GoogleApiToolset` converts a Google API Discovery document into `GoogleApiTool` instances and configures them with Google OpenID Connect authentication. Pre-configured toolsets for Calendar, BigQuery, Gmail, YouTube, Slides, Sheets, and Docs are exported directly from `@google/adk`.
+`GoogleApiToolset` converts a Google API Discovery document into `GoogleApiTool` instances and configures them with Google OpenID Connect or service account authentication. Pre-configured toolsets for Calendar, BigQuery, Gmail, YouTube, Slides, Sheets, and Docs are exported directly from `@google/adk`.
 
 - [OpenAPI tool](../openapi_tool/index.md) - Building a toolset directly from an OpenAPI v3 specification for any HTTP service.
 
 ## Introduction
 
-Google APIs publish Discovery documents rather than OpenAPI v3 specifications. The internal converter translates Discovery documents into an OpenAPI v3.0.0 specification. `GoogleApiToolset` attaches Google OpenID Connect endpoints and wraps each operation in a `GoogleApiTool` so you can configure OAuth 2.0 client credentials across the service.
+Google APIs publish Discovery documents rather than OpenAPI v3 specifications. The internal converter translates Discovery documents into an OpenAPI v3.0.0 specification. `GoogleApiToolset` attaches Google OpenID Connect endpoints and wraps each operation in a `GoogleApiTool` so you can configure OAuth 2.0 client credentials or Google service account credentials across the service.
 
 The subsystem exposes nine toolset and tool classes:
 
-| Export                                                                                                                  | Purpose                                                                                                                                       |
-| :---------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GoogleApiToolset`                                                                                                      | Loads a Google API specification, filters operations exposed to an agent, and configures OAuth 2.0 client credentials.                        |
-| `CalendarToolset`, `BigQueryToolset`, `GmailToolset`, `YoutubeToolset`, `SlidesToolset`, `SheetsToolset`, `DocsToolset` | Service-specific `GoogleApiToolset` subclasses that construct isolated toolset instances with `{clientId, clientSecret, toolFilter}` options. |
-| `GoogleApiTool`                                                                                                         | Wraps a single `RestApiTool` and accepts `{clientId, clientSecret}` in its constructor or via `configureAuth(clientId, clientSecret)`.        |
+| Export                                                                                                                  | Purpose                                                                                                                                                              |
+| :---------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GoogleApiToolset`                                                                                                      | Loads a Google API specification, filters operations exposed to an agent, and configures OAuth 2.0 client or service account credentials.                             |
+| `CalendarToolset`, `BigQueryToolset`, `GmailToolset`, `YoutubeToolset`, `SlidesToolset`, `SheetsToolset`, `DocsToolset` | Service-specific `GoogleApiToolset` subclasses that construct isolated toolset instances with `{clientId, clientSecret, serviceAccount, toolFilter}` options.        |
+| `GoogleApiTool`                                                                                                         | Wraps a single `RestApiTool` and accepts `{clientId, clientSecret, serviceAccount}` in its constructor or via `configureAuth(...)` and `configureSaAuth(...)`.       |
 
 All classes in this subsystem carry the `@experimental` decorator and log a one-time warning when instantiated or called.
 
@@ -50,7 +50,7 @@ When `getTools()` is called, `GoogleApiToolset` fetches the Discovery document f
 
 ### 2. Lazy loading and credential propagation
 
-`GoogleApiToolset` defers network discovery until `getTools()` runs. Concurrent calls to `getTools()` share a single in-flight loading promise. Calling `configureAuth(clientId, clientSecret)` before `getTools()` stores the credentials and applies them when tools load. Calling `configureAuth` after loading updates every tool immediately.
+`GoogleApiToolset` defers network discovery until `getTools()` runs. Concurrent calls to `getTools()` share a single in-flight loading promise. Calling `configureAuth(clientId, clientSecret)` or `configureSaAuth(serviceAccount)` before `getTools()` stores the credentials and applies them when tools load. Calling either method after loading updates every tool immediately.
 
 ## Configuration options
 
@@ -58,21 +58,39 @@ When `getTools()` is called, `GoogleApiToolset` fetches the Discovery document f
 
 `new GoogleApiToolset(options)` and the seven service-specific toolset classes accept a `GoogleApiToolsetOptions` object.
 
-| Option         | Type                        | Default     | Description                                                                               |
-| :------------- | :-------------------------- | :---------- | :---------------------------------------------------------------------------------------- |
-| `apiName`      | `string`                    | `undefined` | Google Discovery API identifier, such as `'calendar'` or `'gmail'`.                       |
-| `apiVersion`   | `string`                    | `undefined` | Google Discovery API version string, such as `'v3'` or `'v1'`.                            |
-| `clientId`     | `string`                    | `undefined` | OAuth 2.0 client ID applied to every `GoogleApiTool` in the toolset.                      |
-| `clientSecret` | `string`                    | `undefined` | OAuth 2.0 client secret applied to every `GoogleApiTool` in the toolset.                  |
-| `toolFilter`   | `ToolPredicate \| string[]` | `[]`        | Selects which tools `getTools()` exposes to the agent. An empty array exposes every tool. |
+| Option           | Type                        | Default     | Description                                                                               |
+| :--------------- | :-------------------------- | :---------- | :---------------------------------------------------------------------------------------- |
+| `apiName`        | `string`                    | `undefined` | Google Discovery API identifier, such as `'calendar'` or `'gmail'`.                       |
+| `apiVersion`     | `string`                    | `undefined` | Google Discovery API version string, such as `'v3'` or `'v1'`.                            |
+| `clientId`       | `string`                    | `undefined` | OAuth 2.0 client ID applied to every `GoogleApiTool` in the toolset.                      |
+| `clientSecret`   | `string`                    | `undefined` | OAuth 2.0 client secret applied to every `GoogleApiTool` in the toolset.                  |
+| `serviceAccount` | `ServiceAccount`            | `undefined` | Google service account configuration applied to every `GoogleApiTool` in the toolset.     |
+| `toolFilter`     | `ToolPredicate \| string[]` | `[]`        | Selects which tools `getTools()` exposes to the agent. An empty array exposes every tool. |
 
 `toolFilter` accepts an array of tool names or a `(tool, readonlyContext?) => boolean` predicate function. It can be updated at runtime with `setToolFilter(toolFilter)`.
 
 ### GoogleApiToolOptions
 
-`new GoogleApiTool(restApiTool, options)` accepts an optional `GoogleApiToolOptions` object (`{clientId?: string; clientSecret?: string}`). When either credential is provided, the constructor configures OpenID Connect OAuth 2.0 client credentials on the tool.
+`new GoogleApiTool(restApiTool, options)` accepts an optional `GoogleApiToolOptions` object (`{clientId?: string; clientSecret?: string; serviceAccount?: ServiceAccount}`). When `serviceAccount` is provided, the constructor calls `configureSaAuth(serviceAccount)` and gives it precedence over `clientId` and `clientSecret`. Otherwise, when `clientId` or `clientSecret` is provided, the constructor configures OpenID Connect OAuth 2.0 client credentials on the tool. Both can also be updated after construction via `configureAuth(clientId, clientSecret)` or `configureSaAuth(serviceAccount)`. On a standalone `GoogleApiTool`, `configureAuth` updates only the OAuth 2.0 credential and expects the wrapped `RestApiTool` to already carry an OpenID Connect `authScheme` (calling `configureSaAuth` replaces that scheme with a bearer JWT scheme). By contrast, `GoogleApiToolset.configureAuth` clears any configured `serviceAccount` and restores the toolset's OpenID Connect `authScheme` across loaded tools as well.
 
 ## Advanced applications
+
+### Authenticating with a service account
+
+Pass a `ServiceAccount` configuration in constructor options or call `configureSaAuth(serviceAccount)` to configure bearer JWT service account authentication on every tool in a toolset:
+
+```ts
+import {CalendarToolset, type ServiceAccount} from '@google/adk';
+
+const serviceAccount: ServiceAccount = {
+  useDefaultCredential: true,
+  scopes: ['https://www.googleapis.com/auth/calendar.readonly'],
+};
+
+const calendarToolset = new CalendarToolset({serviceAccount});
+// Or configure after construction:
+// calendarToolset.configureSaAuth(serviceAccount);
+```
 
 ### Loading any Google Discovery API on demand
 
@@ -97,7 +115,7 @@ const driveToolset = new GoogleApiToolset({
 
 ## Related samples
 
-- [samples/tools/google_api_tool/](../../../../samples/tools/google_api_tool/README.md) - Instantiates a `CalendarToolset`, configures OpenID Connect credentials, and executes a tool call through an agent.
+- [samples/tools/google_api_tool/](../../../../samples/tools/google_api_tool/README.md) - Instantiates a `CalendarToolset`, configures OpenID Connect and service account credentials, and executes a tool call through an agent.
 - [Tool samples](../../../../samples/tools/README.md) - Overview of all tool samples and how to run and type-check them.
 
 ## Related guides
