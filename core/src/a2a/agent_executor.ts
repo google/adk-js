@@ -37,6 +37,9 @@ import {getA2aRequestMetadata} from './request_metadata.js';
 
 /**
  * Represents a runner or a configuration for a runner.
+ *
+ * The executor resolves it one time, on the first request, and reuses the
+ * resulting runner: a function is called one time, not one time per request.
  */
 export type RunnerOrRunnerConfig =
   | Runner
@@ -86,6 +89,7 @@ export interface AgentExecutorConfig {
  */
 export class A2AAgentExecutor implements AgentExecutor {
   private agentPartialArtifactIdsMap: Record<string, string> = {};
+  private runnerPromise?: Promise<Runner>;
 
   constructor(private readonly config: AgentExecutorConfig) {}
 
@@ -101,7 +105,7 @@ export class A2AAgentExecutor implements AgentExecutor {
     const userId = `A2A_USER_${ctx.contextId}`;
     const sessionId = ctx.contextId;
     const genAIUserMessage = toGenAIContent(a2aUserMessage);
-    const adkRunner = await getAdkRunner(this.config.runner);
+    const adkRunner = await this.resolveRunner();
     const session = await getAdkSession(
       userId,
       sessionId,
@@ -218,6 +222,25 @@ export class A2AAgentExecutor implements AgentExecutor {
   // Task cancellation is not supported in this implementation yet.
   async cancelTask(_taskId: string): Promise<void> {
     throw new Error('Task cancellation is not supported yet.');
+  }
+
+  /**
+   * Resolves the configured runner one time and shares it between requests,
+   * concurrent ones included. A failed resolution is not kept, so the next
+   * request tries again.
+   */
+  private resolveRunner(): Promise<Runner> {
+    if (!this.runnerPromise) {
+      const runnerPromise = getAdkRunner(this.config.runner);
+      this.runnerPromise = runnerPromise;
+      runnerPromise.catch(() => {
+        if (this.runnerPromise === runnerPromise) {
+          this.runnerPromise = undefined;
+        }
+      });
+    }
+
+    return this.runnerPromise;
   }
 
   private convertAdkEventToA2AEvent(

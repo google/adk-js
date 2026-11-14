@@ -192,6 +192,72 @@ describe('event_processor_utils', () => {
       expect(parts?.length).toBe(1);
       expect((parts?.[0] as DataPart)?.data?.id).toBe('call_1');
     });
+
+    const credentialRequestEvent = (): AdkEvent =>
+      createEvent({
+        longRunningToolIds: ['credential-call'],
+        content: {
+          parts: [
+            {
+              functionCall: {
+                id: 'credential-call',
+                name: 'adk_request_credential',
+                args: {},
+              },
+            },
+          ],
+        },
+      });
+    const approvalRequestEvent = (): AdkEvent =>
+      createEvent({
+        longRunningToolIds: ['approval-call'],
+        content: {
+          parts: [
+            {functionCall: {id: 'approval-call', name: 'askForApproval'}},
+          ],
+        },
+      });
+
+    it('returns an auth-required event when a credential request is pending', () => {
+      const result = getFinalTaskStatusUpdate(
+        [credentialRequestEvent()],
+        mockContext,
+      );
+
+      expect(result.status.state).toBe('auth-required');
+      expect(result.final).toBe(true);
+      expect(
+        result.status.message?.parts.map((part) => (part as DataPart).data.id),
+      ).toEqual(['credential-call']);
+    });
+
+    it.each([
+      {
+        order: 'before',
+        events: () => [credentialRequestEvent(), approvalRequestEvent()],
+      },
+      {
+        order: 'after',
+        events: () => [approvalRequestEvent(), credentialRequestEvent()],
+      },
+    ])(
+      'prefers auth-required when a credential request comes $order another pending call',
+      ({events}) => {
+        const result = getFinalTaskStatusUpdate(events(), mockContext);
+
+        expect(result.status.state).toBe('auth-required');
+        expect(result.status.message?.parts).toHaveLength(2);
+      },
+    );
+
+    it('returns a failed event when an error follows a pending credential request', () => {
+      const result = getFinalTaskStatusUpdate(
+        [credentialRequestEvent(), createEvent({errorCode: 'ERR_CODE'})],
+        mockContext,
+      );
+
+      expect(result.status.state).toBe('failed');
+    });
   });
 
   describe('getUnansweredRequestEvent', () => {
@@ -220,6 +286,42 @@ describe('event_processor_utils', () => {
         status: {state: 'working'},
       } as Task;
       expect(check(task, {} as GenAIContent)).toBeUndefined();
+    });
+
+    it('holds the pause of an auth-required task whose request is unanswered', () => {
+      const task = {
+        id: 'task1',
+        contextId: 'ctx1',
+        kind: 'task',
+        status: {
+          state: 'auth-required',
+          message: {
+            kind: 'message',
+            messageId: 'msg1',
+            role: 'agent',
+            parts: toA2AParts(
+              [
+                {
+                  functionCall: {
+                    id: 'credential-call',
+                    name: 'adk_request_credential',
+                    args: {},
+                  },
+                },
+              ],
+              ['credential-call'],
+            ),
+          },
+        },
+      } as Task;
+
+      const result = check(task, {
+        parts: [{text: 'any news?'}],
+      } as GenAIContent);
+
+      expect(
+        (result?.status.message?.parts.at(-1) as TextPart | undefined)?.text,
+      ).toBe('No input provided for function call id credential-call');
     });
 
     it('returns undefined if task does not have a status message', () => {

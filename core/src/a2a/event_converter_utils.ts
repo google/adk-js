@@ -27,6 +27,7 @@ import {
   A2AEvent,
   getEventMetadata,
   getFailedTaskStatusUpdateEventError,
+  isAuthRequiredTaskStatusUpdateEvent,
   isFailedTaskStatusUpdateEvent,
   isInputRequiredTaskStatusUpdateEvent,
   isMessage,
@@ -35,6 +36,7 @@ import {
   isTaskStatusUpdateEvent,
   isTerminalTaskStatusUpdateEvent,
   MessageRole,
+  TaskState,
 } from './a2a_event.js';
 import {
   A2AMetadataKeys,
@@ -115,7 +117,7 @@ function messageToAdkEvent(
   agentName: string,
   branch?: string,
 ): AdkEvent {
-  const parts = toGenAIParts(msg.parts);
+  const parts = toGenAIParts(msg.parts ?? []);
   const content =
     parts.length === 0
       ? undefined
@@ -134,6 +136,7 @@ function messageToAdkEvent(
     author: agentName,
     branch,
     content,
+    longRunningToolIds: getLongRunningToolIDs(msg.parts ?? []),
     turnComplete: true,
     partial: false,
   };
@@ -206,7 +209,7 @@ function taskStatusUpdateToAdkEvent(
     return undefined;
   }
 
-  const parts = toGenAIParts(msg.parts);
+  const parts = toGenAIParts(msg.parts ?? []);
   if (parts.length === 0) {
     return undefined;
   }
@@ -217,6 +220,7 @@ function taskStatusUpdateToAdkEvent(
     author: agentName,
     branch,
     content: createModelContent(parts),
+    longRunningToolIds: getLongRunningToolIDs(msg.parts ?? []),
     turnComplete: false,
     partial: true,
   };
@@ -242,23 +246,32 @@ function taskToAdkEvent(
   }
 
   if (a2aTask.status?.message) {
-    const a2aParts = a2aTask.status.message.parts;
-    const genAIParts = toGenAIParts(a2aParts);
+    const a2aParts = a2aTask.status.message.parts ?? [];
 
-    parts.push(...genAIParts);
+    parts.push(...toGenAIParts(a2aParts));
     longRunningToolIds.push(...getLongRunningToolIDs(a2aParts));
   }
 
   const isTerminal =
     isTerminalTaskStatusUpdateEvent(a2aTask) ||
-    isInputRequiredTaskStatusUpdateEvent(a2aTask);
+    isInputRequiredTaskStatusUpdateEvent(a2aTask) ||
+    isAuthRequiredTaskStatusUpdateEvent(a2aTask);
   const isFailed = isFailedTaskStatusUpdateEvent(a2aTask);
+
+  if (parts.length === 0 && !isFailed) {
+    // A final status update without a message clears the status message of
+    // the task, so the output of the agent can remain only in the history.
+    const historyParts = getLastAgentMessageParts(a2aTask.history);
+
+    parts.push(...toGenAIParts(historyParts));
+    longRunningToolIds.push(...getLongRunningToolIDs(historyParts));
+  }
 
   if (parts.length === 0 && !isFailed) {
     return undefined;
   }
 
-  return {
+  const adkEvent: AdkEvent = {
     ...createAdkEventFromMetadata(a2aTask),
     invocationId,
     author: agentName,
@@ -270,6 +283,40 @@ function taskToAdkEvent(
     longRunningToolIds,
     turnComplete: isTerminal,
   };
+
+  if (isFinishedTask(a2aTask)) {
+    // The content is the final answer of the remote agent. When the remote
+    // agent runs as a tool, the caller must not summarize the answer again.
+    adkEvent.actions.skipSummarization = true;
+  }
+
+  return adkEvent;
+}
+
+/**
+ * Returns the parts of the last message in the history that the agent wrote.
+ * Messages from the user are skipped, so the request that started the task is
+ * never read as output of the agent.
+ */
+function getLastAgentMessageParts(history: Message[] = []): A2APart[] {
+  for (let index = history.length - 1; index >= 0; index--) {
+    if (history[index].role === MessageRole.AGENT) {
+      return history[index].parts ?? [];
+    }
+  }
+
+  return [];
+}
+
+/**
+ * Returns true when the task ended with a result: completed or canceled. A
+ * paused, running or submitted task is not finished.
+ */
+function isFinishedTask(a2aTask: Task): boolean {
+  return (
+    a2aTask.status?.state === TaskState.COMPLETED ||
+    a2aTask.status?.state === TaskState.CANCELED
+  );
 }
 
 // EventActions fields a remote A2A peer may set on the event we emit

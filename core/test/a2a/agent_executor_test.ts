@@ -463,4 +463,145 @@ describe('A2AAgentExecutor', () => {
       'Task cancellation is not supported yet.',
     );
   });
+
+  describe('runner resolution', () => {
+    const runnerConfig = (): RunnerConfig =>
+      ({
+        appName: 'test-app',
+        sessionService: mockSessionService,
+      }) as unknown as RunnerConfig;
+
+    beforeEach(() => {
+      mockSessionService.getSession.mockResolvedValue(
+        createSession({
+          id: 'test-context',
+          userId: 'A2A_USER_test-context',
+          appName: 'test-app',
+        }),
+      );
+      vi.mocked(Runner).mockImplementation(function (config: RunnerConfig) {
+        return {
+          appName: config?.appName,
+          sessionService: config?.sessionService,
+          runAsync: async function* () {},
+        } as unknown as Runner;
+      });
+    });
+
+    const finalStates = (): string[] =>
+      mockEventBus.publish.mock.calls
+        .map(([event]) => event)
+        .filter(
+          (event): event is TaskStatusUpdateEvent =>
+            event.kind === 'status-update' && event.final,
+        )
+        .map((event) => event.status.state);
+
+    it.each([
+      {kind: 'a sync', factory: () => vi.fn(runnerConfig)},
+      {kind: 'an async', factory: () => vi.fn(async () => runnerConfig())},
+    ])(
+      'calls $kind runner factory one time across requests',
+      async ({factory}) => {
+        const runnerFactory = factory();
+        const executor = new A2AAgentExecutor({runner: runnerFactory});
+
+        await executor.execute(createRequestContext(), mockEventBus);
+        await executor.execute(createRequestContext(), mockEventBus);
+
+        expect(runnerFactory).toHaveBeenCalledTimes(1);
+        expect(Runner).toHaveBeenCalledTimes(1);
+        expect(finalStates()).toEqual(['completed', 'completed']);
+      },
+    );
+
+    it('builds one runner from a runner config across requests', async () => {
+      const executor = new A2AAgentExecutor({runner: runnerConfig()});
+
+      await executor.execute(createRequestContext(), mockEventBus);
+      await executor.execute(createRequestContext(), mockEventBus);
+
+      expect(Runner).toHaveBeenCalledTimes(1);
+    });
+
+    it('shares one resolution between concurrent first requests', async () => {
+      const runnerFactory = vi.fn(async () => runnerConfig());
+      const executor = new A2AAgentExecutor({runner: runnerFactory});
+
+      await Promise.all([
+        executor.execute(createRequestContext(), mockEventBus),
+        executor.execute(createRequestContext(), mockEventBus),
+      ]);
+
+      expect(runnerFactory).toHaveBeenCalledTimes(1);
+      expect(Runner).toHaveBeenCalledTimes(1);
+    });
+
+    it('resolves the runner again after a failed resolution', async () => {
+      const runnerFactory = vi
+        .fn<() => Promise<RunnerConfig>>()
+        .mockRejectedValueOnce(new Error('The runner is not ready.'))
+        .mockResolvedValue(runnerConfig());
+      const executor = new A2AAgentExecutor({runner: runnerFactory});
+
+      await expect(
+        executor.execute(createRequestContext(), mockEventBus),
+      ).rejects.toThrow('The runner is not ready.');
+      await executor.execute(createRequestContext(), mockEventBus);
+
+      expect(runnerFactory).toHaveBeenCalledTimes(2);
+      expect(finalStates()).toEqual(['completed']);
+    });
+  });
+
+  it('publishes an auth-required final status when the run ends on a credential request', async () => {
+    mockSessionService.getSession.mockResolvedValue(
+      createSession({
+        id: 'test-context',
+        userId: 'A2A_USER_test-context',
+        appName: 'test-app',
+      }),
+    );
+    vi.mocked(Runner).mockImplementation(function (config: RunnerConfig) {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: async function* () {
+          yield createEvent({
+            author: 'model',
+            longRunningToolIds: ['credential-call'],
+            content: {
+              role: 'model',
+              parts: [
+                {
+                  functionCall: {
+                    id: 'credential-call',
+                    name: 'adk_request_credential',
+                    args: {},
+                  },
+                },
+              ],
+            },
+            actions: createEventActions(),
+          });
+        },
+      } as unknown as Runner;
+    });
+    const executor = new A2AAgentExecutor({
+      runner: {
+        appName: 'test-app',
+        sessionService: mockSessionService,
+      } as unknown as RunnerConfig,
+    });
+
+    await executor.execute(createRequestContext(), mockEventBus);
+
+    expect(mockEventBus.publish).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        kind: 'status-update',
+        final: true,
+        status: expect.objectContaining({state: 'auth-required'}),
+      }),
+    );
+  });
 });
