@@ -9,6 +9,7 @@ import {
   isAgentTool,
   isFunctionTool,
   ListSkillsTool,
+  LoadMcpResourceTool,
   LoadSkillResourceTool,
   LoadSkillTool,
   MCPTool,
@@ -105,7 +106,11 @@ export function getToolOrigin({
   toolArgs?: Record<string, unknown>;
   toolContext?: ToolOriginContext;
 }): string {
-  if (tool instanceof MCPTool || tool instanceof WebMCPTool) {
+  if (
+    tool instanceof MCPTool ||
+    tool instanceof LoadMcpResourceTool ||
+    tool instanceof WebMCPTool
+  ) {
     return 'MCP';
   }
   // ADK TS has no TransferToAgentTool class: transfers are a FunctionTool

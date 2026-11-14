@@ -275,11 +275,7 @@ describe('validateEvalViewConfig', () => {
     );
   });
 
-  const validatedEvents = requiredEvents.filter(
-    (event) => event !== 'AGENT_STARTING',
-  );
-
-  it.each(validatedEvents)('rejects %s in the denylist', (event) => {
+  it.each(requiredEvents)('rejects %s in the denylist', (event) => {
     expect(() => validate({eventDenylist: [event]})).toThrow(
       'required events are in eventDenylist',
     );
@@ -297,7 +293,11 @@ describe('validateEvalViewConfig', () => {
         ],
       }),
     ).toThrow('eventAllowlist includes all required events');
-    for (const missing of [['AGENT_TRANSFER'], pauseEvents]) {
+    for (const missing of [
+      ['AGENT_STARTING'],
+      ['AGENT_TRANSFER'],
+      pauseEvents,
+    ]) {
       expect(() =>
         validate({
           eventAllowlist: requiredEvents.filter(
@@ -311,11 +311,6 @@ describe('validateEvalViewConfig', () => {
           .join(', ')}].`,
       );
     }
-  });
-
-  it('does not insist on AGENT_STARTING, which the runner never emits', () => {
-    expect(() => validate({eventAllowlist: validatedEvents})).not.toThrow();
-    expect(() => validate({eventDenylist: ['AGENT_STARTING']})).not.toThrow();
   });
 
   it('accepts a full allowlist and treats an empty allowlist as unset', () => {
