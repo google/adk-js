@@ -6,14 +6,19 @@
 
 import {
   AuthCredentialTypes,
+  Context,
+  createSession,
+  InvocationContext,
+  LlmAgent,
   OpenApiSpecParser,
   OpenAPIToolset,
+  PluginManager,
   ReadonlyContext,
   RestApiTool,
 } from '@google/adk';
 import * as yaml from 'js-yaml';
 import {OpenAPIV3} from 'openapi-types';
-import {describe, expect, it, vi} from 'vitest';
+import {afterEach, describe, expect, it, vi} from 'vitest';
 import {logger} from '../../../src/utils/logger.js';
 
 describe('OpenAPIToolset', () => {
@@ -248,6 +253,10 @@ describe('OpenAPIToolset', () => {
     ]);
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('should accept a supported specType on the spec string path', async () => {
     const toolset = new OpenAPIToolset({
       specStr: JSON.stringify(mockSpec),
@@ -255,6 +264,83 @@ describe('OpenAPIToolset', () => {
     });
 
     expect((await toolset.getTools()).length).toBe(2);
+  });
+
+  it('should not send global credential on an operation that opts out with security: [] or [{}]', async () => {
+    const spec: OpenAPIV3.Document = {
+      openapi: '3.0.0',
+      info: {title: 'Test API', version: '1.0.0'},
+      servers: [{url: 'https://api.example.com'}],
+      security: [{ApiKeyAuth: []}],
+      components: {
+        securitySchemes: {
+          ApiKeyAuth: {type: 'apiKey', in: 'header', name: 'X-API-Key'},
+        },
+      },
+      paths: {
+        '/health': {
+          get: {
+            operationId: 'health',
+            security: [],
+            responses: {'200': {description: 'ok'}},
+          },
+        },
+        '/optional': {
+          get: {
+            operationId: 'optional',
+            security: [{}],
+            responses: {'200': {description: 'ok'}},
+          },
+        },
+        '/secret': {
+          get: {
+            operationId: 'secret',
+            responses: {'200': {description: 'ok'}},
+          },
+        },
+      },
+    };
+
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockImplementation(
+        async () =>
+          new Response('{}', {headers: {'content-type': 'application/json'}}),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const toolset = new OpenAPIToolset({
+      specDict: spec,
+      authCredential: {
+        authType: AuthCredentialTypes.API_KEY,
+        apiKey: 'my-key',
+      },
+    });
+    const toolContext = new Context({
+      invocationContext: new InvocationContext({
+        invocationId: 'invocation-1',
+        agent: new LlmAgent({name: 'test_agent'}),
+        session: createSession({id: 'session-1', appName: 'test_app'}),
+        pluginManager: new PluginManager(),
+      }),
+    });
+
+    for (const tool of await toolset.getTools()) {
+      await tool.runAsync({args: {}, toolContext});
+    }
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const headersByUrl = new Map(
+      fetchMock.mock.calls.map(([url, init]) => [
+        url,
+        init?.headers as Record<string, string> | undefined,
+      ]),
+    );
+    expect(headersByUrl.get('https://api.example.com/health')).toEqual({});
+    expect(headersByUrl.get('https://api.example.com/optional')).toEqual({});
+    expect(headersByUrl.get('https://api.example.com/secret')).toEqual({
+      'X-API-Key': 'my-key',
+    });
   });
 });
 

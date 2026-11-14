@@ -728,4 +728,26 @@ describe('OperationParser', () => {
       expect(parser.getDescription()).toBe('');
     });
   });
+
+  describe('getAuthSchemeName optional security', () => {
+    it('should return an empty auth scheme name when optional security is listed first', () => {
+      const op: OpenAPIV3.OperationObject = {
+        operationId: 'listItems',
+        security: [{}, {apiKey: []}],
+        responses: {},
+      };
+
+      expect(new OperationParser(op).getAuthSchemeName()).toBe('');
+    });
+
+    it('should return an empty auth scheme name when optional security is listed last', () => {
+      const op: OpenAPIV3.OperationObject = {
+        operationId: 'listItems',
+        security: [{apiKey: []}, {}],
+        responses: {},
+      };
+
+      expect(new OperationParser(op).getAuthSchemeName()).toBe('');
+    });
+  });
 });
