@@ -326,6 +326,73 @@ describe('LangchainTool', () => {
     expect(funcSpy).toHaveBeenCalledWith({input: 'hello'});
   });
 
+  it('executes a structured tool with an async coroutine when func is undefined', async () => {
+    const coroutineSpy = vi.fn(async ({x, y}: {x: number; y: number}) => x + y);
+    const tool = new LangchainTool({
+      tool: {
+        name: 'add',
+        description: 'Adds two numbers',
+        argsSchema: z.object({x: z.number(), y: z.number()}),
+        func: undefined,
+        coroutine: coroutineSpy,
+      },
+    });
+
+    expect(tool._getDeclaration()).toEqual({
+      name: 'add',
+      description: 'Adds two numbers',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          x: {type: Type.NUMBER},
+          y: {type: Type.NUMBER},
+        },
+        required: ['x', 'y'],
+      },
+    });
+
+    const result = await tool.runAsync({
+      args: {x: 1, y: 3},
+      toolContext: emptyContext,
+    });
+
+    expect(result).toBe(4);
+    expect(coroutineSpy).toHaveBeenCalledWith({x: 1, y: 3});
+  });
+
+  it('executes a structured tool with a sync or async func and an argsSchema', async () => {
+    const addSchema = z.object({x: z.number(), y: z.number()});
+    const syncTool = new LangchainTool({
+      tool: {
+        name: 'add',
+        description: 'Adds two numbers',
+        argsSchema: addSchema,
+        func: ({x, y}: {x: number; y: number}) => x + y,
+      },
+    });
+    const asyncTool = new LangchainTool({
+      tool: {
+        name: 'add',
+        description: 'Adds two numbers',
+        argsSchema: addSchema,
+        func: async ({x, y}: {x: number; y: number}) => x + y,
+      },
+    });
+
+    expect(
+      await syncTool.runAsync({
+        args: {x: 1, y: 3},
+        toolContext: emptyContext,
+      }),
+    ).toBe(4);
+    expect(
+      await asyncTool.runAsync({
+        args: {x: 1, y: 3},
+        toolContext: emptyContext,
+      }),
+    ).toBe(4);
+  });
+
   it('does not mark fields as required when every schema field is optional', () => {
     const tool = new LangchainTool({
       name: 'optional_tool',

@@ -1193,6 +1193,192 @@ describe('FunctionTool', () => {
         required: ['requiredStr'],
       });
     });
+
+    it('omits response schema on Gemini API when a function has no return annotation', () => {
+      const decl = buildFunctionDeclarationUtil(
+        false,
+        'function_no_return',
+        'A function with no return annotation.',
+        function functionNoReturn() {},
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+        },
+      );
+      expect(decl).toEqual({
+        name: 'function_no_return',
+        description: 'A function with no return annotation.',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {param: {type: Type.STRING}},
+          required: ['param'],
+        },
+      });
+      expect(decl.response).toBeUndefined();
+    });
+
+    it('sets an unspecified response schema on Vertex AI when a function has no return annotation', () => {
+      const decl = buildFunctionDeclarationUtil(
+        true,
+        'function_no_return',
+        'A function with no return annotation.',
+        function functionNoReturn() {},
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+        },
+      );
+      expect(decl).toEqual({
+        name: 'function_no_return',
+        description: 'A function with no return annotation.',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {param: {type: Type.STRING}},
+          required: ['param'],
+        },
+        response: {type: Type.TYPE_UNSPECIFIED},
+      });
+    });
+
+    it('sets a null response schema on Vertex AI when returnType or response is explicitly null or void', () => {
+      const nullReturnTypeDecl = buildFunctionDeclarationUtil(
+        true,
+        'function_null_return',
+        'A function that explicitly returns null.',
+        Object.assign(function functionNullReturn() {}, {returnType: null}),
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+        },
+      );
+      expect(nullReturnTypeDecl.response).toEqual({type: Type.NULL});
+
+      const voidReturnTypeDecl = buildFunctionDeclarationUtil(
+        true,
+        'function_void_return',
+        'A function that explicitly returns void.',
+        function functionVoidReturn() {},
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+          returnType: 'void',
+        },
+      );
+      expect(voidReturnTypeDecl.response).toEqual({type: Type.NULL});
+
+      const nullResponseDecl = buildFunctionDeclarationUtil(
+        true,
+        'function_null_response',
+        'A function with response set to null.',
+        function functionNullResponse() {},
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+          response: null,
+        },
+      );
+      expect(nullResponseDecl.response).toEqual({type: Type.NULL});
+    });
+
+    it('omits response schema on Gemini API when returnType or response is explicitly null or void', () => {
+      const decl = buildFunctionDeclarationUtil(
+        false,
+        'function_null_return',
+        'A function that explicitly returns null.',
+        Object.assign(function functionNullReturn() {}, {returnType: null}),
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+          returnType: 'void',
+          response: null,
+        },
+      );
+      expect(decl.response).toBeUndefined();
+    });
+
+    it('sets string and object response schemas on Vertex AI for string and object return types', () => {
+      const stringDecl = buildFunctionDeclarationUtil(
+        true,
+        'function_string_return',
+        'A function that returns a string.',
+        Object.assign(function functionStringReturn() {}, {
+          returnType: 'string',
+        }),
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+        },
+      );
+      expect(stringDecl.response).toEqual({type: Type.STRING});
+
+      const objectDecl = buildFunctionDeclarationUtil(
+        true,
+        'function_object_return',
+        'A function that returns an object.',
+        Object.assign(function functionObjectReturn() {}, {
+          returnType: 'object',
+        }),
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+        },
+      );
+      expect(objectDecl.response).toEqual({type: Type.OBJECT});
+    });
+
+    it('builds a Vertex AI declaration for a parameterless function returning null without parameters', () => {
+      const decl = buildFunctionDeclarationUtil(
+        true,
+        'test_function',
+        'A test function with no parameters that returns null.',
+        Object.assign(function testFunction() {}, {returnType: null}),
+        {properties: {}},
+      );
+      expect(decl.name).toBe('test_function');
+      expect(decl.parameters).toBeUndefined();
+      expect(decl.response).toEqual({type: Type.NULL});
+    });
+
+    it('sets a response schema on Vertex AI for a transfer_to_agent-like function with tool_context omitted', () => {
+      const decl = buildFunctionDeclarationUtil(
+        true,
+        'transfer_to_agent',
+        'Transfer the question to another agent.',
+        function transferToAgent() {},
+        {
+          properties: {
+            agent_name: {type: 'string'},
+          },
+          required: ['agent_name'],
+        },
+      );
+      expect(decl.name).toBe('transfer_to_agent');
+      expect(decl.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          agent_name: {type: Type.STRING},
+        },
+        required: ['agent_name'],
+      });
+      expect(decl.parameters?.properties).not.toHaveProperty('tool_context');
+      expect(decl.response).toEqual({type: Type.TYPE_UNSPECIFIED});
+    });
   });
 
   describe('execution and mandatory parameter validation', () => {

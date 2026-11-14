@@ -207,4 +207,57 @@ describe('BaseToolset integration with LLM Request', () => {
     expect(toolKeys).toContain('prefixB_tool1');
     expect(toolKeys).toContain('prefixB_tool2');
   });
+
+  it('leaves llmRequest unchanged in the default processLlmRequest implementation', async () => {
+    const toolset = new DummyToolset();
+    const llmRequest: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+    const context = new Context({
+      invocationContext: {session: {state: {}}} as unknown as InvocationContext,
+    });
+
+    await toolset.processLlmRequest(context, llmRequest);
+
+    expect(llmRequest).toEqual({
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    });
+  });
+
+  it('allows subclasses to override processLlmRequest and mutate llmRequest', async () => {
+    class CustomToolset extends DummyToolset {
+      override async processLlmRequest(
+        _toolContext: Context,
+        llmRequest: LlmRequest,
+      ): Promise<void> {
+        llmRequest.contents.push({
+          role: 'user',
+          parts: [{text: 'Custom processing applied'}],
+        });
+      }
+    }
+
+    const toolset = new CustomToolset();
+    const llmRequest: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+    const context = new Context({
+      invocationContext: {session: {state: {}}} as unknown as InvocationContext,
+    });
+
+    await toolset.processLlmRequest(context, llmRequest);
+
+    expect(llmRequest.contents).toEqual([
+      {
+        role: 'user',
+        parts: [{text: 'Custom processing applied'}],
+      },
+    ]);
+  });
 });
