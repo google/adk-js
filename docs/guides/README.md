@@ -90,6 +90,12 @@ Planning for an `LlmAgent` through its `planner` option: the model's built-in th
 
 - [Planners](planners/index.md) - `BasePlanner`, `BuiltInPlanner`, `PlanReActPlanner`, and the `isBasePlanner` and `isBuiltInPlanner` type guards.
 
+### Plugins
+
+Runner-wide callbacks: a plugin observes or changes the user message, the run, each agent, each model request, each tool call and each event of a runner.
+
+- [Plugins](plugins/index.md) - `BasePlugin`, `PluginManager`, `PluginCallbackName`, registration through `Runner`, `InMemoryRunner` and `App`, and the order, early exit and error handling of plugin callbacks.
+
 ### Runners
 
 - [Runner](runners/index.md) - Running an agent for an application, the entry points, which agent answers a resumed conversation, archiving a finished conversation into memory, and closing toolsets with `runner.close()`.
@@ -124,7 +130,7 @@ Client-side retrieval tools. The agent calls a one-argument search function, you
 
 #### Google API Tool
 
-- [Google API tool](tools/google_api_tool/index.md) - Converting Google API Discovery documents into OpenAPI v3 tools, configuring OpenID Connect credentials, and using pre-configured Google API toolsets.
+- [Google API tool](tools/google_api_tool/index.md) - Converting Google API Discovery documents into OpenAPI v3 tools, configuring OpenID Connect or service account credentials, and using pre-configured Google API toolsets.
 
 #### API Hub Tool
 

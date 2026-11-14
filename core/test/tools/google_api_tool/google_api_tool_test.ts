@@ -14,9 +14,30 @@ import {
   LlmAgent,
   PluginManager,
   RestApiTool,
+  ServiceAccount,
 } from '@google/adk';
 import {OpenAPIV3} from 'openapi-types';
 import {afterEach, describe, expect, it, vi} from 'vitest';
+
+function createTestServiceAccount(): ServiceAccount {
+  return {
+    serviceAccountCredential: {
+      type: 'service_account',
+      projectId: 'project-id',
+      privateKeyId: 'private-key-id',
+      privateKey: 'private-key',
+      clientEmail: 'test@example.iam.gserviceaccount.com',
+      clientId: 'client-id',
+      authUri: 'https://accounts.google.com/o/oauth2/auth',
+      tokenUri: 'https://oauth2.googleapis.com/token',
+      authProviderX509CertUrl: 'https://www.googleapis.com/oauth2/v1/certs',
+      clientX509CertUrl:
+        'https://www.googleapis.com/robot/v1/metadata/x509/test',
+      universeDomain: 'googleapis.com',
+    },
+    scopes: ['scope1', 'scope2'],
+  };
+}
 
 function createTestRestApiTool(): RestApiTool {
   const endpoint = {
@@ -120,6 +141,28 @@ describe('GoogleApiTool', () => {
       },
     });
   });
+
+  it('configures service account credentials and bearer auth scheme on the wrapped RestApiTool', () => {
+    const restApiTool = createTestRestApiTool();
+    const schemeSpy = vi.spyOn(restApiTool, 'configureAuthScheme');
+    const credentialSpy = vi.spyOn(restApiTool, 'configureAuthCredential');
+    const googleApiTool = new GoogleApiTool(restApiTool);
+    const serviceAccount = createTestServiceAccount();
+
+    googleApiTool.configureSaAuth(serviceAccount);
+
+    expect(schemeSpy).toHaveBeenCalledTimes(1);
+    expect(schemeSpy).toHaveBeenCalledWith({
+      type: 'http',
+      scheme: 'bearer',
+      bearerFormat: 'JWT',
+    });
+    expect(credentialSpy).toHaveBeenCalledTimes(1);
+    expect(credentialSpy).toHaveBeenCalledWith({
+      authType: AuthCredentialTypes.SERVICE_ACCOUNT,
+      serviceAccount,
+    });
+  });
 });
 
 describe('GoogleApiTool constructor options', () => {
@@ -143,6 +186,53 @@ describe('GoogleApiTool constructor options', () => {
         clientId: 'ctor-client-id',
         clientSecret: 'ctor-client-secret',
       },
+    });
+  });
+
+  it('configures service account credentials when serviceAccount is provided in constructor options', () => {
+    const restApiTool = createTestRestApiTool();
+    const schemeSpy = vi.spyOn(restApiTool, 'configureAuthScheme');
+    const credentialSpy = vi.spyOn(restApiTool, 'configureAuthCredential');
+    const serviceAccount = createTestServiceAccount();
+
+    const googleApiTool = new GoogleApiTool(restApiTool, {serviceAccount});
+
+    expect(isGoogleApiTool(googleApiTool)).toBe(true);
+    expect(schemeSpy).toHaveBeenCalledTimes(1);
+    expect(schemeSpy).toHaveBeenCalledWith({
+      type: 'http',
+      scheme: 'bearer',
+      bearerFormat: 'JWT',
+    });
+    expect(credentialSpy).toHaveBeenCalledTimes(1);
+    expect(credentialSpy).toHaveBeenCalledWith({
+      authType: AuthCredentialTypes.SERVICE_ACCOUNT,
+      serviceAccount,
+    });
+  });
+
+  it('prefers serviceAccount over clientId and clientSecret when both are provided in constructor options', () => {
+    const restApiTool = createTestRestApiTool();
+    const schemeSpy = vi.spyOn(restApiTool, 'configureAuthScheme');
+    const credentialSpy = vi.spyOn(restApiTool, 'configureAuthCredential');
+    const serviceAccount = createTestServiceAccount();
+
+    new GoogleApiTool(restApiTool, {
+      clientId: 'ctor-client-id',
+      clientSecret: 'ctor-client-secret',
+      serviceAccount,
+    });
+
+    expect(schemeSpy).toHaveBeenCalledTimes(1);
+    expect(schemeSpy).toHaveBeenCalledWith({
+      type: 'http',
+      scheme: 'bearer',
+      bearerFormat: 'JWT',
+    });
+    expect(credentialSpy).toHaveBeenCalledTimes(1);
+    expect(credentialSpy).toHaveBeenCalledWith({
+      authType: AuthCredentialTypes.SERVICE_ACCOUNT,
+      serviceAccount,
     });
   });
 

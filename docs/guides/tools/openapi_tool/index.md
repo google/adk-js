@@ -109,9 +109,10 @@ every call.
 **1. The document becomes operations.** `OpenApiSpecParser` resolves every
 internal `$ref` to the value it points at, normalizes schema types for Gemini
 function calling, resolves server URL variables, merges path-level parameters
-into each operation, and walks the paths producing one `ParsedOperation` per
-HTTP method. It is synchronous and does no I/O: it never calls the API the
-document describes.
+into each operation (letting operation-level parameters override path-level
+parameters with the same `name` and `in` location), and walks the paths
+producing one `ParsedOperation` per HTTP method. It is synchronous and does no
+I/O: it never calls the API the document describes.
 
 `ParsedOperation` is the hand-off between the stages:
 

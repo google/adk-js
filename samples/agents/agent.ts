@@ -12,13 +12,15 @@
  * key:
  * 1. `LlmAgent` with a dynamic `InstructionProvider` (`ReadonlyContext`),
  *    `outputKey`, `beforeAgentCallback`, and `afterAgentCallback`
- *    (`CallbackContext`).
+ *    (`CallbackContext`, including `saveArtifact` and `listArtifacts`).
  * 2. `ParallelAgent`, `LoopAgent`, and `SequentialAgent` orchestrating a custom
  *    `BaseAgent` subclass (`QualityCheckAgent`) that saves a session artifact
  *    via `ctx.artifactService.saveArtifact` and escalates on completion.
  * 3. `LangGraphAgent` wrapping an in-memory `CompiledGraphLike` state graph.
  * 4. `RunConfig.maxLlmCalls` enforcement throwing `LlmCallsLimitExceededError`
  *    across a multi-iteration `LoopAgent`.
+ * 5. `Context.saveCredential` and `Context.loadCredential` inside agent
+ *    callbacks using `Runner` configured with `InMemoryCredentialService`.
  *
  * This sample exports `rootAgent` for `adk web` and `npm run sample`, and also
  * includes a direct `InMemoryRunner` driver in `main()` to inspect the agent
@@ -33,6 +35,8 @@
  */
 
 import {
+  AuthConfig,
+  AuthCredentialTypes,
   BaseAgent,
   BaseAgentConfig,
   BaseLlm,
@@ -40,7 +44,10 @@ import {
   CallbackContext,
   CompiledGraphLike,
   Event,
+  InMemoryArtifactService,
+  InMemoryCredentialService,
   InMemoryRunner,
+  InMemorySessionService,
   InvocationContext,
   LangGraphAIMessage,
   LangGraphAgent,
@@ -50,6 +57,7 @@ import {
   LoopAgent,
   ParallelAgent,
   ReadonlyContext,
+  Runner,
   SequentialAgent,
   createEvent,
   isFinalResponse,
@@ -207,6 +215,10 @@ function createShowcasePipeline(model: string | BaseLlm): SequentialAgent {
       await ctx.saveArtifact('summary_audit.txt', {
         text: `Completed summary for invocation ${ctx.invocationId}`,
       });
+      const artifacts = await ctx.listArtifacts();
+      if (!artifacts.includes('summary_audit.txt')) {
+        throw new Error('Expected summary_audit.txt in listArtifacts().');
+      }
       return undefined;
     },
   });
@@ -324,6 +336,58 @@ async function main(): Promise<void> {
       throw err;
     }
   }
+
+  process.stdout.write('\n=== 4. Callback Credential Persistence ===\n');
+  const credentialAuthConfig: AuthConfig = {
+    credentialKey: 'sample_api_credential',
+    authScheme: {
+      type: 'apiKey',
+      in: 'header',
+      name: 'X-Sample-Key',
+    },
+    exchangedAuthCredential: {
+      authType: AuthCredentialTypes.API_KEY,
+      apiKey: 'sample-placeholder-value',
+    },
+  };
+  let loadedCredentialType: string | undefined;
+  const credentialAgent = new LlmAgent({
+    name: 'credential_demo_agent',
+    model: new DeterministicDemoLlm(),
+    instruction: 'Demonstrate callback credential persistence.',
+    beforeAgentCallback: async (ctx: CallbackContext) => {
+      await ctx.saveCredential(credentialAuthConfig);
+      return undefined;
+    },
+    afterAgentCallback: async (ctx: CallbackContext) => {
+      const loaded = await ctx.loadCredential(credentialAuthConfig);
+      loadedCredentialType = loaded?.authType;
+      return undefined;
+    },
+  });
+  const credentialRunner = new Runner({
+    appName: 'agents_sample_app',
+    agent: credentialAgent,
+    sessionService: new InMemorySessionService(),
+    artifactService: new InMemoryArtifactService(),
+    credentialService: new InMemoryCredentialService(),
+  });
+  const credentialSession = await credentialRunner.sessionService.createSession(
+    {
+      appName: 'agents_sample_app',
+      userId: 'sample_user',
+    },
+  );
+  for await (const _event of credentialRunner.runAsync({
+    userId: credentialSession.userId,
+    sessionId: credentialSession.id,
+    newMessage: {role: 'user', parts: [{text: 'Verify credential callbacks'}]},
+  })) {
+    // Run completes after beforeAgentCallback and afterAgentCallback execute.
+  }
+  process.stdout.write(
+    `Loaded credential type from callback context: ${loadedCredentialType ?? 'none'}\n`,
+  );
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

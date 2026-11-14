@@ -52,7 +52,7 @@ export class InMemoryMemoryService implements BaseMemoryService {
       return Promise.resolve({memories: []});
     }
 
-    const wordsInQuery = req.query.toLowerCase().split(/\s+/);
+    const wordsInQuery = extractWordsLower(req.query);
     const response: SearchMemoryResponse = {memories: []};
 
     for (const sessionEvents of Object.values(this.sessionEvents[userKey])) {
@@ -70,7 +70,7 @@ export class InMemoryMemoryService implements BaseMemoryService {
           continue;
         }
 
-        const matchQuery = wordsInQuery.some((queryWord) =>
+        const matchQuery = [...wordsInQuery].some((queryWord) =>
           wordsInEvent.has(queryWord),
         );
         if (matchQuery) {

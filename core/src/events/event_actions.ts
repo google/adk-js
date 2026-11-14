@@ -7,7 +7,10 @@
 import {isEmpty} from 'lodash-es';
 
 import {AuthConfig} from '../auth/auth_tool.js';
-import {carryDeltaStamps} from '../sessions/state_write_order.js';
+import {
+  carryDeltaStamp,
+  carryMergedDeltaStamp,
+} from '../sessions/state_write_order.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 
 /**
@@ -99,9 +102,9 @@ export function createEventActions(
 /**
  * Returns whether the given {@link EventActions} still holds only its default
  * values, i.e. the event carries no state, artifact, auth, confirmation,
- * transfer, escalation or summarization signal.
+ * transfer, escalation, summarization, agent state, or end-of-agent signal.
  *
- * An actions object is considered non-default when any dictionary field has at
+ * An actions object is considered non-default when any record field has at
  * least one entry, or when any scalar field has been explicitly set (including
  * being set to `false`).
  *
@@ -114,24 +117,95 @@ export function isDefaultEventActions(actions: EventActions): boolean {
     isEmpty(actions.artifactDelta) &&
     isEmpty(actions.requestedAuthConfigs) &&
     isEmpty(actions.requestedToolConfirmations) &&
+    isEmpty(actions.agentState) &&
     actions.skipSummarization === undefined &&
     actions.transferToAgent === undefined &&
-    actions.escalate === undefined
+    actions.escalate === undefined &&
+    actions.endOfAgent === undefined
   );
+}
+
+const UNSAFE_MERGE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function clonePlainRecord(
+  record: Record<string, unknown>,
+): Record<string, unknown> {
+  const copy: Record<string, unknown> = {};
+  for (const key of Object.keys(record)) {
+    if (UNSAFE_MERGE_KEYS.has(key)) {
+      continue;
+    }
+    const value = record[key];
+    copy[key] = isPlainRecord(value) ? clonePlainRecord(value) : value;
+  }
+  return copy;
+}
+
+function deepMergeRecords(
+  base: Record<string, unknown>,
+  incoming: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged = clonePlainRecord(base);
+  for (const key of Object.keys(incoming)) {
+    if (UNSAFE_MERGE_KEYS.has(key)) {
+      continue;
+    }
+    const incomingValue = incoming[key];
+    const existingValue = Object.hasOwn(merged, key) ? merged[key] : undefined;
+    if (isPlainRecord(existingValue) && isPlainRecord(incomingValue)) {
+      merged[key] = deepMergeRecords(existingValue, incomingValue);
+    } else if (isPlainRecord(incomingValue)) {
+      merged[key] = clonePlainRecord(incomingValue);
+    } else {
+      merged[key] = incomingValue;
+    }
+  }
+  return merged;
+}
+
+function carryStateDeltaStamps(
+  base: Record<string, unknown>,
+  incoming: Record<string, unknown>,
+  merged: Record<string, unknown>,
+): void {
+  for (const key of Object.keys(merged)) {
+    if (!Object.hasOwn(incoming, key)) {
+      carryDeltaStamp(base, merged, key);
+      continue;
+    }
+    if (
+      Object.hasOwn(base, key) &&
+      isPlainRecord(base[key]) &&
+      isPlainRecord(incoming[key])
+    ) {
+      carryMergedDeltaStamp({base, incoming, to: merged, key});
+    } else {
+      carryDeltaStamp(incoming, merged, key);
+    }
+  }
 }
 
 /**
  * Merges a list of {@link EventActions} objects into a single
- * {@link EventActions} object.
+ * {@link EventActions} object without mutating `target` or any source.
  *
  * Merge semantics:
- * 1. **Dictionary fields** (`stateDelta`, `artifactDelta`,
- *    `requestedAuthConfigs`, `requestedToolConfirmations`) — all entries from
- *    every source are combined via `Object.assign`. Later sources win on
- *    duplicate keys.
- * 2. **Scalar fields** (`skipSummarization`, `transferToAgent`, `escalate`) —
- *    last-writer-wins: the value from the last source that sets the field is
- *    kept.
+ * 1. **Flat record fields** (`artifactDelta`, `requestedAuthConfigs`,
+ *    `requestedToolConfirmations`) — all entries from every source are combined
+ *    with later sources winning on duplicate keys.
+ * 2. **Nested record fields** (`stateDelta`, `agentState`) — nested plain
+ *    objects are merged recursively; arrays and class instances are replaced.
+ * 3. **Scalar fields** (`skipSummarization`, `transferToAgent`, `escalate`,
+ *    `endOfAgent`) — last-writer-wins: the value from the last source that
+ *    sets the field is kept.
  *
  * @param sources - Ordered list of partial {@link EventActions} to merge.
  *   Falsy entries are silently skipped.
@@ -144,19 +218,22 @@ export function mergeEventActions(
   target?: EventActions,
 ): EventActions {
   const result = createEventActions();
+  const allSources = target ? [target, ...sources] : sources;
 
-  if (target) {
-    Object.assign(result, target);
-  }
-
-  for (const source of sources) {
+  for (const source of allSources) {
     if (!source) continue;
 
     if (source.stateDelta) {
-      Object.assign(result.stateDelta, source.stateDelta);
-      // The merged map is a new object; carry the write order with the entries
-      // so a late commit can still tell it has been superseded.
-      carryDeltaStamps(source.stateDelta, result.stateDelta);
+      const mergedStateDelta = deepMergeRecords(
+        result.stateDelta,
+        source.stateDelta,
+      );
+      carryStateDeltaStamps(
+        result.stateDelta,
+        source.stateDelta,
+        mergedStateDelta,
+      );
+      result.stateDelta = mergedStateDelta;
     }
     if (source.artifactDelta) {
       Object.assign(result.artifactDelta, source.artifactDelta);
@@ -170,6 +247,12 @@ export function mergeEventActions(
         source.requestedToolConfirmations,
       );
     }
+    if (source.agentState) {
+      result.agentState = deepMergeRecords(
+        result.agentState ?? {},
+        source.agentState,
+      );
+    }
 
     if (source.skipSummarization !== undefined) {
       result.skipSummarization = source.skipSummarization;
@@ -179,6 +262,9 @@ export function mergeEventActions(
     }
     if (source.escalate !== undefined) {
       result.escalate = source.escalate;
+    }
+    if (source.endOfAgent !== undefined) {
+      result.endOfAgent = source.endOfAgent;
     }
   }
   return result;
