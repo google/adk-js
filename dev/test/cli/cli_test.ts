@@ -318,6 +318,19 @@ describe('CLI Entrypoint', () => {
       const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
       expect(args.a2aAuthToken).toBe('tok');
     });
+
+    it.each([
+      {args: ['web'], expected: false},
+      {args: ['web', '--reload_agents'], expected: true},
+      {args: ['web', '--reload-agents'], expected: true},
+      {args: ['web', '--reload_agents=false'], expected: false},
+    ])('passes reloadAgents: $expected for $args', async ({args, expected}) => {
+      await parse(args);
+
+      const serverOptions = (AdkApiServer as unknown as Mock).mock
+        .calls[0]?.[0];
+      expect(serverOptions.reloadAgents).toBe(expected);
+    });
   });
 
   describe('command: api_server', () => {
@@ -357,6 +370,19 @@ describe('CLI Entrypoint', () => {
 
       const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
       expect(args.memoryService).toBeInstanceOf(InMemoryMemoryService);
+    });
+
+    it.each([
+      {args: ['api_server'], expected: false},
+      {args: ['api_server', '--reload_agents'], expected: true},
+      {args: ['api_server', '--reload-agents'], expected: true},
+      {args: ['api_server', '--reload_agents=false'], expected: false},
+    ])('passes reloadAgents: $expected for $args', async ({args, expected}) => {
+      await parse(args);
+
+      const serverOptions = (AdkApiServer as unknown as Mock).mock
+        .calls[0]?.[0];
+      expect(serverOptions.reloadAgents).toBe(expected);
     });
   });
 

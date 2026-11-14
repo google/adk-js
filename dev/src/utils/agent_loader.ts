@@ -580,6 +580,12 @@ export class AgentLoader {
   private readonly preloadedAgents: Record<string, AgentFile> = {};
   private readonly retiredAgents = new Set<AgentFile>();
   private readonly loadFailures: Record<string, AgentLoadFailure> = {};
+  /**
+   * Agents dropped one at a time since the last completed preload pass. One
+   * save reaches the watcher as several events, and only the first finds the
+   * agent in the cache; this record lets the rest map to the same agent.
+   */
+  private readonly agentsPendingReload = new Set<string>();
   private watcher?: fs.FSWatcher;
 
   constructor(
@@ -612,9 +618,10 @@ export class AgentLoader {
   }
 
   /**
-   * Starts watching the agents directory for file changes. When a change is
-   * detected all cached agents are invalidated so they are reloaded on the
-   * next request.
+   * Starts watching the agents directory for file changes. A change that
+   * belongs to one known agent (cached, failed to load, or dropped and not yet
+   * reloaded) drops only that agent; any other change drops every agent.
+   * Dropped agents are reloaded on the next request.
    */
   private startWatching(): void {
     if (this.watcher) {
@@ -627,8 +634,7 @@ export class AgentLoader {
         {recursive: true},
         (_event, filename) => {
           if (filename && isJsFile(path.extname(filename))) {
-            logger.info(`Detected change in ${filename}, reloading agents...`);
-            this.invalidateAll();
+            this.invalidateForChangedFile(filename);
           }
         },
       );
@@ -642,6 +648,62 @@ export class AgentLoader {
   }
 
   /**
+   * Drops the agent that owns `filename`, a path relative to the agents
+   * directory. A file that no known agent owns (a new agent, a shared helper)
+   * can affect any of them, so it drops every agent.
+   */
+  private invalidateForChangedFile(filename: string): void {
+    const agentName = getOwningAgentName(filename);
+    if (
+      Object.hasOwn(this.preloadedAgents, agentName) ||
+      Object.hasOwn(this.loadFailures, agentName) ||
+      this.agentsPendingReload.has(agentName)
+    ) {
+      logger.info(
+        `Detected change in ${filename}, reloading agent '${agentName}'...`,
+      );
+      this.removeAgentFromCache(agentName);
+      return;
+    }
+
+    logger.info(`Detected change in ${filename}, reloading agents...`);
+    this.invalidateAll();
+  }
+
+  /**
+   * Drops one agent from the cache so the next request loads it again from
+   * disk, and forgets a load failure recorded for it. The other cached agents
+   * stay loaded. A bundle still in use by an active request remains on disk
+   * until its last lease is released. A name that is not cached is ignored.
+   */
+  removeAgentFromCache(agentName: string): void {
+    // `Object.hasOwn` so a name such as 'constructor' does not resolve to an
+    // inherited `Object.prototype` member.
+    const removedPreloaded = Object.hasOwn(this.preloadedAgents, agentName);
+    if (removedPreloaded) {
+      this.retireAgentFile(this.preloadedAgents[agentName]);
+      delete this.preloadedAgents[agentName];
+      this.agentsPendingReload.add(agentName);
+    }
+
+    const removedFailure = Object.hasOwn(this.loadFailures, agentName);
+    if (removedFailure) {
+      delete this.loadFailures[agentName];
+      this.agentsPendingReload.add(agentName);
+    }
+
+    if (!removedPreloaded && !removedFailure && !this.preloadInFlight) {
+      return;
+    }
+
+    // Increment even when only a preload pass is in flight: it may be about to
+    // cache a bundle built before the source changed.
+    this.invalidationGeneration++;
+    this.agentsAlreadyPreloaded = false;
+    this.preloadInFlight = undefined;
+  }
+
+  /**
    * Retires all cached agents and marks them for reload on the next request.
    * Bundles still in use by active requests remain on disk until their last
    * lease is released.
@@ -649,13 +711,7 @@ export class AgentLoader {
   private invalidateAll(): void {
     this.invalidationGeneration++;
     for (const agentFile of Object.values(this.preloadedAgents)) {
-      this.retiredAgents.add(agentFile);
-      agentFile
-        .retire()
-        .catch(() => {})
-        .finally(() => {
-          this.retiredAgents.delete(agentFile);
-        });
+      this.retireAgentFile(agentFile);
     }
 
     for (const key of Object.keys(this.preloadedAgents)) {
@@ -666,10 +722,25 @@ export class AgentLoader {
       delete this.loadFailures[key];
     }
 
+    this.agentsPendingReload.clear();
     this.agentsAlreadyPreloaded = false;
     // Drop any pass still in flight so the next caller starts a fresh one
     // rather than awaiting a result gathered before the file changed.
     this.preloadInFlight = undefined;
+  }
+
+  /**
+   * Retires a file that left the cache, and keeps track of it until its bundle
+   * is removed so {@link disposeAll} can still clean it up.
+   */
+  private retireAgentFile(agentFile: AgentFile): void {
+    this.retiredAgents.add(agentFile);
+    agentFile
+      .retire()
+      .catch(() => {})
+      .finally(() => {
+        this.retiredAgents.delete(agentFile);
+      });
   }
 
   /**
@@ -784,6 +855,15 @@ export class AgentLoader {
         return;
       }
       if (fileOrDir.isFile && isJsFile(fileOrDir.ext)) {
+        // A pass that follows the removal of one agent loads only what is
+        // missing. Loading a cached file again would replace its entry and
+        // leave the previous bundle on disk.
+        if (
+          Object.hasOwn(this.preloadedAgents, fileOrDir.name) ||
+          Object.hasOwn(this.loadFailures, fileOrDir.name)
+        ) {
+          continue;
+        }
         await this.loadAgentFromFile(fileOrDir, generation);
       }
     }
@@ -816,6 +896,7 @@ export class AgentLoader {
     }
 
     this.agentsAlreadyPreloaded = true;
+    this.agentsPendingReload.clear();
 
     if (this.watchForChanges && !this.watcher) {
       this.startWatching();
@@ -908,6 +989,16 @@ function toLoadError(e: unknown): Error {
     }
   }
   return new Error(typeof e === 'string' ? e : String(e));
+}
+
+/**
+ * Returns the name of the agent that owns a path relative to the agents
+ * directory: the first directory of the path, or the file name without its
+ * extension for a file at the top level.
+ */
+function getOwningAgentName(relativePath: string): string {
+  const segments = relativePath.split(path.sep);
+  return segments.length > 1 ? segments[0] : path.parse(segments[0]).name;
 }
 
 function isJsFile(fileExt?: string): boolean {
