@@ -26,9 +26,18 @@ import {
   Runner,
   Session,
 } from '@google/adk';
-import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  MockInstance,
+  vi,
+} from 'vitest';
 import {AdkMetadataKeys} from '../../src/a2a/metadata_converter_utils.js';
 import {toA2AParts} from '../../src/a2a/part_converter_utils.js';
+import {logger} from '../../src/utils/logger.js';
 
 type A2AStreamEventData =
   Message | Task | TaskStatusUpdateEvent | TaskArtifactUpdateEvent;
@@ -253,6 +262,202 @@ describe('A2ARemoteAgent', () => {
     expect(mockClient.sendMessageStream).not.toHaveBeenCalled();
     expect(events.length).toBe(1);
     expect(events[0].content?.parts![0].text).toBe('static response');
+  });
+
+  describe('debug logs', () => {
+    const debugLogs = (debug: {mock: {calls: unknown[][]}}): string[] =>
+      debug.mock.calls
+        .map(([message]) => message)
+        .filter((message): message is string => typeof message === 'string');
+
+    let debug: MockInstance<typeof logger.debug>;
+
+    beforeEach(() => {
+      debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      debug.mockRestore();
+    });
+
+    it('logs the request and each stream chunk', async () => {
+      const agent = new RemoteA2AAgent({
+        name: 'test-agent',
+        client: mockClient,
+      });
+      vi.mocked(mockClient.sendMessageStream).mockReturnValue(
+        (async function* () {
+          yield {
+            kind: 'artifact-update',
+            taskId: 'task-1',
+            contextId: 'context-1',
+            artifact: {
+              artifactId: 'artifact-1',
+              parts: [{kind: 'text', text: 'first'}],
+            },
+          } as A2AStreamEventData;
+          yield {
+            kind: 'status-update',
+            taskId: 'task-1',
+            contextId: 'context-1',
+            final: true,
+            status: {state: 'completed'},
+          } as A2AStreamEventData;
+        })(),
+      );
+
+      for await (const _event of agent.runAsync(createMockContext())) {
+        // Drain the run.
+      }
+      const logs = debugLogs(debug);
+
+      expect(logs).toHaveLength(3);
+      expect(logs[0]).toContain('A2A Send Message Request:');
+      expect(logs[0]).toContain('Part 0: TextPart: hello');
+      expect(logs[1]).toContain('Artifact ID: artifact-1');
+      expect(logs[2]).toContain('Status State: completed');
+    });
+
+    it('logs the request after the before-request callbacks and the non-streaming response', async () => {
+      const agent = new RemoteA2AAgent({
+        name: 'test-agent',
+        agentCard: {
+          name: 'Remote',
+          description: 'test',
+          protocolVersion: '1.0',
+          defaultInputModes: [],
+          defaultOutputModes: [],
+          capabilities: {streaming: false},
+          skills: [],
+          url: 'https://example.com',
+          version: '1.0',
+        },
+        clientFactory: mockClientFactory,
+        beforeRequestCallbacks: [
+          (_context, params) => {
+            params.metadata = {tenant: 'tenant-1'};
+          },
+        ],
+      });
+      vi.mocked(mockClient.sendMessage).mockResolvedValue({
+        kind: 'message',
+        messageId: 'response-message-id',
+        role: 'agent',
+        parts: [{kind: 'text', text: 'static response'}],
+      });
+
+      for await (const _event of agent.runAsync(createMockContext())) {
+        // Drain the run.
+      }
+      const logs = debugLogs(debug);
+
+      expect(logs).toHaveLength(2);
+      expect(logs[0]).toContain('A2A Send Message Request:');
+      expect(logs[0]).toContain('"tenant": "tenant-1"');
+      expect(logs[1]).toContain('ID: response-message-id');
+      expect(logs[1]).toContain('Part 0: TextPart: static response');
+    });
+
+    it('yields the converted events for stream chunks whose metadata is null', async () => {
+      const agent = new RemoteA2AAgent({
+        name: 'test-agent',
+        client: mockClient,
+      });
+      vi.mocked(mockClient.sendMessageStream).mockReturnValue(
+        (async function* () {
+          yield {
+            kind: 'message',
+            messageId: 'response-message-id',
+            role: 'agent',
+            parts: [{kind: 'text', text: 'streamed response', metadata: null}],
+            metadata: null,
+          } as unknown as A2AStreamEventData;
+        })(),
+      );
+
+      const events: AdkEvent[] = [];
+      for await (const event of agent.runAsync(createMockContext())) {
+        events.push(event);
+      }
+
+      expect(events).toHaveLength(1);
+      expect(events[0].errorCode).toBeUndefined();
+      expect(events[0].errorMessage).toBeUndefined();
+      expect(events[0].content?.parts?.[0].text).toBe('streamed response');
+      expect(debugLogs(debug)[1]).toContain(
+        'Part 0: TextPart: streamed response',
+      );
+    });
+
+    it('yields the converted event for a non-streaming result whose metadata is null', async () => {
+      const agent = new RemoteA2AAgent({
+        name: 'test-agent',
+        agentCard: {
+          name: 'Remote',
+          description: 'test',
+          protocolVersion: '1.0',
+          defaultInputModes: [],
+          defaultOutputModes: [],
+          capabilities: {streaming: false},
+          skills: [],
+          url: 'https://example.com',
+          version: '1.0',
+        },
+        clientFactory: mockClientFactory,
+      });
+      vi.mocked(mockClient.sendMessage).mockResolvedValue({
+        kind: 'message',
+        messageId: 'response-message-id',
+        role: 'agent',
+        parts: [{kind: 'text', text: 'static response', metadata: null}],
+        metadata: null,
+      } as unknown as Message);
+
+      const events: AdkEvent[] = [];
+      for await (const event of agent.runAsync(createMockContext())) {
+        events.push(event);
+      }
+
+      expect(events).toHaveLength(1);
+      expect(events[0].errorCode).toBeUndefined();
+      expect(events[0].errorMessage).toBeUndefined();
+      expect(events[0].content?.parts?.[0].text).toBe('static response');
+      expect(debugLogs(debug)[1]).toContain(
+        'Part 0: TextPart: static response',
+      );
+    });
+
+    it('yields the converted event when a before-request callback leaves the request unformattable', async () => {
+      const agent = new RemoteA2AAgent({
+        name: 'test-agent',
+        client: mockClient,
+        beforeRequestCallbacks: [
+          (_context, params) => {
+            Object.assign(params.message, {parts: null, metadata: null});
+            Object.assign(params, {metadata: null});
+          },
+        ],
+      });
+      vi.mocked(mockClient.sendMessageStream).mockReturnValue(
+        (async function* () {
+          yield {
+            kind: 'message',
+            messageId: 'response-message-id',
+            role: 'agent',
+            parts: [{kind: 'text', text: 'streamed response'}],
+          } as A2AStreamEventData;
+        })(),
+      );
+
+      const events: AdkEvent[] = [];
+      for await (const event of agent.runAsync(createMockContext())) {
+        events.push(event);
+      }
+
+      expect(events).toHaveLength(1);
+      expect(events[0].errorCode).toBeUndefined();
+      expect(events[0].content?.parts?.[0].text).toBe('streamed response');
+    });
   });
 
   it.each(['local', 'other-peer'])(

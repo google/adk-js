@@ -32,6 +32,7 @@ export enum TaskState {
   CANCELED = 'canceled',
   REJECTED = 'rejected',
   INPUT_REQUIRED = 'input-required',
+  AUTH_REQUIRED = 'auth-required',
 }
 
 /**
@@ -119,6 +120,16 @@ export function isInputRequiredTaskStatusUpdateEvent(event: unknown): boolean {
   return (
     (isTaskStatusUpdateEvent(event) || isTask(event)) &&
     event.status.state === TaskState.INPUT_REQUIRED
+  );
+}
+
+/**
+ * Checks if the event is an auth required task status update event.
+ */
+export function isAuthRequiredTaskStatusUpdateEvent(event: unknown): boolean {
+  return (
+    (isTaskStatusUpdateEvent(event) || isTask(event)) &&
+    event.status.state === TaskState.AUTH_REQUIRED
   );
 }
 
@@ -327,32 +338,52 @@ export function createTaskFailedEvent({
 }
 
 /**
- * Creates an input-required status update.
- *
- * A2A has one `input-required` state, so every reason an agent can pause for a
- * human produces the same status update: a long-running tool asking for input,
- * and a client message that left an earlier request unanswered. What separates
- * them travels in `parts` — a validation failure carries a text part marked
- * `validation_error` — not in the shape of the event, so both go through here.
+ * The options that describe a paused task.
  */
-export function createTaskInputRequiredEvent({
-  taskId,
-  contextId,
-  parts,
-  metadata,
-}: {
+interface TaskPausedEventOptions {
   taskId: string;
   contextId: string;
   parts: A2APart[];
   metadata?: Record<string, unknown>;
-}): TaskStatusUpdateEvent {
+}
+
+/**
+ * Creates an input-required status update.
+ *
+ * Every reason an agent can pause for input from a human produces this status
+ * update: a long-running tool asking for input, and a client message that left
+ * an earlier request unanswered. What separates them travels in `parts` — a
+ * validation failure carries a text part marked `validation_error` — not in the
+ * shape of the event, so both go through here. A run that ends on a pending
+ * credential request uses {@link createTaskAuthRequiredEvent} instead.
+ */
+export function createTaskInputRequiredEvent(
+  options: TaskPausedEventOptions,
+): TaskStatusUpdateEvent {
+  return createTaskPausedEvent(TaskState.INPUT_REQUIRED, options);
+}
+
+/**
+ * Creates an auth-required status update, for a task that waits on a
+ * credential.
+ */
+export function createTaskAuthRequiredEvent(
+  options: TaskPausedEventOptions,
+): TaskStatusUpdateEvent {
+  return createTaskPausedEvent(TaskState.AUTH_REQUIRED, options);
+}
+
+function createTaskPausedEvent(
+  state: TaskState.INPUT_REQUIRED | TaskState.AUTH_REQUIRED,
+  {taskId, contextId, parts, metadata}: TaskPausedEventOptions,
+): TaskStatusUpdateEvent {
   return {
     kind: 'status-update',
     taskId,
     contextId,
     final: true,
     status: {
-      state: TaskState.INPUT_REQUIRED,
+      state,
       message: {
         kind: 'message',
         messageId: randomUUID(),

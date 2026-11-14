@@ -38,6 +38,7 @@ import {
 } from './a2a_remote_agent_utils.js';
 import {resolveAgentCard, ResolveAgentCardOptions} from './agent_card.js';
 import {toAdkEvent} from './event_converter_utils.js';
+import {buildA2ARequestLog, buildA2AResponseLog} from './log_utils.js';
 import {getA2ASessionMetadata} from './metadata_converter_utils.js';
 
 export {AGENT_CARD_PATH};
@@ -265,11 +266,15 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
         }
       }
 
+      logger.debug(buildA2ARequestLog(params));
+
       const useStreaming = this.card
         ? this.card.capabilities?.streaming !== false
         : true;
       if (useStreaming) {
         for await (const chunk of this.client!.sendMessageStream(params)) {
+          logger.debug(buildA2AResponseLog(chunk));
+
           if (this.a2aConfig.afterRequestCallbacks) {
             for (const callback of this.a2aConfig.afterRequestCallbacks) {
               await callback(context, chunk);
@@ -299,6 +304,8 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
         }
       } else {
         const result = await this.client!.sendMessage(params);
+        logger.debug(buildA2AResponseLog(result));
+
         if (this.a2aConfig.afterRequestCallbacks) {
           for (const callback of this.a2aConfig.afterRequestCallbacks) {
             await callback(context, result);
