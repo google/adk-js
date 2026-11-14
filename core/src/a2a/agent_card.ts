@@ -16,6 +16,8 @@ import {isSequentialAgent} from '../agents/sequential_agent.js';
 import {propagateTraceContext} from '../telemetry/api/instrumentation.js';
 import {BaseTool, isBaseTool} from '../tools/base_tool.js';
 import {isBaseToolset} from '../tools/base_toolset.js';
+import {getErrorMessage} from '../utils/error_utils.js';
+import {fetchWithTimeout} from '../utils/fetch_utils.js';
 import {logger} from '../utils/logger.js';
 import {
   isLinkLocalAddress,
@@ -71,6 +73,52 @@ export interface ResolveAgentCardOptions {
 }
 
 /**
+ * Parameters of {@link resolveAgentCard}: the validation options, plus the
+ * request timeout of the caller that fetches the card.
+ */
+export interface ResolveAgentCardParams extends ResolveAgentCardOptions {
+  /**
+   * Maximum time to wait for the response headers of the card fetch, in
+   * milliseconds. Unset means the fetch has no timeout.
+   */
+  timeoutMs?: number;
+}
+
+const AGENT_CARD_RESOLUTION_ERROR_SIGNATURE_SYMBOL = Symbol.for(
+  'google.adk.agentCardResolutionError',
+);
+
+/**
+ * Error thrown when an agent card cannot be resolved from a URL or a file.
+ */
+export class AgentCardResolutionError extends Error {
+  readonly [AGENT_CARD_RESOLUTION_ERROR_SIGNATURE_SYMBOL] = true;
+
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'AgentCardResolutionError';
+    Object.setPrototypeOf(this, AgentCardResolutionError.prototype);
+  }
+}
+
+/**
+ * Type guard for {@link AgentCardResolutionError}.
+ *
+ * @param obj The value to check.
+ * @returns True if obj is an {@link AgentCardResolutionError}.
+ */
+export function isAgentCardResolutionError(
+  obj: unknown,
+): obj is AgentCardResolutionError {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    (AGENT_CARD_RESOLUTION_ERROR_SIGNATURE_SYMBOL in obj ||
+      (obj instanceof Error && obj.name === 'AgentCardResolutionError'))
+  );
+}
+
+/**
  * Resolves the AgentCard from the provided source.
  *
  * A source is either an {@link AgentCard}, an `http(s)://` URL to fetch it
@@ -81,33 +129,94 @@ export interface ResolveAgentCardOptions {
  * redirect from the card endpoint is refused rather than followed. Loopback and
  * private addresses stay allowed: they are where a locally served or
  * VPC-internal peer agent lives.
+ *
+ * @throws {@link AgentCardResolutionError} when a URL or file source cannot be
+ *     resolved. Its `cause` is the original error.
  */
 export async function resolveAgentCard(
   agentCard: AgentCard | string,
-  options: ResolveAgentCardOptions = {},
+  options: ResolveAgentCardParams = {},
 ): Promise<AgentCard> {
-  if (typeof agentCard === 'object') {
+  try {
+    if (typeof agentCard === 'string') {
+      const source = agentCard.trim();
+      if (!source) {
+        throw new Error('Agent card source string cannot be empty.');
+      }
+      return await resolveAgentCardSource(source, options);
+    }
+    validateResolvedAgentCard(agentCard);
     return agentCard;
+  } catch (e: unknown) {
+    throw new AgentCardResolutionError(getErrorMessage(e), {cause: e});
   }
+}
 
-  const source = agentCard as string;
+/** Fetches or reads the card that the URL or filesystem path `source` names. */
+async function resolveAgentCardSource(
+  source: string,
+  options: ResolveAgentCardParams,
+): Promise<AgentCard> {
   if (source.startsWith('http://') || source.startsWith('https://')) {
     await refuseLinkLocalHost(source);
     const resolver = new DefaultAgentCardResolver({
-      fetchImpl: tracePropagatingRefuseRedirectFetch,
+      fetchImpl:
+        options.timeoutMs === undefined
+          ? tracePropagatingRefuseRedirectFetch
+          : propagateTraceContext(
+              fetchWithTimeout({
+                timeoutMs: options.timeoutMs,
+                fetchImpl: refuseRedirectFetch,
+              }),
+            ),
     });
     const card = await resolver.resolve(source);
+    validateResolvedAgentCard(card);
     validateCardRpcTargets(card, source, options);
     return card;
   }
   const url = parseCardUrl(source);
   if (url && url.protocol !== 'file:') {
     throw new Error(
-      `Unsupported agent card URL scheme "${url.protocol}": ${agentCard}. ` +
+      `Unsupported agent card URL scheme "${url.protocol}": ${source}. ` +
         'Use http://, https:// or file://, or pass a filesystem path with no scheme.',
     );
   }
-  return readAgentCardFile(agentCard, url);
+  const card = await readAgentCardFile(source, url);
+  validateResolvedAgentCard(card);
+  return card;
+}
+
+/**
+ * Checks that a resolved card is a plain object whose `url` parses with a
+ * scheme and a host.
+ */
+function validateResolvedAgentCard(card: unknown): asserts card is AgentCard {
+  if (
+    typeof card !== 'object' ||
+    card === null ||
+    Array.isArray(card) ||
+    Object.prototype.toString.call(card) !== '[object Object]'
+  ) {
+    throw new Error('Agent card must be a non-null object.');
+  }
+  if (!('url' in card) || typeof card.url !== 'string' || !card.url.trim()) {
+    throw new Error(
+      'Invalid RPC URL in agent card: Agent card must have a valid URL.',
+    );
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(card.url);
+  } catch (err: unknown) {
+    throw new Error(
+      `Invalid RPC URL in agent card: ${card.url}: ${getErrorMessage(err)}`,
+      {cause: err},
+    );
+  }
+  if (!parsed.protocol || !parsed.host) {
+    throw new Error(`Invalid RPC URL in agent card: ${card.url}`);
+  }
 }
 
 /**
@@ -206,7 +315,8 @@ async function readAgentCardFile(
     return JSON.parse(content) as AgentCard;
   } catch (err: unknown) {
     throw new Error(
-      `Failed to read agent card from file ${source}: ${(err as Error).message}`,
+      `Failed to read agent card from file ${source}: ${getErrorMessage(err)}`,
+      {cause: err},
     );
   }
 }

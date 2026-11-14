@@ -517,6 +517,7 @@ describe('A2A Request Metadata Propagation', () => {
         agentCard: {
           name: 'remote-card',
           description: 'remote-desc',
+          url: 'https://example.com',
           defaultInputModes: ['text'],
           defaultOutputModes: ['text'],
           capabilities: {streaming: true},
@@ -581,6 +582,7 @@ describe('A2A Request Metadata Propagation', () => {
         agentCard: {
           name: 'remote-card-2',
           description: 'remote-desc-2',
+          url: 'https://example.com',
           defaultInputModes: ['text'],
           defaultOutputModes: ['text'],
           capabilities: {streaming: true},

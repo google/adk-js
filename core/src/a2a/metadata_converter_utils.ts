@@ -10,7 +10,8 @@ import {publicMetadata} from '../events/internal_metadata.js';
 import {A2AEvent, isTask} from './a2a_event.js';
 
 const ADK_METADATA_KEY_PREFIX = 'adk_';
-const A2A_METADATA_KEY_PREFIX = 'a2a:';
+/** Prefix of the event custom metadata keys that carry A2A data. */
+export const A2A_METADATA_KEY_PREFIX = 'a2a:';
 
 /**
  * First segment of an A2A context id built by {@link toA2AContextId}.
