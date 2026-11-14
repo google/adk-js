@@ -10,6 +10,7 @@ import {
   FunctionCall,
   GenerateContentResponse,
   Part,
+  PartialArg,
 } from '@google/genai';
 import {describe, expect, it, vi} from 'vitest';
 import {
@@ -479,7 +480,277 @@ describe('GeminiStreamingResponseAggregator', () => {
     });
   });
 
-  describe('JSONPath Plus Integration', () => {
+  describe('JSON path arguments', () => {
+    async function aggregateArguments(chunks: PartialArg[][]) {
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: true,
+      });
+      for (const [index, partialArgs] of chunks.entries()) {
+        const response = createResponse({
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  name: 'collect',
+                  partialArgs,
+                  willContinue: index < chunks.length - 1,
+                },
+              },
+            ],
+          },
+        });
+        for await (const _ of aggregator.processResponse(response)) {
+          // Consume the public streaming interface before closing it.
+        }
+      }
+      return aggregator.close()?.content?.parts?.[0]?.functionCall?.args;
+    }
+
+    const argumentCases: Array<{
+      name: string;
+      partialArgs: PartialArg[];
+      expected: Record<string, unknown>;
+    }> = [
+      {
+        name: 'out-of-order array elements',
+        partialArgs: [
+          {jsonPath: '$.items[1]', stringValue: 'beta'},
+          {jsonPath: '$.items[0]', stringValue: 'alpha'},
+        ],
+        expected: {items: ['alpha', 'beta']},
+      },
+      {
+        name: 'sparse object arrays',
+        partialArgs: [{jsonPath: '$.items[2].name', stringValue: 'third'}],
+        expected: {items: [null, null, {name: 'third'}]},
+      },
+      {
+        name: 'nested arrays',
+        partialArgs: [{jsonPath: '$.matrix[1][0]', numberValue: 7}],
+        expected: {matrix: [null, [7]]},
+      },
+      {
+        name: 'quoted and dotted numeric object keys',
+        partialArgs: [
+          {jsonPath: "$.quoted['0']", stringValue: 'zero'},
+          {jsonPath: '$.quoted["1"]', stringValue: 'one'},
+          {jsonPath: '$.dotted.0', boolValue: true},
+        ],
+        expected: {quoted: {'0': 'zero', '1': 'one'}, dotted: {'0': true}},
+      },
+      {
+        name: 'whitespace and leading zeros in array indices',
+        partialArgs: [{jsonPath: '$.items[ 001 ]', stringValue: 'second'}],
+        expected: {items: [null, 'second']},
+      },
+      {
+        name: 'escaped property names',
+        partialArgs: [
+          {jsonPath: String.raw`$['a.b']['quote\'key']`, stringValue: 'quote'},
+          {
+            jsonPath: String.raw`$.escaped\.dot['\u006b\ne y']`,
+            boolValue: true,
+          },
+        ],
+        expected: {
+          'a.b': {"quote'key": 'quote'},
+          'escaped.dot': {'k\ne y': true},
+        },
+      },
+      {
+        name: 'falsy primitive array values',
+        partialArgs: [
+          {jsonPath: '$.items[0]', numberValue: 0},
+          {jsonPath: '$.items[1]', boolValue: false},
+          {jsonPath: '$.items[2]', nullValue: 'NULL_VALUE'},
+          {jsonPath: '$.items[3]', stringValue: ''},
+        ],
+        expected: {items: [0, false, null, '']},
+      },
+      {
+        name: 'named array properties are ignored',
+        partialArgs: [
+          {jsonPath: '$.items[0]', stringValue: 'first'},
+          {jsonPath: '$.items.length', numberValue: 999},
+          {jsonPath: "$.items['1']", stringValue: 'named'},
+          {jsonPath: '$.items[-1]', stringValue: 'negative'},
+        ],
+        expected: {items: ['first']},
+      },
+      {
+        name: 'numeric indices do not overwrite object containers',
+        partialArgs: [
+          {jsonPath: "$.items['0']", stringValue: 'object'},
+          {jsonPath: '$.items[1]', stringValue: 'array'},
+        ],
+        expected: {items: {'0': 'object'}},
+      },
+      {
+        name: 'scalar parents are preserved',
+        partialArgs: [
+          {jsonPath: '$.value', numberValue: 7},
+          {jsonPath: '$.value.child', stringValue: 'ignored'},
+        ],
+        expected: {value: 7},
+      },
+      {
+        name: 'empty paths and absent values',
+        partialArgs: [
+          {jsonPath: '$', stringValue: 'ignored'},
+          {jsonPath: '[]', stringValue: 'ignored'},
+          {jsonPath: '$.empty'},
+          JSON.parse('{"jsonPath":17,"stringValue":"ignored"}'),
+          JSON.parse('{"jsonPath":null,"stringValue":"ignored"}'),
+          JSON.parse('{"jsonPath":{},"stringValue":"ignored"}'),
+        ],
+        expected: {},
+      },
+    ];
+    it.each(argumentCases)(
+      'should aggregate $name',
+      async ({partialArgs, expected}) => {
+        expect(await aggregateArguments([partialArgs])).toEqual(expected);
+      },
+    );
+
+    it('should append string chunks inside nested arrays', async () => {
+      expect(
+        await aggregateArguments([
+          [{jsonPath: '$.items[1].name', stringValue: 'hello '}],
+          [{jsonPath: '$.items[1].name', stringValue: 'world'}],
+        ]),
+      ).toEqual({items: [null, {name: 'hello world'}]});
+    });
+
+    it('should bound array allocation at index 10000', async () => {
+      const args = await aggregateArguments([
+        [
+          {jsonPath: '$.items[10000]', boolValue: true},
+          {jsonPath: '$.items[10001]', stringValue: 'ignored'},
+          {jsonPath: `$.huge[${'9'.repeat(100_000)}]`, boolValue: true},
+          {jsonPath: '$.deep[10001]' + '[0]'.repeat(10_000), boolValue: true},
+        ],
+      ]);
+      expect(args?.items).toEqual([...Array(10_000).fill(null), true]);
+      expect(args?.huge).toEqual([]);
+      expect(args?.deep).toBeUndefined();
+    });
+
+    it('should aggregate deeply nested paths without recursive traversal', async () => {
+      const depth = 256;
+      const args = await aggregateArguments([
+        [{jsonPath: '$' + '.nested'.repeat(depth), boolValue: true}],
+      ]);
+      let expected: unknown = true;
+      for (let i = 0; i < depth; i++) expected = {nested: expected};
+      expect(args).toEqual(expected);
+    });
+
+    it('should ignore paths beyond the snapshot depth limit', async () => {
+      expect(
+        await aggregateArguments([
+          [{jsonPath: '$' + '.nested'.repeat(257), boolValue: true}],
+        ]),
+      ).toEqual({});
+    });
+
+    it('should bound cumulative padding in nested arrays', async () => {
+      const args = await aggregateArguments([
+        [{jsonPath: '$.items' + '[10000]'.repeat(100), boolValue: true}],
+      ]);
+      let nested: unknown = args?.items;
+      for (let i = 0; i < 9; i++) {
+        expect(Array.isArray(nested)).toBe(true);
+        const array = nested as unknown[];
+        expect(array).toHaveLength(10_001);
+        expect(array[0]).toBeNull();
+        nested = array[10_000];
+      }
+      expect(nested).toEqual([]);
+    });
+
+    it('should share the padding budget across arguments and reset it for each call', async () => {
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: true,
+      });
+      const partialArgs = Array.from({length: 11}, (_, index) => ({
+        jsonPath: `$.items${index}[9999]`,
+        boolValue: true,
+      }));
+      for (const id of ['first', 'second']) {
+        for await (const _ of aggregator.processResponse(
+          createResponse({
+            content: {
+              parts: [
+                {
+                  functionCall: {
+                    name: 'collect',
+                    id,
+                    partialArgs,
+                    willContinue: false,
+                  },
+                },
+              ],
+            },
+          }),
+        )) {
+          // Consume both calls through the public interface.
+        }
+      }
+      const calls = aggregator.close()?.content?.parts;
+      expect(calls).toHaveLength(2);
+      for (const part of calls ?? []) {
+        for (let index = 0; index < 10; index++) {
+          const items = part.functionCall?.args?.[`items${index}`];
+          expect(items).toHaveLength(10_000);
+          expect((items as unknown[])[9999]).toBe(true);
+        }
+        expect(part.functionCall?.args?.items10).toEqual([]);
+      }
+    });
+
+    it.each([
+      String.raw`$['\u005f_proto__'].polluted`,
+      String.raw`$.constr\uctor.prototype.polluted`,
+      '$["constructor"]["prototype"].polluted',
+      '$.items[0].__proto__.polluted',
+    ])('should reject unsafe decoded path %s', async (jsonPath) => {
+      expect(
+        await aggregateArguments([[{jsonPath, stringValue: 'sentinel'}]]),
+      ).toEqual({});
+      expect(Object.prototype).not.toHaveProperty('polluted');
+    });
+
+    it.each([true, false])(
+      'should preserve complete array arguments and call IDs (progressive=%s)',
+      async (isProgressiveMode) => {
+        const aggregator = new GeminiStreamingResponseAggregator({
+          isProgressiveMode,
+        });
+        const calls = [
+          {name: 'collect', id: 'first', args: {items: ['alpha', 'beta']}},
+          {name: 'collect', id: 'second', args: {items: [0, false, null]}},
+        ];
+        const response = createResponse({
+          content: {parts: calls.map((functionCall) => ({functionCall}))},
+        });
+        const emittedCalls = [];
+        for await (const chunk of aggregator.processResponse(response)) {
+          if (!chunk.partial) {
+            emittedCalls.push(
+              ...(chunk.content?.parts ?? []).map((part) => part.functionCall),
+            );
+          }
+        }
+        emittedCalls.push(
+          ...(aggregator.close()?.content?.parts ?? []).map(
+            (part) => part.functionCall,
+          ),
+        );
+        expect(emittedCalls).toEqual(calls);
+      },
+    );
+
     it('should support bracket notation in paths', async () => {
       const aggregator = new GeminiStreamingResponseAggregator({
         isProgressiveMode: true,
