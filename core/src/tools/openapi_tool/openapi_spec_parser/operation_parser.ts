@@ -131,7 +131,7 @@ export class OperationParser {
             description: schema.description || description || undefined,
           },
           description,
-          required: param.required ?? false,
+          required: location === 'path' || (param.required ?? false),
           name: this.getParamName(originalName),
         });
       }

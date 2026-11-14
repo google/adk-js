@@ -210,6 +210,157 @@ describe('OpenApiSpecParser', () => {
     expect(op.parameters[0].name).toBe('id');
   });
 
+  it('should combine operation parameters with path-level parameters', () => {
+    const spec: OpenAPIV3.Document = {
+      openapi: '3.0.0',
+      info: {title: 'Combine Parameters API', version: '1.0.0'},
+      paths: {
+        '/test': {
+          parameters: [
+            {
+              name: 'globalParam',
+              in: 'query',
+              schema: {type: 'string'},
+            },
+          ],
+          get: {
+            operationId: 'testGet',
+            parameters: [
+              {
+                name: 'localParam',
+                in: 'header',
+                schema: {type: 'integer'},
+              },
+            ],
+            responses: {
+              '200': {
+                description: 'Successful response',
+                content: {
+                  'application/json': {schema: {type: 'string'}},
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+
+    const parsed = new OpenApiSpecParser().parse(spec);
+    expect(parsed.length).toBe(1);
+
+    const op = parsed[0];
+    expect(op.parameters.length).toBe(2);
+
+    const globalParam = op.parameters.find(
+      (p) => p.originalName === 'globalParam',
+    );
+    const localParam = op.parameters.find(
+      (p) => p.originalName === 'localParam',
+    );
+
+    expect(globalParam).toBeDefined();
+    expect(globalParam?.paramLocation).toBe('query');
+    expect(globalParam?.paramSchema.type).toBe('string');
+
+    expect(localParam).toBeDefined();
+    expect(localParam?.paramLocation).toBe('header');
+    expect(localParam?.paramSchema.type).toBe('integer');
+  });
+
+  it('should let an operation parameter override a path-level parameter with the same name and location', () => {
+    const spec: OpenAPIV3.Document = {
+      openapi: '3.0.0',
+      info: {title: 'Accounts API', version: '1.0.0'},
+      paths: {
+        '/accounts/{accountId}': {
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: {type: 'string'},
+              description: 'Shared account id',
+            },
+            {
+              name: 'accountId',
+              in: 'header',
+              schema: {type: 'string'},
+            },
+          ],
+          get: {
+            operationId: 'getAccount',
+            parameters: [
+              {
+                name: 'accountId',
+                in: 'path',
+                required: true,
+                schema: {type: 'string'},
+                description: 'Account id, e.g. ACC-123',
+              },
+            ],
+            responses: {'200': {description: 'ok'}},
+          },
+        },
+      },
+    };
+
+    const op = new OpenApiSpecParser().parse(spec)[0];
+
+    expect(op.parameters.map((p) => [p.originalName, p.paramLocation])).toEqual(
+      [
+        ['accountId', 'path'],
+        ['accountId', 'header'],
+      ],
+    );
+    expect(op.parameters[0].description).toBe('Account id, e.g. ACC-123');
+  });
+
+  it('should keep a path parameter required even when an operation override omits required', () => {
+    const spec: OpenAPIV3.Document = {
+      openapi: '3.0.0',
+      info: {title: 'Accounts API', version: '1.0.0'},
+      paths: {
+        '/accounts/{accountId}': {
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: {type: 'string'},
+            },
+          ],
+          get: {
+            operationId: 'getAccount',
+            parameters: [
+              {
+                name: 'accountId',
+                in: 'path',
+                schema: {type: 'string'},
+              },
+              {
+                name: 'expand',
+                in: 'query',
+                schema: {type: 'string'},
+              },
+            ],
+            responses: {'200': {description: 'ok'}},
+          },
+        },
+      },
+    };
+
+    const op = new OpenApiSpecParser().parse(spec)[0];
+
+    expect(
+      Object.fromEntries(
+        op.parameters.map((p) => [p.originalName, p.required]),
+      ),
+    ).toEqual({
+      accountId: true,
+      expand: false,
+    });
+  });
+
   it('should resolve security schemes', () => {
     const spec: OpenAPIV3.Document = {
       openapi: '3.0.0',

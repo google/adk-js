@@ -315,10 +315,26 @@ function collectOperations(
       const operation = pathItem[method];
       if (!operation) continue;
 
-      // Merge path level parameters
+      // Merge path level parameters. An operation-level parameter with the
+      // same name and location overrides the path-level one, so appending
+      // both would ask the model for the same value twice.
       const pathParams = pathItem.parameters || [];
       const opParams = operation.parameters || [];
-      operation.parameters = [...opParams, ...pathParams];
+      const overridden = new Set(
+        opParams
+          .filter(
+            (param): param is OpenAPIV3.ParameterObject => 'name' in param,
+          )
+          .map((param) => `${param.name}:${param.in ?? ''}`),
+      );
+      operation.parameters = [
+        ...opParams,
+        ...pathParams.filter(
+          (param) =>
+            !('name' in param) ||
+            !overridden.has(`${param.name}:${param.in ?? ''}`),
+        ),
+      ];
 
       if (!operation.operationId) {
         // Generate operation ID if missing
