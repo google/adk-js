@@ -805,4 +805,48 @@ describe('ContentRequestProcessor', () => {
       reqChild.contents[2]?.parts?.[0]?.functionResponse?.id,
     ).toBeUndefined();
   });
+
+  it('leaves llmRequest.contents untouched when the agent is not an LlmAgent', async () => {
+    class CustomAgent extends BaseAgent {
+      protected override async *runAsyncImpl(): AsyncGenerator<
+        Event,
+        void,
+        void
+      > {}
+      protected override async *runLiveImpl(): AsyncGenerator<
+        Event,
+        void,
+        void
+      > {}
+    }
+    const agent = new CustomAgent({name: 'custom_agent'});
+    const session: Session = {
+      id: 'test-session',
+      events: [createMockEvent('1', 1000, 'Hello')],
+      appName: 'test-app',
+      userId: 'test-user',
+      state: {},
+      lastUpdateTime: 0,
+    };
+    const invocationContext = new InvocationContext({
+      invocationId: 'test-invocation',
+      agent,
+      session,
+      pluginManager: new PluginManager([]),
+    });
+    const llmRequest: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    for await (const _ of CONTENT_REQUEST_PROCESSOR.runAsync(
+      invocationContext,
+      llmRequest,
+    )) {
+      // consume generator
+    }
+
+    expect(llmRequest.contents).toEqual([]);
+  });
 });
