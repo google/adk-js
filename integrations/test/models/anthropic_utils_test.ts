@@ -892,7 +892,7 @@ describe('Claude conversion helpers', () => {
 
       expect(() =>
         partToMessageBlock({
-          inlineData: {mimeType: 'image/png', data: 'aGVsbG8='},
+          inlineData: {mimeType: 'audio/wav', data: 'aGVsbG8='},
         }),
       ).toThrow('Part kind "inlineData" is not supported by Claude.');
 
@@ -905,25 +905,172 @@ describe('Claude conversion helpers', () => {
         }),
       ).toThrow('Part kind "fileData" is not supported by Claude.');
 
-      expect(() =>
-        partToMessageBlock({
-          executableCode: {code: 'print(1)', language: undefined},
-        }),
-      ).toThrow('Part kind "executableCode" is not supported by Claude.');
-
-      expect(() =>
-        partToMessageBlock({
-          codeExecutionResult: {output: '1', outcome: undefined},
-        }),
-      ).toThrow('Part kind "codeExecutionResult" is not supported by Claude.');
-
       expect(() => partToMessageBlock({})).toThrow(
         'Part kind "empty part" is not supported by Claude.',
       );
     });
+
+    it('converts an inline image part into a base64 image block', () => {
+      expect(
+        partToMessageBlock({
+          inlineData: {mimeType: 'image/png', data: 'aGVsbG8='},
+        }),
+      ).toEqual({
+        type: 'image',
+        source: {type: 'base64', media_type: 'image/png', data: 'aGVsbG8='},
+      });
+    });
+
+    it.each([
+      {mimeType: 'image/PNG', mediaType: 'image/png'},
+      {mimeType: 'IMAGE/PNG', mediaType: 'image/png'},
+      {mimeType: ' image/png ', mediaType: 'image/png'},
+      {mimeType: 'image/jpeg ; charset=binary', mediaType: 'image/jpeg'},
+      {mimeType: 'image/gif', mediaType: 'image/gif'},
+      {mimeType: 'image/webp', mediaType: 'image/webp'},
+    ])(
+      'normalizes the image MIME type "$mimeType"',
+      ({mimeType, mediaType}) => {
+        expect(
+          partToMessageBlock({inlineData: {mimeType, data: 'aGVsbG8='}}),
+        ).toEqual({
+          type: 'image',
+          source: {type: 'base64', media_type: mediaType, data: 'aGVsbG8='},
+        });
+      },
+    );
+
+    it('throws for an image MIME type that Claude does not accept', () => {
+      expect(() =>
+        partToMessageBlock({
+          inlineData: {mimeType: 'image/bmp', data: 'aGVsbG8='},
+        }),
+      ).toThrow('Unsupported Anthropic image MIME type: image/bmp');
+    });
+
+    it('throws for an image part without data', () => {
+      expect(() =>
+        partToMessageBlock({inlineData: {mimeType: 'image/png'}}),
+      ).toThrow('Anthropic image parts require MIME type and data');
+    });
+
+    it('converts an executableCode part into a fenced python text block', () => {
+      expect(partToMessageBlock({executableCode: {code: 'print(1)'}})).toEqual({
+        type: 'text',
+        text: 'Code:```python\nprint(1)\n```',
+      });
+    });
+
+    it('converts an executableCode part without code into an empty fenced block', () => {
+      expect(partToMessageBlock({executableCode: {}})).toEqual({
+        type: 'text',
+        text: 'Code:```python\n\n```',
+      });
+    });
+
+    it('converts a codeExecutionResult part into a fenced code_output text block', () => {
+      expect(partToMessageBlock({codeExecutionResult: {output: '1'}})).toEqual({
+        type: 'text',
+        text: 'Execution Result:```code_output\n1\n```',
+      });
+    });
+
+    it('converts a codeExecutionResult part without output into an empty fenced block', () => {
+      expect(partToMessageBlock({codeExecutionResult: {}})).toEqual({
+        type: 'text',
+        text: 'Execution Result:```code_output\n\n```',
+      });
+    });
   });
 
   describe('contentToMessageParam', () => {
+    it('keeps an image part on a user turn', () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        expect(
+          contentToMessageParam({
+            role: 'user',
+            parts: [
+              {text: 'What is in this image?'},
+              {inlineData: {mimeType: 'image/png', data: 'aGVsbG8='}},
+            ],
+          }),
+        ).toEqual({
+          role: 'user',
+          content: [
+            {type: 'text', text: 'What is in this image?'},
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: 'image/png',
+                data: 'aGVsbG8=',
+              },
+            },
+          ],
+        });
+        expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('keeps an image part when role is omitted', () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        expect(
+          contentToMessageParam({
+            parts: [
+              {text: 'What is in this image?'},
+              {inlineData: {mimeType: 'image/png', data: 'aGVsbG8='}},
+            ],
+          }),
+        ).toEqual({
+          role: 'user',
+          content: [
+            {type: 'text', text: 'What is in this image?'},
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: 'image/png',
+                data: 'aGVsbG8=',
+              },
+            },
+          ],
+        });
+        expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it.each(['model', 'assistant'])(
+      'drops an image part on a %s turn and logs a warning',
+      (role) => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+        try {
+          expect(
+            contentToMessageParam({
+              role,
+              parts: [
+                {text: 'Here is the chart.'},
+                {inlineData: {mimeType: 'image/png', data: 'aGVsbG8='}},
+              ],
+            }),
+          ).toEqual({
+            role: 'assistant',
+            content: [{type: 'text', text: 'Here is the chart.'}],
+          });
+          expect(warnSpy).toHaveBeenCalledWith(
+            'Image data is not supported in Claude for assistant turns.',
+          );
+        } finally {
+          warnSpy.mockRestore();
+        }
+      },
+    );
+
     it('converts a Content object with multiple parts into a MessageParam', () => {
       expect(
         contentToMessageParam({
