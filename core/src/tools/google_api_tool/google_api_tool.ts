@@ -5,9 +5,13 @@
  */
 
 import {FunctionDeclaration} from '@google/genai';
-import {AuthCredentialTypes} from '../../auth/auth_credential.js';
+import {
+  AuthCredentialTypes,
+  ServiceAccount,
+} from '../../auth/auth_credential.js';
 import {experimental} from '../../utils/experimental.js';
 import {BaseTool, RunAsyncToolRequest} from '../base_tool.js';
+import {serviceAccountSchemeCredential} from '../openapi_tool/auth/auth_helpers.js';
 import {RestApiTool} from '../openapi_tool/rest_api_tool.js';
 
 const GOOGLE_API_TOOL_SIGNATURE_SYMBOL = Symbol.for('google.adk.googleApiTool');
@@ -18,6 +22,7 @@ const GOOGLE_API_TOOL_SIGNATURE_SYMBOL = Symbol.for('google.adk.googleApiTool');
 export interface GoogleApiToolOptions {
   clientId?: string;
   clientSecret?: string;
+  serviceAccount?: ServiceAccount;
 }
 
 /**
@@ -34,7 +39,8 @@ export function isGoogleApiTool(obj: unknown): obj is GoogleApiTool {
 
 /**
  * Wraps a {@link RestApiTool} created from a Google API specification and adds
- * helper methods for configuring Google OpenID Connect credentials.
+ * helper methods for configuring Google OpenID Connect or service account
+ * credentials.
  */
 @experimental
 export class GoogleApiTool extends BaseTool {
@@ -48,7 +54,12 @@ export class GoogleApiTool extends BaseTool {
       isLongRunning: restApiTool.isLongRunning,
     });
     this.restApiTool = restApiTool;
-    if (options.clientId !== undefined || options.clientSecret !== undefined) {
+    if (options.serviceAccount !== undefined) {
+      this.configureSaAuth(options.serviceAccount);
+    } else if (
+      options.clientId !== undefined ||
+      options.clientSecret !== undefined
+    ) {
       this.configureAuth(options.clientId, options.clientSecret);
     }
   }
@@ -76,5 +87,17 @@ export class GoogleApiTool extends BaseTool {
         clientSecret,
       },
     });
+  }
+
+  /**
+   * Configures Google service account credentials and bearer auth scheme on
+   * the underlying {@link RestApiTool}.
+   */
+  @experimental
+  configureSaAuth(serviceAccount: ServiceAccount): void {
+    const [authScheme, authCredential] =
+      serviceAccountSchemeCredential(serviceAccount);
+    this.restApiTool.configureAuthScheme(authScheme);
+    this.restApiTool.configureAuthCredential(authCredential);
   }
 }

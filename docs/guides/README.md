@@ -124,7 +124,7 @@ Client-side retrieval tools. The agent calls a one-argument search function, you
 
 #### Google API Tool
 
-- [Google API tool](tools/google_api_tool/index.md) - Converting Google API Discovery documents into OpenAPI v3 tools, configuring OpenID Connect credentials, and using pre-configured Google API toolsets.
+- [Google API tool](tools/google_api_tool/index.md) - Converting Google API Discovery documents into OpenAPI v3 tools, configuring OpenID Connect or service account credentials, and using pre-configured Google API toolsets.
 
 #### API Hub Tool
 

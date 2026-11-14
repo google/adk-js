@@ -5,6 +5,7 @@
  */
 
 import {
+  AuthCredentialTypes,
   Context,
   createSession,
   GoogleApiTool,
@@ -17,9 +18,33 @@ import {
   OpenIdConnectWithConfig,
   PluginManager,
   ReadonlyContext,
+  ServiceAccount,
+  ServiceAccountCredentialExchanger,
 } from '@google/adk';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import type {GoogleApiSpec} from '../../../src/tools/google_api_tool/googleapi_to_openapi_converter.js';
+
+function createTestServiceAccount(
+  scopes: string[] = ['scope1', 'scope2'],
+): ServiceAccount {
+  return {
+    serviceAccountCredential: {
+      type: 'service_account',
+      projectId: 'project-id',
+      privateKeyId: 'private-key-id',
+      privateKey: 'private-key',
+      clientEmail: 'test@example.iam.gserviceaccount.com',
+      clientId: 'client-id',
+      authUri: 'https://accounts.google.com/o/oauth2/auth',
+      tokenUri: 'https://oauth2.googleapis.com/token',
+      authProviderX509CertUrl: 'https://www.googleapis.com/oauth2/v1/certs',
+      clientX509CertUrl:
+        'https://www.googleapis.com/robot/v1/metadata/x509/test',
+      universeDomain: 'googleapis.com',
+    },
+    scopes,
+  };
+}
 
 const MOCK_DISCOVERY_SPEC: GoogleApiSpec = {
   kind: 'discovery#restDescription',
@@ -295,6 +320,281 @@ describe('GoogleApiToolset', () => {
 
     toolset.configureAuth('updated-id', 'updated-secret');
     expect(configureSpy).toHaveBeenCalledWith('updated-id', 'updated-secret');
+  });
+
+  it('forwards serviceAccount from constructor options to created tools', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => MOCK_DISCOVERY_SPEC,
+    } as Response);
+    const configureSaSpy = vi.spyOn(GoogleApiTool.prototype, 'configureSaAuth');
+    const serviceAccount = createTestServiceAccount();
+
+    const toolset = new GoogleApiToolset({
+      apiName: 'calendar',
+      apiVersion: 'v3',
+      serviceAccount,
+    });
+
+    const tools = await toolset.getTools();
+    expect(tools).toHaveLength(2);
+    expect(configureSaSpy).toHaveBeenCalledTimes(2);
+    expect(configureSaSpy).toHaveBeenCalledWith(serviceAccount);
+  });
+
+  it('applies service account credentials to tools loaded later and to already-loaded tools', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => MOCK_DISCOVERY_SPEC,
+    } as Response);
+    const configureSaSpy = vi.spyOn(GoogleApiTool.prototype, 'configureSaAuth');
+    const initialServiceAccount = createTestServiceAccount(['scope1']);
+    const updatedServiceAccount = createTestServiceAccount(['scope2']);
+
+    const toolset = new GoogleApiToolset({
+      apiName: 'calendar',
+      apiVersion: 'v3',
+    });
+    toolset.configureSaAuth(initialServiceAccount);
+
+    const tools = await toolset.getTools();
+    expect(tools).toHaveLength(2);
+    expect(configureSaSpy).toHaveBeenCalledTimes(2);
+    expect(configureSaSpy).toHaveBeenCalledWith(initialServiceAccount);
+
+    configureSaSpy.mockClear();
+    toolset.configureSaAuth(updatedServiceAccount);
+    expect(configureSaSpy).toHaveBeenCalledTimes(2);
+    expect(configureSaSpy).toHaveBeenCalledWith(updatedServiceAccount);
+  });
+
+  it('exchanges serviceAccount credentials and sends a bearer token when running a tool', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => MOCK_DISCOVERY_SPEC,
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({id: 'primary', summary: 'Primary'}),
+      } as Response);
+    const exchangeSpy = vi
+      .spyOn(ServiceAccountCredentialExchanger.prototype, 'exchange')
+      .mockResolvedValue({
+        credential: {
+          authType: AuthCredentialTypes.HTTP,
+          http: {
+            scheme: 'bearer',
+            credentials: {token: 'sa-access-token'},
+          },
+        },
+        wasExchanged: true,
+      });
+
+    const toolset = new GoogleApiToolset({
+      apiName: 'calendar',
+      apiVersion: 'v3',
+      serviceAccount: createTestServiceAccount(),
+    });
+
+    const tools = await toolset.getTools();
+    const context = new Context({
+      invocationContext: new InvocationContext({
+        invocationId: 'inv-sa-exec',
+        agent: new LlmAgent({name: 'test_agent'}),
+        session: createSession({id: 'sess-sa-exec', appName: 'test_app'}),
+        pluginManager: new PluginManager(),
+      }),
+      functionCallId: 'call-sa-exec',
+    });
+
+    const result = await tools[0].runAsync({
+      args: {calendar_id: 'primary'},
+      toolContext: context,
+    });
+
+    expect(result).toEqual({id: 'primary', summary: 'Primary'});
+    expect(exchangeSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenNthCalledWith(
+      2,
+      'https://www.googleapis.com/calendar/v3/calendars/primary',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer sa-access-token',
+        }),
+      }),
+    );
+    expect(context.eventActions.requestedAuthConfigs).toEqual({});
+  });
+
+  it('uses OpenID Connect auth when configureAuth follows configureSaAuth before getTools', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => MOCK_DISCOVERY_SPEC,
+    } as Response);
+
+    const toolset = new GoogleApiToolset({
+      apiName: 'calendar',
+      apiVersion: 'v3',
+    });
+    toolset.configureSaAuth(createTestServiceAccount());
+    toolset.configureAuth('oidc-client-id', 'oidc-client-secret');
+
+    const tools = await toolset.getTools();
+    const context = new Context({
+      invocationContext: new InvocationContext({
+        invocationId: 'inv-switch-before',
+        agent: new LlmAgent({name: 'test_agent'}),
+        session: createSession({id: 'sess-switch-before', appName: 'test_app'}),
+        pluginManager: new PluginManager(),
+      }),
+      functionCallId: 'call-switch-before',
+    });
+
+    await tools[0].runAsync({
+      args: {calendar_id: 'primary'},
+      toolContext: context,
+    });
+
+    const requestedAuth =
+      context.eventActions.requestedAuthConfigs['call-switch-before'];
+    expect(requestedAuth).toBeDefined();
+    expect(requestedAuth.authScheme).toEqual(
+      expect.objectContaining({
+        type: 'openIdConnect',
+        authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+        tokenEndpoint: 'https://oauth2.googleapis.com/token',
+        scopes: ['https://www.googleapis.com/auth/calendar'],
+      }),
+    );
+    expect(requestedAuth.rawAuthCredential).toEqual({
+      authType: AuthCredentialTypes.OPEN_ID_CONNECT,
+      oauth2: {
+        clientId: 'oidc-client-id',
+        clientSecret: 'oidc-client-secret',
+      },
+    });
+  });
+
+  it('restores the OpenID Connect auth scheme when configureAuth follows configureSaAuth after getTools', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => MOCK_DISCOVERY_SPEC,
+    } as Response);
+
+    const toolset = new GoogleApiToolset({
+      apiName: 'calendar',
+      apiVersion: 'v3',
+    });
+
+    const tools = await toolset.getTools();
+    toolset.configureSaAuth(createTestServiceAccount());
+    toolset.configureAuth('updated-client-id', 'updated-client-secret');
+
+    const context = new Context({
+      invocationContext: new InvocationContext({
+        invocationId: 'inv-switch-after',
+        agent: new LlmAgent({name: 'test_agent'}),
+        session: createSession({id: 'sess-switch-after', appName: 'test_app'}),
+        pluginManager: new PluginManager(),
+      }),
+      functionCallId: 'call-switch-after',
+    });
+
+    await tools[0].runAsync({
+      args: {calendar_id: 'primary'},
+      toolContext: context,
+    });
+
+    const requestedAuth =
+      context.eventActions.requestedAuthConfigs['call-switch-after'];
+    expect(requestedAuth).toBeDefined();
+    expect(requestedAuth.authScheme).toEqual(
+      expect.objectContaining({
+        type: 'openIdConnect',
+        authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+        tokenEndpoint: 'https://oauth2.googleapis.com/token',
+        scopes: ['https://www.googleapis.com/auth/calendar'],
+      }),
+    );
+    expect(requestedAuth.rawAuthCredential).toEqual({
+      authType: AuthCredentialTypes.OPEN_ID_CONNECT,
+      oauth2: {
+        clientId: 'updated-client-id',
+        clientSecret: 'updated-client-secret',
+      },
+    });
+  });
+
+  it('uses serviceAccount auth when configureSaAuth follows configureAuth before getTools', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => MOCK_DISCOVERY_SPEC,
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({id: 'primary', summary: 'Primary'}),
+      } as Response);
+    vi.spyOn(
+      ServiceAccountCredentialExchanger.prototype,
+      'exchange',
+    ).mockResolvedValue({
+      credential: {
+        authType: AuthCredentialTypes.HTTP,
+        http: {
+          scheme: 'bearer',
+          credentials: {token: 'sa-switched-token'},
+        },
+      },
+      wasExchanged: true,
+    });
+
+    const toolset = new GoogleApiToolset({
+      apiName: 'calendar',
+      apiVersion: 'v3',
+      clientId: 'initial-client-id',
+      clientSecret: 'initial-client-secret',
+    });
+    toolset.configureSaAuth(createTestServiceAccount());
+
+    const tools = await toolset.getTools();
+    const context = new Context({
+      invocationContext: new InvocationContext({
+        invocationId: 'inv-switch-sa',
+        agent: new LlmAgent({name: 'test_agent'}),
+        session: createSession({id: 'sess-switch-sa', appName: 'test_app'}),
+        pluginManager: new PluginManager(),
+      }),
+      functionCallId: 'call-switch-sa',
+    });
+
+    await tools[0].runAsync({
+      args: {calendar_id: 'primary'},
+      toolContext: context,
+    });
+
+    expect(fetchSpy).toHaveBeenNthCalledWith(
+      2,
+      'https://www.googleapis.com/calendar/v3/calendars/primary',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer sa-switched-token',
+        }),
+      }),
+    );
+    expect(context.eventActions.requestedAuthConfigs).toEqual({});
   });
 
   it('applies a list or predicate filter set after construction', async () => {
