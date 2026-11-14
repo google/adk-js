@@ -464,6 +464,7 @@ const SCHEMA_TYPE_MAP: Readonly<Record<string, Type>> = {
   OBJECT: Type.OBJECT,
   NULL: Type.NULL,
   null: Type.NULL,
+  void: Type.NULL,
   TYPE_UNSPECIFIED: Type.TYPE_UNSPECIFIED,
 };
 
@@ -645,13 +646,22 @@ function resolveReturnSchema(
 ): Schema | undefined {
   const funcObj =
     typeof func === 'function' || isPlainRecord(func)
-      ? (func as {response?: SchemaLike; returnType?: string})
+      ? (func as {response?: SchemaLike | null; returnType?: string | null})
       : undefined;
+  if (funcObj?.response === null || beforeParamSchema['response'] === null) {
+    return {type: Type.NULL};
+  }
   const responseCandidate =
     funcObj?.response ??
     (beforeParamSchema['response'] as SchemaLike | undefined);
   if (responseCandidate !== undefined) {
     return toResponseSchema(responseCandidate);
+  }
+  if (
+    funcObj?.returnType === null ||
+    beforeParamSchema['returnType'] === null
+  ) {
+    return {type: Type.NULL};
   }
   const returnTypeCandidate =
     funcObj?.returnType ??
