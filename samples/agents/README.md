@@ -9,7 +9,7 @@ This sample demonstrates how to compose model-backed, workflow, and LangGraph-ba
 1. `ParallelAgent` (`parallel_collectors`), running an `LlmAgent` (`topic_summarizer`) and a `LangGraphAgent` (`graph_classifier`) concurrently on isolated branch contexts while sharing `session.state`.
 2. `LoopAgent` (`quality_review_loop`), repeating a custom `BaseAgent` subclass (`QualityCheckAgent`) until it writes an approval artifact via `ctx.artifactService.saveArtifact` and sets `actions.escalate = true`.
 
-In addition to exporting `rootAgent` for `npm run sample` and `adk web`, the direct `main()` driver verifies the agent type guards (`isSequentialAgent`, `isParallelAgent`, `isLlmAgent`, `isLangGraphAgent`, and `isLoopAgent`) and triggers `LlmCallsLimitExceededError` via `runConfig: {maxLlmCalls: 1}`.
+In addition to exporting `rootAgent` for `npm run sample` and `adk web`, the direct `main()` driver verifies the agent type guards (`isSequentialAgent`, `isParallelAgent`, `isLlmAgent`, `isLangGraphAgent`, and `isLoopAgent`), triggers `LlmCallsLimitExceededError` via `runConfig: {maxLlmCalls: 1}`, and exercises `ctx.saveCredential` and `ctx.loadCredential` via `Runner` with `InMemoryCredentialService` (while `topic_summarizer` verifies `ctx.listArtifacts()` after `ctx.saveArtifact`).
 
 ## Sample Inputs
 
@@ -80,7 +80,7 @@ try {
 
 The sample uses an offline `BaseLlm` (`DeterministicDemoLlm`) and an in-memory `CompiledGraphLike`, so no API key or network access is required.
 
-Run the self-contained script directly to execute all three sections (type guards, multi-agent pipeline execution, and `LlmCallsLimitExceededError` enforcement):
+Run the self-contained script directly to execute all four sections (type guards, multi-agent pipeline execution, `LlmCallsLimitExceededError` enforcement, and callback credential persistence):
 
 ```bash
 npm run build
