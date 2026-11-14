@@ -94,6 +94,100 @@ describe('BaseAgent', () => {
     });
   });
 
+  describe('name validation', () => {
+    it('throws on invalid or reserved agent names', () => {
+      expect(() => new MockAgent({name: 'not an identifier'})).toThrow(
+        'Found invalid agent name: "not an identifier".',
+      );
+      expect(() => new MockAgent({name: 'user'})).toThrow(
+        "Agent name cannot be 'user'.",
+      );
+      expect(new MockAgent({name: 'User'}).name).toBe('User');
+      expect(new MockAgent({name: 'USER'}).name).toBe('USER');
+    });
+  });
+
+  describe('hierarchy and lookup', () => {
+    it('assigns parentAgent for each configured subAgent', () => {
+      const subAgent1 = new MockAgent({name: 'sub_agent_1'});
+      const subAgent2 = new MockAgent({name: 'sub_agent_2'});
+      const parent = new MockAgent({
+        name: 'parent',
+        subAgents: [subAgent1, subAgent2],
+      });
+
+      expect(subAgent1.parentAgent).toBe(parent);
+      expect(subAgent2.parentAgent).toBe(parent);
+    });
+
+    it('throws when a subAgent is added to a second parent agent', () => {
+      const subAgent = new MockAgent({name: 'sub_agent'});
+      new MockAgent({name: 'parent_1', subAgents: [subAgent]});
+
+      expect(
+        () => new MockAgent({name: 'parent_2', subAgents: [subAgent]}),
+      ).toThrow(
+        'Agent "sub_agent" already has a parent agent, current parent: "parent_1", trying to add: "parent_2"',
+      );
+    });
+
+    it('finds self and descendant agents across a multi-level hierarchy', () => {
+      const grandSubAgent1 = new MockAgent({name: 'grand_sub_agent_1'});
+      const grandSubAgent2 = new MockAgent({name: 'grand_sub_agent_2'});
+      const subAgent1 = new MockAgent({
+        name: 'sub_agent_1',
+        subAgents: [grandSubAgent1],
+      });
+      const subAgent2 = new MockAgent({
+        name: 'sub_agent_2',
+        subAgents: [grandSubAgent2],
+      });
+      const parent = new MockAgent({
+        name: 'parent',
+        subAgents: [subAgent1, subAgent2],
+      });
+
+      expect(parent.findAgent(parent.name)).toBe(parent);
+      expect(parent.findAgent(subAgent1.name)).toBe(subAgent1);
+      expect(parent.findAgent(subAgent2.name)).toBe(subAgent2);
+      expect(parent.findAgent(grandSubAgent1.name)).toBe(grandSubAgent1);
+      expect(parent.findAgent(grandSubAgent2.name)).toBe(grandSubAgent2);
+      expect(subAgent1.findAgent(grandSubAgent1.name)).toBe(grandSubAgent1);
+      expect(subAgent1.findAgent(grandSubAgent2.name)).toBeUndefined();
+      expect(subAgent2.findAgent(grandSubAgent1.name)).toBeUndefined();
+      expect(subAgent2.findAgent(subAgent2.name)).toBe(subAgent2);
+      expect(parent.findAgent('not_exist')).toBeUndefined();
+    });
+
+    it('finds only descendant sub-agents and excludes self', () => {
+      const grandSubAgent1 = new MockAgent({name: 'grand_sub_agent_1'});
+      const grandSubAgent2 = new MockAgent({name: 'grand_sub_agent_2'});
+      const subAgent1 = new MockAgent({
+        name: 'sub_agent_1',
+        subAgents: [grandSubAgent1],
+      });
+      const subAgent2 = new MockAgent({
+        name: 'sub_agent_2',
+        subAgents: [grandSubAgent2],
+      });
+      const parent = new MockAgent({
+        name: 'parent',
+        subAgents: [subAgent1, subAgent2],
+      });
+
+      expect(parent.findSubAgent(subAgent1.name)).toBe(subAgent1);
+      expect(parent.findSubAgent(subAgent2.name)).toBe(subAgent2);
+      expect(parent.findSubAgent(grandSubAgent1.name)).toBe(grandSubAgent1);
+      expect(parent.findSubAgent(grandSubAgent2.name)).toBe(grandSubAgent2);
+      expect(subAgent1.findSubAgent(grandSubAgent1.name)).toBe(grandSubAgent1);
+      expect(subAgent1.findSubAgent(grandSubAgent2.name)).toBeUndefined();
+      expect(subAgent2.findSubAgent(grandSubAgent1.name)).toBeUndefined();
+      expect(subAgent2.findSubAgent(grandSubAgent2.name)).toBe(grandSubAgent2);
+      expect(parent.findSubAgent(parent.name)).toBeUndefined();
+      expect(parent.findSubAgent('not_exist')).toBeUndefined();
+    });
+  });
+
   describe('Abort Signal Handling', () => {
     it('should stop processing beforeAgentCallbacks if aborted', async () => {
       const controller = new AbortController();
