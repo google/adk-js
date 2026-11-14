@@ -138,3 +138,26 @@ export function carryDeltaStamps(from: object, to: object): void {
     carried.set(key, stamp);
   }
 }
+
+/**
+ * Carries the stamp for a deep-merged `key` onto `to`, keeping the newer of
+ * the two source stamps when both `base` and `incoming` carry one, or leaving
+ * `key` unstamped when an unstamped delta contributed.
+ */
+export function carryMergedDeltaStamp({
+  base,
+  incoming,
+  to,
+  key,
+}: {
+  base: object;
+  incoming: object;
+  to: object;
+  key: string;
+}): void {
+  const baseStamp = deltaStamps.get(base)?.get(key);
+  const incomingStamp = deltaStamps.get(incoming)?.get(key);
+  if (baseStamp !== undefined && incomingStamp !== undefined) {
+    stampsFor(deltaStamps, to).set(key, Math.max(baseStamp, incomingStamp));
+  }
+}

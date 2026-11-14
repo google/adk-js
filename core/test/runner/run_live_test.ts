@@ -11,6 +11,9 @@ import {
   BasePlugin,
   BaseTool,
   Event,
+  FunctionTool,
+  getFunctionCalls,
+  getFunctionResponses,
   InMemoryArtifactService,
   InMemoryCredentialService,
   InMemorySessionService,
@@ -31,6 +34,7 @@ import {
   RealtimeInputConfig,
 } from '@google/genai';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {z} from 'zod';
 
 const TEST_APP_ID = 'test_app_id';
 const TEST_USER_ID = 'test_user_id';
@@ -1382,6 +1386,358 @@ describe('Runner.runLive', () => {
     const liveConfig = parentLlm.llmRequestSeen?.liveConnectConfig;
     expect(liveConfig?.inputAudioTranscription).toEqual({});
     expect(liveConfig?.outputAudioTranscription).toEqual({});
+  });
+
+  it('forwards content when combined with activityStart, activityEnd, or blob on the same LiveRequest', async () => {
+    const llm = new FakeLiveLlm([{turnComplete: true}]);
+    const agent = new LlmAgent({name: 'agent', model: llm});
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+    });
+
+    const firstContent: Content = {
+      role: 'user',
+      parts: [{text: 'alongside activity start'}],
+    };
+    const secondContent: Content = {
+      role: 'user',
+      parts: [{text: 'alongside blob'}],
+    };
+    const thirdContent: Content = {
+      role: 'user',
+      parts: [{text: 'alongside activity end'}],
+    };
+    const blob: Blob = {data: 'AP8=', mimeType: 'audio/pcm'};
+
+    const queue = new LiveRequestQueue();
+    queue.send({activityStart: {}, content: firstContent});
+    queue.send({blob, content: secondContent});
+    queue.send({activityEnd: {}, content: thirdContent});
+    queue.close();
+    for await (const _ of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+    })) {
+      // drain
+    }
+
+    expect(llm.connection?.activityStartCalls).toBe(1);
+    expect(llm.connection?.activityEndCalls).toBe(1);
+    expect(llm.connection?.realtimeCalls).toEqual([blob]);
+    expect(llm.connection?.contentCalls).toEqual([
+      firstContent,
+      secondContent,
+      thirdContent,
+    ]);
+  });
+
+  it('executes multiple sequential tool calls in live mode', async () => {
+    const weatherTool = new FunctionTool({
+      name: 'get_weather',
+      description: 'returns weather for a location',
+      parameters: z.object({location: z.string()}),
+      execute: async ({location}) => ({
+        temperature: 22,
+        condition: 'sunny',
+        location,
+      }),
+    });
+    const timeTool = new FunctionTool({
+      name: 'get_time',
+      description: 'returns current time for a timezone',
+      parameters: z.object({timezone: z.string()}),
+      execute: async ({timezone}) => ({time: '14:30', timezone}),
+    });
+    const llm = new FakeLiveLlm([
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-weather',
+                name: 'get_weather',
+                args: {location: 'San Francisco'},
+              },
+            },
+          ],
+        },
+        turnComplete: false,
+      },
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-time',
+                name: 'get_time',
+                args: {timezone: 'PST'},
+              },
+            },
+          ],
+        },
+        turnComplete: false,
+      },
+      {turnComplete: true},
+    ]);
+    const agent = new LlmAgent({
+      name: 'agent',
+      model: llm,
+      tools: [weatherTool, timeTool],
+    });
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+    });
+
+    const queue = new LiveRequestQueue();
+    queue.close();
+    const events: Event[] = [];
+    for await (const event of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+    })) {
+      events.push(event);
+    }
+
+    const calledNames = events.flatMap((e) =>
+      getFunctionCalls(e).map((fc) => fc.name),
+    );
+    const responses = events.flatMap((e) => getFunctionResponses(e));
+    expect(calledNames).toEqual(['get_weather', 'get_time']);
+    expect(responses).toEqual([
+      {
+        id: 'fc-weather',
+        name: 'get_weather',
+        response: {
+          temperature: 22,
+          condition: 'sunny',
+          location: 'San Francisco',
+        },
+      },
+      {
+        id: 'fc-time',
+        name: 'get_time',
+        response: {time: '14:30', timezone: 'PST'},
+      },
+    ]);
+    expect(llm.connection?.contentCalls).toHaveLength(2);
+  });
+
+  it('forwards error objects returned by a live tool call', async () => {
+    const weatherTool = new FunctionTool({
+      name: 'get_weather',
+      description: 'returns weather or error',
+      parameters: z.object({location: z.string()}),
+      execute: async ({location}) => {
+        if (location === 'Invalid Location') {
+          return {error: 'Location not found'};
+        }
+        return {temperature: 22, location};
+      },
+    });
+    const llm = new FakeLiveLlm([
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-err',
+                name: 'get_weather',
+                args: {location: 'Invalid Location'},
+              },
+            },
+          ],
+        },
+        turnComplete: false,
+      },
+      {turnComplete: true},
+    ]);
+    const agent = new LlmAgent({
+      name: 'agent',
+      model: llm,
+      tools: [weatherTool],
+    });
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+    });
+
+    const queue = new LiveRequestQueue();
+    queue.close();
+    const events: Event[] = [];
+    for await (const event of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+    })) {
+      events.push(event);
+    }
+
+    const responses = events.flatMap((e) => getFunctionResponses(e));
+    expect(responses).toEqual([
+      {
+        id: 'fc-err',
+        name: 'get_weather',
+        response: {error: 'Location not found'},
+      },
+    ]);
+    expect(
+      llm.connection?.contentCalls[0]?.parts?.[0]?.functionResponse?.response,
+    ).toEqual({
+      error: 'Location not found',
+    });
+  });
+
+  it('launches multiple distinct streaming tools in parallel and forwards their outputs before closing', async () => {
+    const monitorStock = new FunctionTool({
+      name: 'monitor_stock_price',
+      description: 'streams stock updates',
+      parameters: z.object({stock_symbol: z.string()}),
+      execute: async function* ({stock_symbol}) {
+        yield `Stock ${stock_symbol} price: $800`;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        yield `Stock ${stock_symbol} price: $805`;
+      },
+    });
+    const monitorMetrics = new FunctionTool({
+      name: 'monitor_video_stream',
+      description: 'streams video detection updates',
+      parameters: z.object({}),
+      execute: async function* () {
+        yield 'Video monitoring started';
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        yield 'Detected motion in video stream';
+      },
+    });
+
+    let capturedContext: InvocationContext | undefined;
+    const contextPlugin = new (class extends BasePlugin {
+      constructor() {
+        super('capture_live_context');
+      }
+      override async beforeRunCallback({
+        invocationContext,
+      }: {
+        invocationContext: InvocationContext;
+      }) {
+        capturedContext = invocationContext;
+        return undefined;
+      }
+    })();
+
+    const llm = new FakeLiveLlm([
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-stock',
+                name: 'monitor_stock_price',
+                args: {stock_symbol: 'NVDA'},
+              },
+            },
+            {
+              functionCall: {
+                id: 'fc-video',
+                name: 'monitor_video_stream',
+                args: {},
+              },
+            },
+          ],
+        },
+        turnComplete: false,
+      },
+      {turnComplete: true},
+    ]);
+    const agent = new LlmAgent({
+      name: 'agent',
+      model: llm,
+      tools: [monitorStock, monitorMetrics],
+    });
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+      plugins: [contextPlugin],
+    });
+
+    const queue = new LiveRequestQueue();
+    const events: Event[] = [];
+    try {
+      const stream = runner.runLive({
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+        liveRequestQueue: queue,
+      });
+      for await (const event of stream) {
+        events.push(event);
+        if (events.some((e) => e.turnComplete)) {
+          const activeTools = Object.values(
+            capturedContext?.activeStreamingTools ?? {},
+          );
+          await Promise.allSettled(
+            activeTools.map((entry) => entry.task?.promise),
+          );
+          // Allow the send loop to flush all queued streaming tool messages.
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          queue.close();
+        }
+      }
+    } finally {
+      queue.close();
+      const activeTools = Object.values(
+        capturedContext?.activeStreamingTools ?? {},
+      );
+      for (const entry of activeTools) {
+        entry.task?.cancel();
+        entry.stream?.close();
+      }
+      await Promise.allSettled(activeTools.map((entry) => entry.task?.promise));
+    }
+
+    const calledNames = events.flatMap((e) =>
+      getFunctionCalls(e).map((fc) => fc.name),
+    );
+    expect(calledNames).toEqual([
+      'monitor_stock_price',
+      'monitor_video_stream',
+    ]);
+    const responses = events.flatMap((e) => getFunctionResponses(e));
+    expect(responses).toHaveLength(2);
+    expect(
+      responses.every(
+        (r) =>
+          (r.response as Record<string, unknown>)['status'] ===
+          'The function is running asynchronously and the results are pending.',
+      ),
+    ).toBe(true);
+
+    const forwardedTexts =
+      llm.connection?.contentCalls.flatMap(
+        (c) => c.parts?.map((p) => p.text).filter(Boolean) ?? [],
+      ) ?? [];
+    expect(forwardedTexts).toEqual(
+      expect.arrayContaining([
+        'Function monitor_stock_price returned: Stock NVDA price: $800',
+        'Function monitor_stock_price returned: Stock NVDA price: $805',
+        'Function monitor_video_stream returned: Video monitoring started',
+        'Function monitor_video_stream returned: Detected motion in video stream',
+      ]),
+    );
   });
 });
 
