@@ -85,7 +85,9 @@ The executor reads the model name and throws
 `Gemini code execution tool is not supported for model <name>` unless it finds
 a Gemini version of 2 or later. It parses the version from the text after
 `gemini-`, so `gemini-2.5-flash` works and an alias such as
-`gemini-flash-latest` fails.
+`gemini-flash-latest` fails. A full Vertex AI resource name such as
+`projects/<project>/locations/<location>/publishers/google/models/gemini-2.5-flash`
+also works, because the executor reads the model name after `models/`.
 
 The code runs in Google's environment as part of the model call, not on your
 machine.
