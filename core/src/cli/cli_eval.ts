@@ -21,14 +21,30 @@ import {BaseArtifactService} from '../artifacts/base_artifact_service.js';
 import {InMemoryArtifactService} from '../artifacts/in_memory_artifact_service.js';
 import {InputValidationError} from '../errors/input_validation_error.js';
 import {NotFoundError} from '../errors/not_found_error.js';
+import {
+  AppDetails,
+  buildAppDetailsFromAgent,
+} from '../evaluation/app_details.js';
+import {Invocation} from '../evaluation/eval_case.js';
+import {RubricScore} from '../evaluation/eval_rubrics.js';
+import {EvalStatus, EvaluationResult} from '../evaluation/evaluator.js';
+import {
+  MultiTurnVertexAiEvalFacade,
+  SingleTurnVertexAiEvalFacade,
+  VertexAiEvalFacade,
+  VertexAiEvaluationClient,
+} from '../evaluation/vertex_ai_eval_facade.js';
 import {publicSession} from '../events/internal_metadata.js';
 import {Runner} from '../runner/runner.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {InMemorySessionService} from '../sessions/in_memory_session_service.js';
 import {Session} from '../sessions/session.js';
+import {formatError} from '../utils/error_utils.js';
 import {logger} from '../utils/logger.js';
 import {
+  convertEvaluationItemToInvocation,
   convertSessionToEvalFormat,
+  convertSessionToInvocations,
   createEmptyState,
   EvalCase,
   EvalIntermediateData,
@@ -66,6 +82,49 @@ export const RESPONSE_MATCH_SCORE_KEY = 'response_match_score';
 export const RESPONSE_EVALUATION_SCORE_KEY = 'response_evaluation_score';
 
 /**
+ * Metric key for the Vertex AI safety (harmlessness) score of each response.
+ */
+export const SAFETY_V1_KEY = 'safety_v1';
+
+/**
+ * Metric key for the Vertex AI score of whether the agent achieved the goal of
+ * a multi-turn conversation.
+ */
+export const MULTI_TURN_TASK_SUCCESS_V1_KEY = 'multi_turn_task_success_v1';
+
+/**
+ * Metric key for the Vertex AI score of the path the agent took through a
+ * multi-turn conversation.
+ */
+export const MULTI_TURN_TRAJECTORY_QUALITY_V1_KEY =
+  'multi_turn_trajectory_quality_v1';
+
+/**
+ * Metric key for the Vertex AI score of how well the agent used its tools in a
+ * multi-turn conversation.
+ */
+export const MULTI_TURN_TOOL_USE_QUALITY_V1_KEY =
+  'multi_turn_tool_use_quality_v1';
+
+/**
+ * Single-turn metrics evaluated by the Vertex AI evaluation service. Each key
+ * is also the name of the Vertex AI metric spec.
+ */
+const VERTEX_AI_SINGLE_TURN_METRICS: ReadonlySet<string> = new Set([
+  SAFETY_V1_KEY,
+]);
+
+/**
+ * Multi-turn metrics evaluated by the Vertex AI evaluation service. Each key
+ * is also the name of the Vertex AI metric spec.
+ */
+const VERTEX_AI_MULTI_TURN_METRICS: ReadonlySet<string> = new Set([
+  MULTI_TURN_TASK_SUCCESS_V1_KEY,
+  MULTI_TURN_TRAJECTORY_QUALITY_V1_KEY,
+  MULTI_TURN_TOOL_USE_QUALITY_V1_KEY,
+]);
+
+/**
  * Prefix applied to session IDs generated during evaluation runs.
  */
 export const EVAL_SESSION_ID_PREFIX = '___eval___session___';
@@ -77,15 +136,6 @@ export const DEFAULT_CRITERIA: Record<string, number> = {
   [TOOL_TRAJECTORY_SCORE_KEY]: 1.0,
   [RESPONSE_MATCH_SCORE_KEY]: 0.8,
 };
-
-/**
- * Outcome status of an evaluation metric or case.
- */
-export enum EvalStatus {
-  PASSED = 1,
-  FAILED = 2,
-  NOT_EVALUATED = 3,
-}
 
 /**
  * An evaluation metric definition and its pass threshold.
@@ -101,6 +151,8 @@ export interface EvalMetric {
 export interface EvalMetricResult extends EvalMetric {
   score?: number;
   eval_status: EvalStatus;
+  /** Rubric verdicts and explanations reported by the metric, if any. */
+  rubric_scores?: RubricScore[];
 }
 
 /**
@@ -225,6 +277,12 @@ export interface RunEvalsOptions {
   printDetailedResults?: boolean;
   sessionService?: BaseSessionService;
   artifactService?: BaseArtifactService;
+  /**
+   * The client used for metrics evaluated by Vertex AI. Defaults to a client
+   * created from the GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION
+   * environment variables.
+   */
+  evalClient?: VertexAiEvaluationClient;
 }
 
 /**
@@ -614,9 +672,9 @@ async function generateActualInvocations(
   artifactService?: BaseArtifactService,
 ): Promise<{
   actualInvocations: EvaluationItem[];
+  recordedSession?: Session;
   sessionId: string;
   userId: string;
-  recordedSession?: Session;
 }> {
   if (resetFunc) {
     await resetFunc();
@@ -716,7 +774,116 @@ async function generateActualInvocations(
     });
   }
 
-  return {actualInvocations, sessionId, userId, recordedSession};
+  return {actualInvocations, recordedSession, sessionId, userId};
+}
+
+/**
+ * Creates a Vertex AI evaluation facade for each configured metric that the
+ * Vertex AI evaluation service evaluates.
+ */
+function createVertexAiFacades(
+  evalMetrics: readonly EvalMetric[],
+  client?: VertexAiEvaluationClient,
+): Map<string, VertexAiEvalFacade> {
+  const facades = new Map<string, VertexAiEvalFacade>();
+  for (const metric of evalMetrics) {
+    if (VERTEX_AI_SINGLE_TURN_METRICS.has(metric.metric_name)) {
+      facades.set(
+        metric.metric_name,
+        new SingleTurnVertexAiEvalFacade({
+          metricName: metric.metric_name,
+          threshold: metric.threshold,
+          client,
+        }),
+      );
+    } else if (VERTEX_AI_MULTI_TURN_METRICS.has(metric.metric_name)) {
+      facades.set(
+        metric.metric_name,
+        new MultiTurnVertexAiEvalFacade({
+          metricName: metric.metric_name,
+          threshold: metric.threshold,
+          client,
+        }),
+      );
+    }
+  }
+  return facades;
+}
+
+/**
+ * Converts a recorded eval session into one invocation per expected turn,
+ * padding turns the agent never answered with an empty response.
+ */
+function toActualInvocations({
+  recordedSession,
+  expectedTurns,
+  appDetails,
+}: {
+  recordedSession?: Session;
+  expectedTurns: readonly EvaluationItem[];
+  appDetails: AppDetails;
+}): Invocation[] {
+  const recorded = convertSessionToInvocations(recordedSession, appDetails);
+  return expectedTurns.map(
+    (turn, index) =>
+      recorded[index] ?? {
+        userContent: {role: 'user', parts: [{text: turn.query}]},
+        appDetails,
+      },
+  );
+}
+
+async function evaluateVertexAiMetric({
+  metric,
+  facade,
+  evalCaseId,
+  actualInvocations,
+  expectedInvocations,
+}: {
+  metric: EvalMetric;
+  facade: VertexAiEvalFacade;
+  evalCaseId: string;
+  actualInvocations: Invocation[];
+  expectedInvocations: Invocation[];
+}): Promise<{overall: EvalMetricResult; perInvocation: EvalMetricResult[]}> {
+  let result: EvaluationResult;
+  try {
+    result = await facade.evaluateInvocations(
+      actualInvocations,
+      expectedInvocations,
+    );
+  } catch (error: unknown) {
+    logger.error(
+      `Metric evaluation failed for metric \`${metric.metric_name}\` for eval case id '${evalCaseId}' with following error: ${formatError(error)}`,
+    );
+    result = {
+      overallEvalStatus: EvalStatus.NOT_EVALUATED,
+      perInvocationResults: [],
+    };
+  }
+  const hasPerInvocationResults =
+    result.perInvocationResults.length === actualInvocations.length;
+  return {
+    overall: {
+      metric_name: metric.metric_name,
+      threshold: metric.threshold,
+      score: result.overallScore,
+      eval_status: result.overallEvalStatus,
+      rubric_scores: result.overallRubricScores,
+    },
+    perInvocation: actualInvocations.map((_, index) => {
+      const perInvocation = hasPerInvocationResults
+        ? result.perInvocationResults[index]
+        : undefined;
+      return {
+        metric_name: metric.metric_name,
+        threshold: metric.threshold,
+        score: perInvocation?.score,
+        eval_status: perInvocation?.evalStatus ?? EvalStatus.NOT_EVALUATED,
+        rubric_scores: perInvocation?.rubricScores,
+      };
+    }),
+  };
 }
 
 function evalCaseToEvalEntry(evalCase: EvalCase | EvalEntry): EvalEntry {
@@ -850,6 +1017,7 @@ export async function* runEvals(
   let printDetailedResults: boolean;
   let sessionService: BaseSessionService | undefined;
   let artifactService: BaseArtifactService | undefined;
+  let evalClient: VertexAiEvaluationClient | undefined;
 
   if (
     rootAgentArg === undefined &&
@@ -870,6 +1038,7 @@ export async function* runEvals(
     printDetailedResults = opts.printDetailedResults ?? false;
     sessionService = opts.sessionService;
     artifactService = opts.artifactService;
+    evalClient = opts.evalClient;
   } else {
     evalCasesByEvalSetId = optionsOrMap as Record<
       string,
@@ -891,11 +1060,19 @@ export async function* runEvals(
     artifactService = artifactServiceArg;
   }
 
+  const vertexAiFacades = createVertexAiFacades(evalMetrics, evalClient);
+  // Built only when a Vertex AI metric needs it: resolving the tools of an
+  // agent can reach remote toolsets.
+  const appDetails =
+    vertexAiFacades.size > 0
+      ? await buildAppDetailsFromAgent(rootAgent)
+      : {agentDetails: {}};
+
   for (const [evalSetId, rawEntries] of Object.entries(evalCasesByEvalSetId)) {
     const evalCases = resolveEvalCasesForSet(evalSetId, rawEntries);
     for (const evalCase of evalCases) {
       const evalName = evalCase.name;
-      const {actualInvocations, sessionId, userId, recordedSession} =
+      const {actualInvocations, recordedSession, sessionId, userId} =
         await generateActualInvocations(
           rootAgent,
           evalCase,
@@ -915,11 +1092,22 @@ export async function* runEvals(
       );
 
       for (const metric of evalMetrics) {
-        const {overall, perInvocation} = evaluateSingleMetric(
-          metric,
-          actualInvocations,
-          evalCase.data,
-        );
+        const facade = vertexAiFacades.get(metric.metric_name);
+        const {overall, perInvocation} = facade
+          ? await evaluateVertexAiMetric({
+              metric,
+              facade,
+              evalCaseId: evalName,
+              actualInvocations: toActualInvocations({
+                recordedSession,
+                expectedTurns: evalCase.data,
+                appDetails,
+              }),
+              expectedInvocations: evalCase.data.map((turn) =>
+                convertEvaluationItemToInvocation(turn, appDetails),
+              ),
+            })
+          : evaluateSingleMetric(metric, actualInvocations, evalCase.data);
         overallEvalMetricResults.push(overall);
         evalMetricResultsPairs.push([metric, overall]);
         for (let i = 0; i < perInvocation.length; i++) {

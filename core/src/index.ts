@@ -199,18 +199,21 @@ export {
   convertEvalSetToSchema,
   DEFAULT_CRITERIA,
   EVAL_SESSION_ID_PREFIX,
-  EvalStatus,
   getEvaluationCriteriaOrDefault,
   getRootAgent,
   loadEvalSetFromFile,
   LocalEvalSetResultsManager,
   LocalEvalSetsManager,
   MISSING_EVAL_DEPENDENCIES_MESSAGE,
+  MULTI_TURN_TASK_SUCCESS_V1_KEY,
+  MULTI_TURN_TOOL_USE_QUALITY_V1_KEY,
+  MULTI_TURN_TRAJECTORY_QUALITY_V1_KEY,
   normalizeEvalCase,
   parseAndGetEvalsToRun,
   RESPONSE_EVALUATION_SCORE_KEY,
   RESPONSE_MATCH_SCORE_KEY,
   runEvals,
+  SAFETY_V1_KEY,
   TOOL_TRAJECTORY_SCORE_KEY,
   tryGetResetFunc,
 } from './cli/cli_eval.js';
@@ -246,4 +249,13 @@ export {
 } from './cli/utils/logs.js';
 export type {LogToTmpFolderOptions} from './cli/utils/logs.js';
 export {validatePathSegment} from './cli/utils/path_validation.js';
+export {
+  MultiTurnVertexAiEvalFacade,
+  SingleTurnVertexAiEvalFacade,
+  VertexAiEvalFacade,
+} from './evaluation/vertex_ai_eval_facade.js';
+export type {
+  VertexAiEvalFacadeOptions,
+  VertexAiEvaluationClient,
+} from './evaluation/vertex_ai_eval_facade.js';
 export * from './tools/mcp/index.js';

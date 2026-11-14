@@ -36,7 +36,7 @@ Credentials for tools that call protected APIs: how a credential is described, h
 
 Environment loading, session-to-eval conversion, instruction placeholder initialization, log routing, runner cleanup, and batch evaluation utilities backing the ADK CLI and development server.
 
-- [CLI and Evaluation Utilities](cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalInvocations`, `convertSessionToEvalFormat`, `setupAdkLogger`, `logToTmpFolder`, `closeRunners`, `runEvals`, `LocalEvalSetsManager`, `LocalEvalSetResultsManager`, `EvalSetsManager`, `EvalSetResultsManager`, `GcsEvalSetsManager`, `GcsEvalSetResultsManager`, `createGcsEvalManagersFromUri`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun`.
+- [CLI and Evaluation Utilities](cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalInvocations`, `convertSessionToEvalFormat`, `setupAdkLogger`, `logToTmpFolder`, `closeRunners`, `runEvals`, `LocalEvalSetsManager`, `LocalEvalSetResultsManager`, `EvalSetsManager`, `EvalSetResultsManager`, `GcsEvalSetsManager`, `GcsEvalSetResultsManager`, `createGcsEvalManagersFromUri`, `getEvaluationCriteriaOrDefault`, `parseAndGetEvalsToRun`, and the Vertex AI evaluation facades (`SingleTurnVertexAiEvalFacade`, `MultiTurnVertexAiEvalFacade`).
 
 ### Code executors
 
