@@ -53,7 +53,7 @@ export class SearchSkillsTool extends BaseTool {
     try {
       const results = await this.toolset.registry!.searchSkills(query);
       return results.filter((r) => {
-        if (this.toolset.skills[r.name]) {
+        if (Object.hasOwn(this.toolset.skills, r.name)) {
           logger.warn(
             `Skill naming conflict: skill '${r.name}' already exists locally. Registry skill is filtered.`,
           );

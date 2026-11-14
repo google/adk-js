@@ -286,6 +286,24 @@ Instruction body`;
       expect(res[0].name).toBe('remote-only');
     });
 
+    it('runAsync keeps registry skills named like Object.prototype members', async () => {
+      const names = ['constructor', 'toString', '__proto__', 'hasOwnProperty'];
+      const mockRegistry = {
+        getSkill: vi.fn(),
+        searchSkills: vi
+          .fn()
+          .mockResolvedValue(names.map((name) => ({name, description: 'd'}))),
+      };
+      const toolset = new SkillToolset([], {registry: mockRegistry});
+      const tool = new SearchSkillsTool(toolset);
+      const res = (await tool.runAsync({
+        args: {query: 'skills'},
+        toolContext: createMockContext(),
+      })) as Array<Record<string, unknown>>;
+
+      expect(res.map((r) => r.name)).toEqual(names);
+    });
+
     it('runAsync returns error on registry exception', async () => {
       const mockRegistry = {
         getSkill: vi.fn(),
@@ -355,6 +373,20 @@ Instruction body`;
 
       await toolset.close();
     });
+
+    it.each(['constructor', 'toString', '__proto__', 'hasOwnProperty'])(
+      'getOrFetchSkill asks the registry for %s',
+      async (name) => {
+        const mockRegistry = {
+          getSkill: vi.fn().mockResolvedValue(undefined),
+          searchSkills: vi.fn(),
+        };
+        const toolset = new SkillToolset([], {registry: mockRegistry});
+
+        expect(await toolset.getOrFetchSkill(name)).toBeUndefined();
+        expect(mockRegistry.getSkill).toHaveBeenCalledWith(name);
+      },
+    );
 
     it('getOrFetchSkill rethrows registry fetch errors', async () => {
       const mockRegistry = {

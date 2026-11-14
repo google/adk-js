@@ -159,6 +159,51 @@ describe('skill_toolset', () => {
       expect(tools.map((t) => t.name)).toContain('dummy_tool');
     });
 
+    it.each(['constructor', 'toString', '__proto__', 'hasOwnProperty'])(
+      'getSkill returns undefined for %s',
+      (name) => {
+        expect(new SkillToolset([]).getSkill(name)).toBeUndefined();
+      },
+    );
+
+    it('resolves additional tools named like Object.prototype members', async () => {
+      class DummyTool extends BaseTool {
+        constructor(name: string) {
+          super({name, description: 'dummy'});
+        }
+        _getDeclaration() {
+          return {name: this.name, description: 'dummy'};
+        }
+        async runAsync() {
+          return 'dummy';
+        }
+      }
+
+      const skillWithTools: Skill = {
+        frontmatter: {
+          name: 'skill-with-tools',
+          description: 'desc',
+          metadata: {
+            adk_additional_tools: ['constructor', 'toString', '__proto__'],
+          },
+        },
+        instructions: 'instructions',
+      };
+
+      const toolset = new SkillToolset([skillWithTools], {
+        additionalTools: [new DummyTool('constructor')],
+      });
+
+      const context = {
+        agentName: 'test-agent',
+        state: {get: vi.fn().mockReturnValue(['skill-with-tools'])},
+      } as unknown as ReadonlyContext;
+
+      const tools = await toolset.getTools(context);
+      expect(tools.slice(-1).map((t) => t.name)).toEqual(['constructor']);
+      expect(tools.every((t) => t instanceof BaseTool)).toBe(true);
+    });
+
     it('throws error when duplicate BaseTool names are provided in additionalTools', async () => {
       class DummyTool extends BaseTool {
         constructor(name: string) {
