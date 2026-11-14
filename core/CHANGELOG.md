@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.6.0](https://github.com/google/adk-js/compare/adk-v2.5.0...adk-v2.6.0) (2026-11-14)
+
+
+### Features
+
+* **a2a:** add a request timeout and a card resolution error to RemoteA2AAgent ([#1323](https://github.com/google/adk-js/issues/1323)) ([4776b47](https://github.com/google/adk-js/commit/4776b4728744b6d70a70c8bef5565ce3b3074e3c))
+* **a2a:** add auth-required task state, runner caching and request logs ([#1320](https://github.com/google/adk-js/issues/1320)) ([1ce9cfa](https://github.com/google/adk-js/commit/1ce9cfa11dff999a96002ce6968be81d18e85b8f))
+* **auth:** add CredentialManager and port auth credential changes ([#1299](https://github.com/google/adk-js/issues/1299)) ([0cc97a7](https://github.com/google/adk-js/commit/0cc97a781d39c15bff43e600d524c83877f91811))
+* **cli:** store eval sets and results in GCS with --eval_storage_uri ([#1314](https://github.com/google/adk-js/issues/1314)) ([077dbfb](https://github.com/google/adk-js/commit/077dbfbdb5aacd02b76f527b9fa1a4d4c20a9152))
+* **tools:** add authentication to MCP tool calls ([#1307](https://github.com/google/adk-js/issues/1307)) ([6f80d23](https://github.com/google/adk-js/commit/6f80d23ad14c83e4d8829835388e3e93a81a5e4e))
+* **tools:** add BaseAuthenticatedTool and AuthenticatedFunctionTool ([#1306](https://github.com/google/adk-js/issues/1306)) ([dc9bf84](https://github.com/google/adk-js/commit/dc9bf847beb03255ff16cd439462465526a5bd86))
+* **tools:** support automatic OAuth2 token refresh in ToolAuthHandler ([#1305](https://github.com/google/adk-js/issues/1305)) ([4e2f0b2](https://github.com/google/adk-js/commit/4e2f0b25fd7545285dcc5089295a67b4713258b1))
+
+
+### Bug Fixes
+
+* **agents:** give each streamed model event its own timestamp ([#1319](https://github.com/google/adk-js/issues/1319)) ([70612f2](https://github.com/google/adk-js/commit/70612f2f0c56988ac8c35cfecd5226a486e75cfe))
+* **runner:** route a user function response to the calling agent without resumability ([#1312](https://github.com/google/adk-js/issues/1312)) ([e75433e](https://github.com/google/adk-js/commit/e75433e6626f8e1e802d1aec2a770a637cdceb7c))
+
 ## [2.5.0](https://github.com/google/adk-js/compare/adk-v2.4.0...adk-v2.5.0) (2026-11-12)
 
 
