@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.6.0](https://github.com/google/adk-js/compare/devtools-v2.5.0...devtools-v2.6.0) (2026-11-14)
+
+
+### Features
+
+* **cli:** reload only the changed agent with --reload_agents ([#1322](https://github.com/google/adk-js/issues/1322)) ([a662b30](https://github.com/google/adk-js/commit/a662b30976d68625a7348f3139bb41806aad7818))
+* **cli:** store eval sets and results in GCS with --eval_storage_uri ([#1314](https://github.com/google/adk-js/issues/1314)) ([077dbfb](https://github.com/google/adk-js/commit/077dbfbdb5aacd02b76f527b9fa1a4d4c20a9152))
+* **dev:** support session event import, agentengine session URIs, and default credential service ([#1304](https://github.com/google/adk-js/issues/1304)) ([b001b63](https://github.com/google/adk-js/commit/b001b63ea93ebb20d30df8efbecf4b613221b2ed))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^2.5.0 to ^2.6.0
+
 ## [2.5.0](https://github.com/google/adk-js/compare/devtools-v2.4.0...devtools-v2.5.0) (2026-11-12)
 
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.6.0](https://github.com/google/adk-js/compare/integrations-v2.5.0...integrations-v2.6.0) (2026-11-14)
+
+
+### Features
+
+* **integrations:** add WriteMode.PROTECTED to BigQuery execute_sql ([#1318](https://github.com/google/adk-js/issues/1318)) ([5389c26](https://github.com/google/adk-js/commit/5389c26dfdc8bda1f2866410fa2cc9217a041e03))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^2.5.0 to ^2.6.0
+
 ## [2.5.0](https://github.com/google/adk-js/compare/integrations-v2.4.0...integrations-v2.5.0) (2026-11-12)
 
 
