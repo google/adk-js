@@ -20,6 +20,31 @@ import type {NodeContext} from '../workflow/node_context.js';
 import {BasePlugin, ContextCompactionTrigger} from './base_plugin.js';
 
 /**
+ * The name of a {@link BasePlugin} callback method that {@link PluginManager}
+ * dispatches to each registered plugin.
+ */
+export type PluginCallbackName =
+  | 'onUserMessageCallback'
+  | 'beforeRunCallback'
+  | 'afterRunCallback'
+  | 'onEventCallback'
+  | 'beforeAgentCallback'
+  | 'afterAgentCallback'
+  | 'beforeToolCallback'
+  | 'afterToolCallback'
+  | 'beforeModelCallback'
+  | 'afterModelCallback'
+  | 'onToolErrorCallback'
+  | 'onModelErrorCallback'
+  | 'onAgentErrorCallback'
+  | 'onRunErrorCallback'
+  | 'beforeNodeCallback'
+  | 'afterNodeCallback'
+  | 'beforeToolSelection'
+  | 'beforeContextCompaction'
+  | 'afterContextCompaction';
+
+/**
  * Manages the registration and execution of plugins.
  *
  * The PluginManager is an internal class that orchestrates the invocation of
@@ -102,7 +127,7 @@ export class PluginManager {
   private async runCallbacks(
     plugins: Set<BasePlugin>,
     callback: (plugin: BasePlugin) => Promise<unknown>,
-    callbackName: string,
+    callbackName: PluginCallbackName,
   ): Promise<unknown> {
     for (const plugin of plugins) {
       try {
@@ -125,7 +150,7 @@ export class PluginManager {
   /** Notifies every plugin without allowing one failure to hide another. */
   private async runNotificationCallbacks(
     callback: (plugin: BasePlugin) => Promise<void>,
-    callbackName: string,
+    callbackName: PluginCallbackName,
   ): Promise<void> {
     for (const plugin of this.plugins) {
       try {
