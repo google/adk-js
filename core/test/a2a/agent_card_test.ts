@@ -29,6 +29,7 @@ import {
   BuiltInCodeExecutor,
   FunctionTool,
   getA2AAgentCard,
+  isAgentCardResolutionError,
   LlmAgent,
   LoopAgent,
   ParallelAgent,
@@ -1023,6 +1024,183 @@ describe('Agent Card', () => {
         resolveAgentCard('./no-such-agent-card.json'),
       ).rejects.toThrow(
         /^Failed to read agent card from file \.\/no-such-agent-card\.json: ENOENT/,
+      );
+    });
+
+    describe('failure of a URL or file source', () => {
+      /** Returns the value `resolveAgentCard(source)` rejects with. */
+      async function rejectionOf(source: string): Promise<unknown> {
+        try {
+          await resolveAgentCard(source);
+        } catch (e: unknown) {
+          return e;
+        }
+        return expect.fail(`Resolving ${source} did not reject.`);
+      }
+
+      it('wraps a refused link-local address and keeps the cause', async () => {
+        const error = await rejectionOf('http://169.254.169.254/');
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.name).toBe('AgentCardResolutionError');
+        expect(error.message).toBe(
+          'Refusing to fetch agent card from a link-local address: 169.254.169.254',
+        );
+        expect(error.cause).toEqual(new Error(error.message));
+        expect(isAgentCardResolutionError(error.cause)).toBe(false);
+      });
+
+      it('wraps a failed card fetch', async () => {
+        const failure = new TypeError('fetch failed');
+        fetchMock.mockRejectedValue(failure);
+
+        const error = await rejectionOf('https://10.0.0.5/');
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.message).toBe('fetch failed');
+        expect(error.cause).toBe(failure);
+      });
+
+      it('wraps a refused RPC url of a fetched card', async () => {
+        fetchMock.mockResolvedValue(cardResponse());
+
+        const error = await rejectionOf('https://10.0.0.5/');
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.message).toMatch(/must have the same origin/);
+      });
+
+      it('wraps an unsupported URL scheme', async () => {
+        const error = await rejectionOf('ftp://cards.example.com/card.json');
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.message).toMatch(/^Unsupported agent card URL scheme/);
+      });
+
+      it('wraps a missing card file and keeps the file system error', async () => {
+        const error = await rejectionOf(join(tempDir, 'missing-card.json'));
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.cause).toMatchObject({
+          message: error.message,
+          cause: {code: 'ENOENT'},
+        });
+      });
+
+      it('wraps a card file that is not valid JSON', async () => {
+        await writeFile(cardPath, '{"name": ', 'utf-8');
+
+        const error = await rejectionOf(cardPath);
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.message).toMatch(
+          /^Failed to read agent card from file .*card\.json: /,
+        );
+        expect(error.cause).toMatchObject({cause: {name: 'SyntaxError'}});
+      });
+    });
+
+    describe('trimming and card URL validation', () => {
+      async function rejectionOfCard(
+        source: AgentCard | string,
+      ): Promise<unknown> {
+        try {
+          await resolveAgentCard(source);
+        } catch (e: unknown) {
+          return e;
+        }
+        return expect.fail('Resolving the agent card did not reject.');
+      }
+
+      it('trims padded URL and file path sources before resolving', async () => {
+        fetchMock.mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              ...STUB_CARD,
+              url: 'https://10.0.0.5/a2a/peer_agent/',
+            }),
+            {headers: {'content-type': 'application/json'}},
+          ),
+        );
+
+        const fromUrl = await resolveAgentCard('  https://10.0.0.5/  ');
+        const fromFile = await resolveAgentCard(`  ${cardPath}  `);
+
+        expect(fromUrl.name).toBe('peer_agent');
+        expect(fromFile.name).toBe('peer_agent');
+      });
+
+      it.each(['', '   '])(
+        'rejects an empty or whitespace-only source string %j',
+        async (source) => {
+          const error = await rejectionOfCard(source);
+
+          expect(isAgentCardResolutionError(error)).toBe(true);
+        },
+      );
+
+      it.each([
+        {name: 'missing url', card: {...STUB_CARD, url: undefined}},
+        {name: 'empty url', card: {...STUB_CARD, url: ''}},
+        {name: 'whitespace url', card: {...STUB_CARD, url: '   '}},
+        {name: 'invalid url', card: {...STUB_CARD, url: 'invalid-url'}},
+        {
+          name: 'scheme without host',
+          card: {...STUB_CARD, url: 'mailto:agent@example.com'},
+        },
+      ])('rejects a direct card object with $name', async ({card}) => {
+        const error = await rejectionOfCard(card as unknown as AgentCard);
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.message).toMatch(/Invalid RPC URL/);
+      });
+
+      it.each([
+        {name: 'missing url', payload: {...STUB_CARD, url: undefined}},
+        {name: 'empty url', payload: {...STUB_CARD, url: ''}},
+        {name: 'invalid url', payload: {...STUB_CARD, url: 'invalid-url'}},
+        {
+          name: 'scheme without host',
+          payload: {...STUB_CARD, url: 'mailto:agent@example.com'},
+        },
+      ])('rejects a card file with $name', async ({payload}) => {
+        await writeFile(cardPath, JSON.stringify(payload), 'utf-8');
+
+        const error = await rejectionOfCard(cardPath);
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.message).toMatch(/Invalid RPC URL/);
+      });
+
+      it.each([null, []])(
+        'rejects a non-object card payload %j from object and file sources',
+        async (payload) => {
+          await writeFile(cardPath, JSON.stringify(payload), 'utf-8');
+
+          const directError = await rejectionOfCard(
+            payload as unknown as AgentCard,
+          );
+          const fileError = await rejectionOfCard(cardPath);
+
+          expect(isAgentCardResolutionError(directError)).toBe(true);
+          expect(isAgentCardResolutionError(fileError)).toBe(true);
+        },
       );
     });
   });
