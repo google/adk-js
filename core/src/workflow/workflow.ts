@@ -97,6 +97,17 @@ class LoopState {
   readonly nodeOutputs = new Map<string, unknown>();
   readonly nodeBranches = new Map<string, string>();
   readonly triggerBuffer = new Map<string, Trigger[]>();
+  /**
+   * Predecessor arrivals that each wait-for-all node has not consumed yet,
+   * keyed by that node's name. Cleared when the node fires, so in a loop it
+   * waits for every predecessor's next run instead of counting runs left over
+   * from an earlier iteration. The exception, for a node on a cycle, is a
+   * predecessor the node cannot reach by following edges, such as a setup step
+   * before the loop: the loop does not run it again, so its arrival stays.
+   */
+  readonly joinArrivals = new Map<string, Set<string>>();
+  /** Nodes reachable from each node, memoized by `Workflow.descendants`. */
+  readonly descendants = new Map<string, ReadonlySet<string>>();
   readonly pending = new Map<string, Promise<CompletedTask>>();
   readonly interruptIds = new Set<string>();
   /** Per-node state reconstructed from prior session events (resume). */
@@ -548,8 +559,12 @@ export class Workflow extends BaseNode {
     }
 
     nodeState.status = NodeStatus.COMPLETED;
+    // Keep only the latest run's output, so a rerun that produces none does
+    // not leave an earlier iteration's output behind.
     if (childCtx.output !== undefined) {
       loop.nodeOutputs.set(nodeName, childCtx.output);
+    } else {
+      loop.nodeOutputs.delete(nodeName);
     }
     loop.nodeBranches.set(nodeName, childCtx.branch ?? '');
 
@@ -576,29 +591,13 @@ export class Workflow extends BaseNode {
       const targetNode = this.getStaticNode(targetName);
 
       if (targetNode.requiresAllPredecessors) {
-        const predecessors = new Set(
-          this.graph!.edges.filter((e) => e.toNode.name === targetName).map(
-            (e) => e.fromNode.name,
-          ),
-        );
-        const allCompleted = [...predecessors].every(
-          (p) => loop.nodes.get(p)?.status === NodeStatus.COMPLETED,
-        );
-        if (allCompleted) {
-          const outputs: Record<string, unknown> = {};
-          for (const p of predecessors) {
-            outputs[p] = loop.nodeOutputs.get(p);
-          }
-          const branches = [...predecessors].map(
-            (p) => loop.nodeBranches.get(p) ?? '',
-          );
-          const commonBranch = commonPrefixOf(branches);
-          this.pushTrigger(loop, targetName, {
-            input: outputs,
-            useSubBranch: false,
-            branch: commonBranch || undefined,
-          });
+        let arrivals = loop.joinArrivals.get(targetName);
+        if (!arrivals) {
+          arrivals = new Set();
+          loop.joinArrivals.set(targetName, arrivals);
         }
+        arrivals.add(nodeName);
+        this.bufferBarrierTrigger(loop, targetName);
       } else {
         this.pushTrigger(loop, targetName, {
           input: output,
@@ -607,6 +606,95 @@ export class Workflow extends BaseNode {
         });
       }
     }
+  }
+
+  /**
+   * Buffers a trigger for the wait-for-all node `targetName` once every
+   * predecessor has arrived and completed. A no-op while any is outstanding.
+   *
+   * Each firing consumes the arrivals it used, except that in a loop the
+   * arrival of a predecessor `targetName` cannot reach is kept, because the
+   * loop does not run that predecessor again.
+   */
+  private bufferBarrierTrigger(loop: LoopState, targetName: string): void {
+    const predecessors = new Set(
+      this.graph!.edges.filter((e) => e.toNode.name === targetName).map(
+        (e) => e.fromNode.name,
+      ),
+    );
+    const arrivals = loop.joinArrivals.get(targetName);
+    // An arrival alone is not enough: a predecessor can be running again
+    // after it arrived, and the join waits for that run's output.
+    const ready = [...predecessors].every(
+      (p) =>
+        arrivals?.has(p) && loop.nodes.get(p)?.status === NodeStatus.COMPLETED,
+    );
+    if (!ready) {
+      return;
+    }
+    const reachable = this.descendants(loop, targetName);
+    if (reachable.has(targetName)) {
+      // The join is on a cycle. A predecessor it cannot reach, such as a setup
+      // step before the loop, is not run again by the loop, so consuming its
+      // arrival would stop the join after the first iteration.
+      for (const p of predecessors) {
+        if (reachable.has(p)) {
+          arrivals!.delete(p);
+        }
+      }
+    } else {
+      // Off a cycle, no predecessor is reachable, so the rule above would keep
+      // every arrival and fire the join again whenever a predecessor reruns.
+      loop.joinArrivals.delete(targetName);
+    }
+
+    const outputs: Record<string, unknown> = {};
+    for (const p of predecessors) {
+      outputs[p] = loop.nodeOutputs.get(p);
+    }
+    const branches = [...predecessors].map(
+      (p) => loop.nodeBranches.get(p) ?? '',
+    );
+    const commonBranch = commonPrefixOf(branches);
+    this.pushTrigger(loop, targetName, {
+      input: outputs,
+      useSubBranch: false,
+      branch: commonBranch || undefined,
+    });
+  }
+
+  /**
+   * Returns the nodes reachable from `nodeName` through one or more edges.
+   *
+   * Every edge counts, including routes the run never takes. The graph does
+   * not change during a run, so each result is memoized in `loop`.
+   */
+  private descendants(loop: LoopState, nodeName: string): ReadonlySet<string> {
+    let reached = loop.descendants.get(nodeName);
+    if (!reached) {
+      const successors = new Map<string, string[]>();
+      for (const edge of this.graph!.edges) {
+        const next = successors.get(edge.fromNode.name);
+        if (next) {
+          next.push(edge.toNode.name);
+        } else {
+          successors.set(edge.fromNode.name, [edge.toNode.name]);
+        }
+      }
+      const found = new Set<string>();
+      const frontier = [nodeName];
+      while (frontier.length > 0) {
+        for (const name of successors.get(frontier.pop()!) ?? []) {
+          if (!found.has(name)) {
+            found.add(name);
+            frontier.push(name);
+          }
+        }
+      }
+      reached = found;
+      loop.descendants.set(nodeName, reached);
+    }
+    return reached;
   }
 
   private collectRemainingInterrupts(loop: LoopState): void {
