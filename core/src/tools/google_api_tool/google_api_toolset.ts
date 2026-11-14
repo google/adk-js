@@ -6,6 +6,7 @@
 
 import {OpenAPIV3} from 'openapi-types';
 import {ReadonlyContext} from '../../agents/readonly_context.js';
+import {ServiceAccount} from '../../auth/auth_credential.js';
 import {OpenIdConnectWithConfig} from '../../auth/auth_schemes.js';
 import {experimental} from '../../utils/experimental.js';
 import {BaseToolset, ToolPredicate} from '../base_toolset.js';
@@ -35,6 +36,7 @@ export interface GoogleApiToolsetOptions {
   clientSecret?: string;
   toolFilter?: ToolPredicate | string[];
   scopes?: string[];
+  serviceAccount?: ServiceAccount;
 }
 
 /**
@@ -52,7 +54,8 @@ export function isGoogleApiToolset(obj: unknown): obj is GoogleApiToolset {
 
 /**
  * Toolset that wraps Google Discovery API operations as {@link GoogleApiTool}
- * instances configured for Google OpenID Connect authentication.
+ * instances configured for Google OpenID Connect or service account
+ * authentication.
  */
 @experimental
 export class GoogleApiToolset extends BaseToolset {
@@ -63,6 +66,9 @@ export class GoogleApiToolset extends BaseToolset {
   readonly scopes?: string[];
   private clientId?: string;
   private clientSecret?: string;
+  private serviceAccount?: ServiceAccount;
+  private oidcAuthScheme?: OpenIdConnectWithConfig;
+  private restTools: RestApiTool[] = [];
   private openapiToolset?: OpenAPIToolset;
   private loadingPromise?: Promise<void>;
   private tools: GoogleApiTool[] = [];
@@ -76,9 +82,13 @@ export class GoogleApiToolset extends BaseToolset {
     this.clientId = options.clientId;
     this.clientSecret = options.clientSecret;
     this.scopes = options.scopes ? [...options.scopes] : undefined;
+    this.serviceAccount = options.serviceAccount;
   }
 
-  private async loadToolsetWithOidcAuth(): Promise<OpenAPIToolset> {
+  private async loadToolsetWithOidcAuth(): Promise<{
+    openapiToolset: OpenAPIToolset;
+    oidcAuthScheme: OpenIdConnectWithConfig;
+  }> {
     if (!this.apiName || !this.apiVersion) {
       throw new Error(
         'Both apiName and apiVersion are required to load a GoogleApiToolset.',
@@ -114,11 +124,14 @@ export class GoogleApiToolset extends BaseToolset {
       scopes,
     };
 
-    return new OpenAPIToolset({
-      specDict,
-      specType: 'yaml',
-      authScheme,
-    });
+    return {
+      openapiToolset: new OpenAPIToolset({
+        specDict,
+        specType: 'yaml',
+        authScheme,
+      }),
+      oidcAuthScheme: authScheme,
+    };
   }
 
   private async ensureToolsLoaded(): Promise<void> {
@@ -127,13 +140,17 @@ export class GoogleApiToolset extends BaseToolset {
     }
     this.loadingPromise ??= (async () => {
       try {
-        const openapiToolset = await this.loadToolsetWithOidcAuth();
+        const {openapiToolset, oidcAuthScheme} =
+          await this.loadToolsetWithOidcAuth();
         const restTools = (await openapiToolset.getTools()) as RestApiTool[];
+        this.oidcAuthScheme = oidcAuthScheme;
+        this.restTools = restTools;
         this.tools = restTools.map(
           (tool) =>
             new GoogleApiTool(tool, {
               clientId: this.clientId,
               clientSecret: this.clientSecret,
+              serviceAccount: this.serviceAccount,
             }),
         );
         this.openapiToolset = openapiToolset;
@@ -163,14 +180,36 @@ export class GoogleApiToolset extends BaseToolset {
   }
 
   /**
-   * Configures OAuth2 client ID and secret across all tools in the toolset.
+   * Configures OAuth2 client ID and secret across all tools in the toolset,
+   * clearing any previously configured service account credentials and restoring
+   * the OpenID Connect auth scheme on loaded tools.
    */
   @experimental
   configureAuth(clientId?: string, clientSecret?: string): void {
     this.clientId = clientId;
     this.clientSecret = clientSecret;
+    this.serviceAccount = undefined;
+    if (this.oidcAuthScheme) {
+      for (const restTool of this.restTools) {
+        restTool.configureAuthScheme(this.oidcAuthScheme);
+      }
+    }
     for (const tool of this.tools) {
       tool.configureAuth(clientId, clientSecret);
+    }
+  }
+
+  /**
+   * Configures Google service account credentials across all tools in the
+   * toolset and clears any previously configured OAuth2 client credentials.
+   */
+  @experimental
+  configureSaAuth(serviceAccount: ServiceAccount): void {
+    this.serviceAccount = serviceAccount;
+    this.clientId = undefined;
+    this.clientSecret = undefined;
+    for (const tool of this.tools) {
+      tool.configureSaAuth(serviceAccount);
     }
   }
 
