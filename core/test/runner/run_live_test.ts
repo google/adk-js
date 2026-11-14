@@ -1739,6 +1739,232 @@ describe('Runner.runLive', () => {
       ]),
     );
   });
+
+  it('executes parallel function calls from a single model response in live mode', async () => {
+    const weatherTool = new FunctionTool({
+      name: 'get_weather',
+      description: 'returns weather for a location',
+      parameters: z.object({location: z.string()}),
+      execute: async ({location}) => {
+        const temperatures: Record<string, number> = {
+          'San Francisco': 22,
+          'New York': 15,
+        };
+        return {temperature: temperatures[location] ?? 20, location};
+      },
+    });
+    const llm = new FakeLiveLlm([
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-sf',
+                name: 'get_weather',
+                args: {location: 'San Francisco'},
+              },
+            },
+            {
+              functionCall: {
+                id: 'fc-nyc',
+                name: 'get_weather',
+                args: {location: 'New York'},
+              },
+            },
+          ],
+        },
+        turnComplete: false,
+      },
+      {turnComplete: true},
+    ]);
+    const agent = new LlmAgent({
+      name: 'agent',
+      model: llm,
+      tools: [weatherTool],
+    });
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+    });
+
+    const queue = new LiveRequestQueue();
+    queue.close();
+    const events: Event[] = [];
+    for await (const event of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+    })) {
+      events.push(event);
+    }
+
+    const calls = events.flatMap((e) => getFunctionCalls(e));
+    expect(calls).toEqual([
+      {
+        id: 'fc-sf',
+        name: 'get_weather',
+        args: {location: 'San Francisco'},
+      },
+      {
+        id: 'fc-nyc',
+        name: 'get_weather',
+        args: {location: 'New York'},
+      },
+    ]);
+    const responses = events.flatMap((e) => getFunctionResponses(e));
+    expect(responses).toEqual([
+      {
+        id: 'fc-sf',
+        name: 'get_weather',
+        response: {temperature: 22, location: 'San Francisco'},
+      },
+      {
+        id: 'fc-nyc',
+        name: 'get_weather',
+        response: {temperature: 15, location: 'New York'},
+      },
+    ]);
+    expect(llm.connection?.contentCalls).toHaveLength(1);
+    expect(llm.connection?.contentCalls[0]?.parts).toHaveLength(2);
+  });
+
+  it('stops an active streaming tool when stop_streaming is called in live mode', async () => {
+    const monitorStock = new FunctionTool({
+      name: 'monitor_stock_price',
+      description: 'streams stock updates until cancelled',
+      parameters: z.object({ticker: z.string()}),
+      execute: async function* ({ticker}) {
+        yield `Started monitoring ${ticker}`;
+        while (true) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          yield `Stock ${ticker} price update`;
+        }
+      },
+    });
+    const stopStreaming = new FunctionTool({
+      name: 'stop_streaming',
+      description: 'stops an active streaming tool',
+      parameters: z.object({functionName: z.string()}),
+      execute: async ({functionName}) => ({
+        stopped: functionName,
+      }),
+    });
+
+    let capturedContext: InvocationContext | undefined;
+    const contextPlugin = new (class extends BasePlugin {
+      constructor() {
+        super('capture_stop_streaming_context');
+      }
+      override async beforeRunCallback({
+        invocationContext,
+      }: {
+        invocationContext: InvocationContext;
+      }) {
+        capturedContext = invocationContext;
+        return undefined;
+      }
+    })();
+
+    const llm = new FakeLiveLlm([
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-start-stream',
+                name: 'monitor_stock_price',
+                args: {ticker: 'TSLA'},
+              },
+            },
+          ],
+        },
+        turnComplete: false,
+      },
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-stop-stream',
+                name: 'stop_streaming',
+                args: {functionName: 'monitor_stock_price'},
+              },
+            },
+          ],
+        },
+        turnComplete: false,
+      },
+      {turnComplete: true},
+    ]);
+    const agent = new LlmAgent({
+      name: 'agent',
+      model: llm,
+      tools: [monitorStock, stopStreaming],
+    });
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+      plugins: [contextPlugin],
+    });
+
+    const queue = new LiveRequestQueue();
+    const events: Event[] = [];
+    try {
+      for await (const event of runner.runLive({
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+        liveRequestQueue: queue,
+      })) {
+        events.push(event);
+        if (event.turnComplete) {
+          queue.close();
+        }
+      }
+    } finally {
+      queue.close();
+      const activeTools = Object.values(
+        capturedContext?.activeStreamingTools ?? {},
+      );
+      for (const entry of activeTools) {
+        entry.task?.cancel();
+        entry.stream?.close();
+      }
+      await Promise.allSettled(activeTools.map((entry) => entry.task?.promise));
+    }
+
+    const calledNames = events.flatMap((e) =>
+      getFunctionCalls(e).map((fc) => fc.name),
+    );
+    expect(calledNames).toEqual(['monitor_stock_price', 'stop_streaming']);
+    const responses = events.flatMap((e) => getFunctionResponses(e));
+    expect(responses).toEqual([
+      {
+        id: 'fc-start-stream',
+        name: 'monitor_stock_price',
+        response: {
+          status:
+            'The function is running asynchronously and the results are pending.',
+        },
+      },
+      {
+        id: 'fc-stop-stream',
+        name: 'stop_streaming',
+        response: {
+          status: 'Successfully stopped streaming function monitor_stock_price',
+        },
+      },
+    ]);
+    expect(
+      capturedContext?.activeStreamingTools?.['monitor_stock_price']?.task,
+    ).toBeUndefined();
+  });
 });
 
 /**
