@@ -3267,6 +3267,116 @@ describe('LlmAgent model callbacks', () => {
     });
   });
 
+  describe('afterModelCallback replacements while streaming', () => {
+    // A replacement that leaves partial, turnComplete or usageMetadata unset
+    // keeps them from the response it replaces, as in adk-python.
+    const usage = {
+      promptTokenCount: 10,
+      candidatesTokenCount: 2,
+      totalTokenCount: 12,
+    };
+    const text = (t: string) => ({role: 'model', parts: [{text: t}]});
+    const upperCase = (response: LlmResponse): LlmResponse => ({
+      content: text(response.content!.parts![0].text!.toUpperCase()),
+    });
+
+    class UpperCasePlugin extends BasePlugin {
+      override async afterModelCallback({
+        llmResponse,
+      }: {
+        callbackContext: Context;
+        llmResponse: LlmResponse;
+      }): Promise<LlmResponse | undefined> {
+        return upperCase(llmResponse);
+      }
+    }
+
+    async function runStreamed(
+      afterModelCallback?: SingleAfterModelCallback,
+      plugins?: BasePlugin[],
+    ) {
+      const model = new CountingMockLlm([
+        [
+          {content: text('Hello '), partial: true},
+          {content: text('world'), partial: true},
+          {
+            content: text('Hello world'),
+            usageMetadata: usage,
+            turnComplete: true,
+          },
+        ],
+      ]);
+      const sessionService = new InMemorySessionService();
+      const runner = new Runner({
+        appName: 'test_app',
+        agent: new LlmAgent({name: 'test_agent', model, afterModelCallback}),
+        sessionService,
+        plugins,
+      });
+      const session = await sessionService.createSession({
+        appName: 'test_app',
+        userId: 'user',
+      });
+      const yielded: Array<[boolean, string | undefined]> = [];
+      for await (const event of runner.runAsync({
+        userId: 'user',
+        sessionId: session.id,
+        newMessage: {role: 'user', parts: [{text: 'hi'}]},
+        runConfig: createRunConfig({streamingMode: StreamingMode.SSE}),
+      })) {
+        yielded.push([!!event.partial, event.content?.parts?.[0]?.text]);
+      }
+      const stored = await sessionService.getSession({
+        appName: 'test_app',
+        userId: 'user',
+        sessionId: session.id,
+      });
+      const saved = stored!.events.filter((e) => e.author === 'test_agent');
+      return {yielded, saved};
+    }
+
+    it('keeps partial, turnComplete and usageMetadata from the replaced response', async () => {
+      const {yielded, saved} = await runStreamed(({response}) =>
+        upperCase(response),
+      );
+
+      expect(yielded).toEqual([
+        [true, 'HELLO '],
+        [true, 'WORLD'],
+        [false, 'HELLO WORLD'],
+      ]);
+      expect(saved.map((e) => e.content?.parts?.[0]?.text)).toEqual([
+        'HELLO WORLD',
+      ]);
+      expect(saved[0].usageMetadata).toEqual(usage);
+      expect(saved[0].turnComplete).toBe(true);
+    });
+
+    it('keeps them when a plugin afterModelCallback replaces the response', async () => {
+      const {saved} = await runStreamed(undefined, [
+        new UpperCasePlugin('upper_case'),
+      ]);
+
+      expect(saved.map((e) => e.content?.parts?.[0]?.text)).toEqual([
+        'HELLO WORLD',
+      ]);
+      expect(saved[0].usageMetadata).toEqual(usage);
+    });
+
+    it('keeps a usageMetadata the replacement sets', async () => {
+      const own = {totalTokenCount: 1};
+      const {saved} = await runStreamed(({response}) => ({
+        ...upperCase(response),
+        usageMetadata: own,
+      }));
+
+      expect(saved.map((e) => e.content?.parts?.[0]?.text)).toEqual([
+        'HELLO WORLD',
+      ]);
+      expect(saved[0].usageMetadata).toEqual(own);
+    });
+  });
+
   describe('model callback chaining', () => {
     interface ModelCallbackChainSpec {
       name: string;

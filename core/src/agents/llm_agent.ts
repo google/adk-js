@@ -157,6 +157,40 @@ function hasSettledResponses(functionResponseEvent: Event): boolean {
 }
 
 /**
+ * Fills the model fields an after-model callback's replacement leaves unset
+ * from the response it replaces. Without `partial`, every streamed chunk would
+ * look final and be saved to the session; without `usageMetadata`, the call
+ * would drop out of token accounting. Values the replacement sets are kept.
+ */
+function inheritUnsetModelFields(
+  original: LlmResponse,
+  replacement: LlmResponse,
+): LlmResponse {
+  if (replacement === original) {
+    return replacement;
+  }
+  const updates: Partial<LlmResponse> = {};
+  if (replacement.partial === undefined && original.partial !== undefined) {
+    updates.partial = original.partial;
+  }
+  if (
+    replacement.turnComplete === undefined &&
+    original.turnComplete !== undefined
+  ) {
+    updates.turnComplete = original.turnComplete;
+  }
+  if (
+    replacement.usageMetadata === undefined &&
+    original.usageMetadata !== undefined
+  ) {
+    updates.usageMetadata = original.usageMetadata;
+  }
+  return Object.keys(updates).length > 0
+    ? {...replacement, ...updates}
+    : replacement;
+}
+
+/**
  * Copies the live-relevant fields from the run config onto the live connect
  * config so the model connection is opened with the caller's modalities,
  * speech, transcription, and proactivity settings.
@@ -2105,7 +2139,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         llmResponse,
       });
     if (afterModelCallbackResponse) {
-      return afterModelCallbackResponse;
+      return inheritUnsetModelFields(llmResponse, afterModelCallbackResponse);
     }
 
     // If no override was returned from the plugins, run the canonical callbacks
@@ -2120,7 +2154,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       }
 
       if (callbackResponse) {
-        return callbackResponse;
+        return inheritUnsetModelFields(llmResponse, callbackResponse);
       }
     }
     return undefined;
