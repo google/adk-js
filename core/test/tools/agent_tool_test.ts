@@ -10,6 +10,7 @@ import {
   createEvent,
   createEventActions,
   createSession,
+  InMemoryCredentialService,
   InMemorySessionService,
   InvocationContext,
   LlmAgent,
@@ -512,6 +513,53 @@ describe('AgentTool', () => {
     expect(subAgentSession?.state).not.toHaveProperty(
       `${State.TEMP_PREFIX}tempKey`,
     );
+  });
+
+  it('forwards credentialService from parent invocationContext to the child Runner', async () => {
+    const subAgent = new LlmAgent({name: 'sub-agent'});
+    const tool = new AgentTool({agent: subAgent});
+    const credentialService = new InMemoryCredentialService();
+
+    const session = createSession({
+      id: 'parent-session',
+      appName: 'sub-agent',
+      userId: 'parent-user',
+    });
+
+    const invocationContext = new InvocationContext({
+      invocationId: 'test-invocation',
+      agent: subAgent,
+      session,
+      pluginManager: new PluginManager([]),
+      credentialService,
+    });
+
+    const toolContext = new Context({invocationContext});
+
+    let capturedCredentialService: unknown;
+    const mockRunAsync = async function* () {
+      yield createEvent({
+        author: 'sub-agent',
+        content: {role: 'model', parts: [{text: 'done'}]},
+      });
+    };
+
+    vi.mocked(Runner).mockImplementation(function (config) {
+      capturedCredentialService = config?.credentialService;
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: mockRunAsync,
+      } as unknown as Runner;
+    });
+
+    const result = await tool.runAsync({
+      args: {request: 'hello'},
+      toolContext,
+    });
+
+    expect(result).toBe('done');
+    expect(capturedCredentialService).toBe(credentialService);
   });
 
   describe('inputSchema and outputSchema validation', () => {
