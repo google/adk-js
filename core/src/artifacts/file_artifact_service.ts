@@ -9,6 +9,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import {fileURLToPath, pathToFileURL} from 'url';
 
+import {InputValidationError} from '../errors/input_validation_error.js';
 import {logger} from '../utils/logger.js';
 
 import {
@@ -87,6 +88,16 @@ export class FileArtifactService implements BaseArtifactService {
       sessionId,
       filename,
     );
+    if (
+      path
+        .basename(artifactDir)
+        .replace(/[ .]+$/, '')
+        .toLowerCase() === 'metadata.json'
+    ) {
+      throw new InputValidationError(
+        'Artifact filename is reserved for version metadata.',
+      );
+    }
     await fs.mkdir(artifactDir, {recursive: true});
 
     const versions = await getArtifactVersionsFromDir(artifactDir);
