@@ -1312,15 +1312,10 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     }
     if (liveRequest.activityStart) {
       await connection.sendActivityStart?.();
-      return;
-    }
-    if (liveRequest.activityEnd) {
+    } else if (liveRequest.activityEnd) {
       await connection.sendActivityEnd?.();
-      return;
-    }
-    if (liveRequest.blob) {
+    } else if (liveRequest.blob) {
       await connection.sendRealtime(liveRequest.blob);
-      return;
     }
     if (liveRequest.content) {
       await connection.sendContent(liveRequest.content);
@@ -2104,6 +2099,10 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         callbackContext,
         llmResponse,
       });
+    if (invocationContext.abortSignal?.aborted) {
+      return undefined;
+    }
+
     if (afterModelCallbackResponse) {
       return afterModelCallbackResponse;
     }

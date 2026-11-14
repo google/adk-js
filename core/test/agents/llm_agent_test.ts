@@ -46,7 +46,7 @@ import {
   StreamingMode,
   ToolProcessLlmRequest,
 } from '@google/adk';
-import {Content, Modality, Schema, Type} from '@google/genai';
+import {Content, FinishReason, Modality, Schema, Type} from '@google/genai';
 import {
   afterEach,
   beforeEach,
@@ -392,6 +392,67 @@ describe('LlmAgent.callLlm', () => {
     agent.model = new MockLlm(null, modelError);
     const result = await callLlmUnderTest();
     expect(result).toEqual([{errorCode: '500', errorMessage: 'LLM error'}]);
+  });
+
+  it('falls back to canonical beforeModelCallback when registered plugin returns undefined', async () => {
+    pluginManager.registerPlugin(mockPlugin);
+    mockPlugin.beforeModelResponse = undefined;
+    agent.model = new MockLlm(originalLlmResponse);
+    agent.beforeModelCallback = async () => beforeCallbackResponse;
+
+    const result = await callLlmUnderTest();
+
+    expect(result).toEqual([beforeCallbackResponse]);
+  });
+
+  it('falls back to model call when registered plugin and canonical beforeModelCallback return undefined', async () => {
+    pluginManager.registerPlugin(mockPlugin);
+    mockPlugin.beforeModelResponse = undefined;
+    agent.model = new MockLlm(originalLlmResponse);
+    agent.beforeModelCallback = async () => undefined;
+
+    const result = await callLlmUnderTest();
+
+    expect(result).toEqual([originalLlmResponse]);
+  });
+
+  it('falls back to canonical afterModelCallback when registered plugin returns undefined', async () => {
+    pluginManager.registerPlugin(mockPlugin);
+    mockPlugin.afterModelResponse = undefined;
+    agent.model = new MockLlm(originalLlmResponse);
+    agent.afterModelCallback = async () => afterCallbackResponse;
+
+    const result = await callLlmUnderTest();
+
+    expect(result).toEqual([afterCallbackResponse]);
+  });
+
+  it('skips canonical afterModelCallback when abortSignal aborts during plugin afterModelCallback', async () => {
+    const abortController = new AbortController();
+    const abortingPlugin = new (class extends BasePlugin {
+      override async afterModelCallback(): Promise<LlmResponse | undefined> {
+        abortController.abort();
+        return undefined;
+      }
+    })('aborting_plugin');
+    const canonicalAfterSpy = vi.fn<SingleAfterModelCallback>(
+      () => afterCallbackResponse,
+    );
+    pluginManager.registerPlugin(abortingPlugin);
+    agent.model = new MockLlm(originalLlmResponse);
+    agent.afterModelCallback = canonicalAfterSpy;
+    invocationContext = new InvocationContext({
+      invocationId: 'inv_abort_after',
+      session: {} as Session,
+      agent,
+      pluginManager,
+      abortSignal: abortController.signal,
+    });
+
+    const result = await callLlmUnderTest();
+
+    expect(result).toEqual([]);
+    expect(canonicalAfterSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -3645,5 +3706,106 @@ describe('LlmAgent canonical fields and config validation', () => {
       ]);
       expect(agent.canonicalAfterToolCallbacks).toEqual([afterCb1, afterCb2]);
     });
+  });
+});
+
+describe('LlmAgent.runAsync partial-event loop termination', () => {
+  async function collectRunAsyncEvents(agent: LlmAgent): Promise<Event[]> {
+    const ctx = new InvocationContext({
+      invocationId: 'inv_partial_loop',
+      agent,
+      session: createSession({
+        id: 'sess_partial_loop',
+        appName: 'test_app',
+        userId: 'test_user',
+      }),
+      pluginManager: new PluginManager(),
+    });
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(ctx)) {
+      events.push(event);
+    }
+    return events;
+  }
+
+  it('breaks and yields one event when the last event has partial: true', async () => {
+    const model = new CountingMockLlm([
+      [
+        {
+          content: {role: 'model', parts: [{text: 'Partial response'}]},
+          partial: true,
+        },
+      ],
+    ]);
+    const agent = new LlmAgent({name: 'test_agent', model});
+
+    const events = await collectRunAsyncEvents(agent);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].partial).toBe(true);
+    expect(events[0].content?.parts?.[0]?.text).toBe('Partial response');
+    expect(model.callCount).toBe(1);
+  });
+
+  it('breaks on a final response with partial: false and FinishReason.STOP', async () => {
+    const model = new CountingMockLlm([
+      [
+        {
+          content: {role: 'model', parts: [{text: 'Final response'}]},
+          partial: false,
+          finishReason: FinishReason.STOP,
+        },
+      ],
+    ]);
+    const agent = new LlmAgent({name: 'test_agent', model});
+
+    const events = await collectRunAsyncEvents(agent);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].partial).toBe(false);
+    expect(events[0].finishReason).toBe(FinishReason.STOP);
+    expect(events[0].content?.parts?.[0]?.text).toBe('Final response');
+    expect(model.callCount).toBe(1);
+  });
+
+  it('breaks with zero events when the model yields an empty response', async () => {
+    const model = new CountingMockLlm([[{content: undefined, partial: false}]]);
+    const agent = new LlmAgent({name: 'test_agent', model});
+
+    const events = await collectRunAsyncEvents(agent);
+
+    expect(events).toHaveLength(0);
+    expect(model.callCount).toBe(1);
+  });
+
+  it('breaks on the first partial: true response without calling the model a second time', async () => {
+    const model = new CountingMockLlm([
+      [
+        {
+          content: {role: 'model', parts: [{text: 'Partial response'}]},
+          partial: true,
+        },
+      ],
+      [
+        {
+          content: {role: 'model', parts: [{text: 'Non-partial response'}]},
+          partial: false,
+        },
+      ],
+      [
+        {
+          content: {role: 'model', parts: [{text: 'Final partial response'}]},
+          partial: true,
+        },
+      ],
+    ]);
+    const agent = new LlmAgent({name: 'test_agent', model});
+
+    const events = await collectRunAsyncEvents(agent);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].partial).toBe(true);
+    expect(events[0].content?.parts?.[0]?.text).toBe('Partial response');
+    expect(model.callCount).toBe(1);
   });
 });

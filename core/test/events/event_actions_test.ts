@@ -12,6 +12,10 @@ import {
   isDefaultEventActions,
   mergeEventActions,
 } from '../../src/events/event_actions.js';
+import {
+  recordStateWrite,
+  shouldApplyDeltaWrite,
+} from '../../src/sessions/state_write_order.js';
 import {ToolConfirmation} from '../../src/tools/tool_confirmation.js';
 
 function createTestAuthConfig(credentialKey: string): AuthConfig {
@@ -101,10 +105,19 @@ describe('isDefaultEventActions', () => {
     ['skipSummarization is explicitly false', {skipSummarization: false}],
     ['transferToAgent is set', {transferToAgent: 'other_agent'}],
     ['escalate is set', {escalate: true}],
+    ['agentState has an entry', {agentState: {nodeA: {step: 1}}}],
+    ['endOfAgent is true', {endOfAgent: true}],
+    ['endOfAgent is explicitly false', {endOfAgent: false}],
   ];
 
   it.each(nonDefaults)('returns false when %s', (_label, overrides) => {
     expect(isDefaultEventActions(createEventActions(overrides))).toBe(false);
+  });
+
+  it('returns true when agentState is empty', () => {
+    expect(isDefaultEventActions(createEventActions({agentState: {}}))).toBe(
+      true,
+    );
   });
 });
 
@@ -251,5 +264,190 @@ describe('mergeEventActions', () => {
       createEventActions({stateDelta: {x: 1}}),
     ]);
     expect(result.stateDelta).toEqual({x: 1});
+  });
+
+  it('recursively merges nested plain objects in stateDelta without mutating target or sources', () => {
+    const targetNested = {a: 1, deep: {keep: true, replace: 'old'}};
+    const source1Nested = {b: 2, deep: {replace: 'new'}};
+    const source2Nested = {c: 3, deep: {added: 42}};
+    const target = createEventActions({
+      stateDelta: {nested: targetNested},
+      artifactDelta: {'base.txt': 1},
+    });
+    const source1 = createEventActions({
+      stateDelta: {nested: source1Nested},
+      artifactDelta: {'extra.txt': 2},
+    });
+    const source2 = createEventActions({
+      stateDelta: {nested: source2Nested},
+    });
+
+    const result = mergeEventActions([source1, source2], target);
+
+    expect(result.stateDelta).toEqual({
+      nested: {a: 1, b: 2, c: 3, deep: {keep: true, replace: 'new', added: 42}},
+    });
+    expect(result.artifactDelta).toEqual({'base.txt': 1, 'extra.txt': 2});
+    expect(target.stateDelta).toEqual({
+      nested: {a: 1, deep: {keep: true, replace: 'old'}},
+    });
+    expect(target.artifactDelta).toEqual({'base.txt': 1});
+    expect(source1.stateDelta).toEqual({
+      nested: {b: 2, deep: {replace: 'new'}},
+    });
+    expect(source2.stateDelta).toEqual({
+      nested: {c: 3, deep: {added: 42}},
+    });
+  });
+
+  it('preserves write-order stamps across merged stateDelta entries', () => {
+    const sessionState: Record<string, unknown> = {};
+    const targetDelta: Record<string, unknown> = {baseKey: 'base'};
+    const delta1: Record<string, unknown> = {staleKey: 'old'};
+    const delta2: Record<string, unknown> = {freshKey: 'fresh'};
+
+    recordStateWrite(sessionState, targetDelta, 'baseKey');
+    recordStateWrite(sessionState, delta1, 'staleKey');
+    recordStateWrite(sessionState, delta2, 'freshKey');
+    // Supersede staleKey directly in sessionState after delta1 was recorded.
+    recordStateWrite(sessionState, undefined, 'staleKey');
+
+    const result = mergeEventActions(
+      [{stateDelta: delta1}, {stateDelta: delta2}],
+      createEventActions({stateDelta: targetDelta}),
+    );
+
+    expect(
+      shouldApplyDeltaWrite(sessionState, result.stateDelta, 'staleKey'),
+    ).toBe(false);
+    expect(
+      shouldApplyDeltaWrite(sessionState, result.stateDelta, 'baseKey'),
+    ).toBe(true);
+    expect(
+      shouldApplyDeltaWrite(sessionState, result.stateDelta, 'freshKey'),
+    ).toBe(true);
+  });
+
+  it('keeps the highest write-order stamp when deep-merging nested plain objects', () => {
+    const sessionState: Record<string, unknown> = {};
+    const olderDelta: Record<string, unknown> = {profile: {role: 'admin'}};
+    const newerDelta: Record<string, unknown> = {profile: {name: 'Ada'}};
+
+    recordStateWrite(sessionState, olderDelta, 'profile');
+    recordStateWrite(sessionState, newerDelta, 'profile');
+
+    const result = mergeEventActions([
+      {stateDelta: newerDelta},
+      {stateDelta: olderDelta},
+    ]);
+
+    expect(result.stateDelta).toEqual({
+      profile: {name: 'Ada', role: 'admin'},
+    });
+    expect(
+      shouldApplyDeltaWrite(sessionState, result.stateDelta, 'profile'),
+    ).toBe(true);
+  });
+
+  it('does not leak a stale stamp onto an unstamped override or merged delta', () => {
+    const sessionState: Record<string, unknown> = {};
+    const staleScalarDelta: Record<string, unknown> = {k: 'old'};
+    const staleNestedDelta: Record<string, unknown> = {
+      nested: {fromStamped: 1},
+    };
+
+    recordStateWrite(sessionState, staleScalarDelta, 'k');
+    recordStateWrite(sessionState, staleNestedDelta, 'nested');
+    recordStateWrite(sessionState, undefined, 'k');
+    recordStateWrite(sessionState, undefined, 'nested');
+
+    const result = mergeEventActions([
+      {stateDelta: staleScalarDelta},
+      {stateDelta: staleNestedDelta},
+      {
+        stateDelta: {
+          k: 'override',
+          nested: {fromUnstamped: 2},
+        },
+      },
+    ]);
+
+    expect(result.stateDelta).toEqual({
+      k: 'override',
+      nested: {fromStamped: 1, fromUnstamped: 2},
+    });
+    expect(shouldApplyDeltaWrite(sessionState, result.stateDelta, 'k')).toBe(
+      true,
+    );
+    expect(
+      shouldApplyDeltaWrite(sessionState, result.stateDelta, 'nested'),
+    ).toBe(true);
+  });
+
+  it('replaces arrays and class instances instead of merging them recursively', () => {
+    const firstConfirmation = new ToolConfirmation({
+      hint: 'first',
+      confirmed: false,
+    });
+    const secondConfirmation = new ToolConfirmation({
+      hint: 'second',
+      confirmed: true,
+    });
+
+    const result = mergeEventActions([
+      createEventActions({
+        stateDelta: {
+          items: [1, 2],
+          confirmation: firstConfirmation,
+        },
+      }),
+      createEventActions({
+        stateDelta: {
+          items: [3],
+          confirmation: secondConfirmation,
+        },
+      }),
+    ]);
+
+    expect(result.stateDelta).toEqual({
+      items: [3],
+      confirmation: secondConfirmation,
+    });
+    expect(result.stateDelta['confirmation']).toBe(secondConfirmation);
+  });
+
+  it('ignores unsafe prototype keys during recursive record merging', () => {
+    const malicious = JSON.parse(
+      '{"nested":{"__proto__":{"polluted":true},"safe":"ok"}}',
+    ) as Record<string, unknown>;
+
+    const result = mergeEventActions([
+      createEventActions({stateDelta: {nested: {initial: true}}}),
+      createEventActions({stateDelta: malicious}),
+    ]);
+
+    expect(result.stateDelta).toEqual({
+      nested: {initial: true, safe: 'ok'},
+    });
+    expect(({} as Record<string, unknown>)['polluted']).toBeUndefined();
+  });
+
+  it('deep-merges agentState and applies last-writer-wins to endOfAgent', () => {
+    const result = mergeEventActions([
+      createEventActions({
+        agentState: {nodeA: {step: 1, meta: {ok: true}}},
+        endOfAgent: true,
+      }),
+      createEventActions({
+        agentState: {nodeA: {meta: {retries: 2}}, nodeB: {done: true}},
+        endOfAgent: false,
+      }),
+    ]);
+
+    expect(result.agentState).toEqual({
+      nodeA: {step: 1, meta: {ok: true, retries: 2}},
+      nodeB: {done: true},
+    });
+    expect(result.endOfAgent).toBe(false);
   });
 });

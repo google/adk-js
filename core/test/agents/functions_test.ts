@@ -11,6 +11,8 @@ import {
   AuthConfig,
   AuthCredentialTypes,
   BaseAgent,
+  BaseLlm,
+  BaseLlmConnection,
   BasePlugin,
   BaseTool,
   BeforeToolCallback,
@@ -22,19 +24,24 @@ import {
   Event,
   functionsExportedForTestingOnly,
   FunctionTool,
+  getFunctionCalls,
+  InMemorySessionService,
   InvocationContext,
   isToolNotFound,
   LiveRequestQueue,
   LlmAgent,
+  LlmRequest,
+  LlmResponse,
   LongRunningFunctionTool,
   PluginManager,
   REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+  Runner,
   Session,
   SingleAfterToolCallback,
   SingleBeforeToolCallback,
   ToolConfirmation,
 } from '@google/adk';
-import {FunctionCall, FunctionResponse} from '@google/genai';
+import {Content, FunctionCall, FunctionResponse} from '@google/genai';
 import {context, SpanStatusCode, trace} from '@opentelemetry/api';
 import {AsyncLocalStorageContextManager} from '@opentelemetry/context-async-hooks';
 import {
@@ -2286,6 +2293,326 @@ describe('handleFunctionCallsLive and processFunctionLiveHelper', () => {
       subAgentRan: true,
     });
   });
+
+  interface LiveCallbackChainSpec {
+    name: string;
+    callbacks: Array<{response: unknown; isAsync: boolean}>;
+    expectedResponse: Record<string, unknown>;
+    expectedCalls: number[];
+    expectToolExecuted: boolean;
+  }
+
+  const LIVE_CALLBACK_CHAIN_CASES: LiveCallbackChainSpec[] = [
+    {
+      name: 'when single sync callback returns undefined',
+      callbacks: [{response: undefined, isAsync: false}],
+      expectedResponse: {initial: 'response'},
+      expectedCalls: [1],
+      expectToolExecuted: true,
+    },
+    {
+      name: 'when single async callback returns undefined',
+      callbacks: [{response: undefined, isAsync: true}],
+      expectedResponse: {initial: 'response'},
+      expectedCalls: [1],
+      expectToolExecuted: true,
+    },
+    {
+      name: 'when first sync callback returns an empty object',
+      callbacks: [
+        {response: {}, isAsync: false},
+        {response: {second: 'callback'}, isAsync: true},
+      ],
+      expectedResponse: {},
+      expectedCalls: [1, 0],
+      expectToolExecuted: false,
+    },
+    {
+      name: 'when first async callback returns an empty object',
+      callbacks: [
+        {response: {}, isAsync: true},
+        {response: {second: 'callback'}, isAsync: false},
+      ],
+      expectedResponse: {},
+      expectedCalls: [1, 0],
+      expectToolExecuted: false,
+    },
+    {
+      name: 'when first sync callback returns falsy zero',
+      callbacks: [
+        {response: 0, isAsync: false},
+        {response: {second: 'callback'}, isAsync: false},
+      ],
+      expectedResponse: {result: 0},
+      expectedCalls: [1, 0],
+      expectToolExecuted: false,
+    },
+    {
+      name: 'when first returns undefined and second async returns a payload',
+      callbacks: [
+        {response: undefined, isAsync: false},
+        {response: {second: 'callback'}, isAsync: true},
+        {response: {third: 'callback'}, isAsync: false},
+      ],
+      expectedResponse: {second: 'callback'},
+      expectedCalls: [1, 1, 0],
+      expectToolExecuted: false,
+    },
+    {
+      name: 'when mixed sync and async callbacks all return undefined',
+      callbacks: [
+        {response: undefined, isAsync: false},
+        {response: undefined, isAsync: true},
+      ],
+      expectedResponse: {initial: 'response'},
+      expectedCalls: [1, 1],
+      expectToolExecuted: true,
+    },
+  ];
+
+  it.each(LIVE_CALLBACK_CHAIN_CASES)(
+    'executes live beforeToolCallbacks chain ($name)',
+    async ({
+      callbacks,
+      expectedResponse,
+      expectedCalls,
+      expectToolExecuted,
+    }) => {
+      const ctx = createLiveInvocationContext();
+      let toolCalls = 0;
+      const simpleTool = new FunctionTool({
+        name: 'simpleTool',
+        description: 'returns an initial object',
+        parameters: z.object({}),
+        execute: async () => {
+          toolCalls += 1;
+          return {initial: 'response'};
+        },
+      });
+      const spies = callbacks.map(({response, isAsync}) =>
+        vi.fn<SingleBeforeToolCallback>(() =>
+          isAsync
+            ? Promise.resolve(response as Record<string, unknown> | undefined)
+            : (response as Record<string, unknown> | undefined),
+        ),
+      );
+      const callEvent = createEvent({
+        invocationId: ctx.invocationId,
+        author: 'live_test_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {functionCall: {id: 'fc-chain-b', name: 'simpleTool', args: {}}},
+          ],
+        },
+      });
+
+      const responseEvent = await handleFunctionCallsLive({
+        invocationContext: ctx,
+        functionCallEvent: callEvent,
+        toolsDict: {simpleTool},
+        beforeToolCallbacks: spies,
+        afterToolCallbacks: [],
+      });
+
+      expect(
+        responseEvent?.content?.parts?.[0]?.functionResponse?.response,
+      ).toEqual(expectedResponse);
+      expect(toolCalls).toBe(expectToolExecuted ? 1 : 0);
+      spies.forEach((spy, index) => {
+        expect(spy).toHaveBeenCalledTimes(expectedCalls[index]);
+      });
+    },
+  );
+
+  it.each(LIVE_CALLBACK_CHAIN_CASES)(
+    'executes live afterToolCallbacks chain ($name)',
+    async ({callbacks, expectedResponse, expectedCalls}) => {
+      const ctx = createLiveInvocationContext();
+      const simpleTool = new FunctionTool({
+        name: 'simpleTool',
+        description: 'returns an initial object',
+        parameters: z.object({}),
+        execute: async () => ({initial: 'response'}),
+      });
+      const spies = callbacks.map(({response, isAsync}) =>
+        vi.fn<SingleAfterToolCallback>(() =>
+          isAsync
+            ? Promise.resolve(response as Record<string, unknown> | undefined)
+            : (response as Record<string, unknown> | undefined),
+        ),
+      );
+      const callEvent = createEvent({
+        invocationId: ctx.invocationId,
+        author: 'live_test_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {functionCall: {id: 'fc-chain-a', name: 'simpleTool', args: {}}},
+          ],
+        },
+      });
+
+      const responseEvent = await handleFunctionCallsLive({
+        invocationContext: ctx,
+        functionCallEvent: callEvent,
+        toolsDict: {simpleTool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: spies,
+      });
+
+      expect(
+        responseEvent?.content?.parts?.[0]?.functionResponse?.response,
+      ).toEqual(expectedResponse);
+      spies.forEach((spy, index) => {
+        expect(spy).toHaveBeenCalledTimes(expectedCalls[index]);
+      });
+    },
+  );
+
+  it('runs beforeToolCallbacks and afterToolCallbacks together when before returns undefined in live mode', async () => {
+    const ctx = createLiveInvocationContext();
+    let beforeCalled = false;
+    const echoArgsTool = new FunctionTool({
+      name: 'echoArgsTool',
+      description: 'returns input args and initial tag',
+      parameters: z.object({modifiedByBefore: z.boolean().optional()}),
+      execute: async (args) => ({initial: 'response', seenArgs: args}),
+    });
+    const beforeCb: SingleBeforeToolCallback = ({args}) => {
+      beforeCalled = true;
+      args['modifiedByBefore'] = true;
+      return undefined;
+    };
+    const afterCb: SingleAfterToolCallback = ({response}) => {
+      return {...response, modifiedByAfter: true};
+    };
+    const callEvent = createEvent({
+      invocationId: ctx.invocationId,
+      author: 'live_test_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'fc-mixed', name: 'echoArgsTool', args: {}}},
+        ],
+      },
+    });
+
+    const responseEvent = await handleFunctionCallsLive({
+      invocationContext: ctx,
+      functionCallEvent: callEvent,
+      toolsDict: {echoArgsTool},
+      beforeToolCallbacks: [beforeCb],
+      afterToolCallbacks: [afterCb],
+    });
+
+    expect(beforeCalled).toBe(true);
+    expect(
+      responseEvent?.content?.parts?.[0]?.functionResponse?.response,
+    ).toEqual({
+      initial: 'response',
+      seenArgs: {modifiedByBefore: true},
+      modifiedByAfter: true,
+    });
+  });
+
+  it('prioritizes plugin tool callbacks over canonical callbacks in handleFunctionCallsLive', async () => {
+    const ctx = createLiveInvocationContext();
+    const plugin = new TestPlugin('livePlugin');
+    plugin.beforeToolCallbackResponse = {from: 'pluginBefore'};
+    ctx.pluginManager.registerPlugin(plugin);
+
+    const canonicalBefore = vi.fn<SingleBeforeToolCallback>(() => ({
+      from: 'canonicalBefore',
+    }));
+    const canonicalAfter = vi.fn<SingleAfterToolCallback>(() => ({
+      from: 'canonicalAfter',
+    }));
+    const callEvent = createEvent({
+      invocationId: ctx.invocationId,
+      author: 'live_test_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'fc-plugin-b', name: 'testTool', args: {}}},
+        ],
+      },
+    });
+
+    const beforeResult = await handleFunctionCallsLive({
+      invocationContext: ctx,
+      functionCallEvent: callEvent,
+      toolsDict: {testTool},
+      beforeToolCallbacks: [canonicalBefore],
+      afterToolCallbacks: [],
+    });
+
+    expect(
+      beforeResult?.content?.parts?.[0]?.functionResponse?.response,
+    ).toEqual({
+      from: 'pluginBefore',
+    });
+    expect(canonicalBefore).not.toHaveBeenCalled();
+
+    plugin.beforeToolCallbackResponse = undefined;
+    plugin.afterToolCallbackResponse = {from: 'pluginAfter'};
+    const afterResult = await handleFunctionCallsLive({
+      invocationContext: ctx,
+      functionCallEvent: callEvent,
+      toolsDict: {testTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [canonicalAfter],
+    });
+
+    expect(
+      afterResult?.content?.parts?.[0]?.functionResponse?.response,
+    ).toEqual({
+      from: 'pluginAfter',
+    });
+    expect(canonicalAfter).not.toHaveBeenCalled();
+  });
+
+  it('matches handleFunctionCallsAsync callback override behavior in handleFunctionCallsLive', async () => {
+    const beforeCb: SingleBeforeToolCallback = () => ({
+      bypassed: 'byBeforeCallback',
+    });
+    const asyncCtx = createLiveInvocationContext();
+    const liveCtx = createLiveInvocationContext();
+    const callEvent = createEvent({
+      invocationId: asyncCtx.invocationId,
+      author: 'live_test_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'fc-override', name: 'testTool', args: {}}},
+        ],
+      },
+    });
+
+    const asyncResult = await handleFunctionCallsAsync({
+      invocationContext: asyncCtx,
+      functionCallEvent: callEvent,
+      toolsDict: {testTool},
+      beforeToolCallbacks: [beforeCb],
+      afterToolCallbacks: [],
+    });
+    const liveResult = await handleFunctionCallsLive({
+      invocationContext: liveCtx,
+      functionCallEvent: callEvent,
+      toolsDict: {testTool},
+      beforeToolCallbacks: [beforeCb],
+      afterToolCallbacks: [],
+    });
+
+    expect(
+      asyncResult?.content?.parts?.[0]?.functionResponse?.response,
+    ).toEqual({
+      bypassed: 'byBeforeCallback',
+    });
+    expect(liveResult?.content?.parts?.[0]?.functionResponse?.response).toEqual(
+      asyncResult?.content?.parts?.[0]?.functionResponse?.response,
+    );
+  });
 });
 
 describe('OAuth2 credential request and response flows', () => {
@@ -2733,5 +3060,321 @@ describe('computer use function responses', () => {
 
     expect(functionResponse.response).toEqual({image});
     expect(functionResponse.parts).toBeUndefined();
+  });
+});
+
+class RecordingResponsesLlm extends BaseLlm {
+  readonly requestContents: Content[][] = [];
+  private index = 0;
+
+  constructor(private readonly responses: LlmResponse[]) {
+    super({model: 'recording-mock-llm'});
+  }
+
+  override async *generateContentAsync(
+    request: LlmRequest,
+  ): AsyncGenerator<LlmResponse, void, void> {
+    this.requestContents.push(structuredClone(request.contents));
+    const response = this.responses[this.index++];
+    if (response) {
+      yield response;
+    }
+  }
+
+  override async connect(): Promise<BaseLlmConnection> {
+    throw new Error('connect is not implemented in RecordingResponsesLlm.');
+  }
+}
+
+describe('parallel tool state merging and multi-tool EUC resumption', () => {
+  it('merges parallel tool stateDelta including nested plain objects and transferToAgent across Runner', async () => {
+    let callsCount = 0;
+    const updateNestedState = new FunctionTool({
+      name: 'update_nested_state',
+      description: 'updates a nested key in session state',
+      parameters: z.object({
+        key: z.string(),
+        nestedField: z.string(),
+        nestedValue: z.string(),
+      }),
+      execute: async ({key, nestedField, nestedValue}, toolContext) => {
+        callsCount += 1;
+        toolContext?.state.set(key, {[nestedField]: nestedValue});
+        return null;
+      },
+    });
+
+    const subAgentLlm = new RecordingResponsesLlm([
+      {content: {role: 'model', parts: [{text: 'sub agent response'}]}},
+    ]);
+    const subAgent = new LlmAgent({
+      name: 'test_sub_agent',
+      model: subAgentLlm,
+    });
+    const rootLlm = new RecordingResponsesLlm([
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'call-1',
+                name: 'update_nested_state',
+                args: {
+                  key: 'profile',
+                  nestedField: 'name',
+                  nestedValue: 'Ada',
+                },
+              },
+            },
+            {
+              functionCall: {
+                id: 'call-2',
+                name: 'update_nested_state',
+                args: {
+                  key: 'profile',
+                  nestedField: 'role',
+                  nestedValue: 'admin',
+                },
+              },
+            },
+            {
+              functionCall: {
+                id: 'call-3',
+                name: 'transfer_to_agent',
+                args: {agent_name: 'test_sub_agent'},
+              },
+            },
+          ],
+        },
+      },
+    ]);
+    const rootAgent = new LlmAgent({
+      name: 'root_agent',
+      model: rootLlm,
+      tools: [updateNestedState],
+      subAgents: [subAgent],
+    });
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'parallel-app',
+      userId: 'user-1',
+    });
+    const runner = new Runner({
+      appName: 'parallel-app',
+      agent: rootAgent,
+      sessionService,
+    });
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: 'user-1',
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'test'}]},
+    })) {
+      events.push(event);
+    }
+
+    expect(callsCount).toBe(2);
+    expect(events).toHaveLength(3);
+    expect(events[1].actions.stateDelta).toEqual({
+      profile: {name: 'Ada', role: 'admin'},
+    });
+    expect(events[1].actions.transferToAgent).toBe('test_sub_agent');
+    expect(events[2].author).toBe('test_sub_agent');
+    expect(events[2].content?.parts?.[0]?.text).toBe('sub agent response');
+    const updatedSession = await sessionService.getSession({
+      appName: 'parallel-app',
+      userId: 'user-1',
+      sessionId: session.id,
+    });
+    expect(updatedSession?.state).toEqual({
+      profile: {name: 'Ada', role: 'admin'},
+    });
+  });
+
+  it('resumes multiple EUC-gated tools across consecutive turns and merges partial function responses', async () => {
+    function createApiKeyConfig(
+      credentialKey: string,
+      headerName: string,
+    ): AuthConfig {
+      return {
+        credentialKey,
+        authScheme: {
+          type: 'apiKey',
+          in: 'header',
+          name: headerName,
+        },
+        rawAuthCredential: {
+          authType: AuthCredentialTypes.API_KEY,
+        },
+      };
+    }
+
+    const authConfig1 = createApiKeyConfig('cred_key_1', 'X-Api-Key-1');
+    const authConfig2 = createApiKeyConfig('cred_key_2', 'X-Api-Key-2');
+
+    let functionInvoked = 0;
+    const callExternalApi1 = new FunctionTool({
+      name: 'call_external_api1',
+      description: 'calls external API 1',
+      parameters: z.object({}),
+      execute: async (_args, toolContext) => {
+        functionInvoked += 1;
+        const auth = toolContext?.getAuthResponse(authConfig1);
+        if (!auth) {
+          toolContext?.requestCredential(authConfig1);
+          return null;
+        }
+        expect(auth.apiKey).toBe('token1');
+        return 1;
+      },
+    });
+    const callExternalApi2 = new FunctionTool({
+      name: 'call_external_api2',
+      description: 'calls external API 2',
+      parameters: z.object({}),
+      execute: async (_args, toolContext) => {
+        functionInvoked += 1;
+        const auth = toolContext?.getAuthResponse(authConfig2);
+        if (!auth) {
+          toolContext?.requestCredential(authConfig2);
+          return null;
+        }
+        expect(auth.apiKey).toBe('token2');
+        return 2;
+      },
+    });
+
+    const mockLlm = new RecordingResponsesLlm([
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {functionCall: {id: 'id_1', name: 'call_external_api1', args: {}}},
+            {functionCall: {id: 'id_2', name: 'call_external_api2', args: {}}},
+          ],
+        },
+      },
+      {content: {role: 'model', parts: [{text: 'response1'}]}},
+      {content: {role: 'model', parts: [{text: 'response2'}]}},
+    ]);
+
+    const agent = new LlmAgent({
+      name: 'root_agent',
+      model: mockLlm,
+      tools: [callExternalApi1, callExternalApi2],
+    });
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'euc-partial-app',
+      userId: 'user-1',
+    });
+    const runner = new Runner({
+      appName: 'euc-partial-app',
+      agent,
+      sessionService,
+    });
+
+    const collectTurn = async (newMessage: Content): Promise<Event[]> => {
+      const turnEvents: Event[] = [];
+      for await (const event of runner.runAsync({
+        userId: 'user-1',
+        sessionId: session.id,
+        newMessage,
+      })) {
+        turnEvents.push(event);
+      }
+      return turnEvents;
+    };
+
+    const turn1Events = await collectTurn({
+      role: 'user',
+      parts: [{text: 'test'}],
+    });
+    expect(functionInvoked).toBe(2);
+
+    const authRequestEvent = turn1Events.find((e) =>
+      getFunctionCalls(e).some(
+        (fc) => fc.name === REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+      ),
+    );
+    if (!authRequestEvent) {
+      throw new Error('Expected an adk_request_credential event in turn 1');
+    }
+    const authCalls = getFunctionCalls(authRequestEvent);
+    expect(authCalls).toHaveLength(2);
+
+    // Turn 2: supply only the first credential; API 1 resolves while API 2 stays pending.
+    await collectTurn({
+      role: 'user',
+      parts: [
+        {
+          functionResponse: {
+            id: authCalls[0].id,
+            name: authCalls[0].name,
+            response: {
+              exchangedAuthCredential: {
+                authType: AuthCredentialTypes.API_KEY,
+                apiKey: 'token1',
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    expect(functionInvoked).toBe(3);
+    expect(mockLlm.requestContents).toHaveLength(2);
+    const partialMergedParts = mockLlm.requestContents[1].at(-1)?.parts;
+    expect(partialMergedParts).toHaveLength(2);
+    expect(partialMergedParts?.[0]?.functionResponse?.name).toBe(
+      'call_external_api1',
+    );
+    expect(partialMergedParts?.[0]?.functionResponse?.response).toEqual({
+      result: 1,
+    });
+    expect(partialMergedParts?.[1]?.functionResponse?.name).toBe(
+      'call_external_api2',
+    );
+    expect(partialMergedParts?.[1]?.functionResponse?.response).toEqual({
+      result: null,
+    });
+
+    // Turn 3: supply the second credential; both tool responses are merged.
+    await collectTurn({
+      role: 'user',
+      parts: [
+        {
+          functionResponse: {
+            id: authCalls[1].id,
+            name: authCalls[1].name,
+            response: {
+              exchangedAuthCredential: {
+                authType: AuthCredentialTypes.API_KEY,
+                apiKey: 'token2',
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    expect(functionInvoked).toBe(4);
+    expect(mockLlm.requestContents).toHaveLength(3);
+    const finalMergedParts = mockLlm.requestContents[2].at(-1)?.parts;
+    expect(finalMergedParts).toHaveLength(2);
+    expect(finalMergedParts?.[0]?.functionResponse?.name).toBe(
+      'call_external_api1',
+    );
+    expect(finalMergedParts?.[0]?.functionResponse?.response).toEqual({
+      result: 1,
+    });
+    expect(finalMergedParts?.[1]?.functionResponse?.name).toBe(
+      'call_external_api2',
+    );
+    expect(finalMergedParts?.[1]?.functionResponse?.response).toEqual({
+      result: 2,
+    });
   });
 });
