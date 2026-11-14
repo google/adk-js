@@ -1575,6 +1575,58 @@ describe('Runner customMetadata support', () => {
     expect(userEvent.author).toBe('user');
     expect(userEvent.content?.role).toBe('user');
   });
+
+  it('persists stateDelta on the appended user event and updates session state when provided', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_with_state_delta',
+    });
+
+    const stateDelta = {theme: 'dark', count: 3};
+    for await (const _ of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'Apply state delta'}]},
+      stateDelta,
+    })) {
+      // iterate
+    }
+
+    const updatedWithDelta = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_with_state_delta',
+    });
+    expect(updatedWithDelta).toBeDefined();
+    expect(updatedWithDelta!.events[0].author).toBe('user');
+    expect(updatedWithDelta!.events[0].actions.stateDelta).toEqual(stateDelta);
+    expect(updatedWithDelta!.state).toEqual(stateDelta);
+
+    const sessionWithoutDelta = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_without_state_delta',
+    });
+
+    for await (const _ of runner.runAsync({
+      userId: sessionWithoutDelta.userId,
+      sessionId: sessionWithoutDelta.id,
+      newMessage: {role: 'user', parts: [{text: 'No state delta'}]},
+    })) {
+      // iterate
+    }
+
+    const updatedWithoutDelta = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_without_state_delta',
+    });
+    expect(updatedWithoutDelta).toBeDefined();
+    expect(updatedWithoutDelta!.events[0].author).toBe('user');
+    expect(updatedWithoutDelta!.events[0].actions.stateDelta).toEqual({});
+    expect(updatedWithoutDelta!.state).toEqual({});
+  });
 });
 
 describe('Runner artifactService handling', () => {
