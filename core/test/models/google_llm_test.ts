@@ -21,6 +21,7 @@ import {
 } from '@google/adk';
 import {
   Environment,
+  FinishReason,
   GenerateContentResponse,
   GoogleGenAI,
   HttpOptions,
@@ -1254,6 +1255,225 @@ describe('GoogleLlm', () => {
         {text: 'Think1Think2', thought: true},
         {text: 'Answer.'},
       ]);
+    });
+
+    function textChunk(
+      text: string,
+      candidate: {finishReason?: FinishReason; finishMessage?: string} = {},
+    ) {
+      return {
+        candidates: [{content: {role: 'model', parts: [{text}]}, ...candidate}],
+      };
+    }
+
+    function thoughtChunk(text: string) {
+      return {
+        candidates: [
+          {content: {role: 'model', parts: [{text, thought: true}]}},
+        ],
+      };
+    }
+
+    function functionCallChunk(
+      name: string,
+      candidate: {finishReason?: FinishReason} = {},
+    ) {
+      return {
+        candidates: [
+          {
+            content: {role: 'model', parts: [{functionCall: {name, args: {}}}]},
+            ...candidate,
+          },
+        ],
+      };
+    }
+
+    it.each([
+      FinishReason.MAX_TOKENS,
+      FinishReason.SAFETY,
+      FinishReason.RECITATION,
+      FinishReason.OTHER,
+    ])(
+      'aggregates the text and reports finish reason %s as the error',
+      async (finishReason) => {
+        const gemini = createStreamingGemini([
+          textChunk('Hello'),
+          textChunk(' world', {
+            finishReason,
+            finishMessage: `Finished with ${finishReason}`,
+          }),
+        ]);
+
+        const responses = await collectResponses(gemini, true);
+
+        expect(responses).toHaveLength(3);
+        expect(responses[0].partial).toBe(true);
+        expect(responses[1].partial).toBe(true);
+        expect(responses[2].partial).toBe(false);
+        expect(responses[2].content?.parts).toEqual([{text: 'Hello world'}]);
+        expect(responses[2].errorCode).toBe(finishReason);
+        expect(responses[2].errorMessage).toBe(`Finished with ${finishReason}`);
+      },
+    );
+
+    it('keeps thought and text parts apart when the stream stops at MAX_TOKENS', async () => {
+      const gemini = createStreamingGemini([
+        thoughtChunk('Think1'),
+        textChunk('Answer', {
+          finishReason: FinishReason.MAX_TOKENS,
+          finishMessage: 'Maximum tokens reached',
+        }),
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      expect(responses).toHaveLength(3);
+      expect(responses[0].partial).toBe(true);
+      expect(responses[1].partial).toBe(true);
+      expect(responses[2].content?.parts).toEqual([
+        {text: 'Think1', thought: true},
+        {text: 'Answer'},
+      ]);
+      expect(responses[2].errorCode).toBe(FinishReason.MAX_TOKENS);
+      expect(responses[2].errorMessage).toBe('Maximum tokens reached');
+    });
+
+    it('leaves errorCode and errorMessage unset when the stream stops normally', async () => {
+      const gemini = createStreamingGemini([
+        textChunk('Hello'),
+        textChunk(' world', {
+          finishReason: FinishReason.STOP,
+          finishMessage: 'Successfully completed',
+        }),
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      expect(responses).toHaveLength(3);
+      expect(responses[0].partial).toBe(true);
+      expect(responses[1].partial).toBe(true);
+      expect(responses[2].content?.parts).toEqual([{text: 'Hello world'}]);
+      expect(responses[2].finishReason).toBe(FinishReason.STOP);
+      expect(responses[2].errorCode).toBeUndefined();
+      expect(responses[2].errorMessage).toBeUndefined();
+    });
+
+    it('yields only the function call when the stream has no text', async () => {
+      const gemini = createStreamingGemini([
+        functionCallChunk('lookup', {finishReason: FinishReason.STOP}),
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      expect(responses).toHaveLength(1);
+      expect(responses[0].content?.parts?.[0]?.functionCall?.name).toBe(
+        'lookup',
+      );
+    });
+
+    it('aggregates text before and after a function call separately', async () => {
+      const gemini = createStreamingGemini([
+        textChunk('First text'),
+        functionCallChunk('lookup'),
+        textChunk(' second text', {finishReason: FinishReason.STOP}),
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      expect(responses).toHaveLength(5);
+      expect(responses[0].partial).toBe(true);
+      expect(responses[0].content?.parts).toEqual([{text: 'First text'}]);
+      expect(responses[1].partial).toBe(false);
+      expect(responses[1].content?.parts).toEqual([{text: 'First text'}]);
+      expect(responses[2].content?.parts?.[0]?.functionCall?.name).toBe(
+        'lookup',
+      );
+      expect(responses[3].partial).toBe(true);
+      expect(responses[3].content?.parts).toEqual([{text: ' second text'}]);
+      expect(responses[4].partial).toBe(false);
+      expect(responses[4].content?.parts).toEqual([{text: ' second text'}]);
+      expect(responses[4].errorCode).toBeUndefined();
+    });
+
+    it('aggregates several text parts of one chunk', async () => {
+      const gemini = createStreamingGemini([
+        {
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: [{text: 'First part'}, {text: ' second part'}],
+              },
+              finishReason: FinishReason.STOP,
+            },
+          ],
+        },
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      expect(responses).toHaveLength(2);
+      expect(responses[0].partial).toBe(true);
+      expect(responses[0].content?.parts?.[0]?.text).toBe('First part');
+      expect(responses[1].partial).toBe(false);
+      expect(responses[1].content?.parts).toEqual([
+        {text: 'First part second part'},
+      ]);
+    });
+
+    it('aggregates thought and text on each side of a function call', async () => {
+      const gemini = createStreamingGemini([
+        thoughtChunk('Thinking...'),
+        textChunk("Here's my answer"),
+        functionCallChunk('lookup'),
+        thoughtChunk('More thinking...'),
+        textChunk(' and conclusion', {finishReason: FinishReason.STOP}),
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      expect(responses).toHaveLength(7);
+      expect(responses[2].partial).toBe(false);
+      expect(responses[2].content?.parts).toEqual([
+        {text: 'Thinking...', thought: true},
+        {text: "Here's my answer"},
+      ]);
+      expect(responses[6].partial).toBe(false);
+      expect(responses[6].content?.parts).toEqual([
+        {text: 'More thinking...', thought: true},
+        {text: ' and conclusion'},
+      ]);
+      expect(responses[6].errorCode).toBeUndefined();
+    });
+
+    it('produces one aggregate for each run of text around a function call', async () => {
+      const gemini = createStreamingGemini([
+        textChunk('First'),
+        textChunk(' chunk'),
+        functionCallChunk('divide'),
+        textChunk('Second'),
+        textChunk(' chunk', {finishReason: FinishReason.STOP}),
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      const aggregatedTexts = responses
+        .filter(
+          (response) => !response.partial && response.content?.parts?.[0]?.text,
+        )
+        .map((response) => response.content?.parts);
+      expect(aggregatedTexts).toEqual([
+        [{text: 'First chunk'}],
+        [{text: 'Second chunk'}],
+      ]);
+      expect(responses.at(-1)?.errorCode).toBeUndefined();
+      expect(
+        responses.flatMap((response) =>
+          (response.content?.parts ?? []).flatMap(
+            (part) => part.functionCall?.name ?? [],
+          ),
+        ),
+      ).toEqual(['divide']);
     });
   });
 
