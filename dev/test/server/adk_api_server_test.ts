@@ -12,6 +12,7 @@ import {
   BaseCredentialService,
   BaseMemoryService,
   BaseSessionService,
+  BaseToolset,
   createEvent,
   createSession,
   EVAL_SESSION_ID_PREFIX,
@@ -3836,6 +3837,375 @@ describe('AdkWebServer', () => {
       } finally {
         closeSpy.mockRestore();
       }
+    });
+
+    it('disposes an owned AgentLoader on stop() and leaves an injected one open', async () => {
+      const disposeSpy = vi
+        .spyOn(AgentLoader.prototype, 'disposeAll')
+        .mockResolvedValue(undefined);
+      const tempAgentsDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-owned-loader-test-'),
+      );
+      try {
+        const ownedServer = new AdkApiServer({
+          agentsDir: tempAgentsDir,
+          sessionService,
+          memoryService,
+          artifactService,
+        });
+        await ownedServer.start();
+        await ownedServer.stop();
+        expect(disposeSpy).toHaveBeenCalledTimes(1);
+
+        const injectedLoader = {
+          listAgents: () => Promise.resolve([]),
+          getAgentFile: () => Promise.reject(new Error('not found')),
+          disposeAll: vi.fn().mockResolvedValue(undefined),
+        } as unknown as AgentLoader;
+        const injectedServer = new AdkApiServer({
+          agentLoader: injectedLoader,
+          sessionService,
+          memoryService,
+          artifactService,
+        });
+        await injectedServer.start();
+        await injectedServer.stop();
+        expect(
+          (injectedLoader as unknown as {disposeAll: ReturnType<typeof vi.fn>})
+            .disposeAll,
+        ).not.toHaveBeenCalled();
+      } finally {
+        disposeSpy.mockRestore();
+        fs.rmSync(tempAgentsDir, {recursive: true, force: true});
+      }
+    });
+
+    describe('replaced Runner cleanup', () => {
+      class RecordingToolset extends BaseToolset {
+        constructor(private readonly onClose: () => void) {
+          super();
+        }
+
+        getTools(): Promise<[]> {
+          return Promise.resolve([]);
+        }
+
+        close(): Promise<void> {
+          this.onClose();
+          return Promise.resolve();
+        }
+      }
+
+      function createReloadingLoader(getAgent: () => LlmAgent): AgentLoader {
+        return {
+          listAgents: () => Promise.resolve(['testApp']),
+          getAgentFile: () =>
+            Promise.resolve({
+              retain: () => ({
+                async [Symbol.asyncDispose](): Promise<void> {
+                  return;
+                },
+              }),
+              load: () => Promise.resolve(getAgent()),
+              async [Symbol.asyncDispose](): Promise<void> {
+                return;
+              },
+            }),
+        } as unknown as AgentLoader;
+      }
+
+      it('closes an idle replaced Runner immediately on reload when a2a is disabled', async () => {
+        const firstClose = vi.fn();
+        const secondClose = vi.fn();
+        let activeAgent = new TestAgent({
+          name: 'testAgent',
+          tools: [new RecordingToolset(firstClose)],
+        });
+        const reloadServer = new AdkApiServer({
+          agentLoader: createReloadingLoader(() => activeAgent),
+          sessionService,
+          memoryService,
+          artifactService,
+        });
+        await reloadServer.start();
+        const reloadClient = new HttpClient(reloadServer.url);
+
+        try {
+          await sessionService.createSession({
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'idleReloadSession',
+          });
+          await reloadClient.post('/run', {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'idleReloadSession',
+            newMessage: {role: 'user', parts: [{text: 'first'}]},
+          });
+          firstClose.mockClear();
+
+          activeAgent = new TestAgent({
+            name: 'testAgent',
+            tools: [new RecordingToolset(secondClose)],
+          });
+          await reloadClient.post('/run', {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'idleReloadSession',
+            newMessage: {role: 'user', parts: [{text: 'second'}]},
+          });
+          expect(firstClose).toHaveBeenCalledTimes(1);
+          secondClose.mockClear();
+
+          await reloadServer.stop();
+          expect(firstClose).toHaveBeenCalledTimes(1);
+          expect(secondClose).toHaveBeenCalledTimes(1);
+        } finally {
+          await reloadServer.stop();
+        }
+      });
+
+      it('waits until an in-flight /run finishes before closing a replaced Runner', async () => {
+        let reportRunStarted = () => {};
+        const runStarted = new Promise<void>((resolve) => {
+          reportRunStarted = resolve;
+        });
+        let releaseRun = () => {};
+        const runReleased = new Promise<void>((resolve) => {
+          releaseRun = resolve;
+        });
+
+        class BlockingRunAgent extends LlmAgent {
+          async *runAsyncImpl(
+            ctx: InvocationContext,
+          ): AsyncGenerator<Event, void, void> {
+            reportRunStarted();
+            await runReleased;
+            yield createEvent({
+              invocationId: ctx.invocationId,
+              author: this.name,
+              content: {role: 'model', parts: [{text: 'unblocked'}]},
+            });
+          }
+        }
+
+        const firstClose = vi.fn();
+        const secondClose = vi.fn();
+        let activeAgent: LlmAgent = new BlockingRunAgent({
+          name: 'testAgent',
+          tools: [new RecordingToolset(firstClose)],
+        });
+        const reloadServer = new AdkApiServer({
+          agentLoader: createReloadingLoader(() => activeAgent),
+          sessionService,
+          memoryService,
+          artifactService,
+        });
+        await reloadServer.start();
+        const reloadClient = new HttpClient(reloadServer.url);
+
+        try {
+          await sessionService.createSession({
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'inFlightRunSession',
+          });
+          await sessionService.createSession({
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'nextRunSession',
+          });
+
+          const firstRunPromise = reloadClient.post('/run', {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'inFlightRunSession',
+            newMessage: {role: 'user', parts: [{text: 'first'}]},
+          });
+          await runStarted;
+
+          activeAgent = new TestAgent({
+            name: 'testAgent',
+            tools: [new RecordingToolset(secondClose)],
+          });
+          await reloadClient.post('/run', {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'nextRunSession',
+            newMessage: {role: 'user', parts: [{text: 'second'}]},
+          });
+          expect(firstClose).not.toHaveBeenCalled();
+          secondClose.mockClear();
+
+          releaseRun();
+          await firstRunPromise;
+          // Once by Runner.runAsync's own finally block and once when
+          // AdkApiServer closes the retired runner.
+          expect(firstClose).toHaveBeenCalledTimes(2);
+          expect(secondClose).not.toHaveBeenCalled();
+
+          await reloadServer.stop();
+          expect(firstClose).toHaveBeenCalledTimes(2);
+          expect(secondClose).toHaveBeenCalledTimes(1);
+        } finally {
+          releaseRun();
+          await reloadServer.stop();
+        }
+      });
+
+      it('waits until an in-flight /run_live session finishes before closing a replaced Runner', async () => {
+        let reportLiveStarted = () => {};
+        const liveStarted = new Promise<void>((resolve) => {
+          reportLiveStarted = resolve;
+        });
+        let releaseLive = () => {};
+        const liveReleased = new Promise<void>((resolve) => {
+          releaseLive = resolve;
+        });
+
+        class BlockingLiveAgent extends LlmAgent {
+          async *runLiveImpl(
+            ctx: InvocationContext,
+          ): AsyncGenerator<Event, void, void> {
+            reportLiveStarted();
+            await liveReleased;
+            yield createEvent({
+              invocationId: ctx.invocationId,
+              author: this.name,
+              content: {role: 'model', parts: [{text: 'live done'}]},
+            });
+          }
+        }
+
+        const firstClose = vi.fn();
+        const secondClose = vi.fn();
+        let activeAgent: LlmAgent = new BlockingLiveAgent({
+          name: 'testAgent',
+          tools: [new RecordingToolset(firstClose)],
+        });
+        const reloadServer = new AdkApiServer({
+          agentLoader: createReloadingLoader(() => activeAgent),
+          sessionService,
+          memoryService,
+          artifactService,
+        });
+        await reloadServer.start();
+        const reloadClient = new HttpClient(reloadServer.url);
+
+        try {
+          await sessionService.createSession({
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'liveSession',
+          });
+          await sessionService.createSession({
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'runAfterLiveSession',
+          });
+
+          const target = new URL(
+            `${reloadServer.url}/run_live?app_name=testApp&user_id=testUser&session_id=liveSession`,
+          );
+          const liveSocketClosed = new Promise<void>((resolve, reject) => {
+            const req = http.request({
+              host: target.hostname,
+              port: target.port,
+              path: `${target.pathname}${target.search}`,
+              method: 'GET',
+              headers: {
+                Connection: 'Upgrade',
+                Upgrade: 'websocket',
+                'Sec-WebSocket-Key':
+                  Buffer.from('1234567890123456').toString('base64'),
+                'Sec-WebSocket-Version': '13',
+              },
+            });
+            req.on('upgrade', (_res, socket) => {
+              socket.resume();
+              socket.on('close', () => resolve());
+              socket.on('error', reject);
+            });
+            req.on('error', reject);
+            req.end();
+          });
+          await liveStarted;
+
+          activeAgent = new TestAgent({
+            name: 'testAgent',
+            tools: [new RecordingToolset(secondClose)],
+          });
+          await reloadClient.post('/run', {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'runAfterLiveSession',
+            newMessage: {role: 'user', parts: [{text: 'second'}]},
+          });
+          expect(firstClose).not.toHaveBeenCalled();
+          secondClose.mockClear();
+
+          releaseLive();
+          await liveSocketClosed;
+          expect(firstClose).toHaveBeenCalledTimes(1);
+          expect(secondClose).not.toHaveBeenCalled();
+
+          await reloadServer.stop();
+          expect(firstClose).toHaveBeenCalledTimes(1);
+          expect(secondClose).toHaveBeenCalledTimes(1);
+        } finally {
+          releaseLive();
+          await reloadServer.stop();
+        }
+      });
+
+      it('keeps replaced Runners open while a2a is enabled and closes them in stop()', async () => {
+        const firstClose = vi.fn();
+        const secondClose = vi.fn();
+        let activeAgent = new TestAgent({
+          name: 'testAgent',
+          tools: [new RecordingToolset(firstClose)],
+        });
+        const a2aReloadServer = new AdkApiServer({
+          agentLoader: createReloadingLoader(() => activeAgent),
+          sessionService,
+          memoryService,
+          artifactService,
+          a2a: true,
+        });
+        await a2aReloadServer.start();
+        const a2aClient = new HttpClient(a2aReloadServer.url);
+
+        try {
+          await sessionService.createSession({
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'a2aReloadSession',
+          });
+
+          activeAgent = new TestAgent({
+            name: 'testAgent',
+            tools: [new RecordingToolset(secondClose)],
+          });
+          await a2aClient.post('/run', {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'a2aReloadSession',
+            newMessage: {role: 'user', parts: [{text: 'reloaded'}]},
+          });
+          expect(firstClose).not.toHaveBeenCalled();
+          secondClose.mockClear();
+
+          const a2aResponse = await sendA2aMessage(a2aReloadServer.url);
+          expect(a2aResponse.status).toBe(200);
+          firstClose.mockClear();
+
+          await a2aReloadServer.stop();
+          expect(firstClose).toHaveBeenCalledTimes(1);
+          expect(secondClose).toHaveBeenCalledTimes(1);
+        } finally {
+          await a2aReloadServer.stop();
+        }
+      });
     });
   });
 

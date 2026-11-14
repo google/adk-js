@@ -44,6 +44,18 @@ To use the browser UI instead, serve the file with `adk web`:
 node dev/dist/esm/cli_entrypoint.js web samples/cli/agent.ts
 ```
 
+Add `--reload_agents` to pick up edits to `agent.ts` without a server restart. The server loads the changed agent again on the next request:
+
+```bash
+node dev/dist/esm/cli_entrypoint.js web samples/cli/agent.ts --reload_agents
+```
+
+Add `--a2a` to also serve the agent over the Agent2Agent (A2A) protocol below `/a2a/agent`, and `--a2a_auth_token` to require a bearer token on those endpoints:
+
+```bash
+node dev/dist/esm/cli_entrypoint.js web samples/cli/agent.ts --a2a --a2a_auth_token <token>
+```
+
 To keep eval sets and eval results in a Google Cloud Storage bucket instead of the agents directory, add `--eval_storage_uri`. The bucket must exist, `GOOGLE_CLOUD_PROJECT` must name its project, and the optional peer `@google-cloud/storage` must be installed:
 
 ```bash

@@ -220,6 +220,7 @@ export class AdkApiServer {
   readonly app: express.Application;
   private readonly agentsDir?: string;
   private readonly agentLoader: AgentLoader;
+  private readonly ownsAgentLoader: boolean;
   /**
    * Caches below are keyed by request path parameters (`appName`, `eventId`,
    * `sessionId`), so each is created with `Object.create(null)`. On an
@@ -229,6 +230,9 @@ export class AdkApiServer {
    * aliases `Object.prototype` on write.
    */
   private readonly runnerCache: Record<string, Runner> = Object.create(null);
+  private readonly retiredRunners = new Set<Runner>();
+  private readonly activeRunCounts = new Map<Runner, number>();
+  private readonly closingRetiredRunners = new Set<Promise<void>>();
   private readonly sessionService: BaseSessionService;
   private readonly memoryService: BaseMemoryService;
   private readonly artifactService: BaseArtifactService;
@@ -275,6 +279,7 @@ export class AdkApiServer {
     this.evalSetResultsManager =
       options.evalSetResultsManager ??
       new LocalEvalSetResultsManager(evalBaseDir);
+    this.ownsAgentLoader = options.agentLoader === undefined;
     this.agentLoader =
       options.agentLoader ??
       new AgentLoader(
@@ -2423,13 +2428,18 @@ export class AdkApiServer {
             }
           : {};
 
-      for await (const event of runner.runLive({
-        userId: session.userId,
-        sessionId: session.id,
-        liveRequestQueue,
-        runConfig,
-      })) {
-        sendWsText(JSON.stringify(publicEvent(event)));
+      this.beginRunnerRun(runner);
+      try {
+        for await (const event of runner.runLive({
+          userId: session.userId,
+          sessionId: session.id,
+          liveRequestQueue,
+          runConfig,
+        })) {
+          sendWsText(JSON.stringify(publicEvent(event)));
+        }
+      } finally {
+        await this.endRunnerRun(runner);
       }
     } catch (e: unknown) {
       this.logger.error(`Error in run_live WebSocket: ${e}`);
@@ -2448,11 +2458,18 @@ export class AdkApiServer {
   }
 
   async stop(): Promise<void> {
-    const runners = Object.values(this.runnerCache);
+    const runners = [
+      ...Object.values(this.runnerCache),
+      ...this.retiredRunners,
+    ];
     for (const key of Object.keys(this.runnerCache)) {
       delete this.runnerCache[key];
     }
-    await closeRunners(runners);
+    this.retiredRunners.clear();
+    await Promise.all([closeRunners(runners), ...this.closingRetiredRunners]);
+    if (this.ownsAgentLoader) {
+      await this.agentLoader.disposeAll();
+    }
 
     const server = this.server;
     // A failed `start()` (EADDRINUSE) and an already-closed server both leave
@@ -2520,16 +2537,50 @@ export class AdkApiServer {
     loadDotenvForAgent(appName, this.agentsDir);
   }
 
+  private beginRunnerRun(runner: Runner): void {
+    this.activeRunCounts.set(
+      runner,
+      (this.activeRunCounts.get(runner) ?? 0) + 1,
+    );
+  }
+
+  private async endRunnerRun(runner: Runner): Promise<void> {
+    const remaining = (this.activeRunCounts.get(runner) ?? 0) - 1;
+    if (remaining > 0) {
+      this.activeRunCounts.set(runner, remaining);
+      return;
+    }
+
+    this.activeRunCounts.delete(runner);
+    if (!this.a2a && this.retiredRunners.delete(runner)) {
+      await this.closeRetiredRunner(runner);
+    }
+  }
+
+  private async retireRunner(runner: Runner): Promise<void> {
+    if (!this.a2a && (this.activeRunCounts.get(runner) ?? 0) === 0) {
+      await this.closeRetiredRunner(runner);
+      return;
+    }
+    this.retiredRunners.add(runner);
+  }
+
+  private async closeRetiredRunner(runner: Runner): Promise<void> {
+    const closePromise = closeRunners([runner]).finally(() => {
+      this.closingRetiredRunners.delete(closePromise);
+    });
+    this.closingRetiredRunners.add(closePromise);
+    await closePromise;
+  }
+
   private async getRunner(
     agentOrApp: RunnableRoot | App,
     appName: string,
   ): Promise<Runner> {
     const isAppInstance = isApp(agentOrApp);
     const agent = isAppInstance ? agentOrApp.rootAgent : agentOrApp;
-    if (
-      !(appName in this.runnerCache) ||
-      this.runnerCache[appName].agent !== agent
-    ) {
+    const previousRunner = this.runnerCache[appName];
+    if (!previousRunner || previousRunner.agent !== agent) {
       this.runnerCache[appName] = new Runner({
         app: isAppInstance ? agentOrApp : undefined,
         appName,
@@ -2539,6 +2590,9 @@ export class AdkApiServer {
         artifactService: this.artifactService,
         credentialService: this.credentialService,
       });
+      if (previousRunner) {
+        await this.retireRunner(previousRunner);
+      }
     }
 
     return this.runnerCache[appName];
@@ -2562,18 +2616,23 @@ export class AdkApiServer {
     const loaded = await agentFile.load();
     const runner = await this.getRunner(loaded, options.appName);
 
-    // Every run endpoint streams through here, so events leave without
-    // ADK-internal customMetadata.
-    for await (const event of runner.runAsync({
-      userId: options.userId,
-      sessionId: options.sessionId,
-      newMessage: options.newMessage,
-      runConfig: options.runConfig,
-      stateDelta: options.stateDelta,
-      customMetadata: options.customMetadata,
-      abortSignal: options.abortSignal,
-    })) {
-      yield publicEvent(event);
+    this.beginRunnerRun(runner);
+    try {
+      // Every run endpoint streams through here, so events leave without
+      // ADK-internal customMetadata.
+      for await (const event of runner.runAsync({
+        userId: options.userId,
+        sessionId: options.sessionId,
+        newMessage: options.newMessage,
+        runConfig: options.runConfig,
+        stateDelta: options.stateDelta,
+        customMetadata: options.customMetadata,
+        abortSignal: options.abortSignal,
+      })) {
+        yield publicEvent(event);
+      }
+    } finally {
+      await this.endRunnerRun(runner);
     }
   }
 }
