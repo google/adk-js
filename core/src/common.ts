@@ -159,6 +159,75 @@ export {OAuth2DiscoveryManager} from './auth/oauth2/oauth2_discovery.js';
 export {CredentialRefresherError} from './auth/refresher/base_credential_refresher.js';
 export type {BaseCredentialRefresher} from './auth/refresher/base_credential_refresher.js';
 export {CredentialRefresherRegistry} from './auth/refresher/credential_refresher_registry.js';
+export {
+  BaseClassifier,
+  isBaseClassifier,
+} from './classifiers/base_classifier.js';
+export type {
+  BaseClassifierConfig,
+  BaseClassifierParams,
+} from './classifiers/base_classifier.js';
+export {
+  ClassifierNode,
+  isClassifierNode,
+} from './classifiers/classifier_node.js';
+export type {ClassifierNodeConfig} from './classifiers/classifier_node.js';
+export {
+  GeminiDecisionsClassifier,
+  isGeminiDecisionsClassifier,
+} from './classifiers/gemini_decisions_classifier.js';
+export type {GeminiDecisionsClassifierConfig} from './classifiers/gemini_decisions_classifier.js';
+export {LlmClassifier, isLlmClassifier} from './classifiers/llm_classifier.js';
+export type {LlmClassifierConfig} from './classifiers/llm_classifier.js';
+export {
+  createBinary,
+  createBinaryAnswer,
+  createChoice,
+  createChoiceAnswer,
+  createClassifierResponse,
+  createRefusalAnswer,
+  createScore,
+  createScoreAnswer,
+  isAnswer,
+  isBinary,
+  isBinaryAnswer,
+  isChoice,
+  isChoiceAnswer,
+  isClassifierResponse,
+  isQuestion,
+  isRefusalAnswer,
+  isScore,
+  isScoreAnswer,
+  parseAnswerJson,
+  parseClassifierResponseJson,
+  parseQuestionJson,
+  serializeAnswer,
+  serializeClassifierResponse,
+  serializeQuestion,
+} from './classifiers/types.js';
+export type {
+  Answer,
+  Binary,
+  BinaryAnswer,
+  Choice,
+  ChoiceAnswer,
+  ClassifierInput,
+  ClassifierRequest,
+  ClassifierResponse,
+  CreateBinaryAnswerParams,
+  CreateBinaryParams,
+  CreateChoiceAnswerParams,
+  CreateChoiceParams,
+  CreateClassifierResponseParams,
+  CreateScoreAnswerParams,
+  CreateScoreParams,
+  JSONContent,
+  JsonValue,
+  Question,
+  RefusalAnswer,
+  Score,
+  ScoreAnswer,
+} from './classifiers/types.js';
 export {BaseCodeExecutor} from './code_executors/base_code_executor.js';
 export type {ExecuteCodeParams} from './code_executors/base_code_executor.js';
 export {BuiltInCodeExecutor} from './code_executors/built_in_code_executor.js';
@@ -577,6 +646,7 @@ export {
   START,
   ToolNode,
   Workflow,
+  WorkflowDataError,
   WorkflowNode,
   asRunnableRoot,
   commonPrefixOf,
@@ -592,6 +662,7 @@ export {
   isRequestInput,
   isRunnableRoot,
   isWorkflow,
+  isWorkflowDataError,
   node,
   normalizeRetryExceptions,
   prepareRetryConfig,
