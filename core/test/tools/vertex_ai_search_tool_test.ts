@@ -168,6 +168,55 @@ describe('VertexAiSearchTool', () => {
     );
   });
 
+  it('should throw error for path-based Gemini 1.x if other tools are present and bypass is false', async () => {
+    const tool = new VertexAiSearchTool({dataStoreId: 'ds'});
+    const llmRequest = makeLlmRequest(
+      'projects/test-proj/locations/us-central1/publishers/google/models/gemini-1.5-pro-preview',
+      {
+        tools: [
+          {
+            functionDeclarations: [
+              {name: 'test_function', description: 'test'},
+            ],
+          },
+        ],
+      },
+    );
+    const toolContext = {} as Context;
+
+    await expect(
+      tool.processLlmRequest({toolContext, llmRequest}),
+    ).rejects.toThrowError(
+      'Vertex AI search tool cannot be used with other tools in Gemini 1.x.',
+    );
+  });
+
+  it('should append vertexAiSearch config when Gemini 2+ model already has other tools', async () => {
+    const tool = new VertexAiSearchTool({dataStoreId: 'ds'});
+    const existingTool = {
+      functionDeclarations: [{name: 'test_function', description: 'test'}],
+    };
+    const llmRequest = makeLlmRequest('gemini-2.5-pro', {
+      tools: [existingTool],
+    });
+    const toolContext = {} as Context;
+
+    await tool.processLlmRequest({toolContext, llmRequest});
+
+    expect(llmRequest.config?.tools).toHaveLength(2);
+    expect(llmRequest.config?.tools?.[0]).toEqual(existingTool);
+    expect(
+      (llmRequest.config?.tools?.[1] as unknown as TestTool).retrieval
+        ?.vertexAiSearch,
+    ).toEqual({
+      datastore: 'ds',
+      dataStoreSpecs: undefined,
+      engine: undefined,
+      filter: undefined,
+      maxResults: undefined,
+    });
+  });
+
   it('should not throw error for Gemini 1.x if other tools are present and bypass is true', async () => {
     const tool = new VertexAiSearchTool({
       dataStoreId: 'ds',
@@ -192,6 +241,20 @@ describe('VertexAiSearchTool', () => {
       tool.processLlmRequest({toolContext, llmRequest}),
     ).rejects.toThrowError(
       'Vertex AI search tool is not supported for model claude-3',
+    );
+  });
+
+  it('should throw error for path-based non-Gemini model', async () => {
+    const tool = new VertexAiSearchTool({dataStoreId: 'ds'});
+    const nonGeminiPath =
+      'projects/test-proj/locations/us-central1/publishers/google/models/claude-3-sonnet';
+    const llmRequest = makeLlmRequest(nonGeminiPath);
+    const toolContext = {} as Context;
+
+    await expect(
+      tool.processLlmRequest({toolContext, llmRequest}),
+    ).rejects.toThrowError(
+      `Vertex AI search tool is not supported for model ${nonGeminiPath}`,
     );
   });
 
