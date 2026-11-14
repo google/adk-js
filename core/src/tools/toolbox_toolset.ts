@@ -156,6 +156,21 @@ export function isToolboxToolset(obj: unknown): obj is ToolboxToolset {
   );
 }
 
+const TOOLBOX_TOOL_SIGNATURE_SYMBOL = Symbol.for('google.adk.toolboxTool');
+
+/**
+ * Type guard to check if an object is a tool loaded by a
+ * {@link ToolboxToolset}.
+ */
+export function isToolboxTool(obj: unknown): obj is BaseTool {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    TOOLBOX_TOOL_SIGNATURE_SYMBOL in obj &&
+    (obj as Record<symbol, unknown>)[TOOLBOX_TOOL_SIGNATURE_SYMBOL] === true
+  );
+}
+
 function createUnconfiguredToolboxToolsetClient(
   serverUrl: string,
 ): ToolboxToolsetClientLike {
@@ -182,9 +197,19 @@ function isToolOptionsObject(
   );
 }
 
-function wrapPrefixedBaseTool(rawTool: BaseTool, name: string): BaseTool {
+// A proxy leaves the loaded tool untouched, so frozen tools work, and binds
+// methods to it, so its private fields and state keep working.
+function wrapToolboxTool(rawTool: BaseTool, name: string): BaseTool {
   return new Proxy(rawTool, {
-    get(target, prop, receiver) {
+    has(target, prop) {
+      return (
+        prop === TOOLBOX_TOOL_SIGNATURE_SYMBOL || Reflect.has(target, prop)
+      );
+    },
+    get(target, prop) {
+      if (prop === TOOLBOX_TOOL_SIGNATURE_SYMBOL) {
+        return true;
+      }
       if (prop === 'name') {
         return name;
       }
@@ -194,7 +219,11 @@ function wrapPrefixedBaseTool(rawTool: BaseTool, name: string): BaseTool {
           return declaration ? {...declaration, name} : undefined;
         };
       }
-      const value = Reflect.get(target, prop, receiver);
+      const value = Reflect.get(target, prop, target);
+      const own = Reflect.getOwnPropertyDescriptor(target, prop);
+      if (own && !own.configurable && !own.writable) {
+        return value;
+      }
       return typeof value === 'function' ? value.bind(target) : value;
     },
   });
@@ -212,10 +241,7 @@ interface ToolboxSdkFunction {
 function wrapLoadedTool(rawTool: unknown, prefix?: string): BaseTool {
   if (isBaseTool(rawTool)) {
     const name = prefix ? `${prefix}_${rawTool.name}` : rawTool.name;
-    if (name === rawTool.name) {
-      return rawTool;
-    }
-    return wrapPrefixedBaseTool(rawTool, name);
+    return wrapToolboxTool(rawTool, name);
   }
 
   if (typeof rawTool === 'function') {
@@ -236,23 +262,18 @@ function wrapLoadedTool(rawTool: unknown, prefix?: string): BaseTool {
       typeof fn.getParamSchema === 'function'
         ? fn.getParamSchema()
         : fn.parameters;
-    return new FunctionTool({
+    return wrapToolboxTool(
+      new FunctionTool({name, description, parameters, execute: fn}),
       name,
-      description,
-      parameters,
-      execute: fn,
-    });
+    );
   }
 
   if (isToolOptionsObject(rawTool)) {
     const baseTool = new FunctionTool(rawTool);
-    if (!prefix) {
-      return baseTool;
-    }
-    return new FunctionTool({
-      ...rawTool,
-      name: `${prefix}_${baseTool.name}`,
-    });
+    const tool = prefix
+      ? new FunctionTool({...rawTool, name: `${prefix}_${baseTool.name}`})
+      : baseTool;
+    return wrapToolboxTool(tool, tool.name);
   }
 
   throw new TypeError(
