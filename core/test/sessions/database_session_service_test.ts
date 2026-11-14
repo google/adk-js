@@ -76,12 +76,15 @@ describe('DatabaseSessionService', () => {
   });
 
   it('should get a session', async () => {
-    await service.createSession({
+    const beforeCreate = Date.now();
+    const created = await service.createSession({
       appName: 'test-app',
       userId: 'test-user',
       sessionId: 'test-session-id',
       state: {'key': 'value'},
     });
+    expect(created.lastUpdateTime).toBeGreaterThanOrEqual(beforeCreate);
+    expect(created.lastUpdateTime).toBeLessThanOrEqual(Date.now());
 
     const session = await service.getSession({
       appName: 'test-app',
@@ -92,6 +95,49 @@ describe('DatabaseSessionService', () => {
     expect(session).toBeDefined();
     expect(session?.id).toBe('test-session-id');
     expect(session?.state['key']).toBe('value');
+    expect(session?.lastUpdateTime).toBeGreaterThanOrEqual(beforeCreate);
+    expect(session?.lastUpdateTime).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('isolates session events across users sharing the same sessionId', async () => {
+    const appName = 'my_app';
+    const sessionId = 'session11';
+    const user1Session = await service.createSession({
+      appName,
+      userId: 'user1',
+      sessionId,
+      state: {key11: 'value11'},
+    });
+    await service.createSession({
+      appName,
+      userId: 'malicious',
+      sessionId,
+    });
+
+    await service.appendEvent({
+      session: user1Session,
+      event: createEvent({
+        invocationId: 'inv-1',
+        author: 'user',
+        timestamp: Date.now(),
+        content: {role: 'user', parts: [{text: 'text'}]},
+      }),
+    });
+
+    const ownerSession = await service.getSession({
+      appName,
+      userId: 'user1',
+      sessionId,
+    });
+    expect(ownerSession?.events).toHaveLength(1);
+
+    const otherUserSession = await service.getSession({
+      appName,
+      userId: 'malicious',
+      sessionId,
+    });
+    expect(otherUserSession).toBeDefined();
+    expect(otherUserSession?.events).toHaveLength(0);
   });
 
   it('should list sessions', async () => {

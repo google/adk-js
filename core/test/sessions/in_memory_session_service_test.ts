@@ -114,10 +114,15 @@ describe('InMemorySessionService', () => {
     });
 
     it('returns the session if it exists', async () => {
+      const beforeCreate = Date.now();
       const createdSession = await service.createSession({
         appName: 'app',
         userId: 'user',
       });
+      expect(createdSession.lastUpdateTime).toBeGreaterThanOrEqual(
+        beforeCreate,
+      );
+      expect(createdSession.lastUpdateTime).toBeLessThanOrEqual(Date.now());
       const session = await service.getSession({
         appName: 'app',
         userId: 'user',
@@ -126,6 +131,49 @@ describe('InMemorySessionService', () => {
 
       expect(session).toBeDefined();
       expect(session?.id).toBe(createdSession.id);
+      expect(session?.lastUpdateTime).toBeGreaterThanOrEqual(beforeCreate);
+      expect(session?.lastUpdateTime).toBeLessThanOrEqual(Date.now());
+    });
+
+    it('isolates session events across users sharing the same sessionId', async () => {
+      const appName = 'my_app';
+      const sessionId = 'session11';
+      const user1Session = await service.createSession({
+        appName,
+        userId: 'user1',
+        sessionId,
+        state: {key11: 'value11'},
+      });
+      await service.createSession({
+        appName,
+        userId: 'malicious',
+        sessionId,
+      });
+
+      await service.appendEvent({
+        session: user1Session,
+        event: createEvent({
+          invocationId: 'inv-1',
+          author: 'user',
+          timestamp: Date.now(),
+          content: {role: 'user', parts: [{text: 'text'}]},
+        }),
+      });
+
+      const ownerSession = await service.getSession({
+        appName,
+        userId: 'user1',
+        sessionId,
+      });
+      expect(ownerSession?.events).toHaveLength(1);
+
+      const otherUserSession = await service.getSession({
+        appName,
+        userId: 'malicious',
+        sessionId,
+      });
+      expect(otherUserSession).toBeDefined();
+      expect(otherUserSession?.events).toHaveLength(0);
     });
 
     it('respects numRecentEvents config', async () => {

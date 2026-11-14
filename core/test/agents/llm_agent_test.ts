@@ -625,6 +625,278 @@ describe('LlmAgent Output Processing', () => {
     const lastEvent = events[events.length - 1];
     expect(lastEvent.actions?.stateDelta?.['result']).toEqual({answer: 42});
   });
+
+  it('saves plain text output to stateDelta when outputKey is set without outputSchema', async () => {
+    const plainAgent = new LlmAgent({
+      name: 'test_agent',
+      outputKey: 'result',
+      model: new MockLlm({
+        content: {role: 'model', parts: [{text: 'Test response'}]},
+      }),
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv_plain',
+      session: createSession({id: 'sess_plain', appName: 'test_app'}),
+      agent: plainAgent,
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of plainAgent.runAsync(ctx)) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(1);
+    expect(events[0].actions.stateDelta['result']).toBe('Test response');
+  });
+
+  it('does not save output when outputKey is not set', async () => {
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    onTestFinished(() => debugSpy.mockRestore());
+
+    const noKeyAgent = new LlmAgent({
+      name: 'test_agent',
+      model: new MockLlm({
+        content: {role: 'model', parts: [{text: 'Test response'}]},
+      }),
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv_no_key',
+      session: createSession({id: 'sess_no_key', appName: 'test_app'}),
+      agent: noKeyAgent,
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of noKeyAgent.runAsync(ctx)) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(1);
+    expect(Object.keys(events[0].actions.stateDelta)).toHaveLength(0);
+    expect(debugSpy).toHaveBeenCalledWith(
+      'Skipping output save for agent test_agent: outputKey is not set',
+    );
+  });
+
+  it('does not save output for partial streaming events', async () => {
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    onTestFinished(() => debugSpy.mockRestore());
+
+    const streamAgent = new LlmAgent({
+      name: 'test_agent',
+      outputKey: 'result',
+      model: new StreamingMockLlm([
+        {
+          content: {role: 'model', parts: [{text: 'Partial response'}]},
+          partial: true,
+        },
+        {
+          content: {role: 'model', parts: [{text: 'Final response'}]},
+          partial: false,
+        },
+      ]),
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv_partial',
+      session: createSession({id: 'sess_partial', appName: 'test_app'}),
+      agent: streamAgent,
+      runConfig: createRunConfig({streamingMode: StreamingMode.SSE}),
+      pluginManager: new PluginManager(),
+    });
+
+    const generator = streamAgent.runAsync(ctx);
+    const firstStep = await generator.next();
+    const partialEvent = firstStep.done ? undefined : firstStep.value;
+    expect(partialEvent?.partial).toBe(true);
+    expect(partialEvent?.actions.stateDelta).toEqual({});
+    expect(debugSpy).toHaveBeenCalledWith(
+      'Skipping output save for agent test_agent: event is not a final response',
+    );
+
+    const secondStep = await generator.next();
+    const finalEvent = secondStep.done ? undefined : secondStep.value;
+    expect(finalEvent?.partial).toBe(false);
+    expect(finalEvent?.actions.stateDelta['result']).toBe('Final response');
+  });
+
+  it('does not save output when final event has no content', async () => {
+    const noContentAgent = new LlmAgent({
+      name: 'test_agent',
+      outputKey: 'result',
+      model: new MockLlm({
+        usageMetadata: {promptTokenCount: 5, totalTokenCount: 5},
+      }),
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv_no_content',
+      session: createSession({id: 'sess_no_content', appName: 'test_app'}),
+      agent: noContentAgent,
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of noContentAgent.runAsync(ctx)) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(1);
+    expect(events[0].content).toBeUndefined();
+    expect(Object.keys(events[0].actions.stateDelta)).toHaveLength(0);
+  });
+
+  it('concatenates multiple text parts when saving output to stateDelta', async () => {
+    const multiPartAgent = new LlmAgent({
+      name: 'test_agent',
+      outputKey: 'result',
+      model: new MockLlm({
+        content: {
+          role: 'model',
+          parts: [{text: 'Hello '}, {text: 'world'}, {text: '!'}],
+        },
+      }),
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv_multipart',
+      session: createSession({id: 'sess_multipart', appName: 'test_app'}),
+      agent: multiPartAgent,
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of multiPartAgent.runAsync(ctx)) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(1);
+    expect(events[0].actions.stateDelta['result']).toBe('Hello world!');
+  });
+
+  it('skips output save and logs debug message when an agent transfers to a sub-agent', async () => {
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    onTestFinished(() => debugSpy.mockRestore());
+
+    const billingAgent = new LlmAgent({
+      name: 'billing_agent',
+      model: new MockLlm({
+        content: {role: 'model', parts: [{text: 'Your bill is $100'}]},
+      }),
+    });
+    const supportAgent = new LlmAgent({
+      name: 'support_agent',
+      outputKey: 'support_result',
+      subAgents: [billingAgent],
+      model: new MockLlm({
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'call_transfer',
+                name: 'transfer_to_agent',
+                args: {agent_name: 'billing_agent'},
+              },
+            },
+          ],
+        },
+      }),
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv_transfer',
+      session: createSession({id: 'sess_transfer', appName: 'test_app'}),
+      agent: supportAgent,
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of supportAgent.runAsync(ctx)) {
+      events.push(event);
+    }
+
+    const billingEvent = events.find((e) => e.author === 'billing_agent');
+    expect(billingEvent).toBeDefined();
+    expect(billingEvent?.actions.stateDelta).toEqual({});
+    expect(debugSpy).toHaveBeenCalledWith(
+      'Skipping output save for agent support_agent: event authored by billing_agent',
+    );
+  });
+
+  it('skips output save with case-sensitive author comparison when event author differs only by case', async () => {
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    onTestFinished(() => debugSpy.mockRestore());
+
+    class CaseMismatchResponseProcessor extends BaseLlmResponseProcessor {
+      async *runAsync(): AsyncGenerator<Event, void, void> {
+        yield createEvent({
+          invocationId: 'inv_case',
+          author: 'testagent',
+          content: {role: 'model', parts: [{text: 'Test response'}]},
+        });
+      }
+    }
+
+    const caseAgent = new LlmAgent({
+      name: 'TestAgent',
+      outputKey: 'result',
+      responseProcessors: [new CaseMismatchResponseProcessor()],
+      model: new MockLlm({
+        content: {role: 'model', parts: []},
+      }),
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv_case',
+      session: createSession({id: 'sess_case', appName: 'test_app'}),
+      agent: caseAgent,
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of caseAgent.runAsync(ctx)) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(1);
+    expect(events[0].author).toBe('testagent');
+    expect(Object.keys(events[0].actions.stateDelta)).toHaveLength(0);
+    expect(debugSpy).toHaveBeenCalledWith(
+      'Skipping output save for agent TestAgent: event authored by testagent',
+    );
+  });
+
+  it.each([
+    {label: 'empty string', emptyContent: ''},
+    {label: 'spaces only', emptyContent: '  '},
+    {label: 'newline only', emptyContent: '\n'},
+  ])(
+    'ignores empty or whitespace final chunk ($label) when outputSchema is set without throwing or saving',
+    async ({emptyContent}) => {
+      const schemaAgent = new LlmAgent({
+        name: 'test_agent',
+        outputKey: 'result',
+        outputSchema: z4.object({
+          message: z4.string(),
+          confidence: z4.number(),
+        }),
+        model: new MockLlm({
+          content: {role: 'model', parts: [{text: emptyContent}]},
+        }),
+      });
+      const ctx = new InvocationContext({
+        invocationId: 'inv_empty_chunk',
+        session: createSession({id: 'sess_empty_chunk', appName: 'test_app'}),
+        agent: schemaAgent,
+        pluginManager: new PluginManager(),
+      });
+
+      const events: Event[] = [];
+      for await (const event of schemaAgent.runAsync(ctx)) {
+        events.push(event);
+      }
+
+      expect(events).toHaveLength(1);
+      expect(Object.keys(events[0].actions.stateDelta)).toHaveLength(0);
+    },
+  );
 });
 
 describe('LlmAgent Configuration with contextCompactors', () => {
@@ -2721,6 +2993,67 @@ describe('LlmAgent live streaming tools and supportCfc', () => {
       events[0].id,
       events[3].id,
     ]);
+  });
+
+  it('stamps advancing timestamps on each partial and final streaming event as the clock advances while sharing one event id', async () => {
+    let fakeNow = 1_700_000_000_000;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => fakeNow);
+    onTestFinished(() => nowSpy.mockRestore());
+
+    class ClockAdvancingStreamingLlm extends BaseLlm {
+      constructor() {
+        super({model: 'clock-advancing-llm'});
+      }
+
+      async *generateContentAsync(): AsyncGenerator<LlmResponse, void, void> {
+        fakeNow += 100;
+        yield {
+          content: {role: 'model', parts: [{text: 'chunk 1 '}]},
+          partial: true,
+        };
+        fakeNow += 100;
+        yield {
+          content: {role: 'model', parts: [{text: 'chunk 2'}]},
+          partial: true,
+        };
+        fakeNow += 100;
+        yield {
+          content: {role: 'model', parts: [{text: 'chunk 1 chunk 2'}]},
+          partial: false,
+        };
+      }
+
+      async connect(): Promise<BaseLlmConnection> {
+        return new MockLlmConnection();
+      }
+    }
+
+    const agent = new LlmAgent({
+      name: 'streaming_timestamp_agent',
+      model: new ClockAdvancingStreamingLlm(),
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv_stream_ts',
+      session: createSession({id: 'sess_stream_ts', appName: 'test-app'}),
+      agent,
+      runConfig: createRunConfig({streamingMode: StreamingMode.SSE}),
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(ctx)) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(3);
+    expect(events[0].partial).toBe(true);
+    expect(events[1].partial).toBe(true);
+    expect(events[2].partial).toBe(false);
+    expect(events[1].id).toBe(events[0].id);
+    expect(events[2].id).toBe(events[0].id);
+    expect(events[0].timestamp).toBe(1_700_000_000_100);
+    expect(events[1].timestamp).toBe(1_700_000_000_200);
+    expect(events[2].timestamp).toBe(1_700_000_000_300);
   });
 });
 

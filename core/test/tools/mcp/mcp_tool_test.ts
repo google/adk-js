@@ -666,6 +666,26 @@ describe('MCPTool', () => {
       expect(sessionManager.createSession).not.toHaveBeenCalled();
     });
 
+    it('rejects an API key sent in a cookie and opens no session', async () => {
+      const {sessionManager, mcpSessionManager} = createMocks();
+      const tool = new MCPTool({
+        mcpTool: authTool,
+        mcpSessionManager,
+        authConfig: {
+          authScheme: {type: AuthSchemeType.API_KEY, in: 'cookie', name: 'key'},
+          rawAuthCredential: apiKeyCredential,
+          credentialKey: 'mcp-api-key',
+        },
+      });
+
+      await expect(
+        tool.runAsync({args: {}, toolContext: createToolContext()}),
+      ).rejects.toThrow(
+        "MCPTool only supports header-based API key authentication. Configured location: 'cookie'.",
+      );
+      expect(sessionManager.createSession).not.toHaveBeenCalled();
+    });
+
     it('rejects an apiKey scheme with a blank header name and opens no session', async () => {
       const {sessionManager, mcpSessionManager} = createMocks();
       const tool = new MCPTool({

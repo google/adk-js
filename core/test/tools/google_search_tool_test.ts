@@ -92,6 +92,17 @@ describe('GoogleSearchTool', () => {
       expect(req.config!.tools).toEqual([{googleSearch: {}}]);
     });
 
+    it('adds googleSearch for Gemini Live model', async () => {
+      const tool = new GoogleSearchTool();
+      const req = makeRequest('gemini-live-2.5-flash');
+      await tool.processLlmRequest({
+        llmRequest: req,
+        toolContext: {} as never,
+      });
+
+      expect(req.config?.tools).toEqual([{googleSearch: {}}]);
+    });
+
     it('throws for unsupported (non-Gemini) model', async () => {
       const tool = new GoogleSearchTool();
       const req = makeRequest('gpt-4');
