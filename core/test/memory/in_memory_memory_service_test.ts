@@ -99,6 +99,41 @@ describe('InMemoryMemoryService', () => {
   });
 
   describe('searchMemory', () => {
+    it.each([
+      {query: 'hello!', count: 1},
+      {query: 'HELLO,', count: 1},
+      {query: '...hello?', count: 1},
+      {query: '...!!!', count: 0},
+    ])(
+      'matches query $query using the event word boundaries',
+      async ({query, count}) => {
+        const session = await sessionService.createSession({
+          appName: 'myApp',
+          userId: 'alice',
+        });
+        session.events.push(
+          createEvent({
+            author: 'user',
+            content: {role: 'user', parts: [{text: 'hello world'}]},
+          }),
+        );
+        await service.addSessionToMemory(session);
+
+        const result = await service.searchMemory({
+          appName: 'myApp',
+          userId: 'alice',
+          query,
+        });
+
+        expect(result.memories).toHaveLength(count);
+        if (count) {
+          expect(result.memories[0].content?.parts).toEqual([
+            {text: 'hello world'},
+          ]);
+        }
+      },
+    );
+
     it('returns empty memories when no session added for user', async () => {
       const result = await service.searchMemory({
         appName: 'myApp',
