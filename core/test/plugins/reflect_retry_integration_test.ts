@@ -5,15 +5,22 @@
  */
 
 import {describe, expect, it} from 'vitest';
+import {z as z3} from 'zod/v3';
 import {Context} from '../../src/agents/context.js';
 import {InvocationContext} from '../../src/agents/invocation_context.js';
+import {LlmAgent} from '../../src/agents/llm_agent.js';
+import {BaseLlm} from '../../src/models/base_llm.js';
+import {BaseLlmConnection} from '../../src/models/base_llm_connection.js';
+import {LlmResponse} from '../../src/models/llm_response.js';
 import {
   REFLECT_AND_RETRY_RESPONSE_TYPE,
   TrackingScope,
 } from '../../src/plugins/_reflect_retry_utils.js';
 import {PluginManager} from '../../src/plugins/plugin_manager.js';
 import {ReflectAndRetryToolPlugin} from '../../src/plugins/reflect_retry_tool_plugin.js';
+import {InMemoryRunner} from '../../src/runner/in_memory_runner.js';
 import {BaseTool, RunAsyncToolRequest} from '../../src/tools/base_tool.js';
+import {FunctionTool} from '../../src/tools/function_tool.js';
 
 class MockWeatherTool extends BaseTool {
   callCount = 0;
@@ -252,5 +259,81 @@ describe('ReflectAndRetryToolPlugin Integration Flow', () => {
     expect(f3!['reflection_guidance']).toContain(
       'Do not attempt to use the `book_flight` tool again',
     );
+  });
+
+  it('should terminate the agent run immediately by propagating the exception when maxRetries is exceeded', async () => {
+    class AlwaysCallsToolLlm extends BaseLlm {
+      callCount = 0;
+
+      constructor() {
+        super({model: 'mock-llm'});
+      }
+
+      async *generateContentAsync(): AsyncGenerator<LlmResponse, void, void> {
+        this.callCount++;
+        yield {
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  id: `c-${this.callCount}`,
+                  name: 'fail_tool',
+                  args: {},
+                },
+              },
+            ],
+          },
+        };
+      }
+
+      async connect(): Promise<BaseLlmConnection> {
+        throw new Error('not implemented');
+      }
+    }
+
+    const llm = new AlwaysCallsToolLlm();
+    let toolRuns = 0;
+    const failTool = new FunctionTool({
+      name: 'fail_tool',
+      description: 'always fails',
+      parameters: z3.object({}),
+      execute: async () => {
+        toolRuns++;
+        throw new Error('boom');
+      },
+    });
+
+    const agent = new LlmAgent({
+      name: 'agent',
+      model: llm,
+      tools: [failTool],
+    });
+
+    const runner = new InMemoryRunner({
+      agent,
+      appName: 'repro',
+      plugins: [new ReflectAndRetryToolPlugin({maxRetries: 1})],
+    });
+
+    const session = await runner.sessionService.createSession({
+      appName: 'repro',
+      userId: 'u1',
+    });
+
+    await expect(async () => {
+      for await (const _event of runner.runAsync({
+        userId: 'u1',
+        sessionId: session.id,
+        newMessage: {role: 'user', parts: [{text: 'go'}]},
+        runConfig: {maxLlmCalls: 10},
+      })) {
+        // Consume events until error is thrown.
+      }
+    }).rejects.toThrow(/boom/);
+
+    // 1 initial attempt + 1 retry = 2 LLM calls and 2 tool runs, not maxLlmCalls (10).
+    expect(llm.callCount).toBe(2);
+    expect(toolRuns).toBe(2);
   });
 });
