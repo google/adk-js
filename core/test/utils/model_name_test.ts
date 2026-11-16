@@ -11,7 +11,68 @@ import {
   isGemini3xLive,
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
-import {getGeminiMajorVersion} from '../../src/utils/model_name.js';
+import {
+  extractModelName,
+  getGeminiMajorVersion,
+  isGemini1Model,
+  isGeminiModel,
+} from '../../src/utils/model_name.js';
+
+describe('extractModelName', () => {
+  it.each([
+    ['gemini-2.5-pro', 'gemini-2.5-pro'],
+    [
+      'projects/my-project/locations/us-central1/publishers/google/models/gemini-2.0-flash-001',
+      'gemini-2.0-flash-001',
+    ],
+    ['models/gemini-2.5-pro', 'gemini-2.5-pro'],
+    ['models/gemini-1.5-flash', 'gemini-1.5-flash'],
+    ['apigee/gemini-2.5-flash', 'gemini-2.5-flash'],
+    ['apigee/v1/gemini-2.5-flash', 'gemini-2.5-flash'],
+    ['apigee/gemini/gemini-2.5-flash', 'gemini-2.5-flash'],
+    ['apigee/vertex_ai/gemini-2.5-flash', 'gemini-2.5-flash'],
+    ['apigee/gemini/v1/gemini-2.5-flash', 'gemini-2.5-flash'],
+    ['apigee/vertex_ai/v1beta/gemini-2.5-flash', 'gemini-2.5-flash'],
+    ['projects/invalid/path/format', 'projects/invalid/path/format'],
+  ])('extracts %s as %s', (input, expected) => {
+    expect(extractModelName(input)).toBe(expected);
+  });
+
+  it('supports models/ and apigee/ prefixes across Gemini version helpers', () => {
+    for (const model of [
+      'models/gemini-2.5-flash',
+      'apigee/gemini-2.5-flash',
+      'apigee/v1/gemini-2.5-flash',
+      'apigee/gemini/gemini-2.5-flash',
+      'apigee/vertex_ai/gemini-2.5-flash',
+      'apigee/gemini/v1/gemini-2.5-flash',
+      'apigee/vertex_ai/v1beta/gemini-2.5-flash',
+    ]) {
+      expect(isGeminiModel(model)).toBe(true);
+      expect(isGemini2OrAbove(model)).toBe(true);
+      expect(getGeminiMajorVersion(model)).toBe(2);
+    }
+
+    for (const model of [
+      'models/gemini-1.5-flash',
+      'apigee/gemini-1.5-flash',
+    ]) {
+      expect(isGeminiModel(model)).toBe(true);
+      expect(isGemini1Model(model)).toBe(true);
+      expect(isGemini2OrAbove(model)).toBe(false);
+      expect(getGeminiMajorVersion(model)).toBe(1);
+    }
+
+    for (const model of [
+      'models/gemini-3.1-flash-live-preview',
+      'apigee/gemini-3.1-flash-live-preview',
+      'apigee/vertex_ai/v1beta/gemini-3.1-flash-live-preview',
+    ]) {
+      expect(isGemini3xLive(model)).toBe(true);
+      expect(getGeminiMajorVersion(model)).toBe(3);
+    }
+  });
+});
 
 describe('isGemini2OrAbove', () => {
   describe('valid models', () => {

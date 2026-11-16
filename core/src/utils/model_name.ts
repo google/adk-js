@@ -6,20 +6,29 @@
 
 import {getBooleanEnvVar} from './env_aware_utils.js';
 
-const MODEL_NAME_PATTERN =
-  '^projects/[^/]+/locations/[^/]+/publishers/[^/]+/models/(.+)$';
+const PATH_BASED_MODEL_NAME_PATTERNS = [
+  /^projects\/[^/]+\/locations\/[^/]+\/publishers\/[^/]+\/models\/(.+)$/,
+  /^apigee\/(?:[^/]+\/)?(?:[^/]+\/)?(.+)$/,
+];
 
 /**
  * Extract the actual model name from either simple or path-based format.
  *
  * @param modelString Either a simple model name like "gemini-2.5-pro" or
- *     a path-based model name like "projects/.../models/gemini-2.0-flash-001"
+ *     a path-based model name like "projects/.../models/gemini-2.0-flash-001",
+ *     "apigee/.../gemini-2.5-flash", or "models/gemini-2.5-pro"
  * @return The extracted model name (e.g., "gemini-2.5-pro")
  */
 export function extractModelName(modelString: string): string {
-  const match = modelString.match(MODEL_NAME_PATTERN);
-  if (match) {
-    return match[1];
+  for (const pattern of PATH_BASED_MODEL_NAME_PATTERNS) {
+    const match = modelString.match(pattern);
+    if (match) {
+      return match[1];
+    }
+  }
+
+  if (modelString.startsWith('models/')) {
+    return modelString.slice('models/'.length);
   }
 
   // If it's not a path-based model, return as-is (simple model name)
