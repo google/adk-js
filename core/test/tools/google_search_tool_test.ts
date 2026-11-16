@@ -68,6 +68,28 @@ describe('GoogleSearchTool', () => {
       );
     });
 
+    it('throws when path-based Gemini 1.x model already has other tools', async () => {
+      const tool = new GoogleSearchTool();
+      const req = makeRequest(
+        'projects/test-proj/locations/us-central1/publishers/google/models/gemini-1.5-pro-preview',
+        [
+          {
+            functionDeclarations: [
+              {name: 'test_function', description: 'test'},
+            ],
+          },
+        ],
+      );
+      await expect(
+        tool.processLlmRequest({
+          llmRequest: req,
+          toolContext: {} as never,
+        }),
+      ).rejects.toThrow(
+        'Google search tool can not be used with other tools in Gemini 1.x.',
+      );
+    });
+
     it('adds googleSearch for Gemini 2+ model', async () => {
       const tool = new GoogleSearchTool();
       const req = makeRequest('gemini-2.0-flash');
@@ -103,6 +125,20 @@ describe('GoogleSearchTool', () => {
       expect(req.config?.tools).toEqual([{googleSearch: {}}]);
     });
 
+    it('appends googleSearch when Gemini 2+ model already has other tools', async () => {
+      const tool = new GoogleSearchTool();
+      const existingTool: Tool = {
+        functionDeclarations: [{name: 'test_function', description: 'test'}],
+      };
+      const req = makeRequest('gemini-2.0-flash', [existingTool]);
+      await tool.processLlmRequest({
+        llmRequest: req,
+        toolContext: {} as never,
+      });
+
+      expect(req.config?.tools).toEqual([existingTool, {googleSearch: {}}]);
+    });
+
     it('throws for unsupported (non-Gemini) model', async () => {
       const tool = new GoogleSearchTool();
       const req = makeRequest('gpt-4');
@@ -113,6 +149,41 @@ describe('GoogleSearchTool', () => {
         }),
       ).rejects.toThrow('Google search tool is not supported for model gpt-4');
     });
+
+    it('throws for path-based non-Gemini model', async () => {
+      const tool = new GoogleSearchTool();
+      const nonGeminiPath =
+        'projects/test-proj/locations/us-central1/publishers/google/models/claude-3-sonnet';
+      const req = makeRequest(nonGeminiPath);
+      await expect(
+        tool.processLlmRequest({
+          llmRequest: req,
+          toolContext: {} as never,
+        }),
+      ).rejects.toThrow(
+        `Google search tool is not supported for model ${nonGeminiPath}`,
+      );
+    });
+
+    it.each([
+      'my-gemini-1.5-model',
+      'custom-gemini-2.0-flash',
+      'projects/test-proj/locations/us-central1/publishers/gemini/models/claude-3-sonnet',
+    ])(
+      'throws for model name %s containing gemini not at the start',
+      async (model) => {
+        const tool = new GoogleSearchTool();
+        const req = makeRequest(model);
+        await expect(
+          tool.processLlmRequest({
+            llmRequest: req,
+            toolContext: {} as never,
+          }),
+        ).rejects.toThrow(
+          `Google search tool is not supported for model ${model}`,
+        );
+      },
+    );
 
     it('initializes config.tools when config is absent', async () => {
       const tool = new GoogleSearchTool();
