@@ -893,6 +893,86 @@ describe('GoogleApiToOpenApiConverter flatPath handling', () => {
       {
         name: 'projectsId',
         in: 'path',
+        description: 'Project identifier',
+        required: true,
+        schema: {type: 'string'},
+      },
+    ]);
+  });
+
+  it('preserves path parameter schema and description metadata from method parameters', () => {
+    const operation = convertOperation(
+      {
+        id: 'example.resources.get',
+        httpMethod: 'GET',
+        description: 'Gets a resource.',
+        parameters: {
+          resourceId: {
+            type: 'string',
+            description: 'The unique resource ID',
+            format: 'uuid',
+            pattern: '^[a-f0-9-]+$',
+            required: true,
+            location: 'path',
+          },
+          category: {
+            type: 'string',
+            description: 'Resource category',
+            enum: ['public', 'private'],
+            default: 'public',
+            required: true,
+            location: 'path',
+          },
+          count: {
+            type: 'integer',
+            description: 'Item count',
+            format: 'int32',
+            default: 10,
+            required: true,
+            location: 'path',
+          },
+        },
+      },
+      ['resourceId', 'category', 'count', 'unlistedParam'],
+    );
+
+    expect(operation.parameters).toEqual([
+      {
+        name: 'resourceId',
+        in: 'path',
+        description: 'The unique resource ID',
+        required: true,
+        schema: {
+          type: 'string',
+          format: 'uuid',
+          pattern: '^[a-f0-9-]+$',
+        },
+      },
+      {
+        name: 'category',
+        in: 'path',
+        description: 'Resource category',
+        required: true,
+        schema: {
+          type: 'string',
+          enum: ['public', 'private'],
+          default: 'public',
+        },
+      },
+      {
+        name: 'count',
+        in: 'path',
+        description: 'Item count',
+        required: true,
+        schema: {
+          type: 'integer',
+          format: 'int32',
+          default: 10,
+        },
+      },
+      {
+        name: 'unlistedParam',
+        in: 'path',
         required: true,
         schema: {type: 'string'},
       },

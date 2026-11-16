@@ -100,6 +100,34 @@ const statusToolset = new MCPToolset(
 );
 ```
 
+**Authenticate tool calls (experimental).** Pass the options object with an
+`authConfig` to send a credential with each tool call to an HTTP MCP server.
+The bundled stdio server takes no credentials, and stdio connections ignore
+authentication headers, so this sample's agent does not use it.
+
+```ts
+import {AuthCredentialTypes, MCPToolset} from '@google/adk';
+
+const authToolset = new MCPToolset({
+  connectionParams: {
+    type: 'StreamableHTTPConnectionParams',
+    url: 'http://localhost:8788/mcp',
+  },
+  authConfig: {
+    authScheme: {type: 'apiKey', in: 'header', name: 'X-API-Key'},
+    rawAuthCredential: {
+      authType: AuthCredentialTypes.API_KEY,
+      apiKey: process.env.MCP_API_KEY,
+    },
+    credentialKey: 'mcp-api-key',
+  },
+});
+```
+
+The options object also takes `authScheme` and `authCredential` in place of
+`authConfig`; the credential key is then derived from them unless you give
+`credentialKey`.
+
 **Load MCP server resources into the prompt.** `LoadMcpResourceTool` lists the
 server's resources before each model call and reads the ones the model requests
 via `load_mcp_resource`.

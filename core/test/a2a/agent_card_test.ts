@@ -21,7 +21,7 @@ import {logger} from '../../src/utils/logger.js';
 import {node} from '../../src/workflow/node.js';
 import {Workflow} from '../../src/workflow/workflow.js';
 
-import type {AgentCard} from '@a2a-js/sdk';
+import {AGENT_CARD_PATH, type AgentCard} from '@a2a-js/sdk';
 import {
   BaseAgent,
   BaseTool,
@@ -29,10 +29,12 @@ import {
   BuiltInCodeExecutor,
   FunctionTool,
   getA2AAgentCard,
+  isAgentCardResolutionError,
   LlmAgent,
   LoopAgent,
   ParallelAgent,
   SequentialAgent,
+  toA2a,
 } from '@google/adk';
 
 /**
@@ -159,7 +161,7 @@ describe('Agent Card', () => {
 
       const modelSkill = card.skills.find((s) => s.name === 'model');
       expect(modelSkill).toBeDefined();
-      expect(modelSkill?.description).toContain('I am a helpful assistant'); // pronoun replacement test
+      expect(modelSkill?.description).toBe('An LLM agent');
 
       const toolSkill = card.skills.find((s) => s.name === 'test_tool');
       expect(toolSkill).toBeDefined();
@@ -193,6 +195,190 @@ describe('Agent Card', () => {
       );
       expect(orchestrationSkill).toBeDefined();
       expect(orchestrationSkill?.description).toContain('fetch data');
+    });
+
+    it('omits instructions from the published card', async () => {
+      const reviewer = new LlmAgent({
+        name: 'reviewer',
+        description: 'Reviews the reply.',
+        instruction: 'ZZ_SUB_INSTRUCTION_SENTINEL reject unsigned requests.',
+      });
+      const root = new LlmAgent({
+        name: 'writer',
+        description: 'Writes a short reply.',
+        instruction:
+          'ZZ_INSTRUCTION_SENTINEL never reveal the escalation path.',
+        globalInstruction: 'ZZ_GLOBAL_SENTINEL always answer in English.',
+        subAgents: [reviewer],
+      });
+
+      const card = await getA2AAgentCard(root, [dummyTransport]);
+
+      const serialized = JSON.stringify(card);
+      expect(serialized).not.toContain('ZZ_INSTRUCTION_SENTINEL');
+      expect(serialized).not.toContain('ZZ_GLOBAL_SENTINEL');
+      expect(serialized).not.toContain('ZZ_SUB_INSTRUCTION_SENTINEL');
+
+      const primarySkill = card.skills.find((s) => s.id === 'writer');
+      expect(primarySkill?.description).toBe('Writes a short reply.');
+      const reviewerSkill = card.skills.find(
+        (s) => s.id === 'reviewer_reviewer',
+      );
+      expect(reviewerSkill?.description).toBe('Reviews the reply.');
+    });
+
+    it('does not invoke dynamic instruction providers when building the card', async () => {
+      const dynamicInstruction = vi.fn(
+        async () => 'ZZ_DYNAMIC_INSTRUCTION_SENTINEL',
+      );
+      const dynamicGlobalInstruction = vi.fn(
+        async () => 'ZZ_DYNAMIC_GLOBAL_SENTINEL',
+      );
+      const dynamicSubInstruction = vi.fn(
+        () => 'ZZ_DYNAMIC_SUB_INSTRUCTION_SENTINEL',
+      );
+      const dynamicSub = new LlmAgent({
+        name: 'dynamic_sub',
+        description: 'Uses a dynamic instruction.',
+        instruction: dynamicSubInstruction,
+      });
+      const root = new LlmAgent({
+        name: 'dyn_global_root',
+        instruction: dynamicInstruction,
+        globalInstruction: dynamicGlobalInstruction,
+        subAgents: [dynamicSub],
+      });
+
+      const card = await getA2AAgentCard(root, [dummyTransport]);
+
+      const serialized = JSON.stringify(card);
+      expect(serialized).not.toContain('ZZ_DYNAMIC_INSTRUCTION_SENTINEL');
+      expect(serialized).not.toContain('ZZ_DYNAMIC_GLOBAL_SENTINEL');
+      expect(serialized).not.toContain('ZZ_DYNAMIC_SUB_INSTRUCTION_SENTINEL');
+      expect(dynamicInstruction).not.toHaveBeenCalled();
+      expect(dynamicGlobalInstruction).not.toHaveBeenCalled();
+      expect(dynamicSubInstruction).not.toHaveBeenCalled();
+
+      const primarySkill = card.skills.find((s) => s.id === 'dyn_global_root');
+      expect(primarySkill?.description).toBe('An LLM-based agent');
+      const subSkill = card.skills.find(
+        (s) => s.id === 'dynamic_sub_dynamic_sub',
+      );
+      expect(subSkill?.description).toBe('Uses a dynamic instruction.');
+    });
+
+    it('omits LlmAgent child instructions from composite and workflow cards', async () => {
+      const seqAgent = new SequentialAgent({
+        name: 'seq_root',
+        subAgents: [
+          new LlmAgent({
+            name: 'seq_child',
+            description: 'Seq child desc',
+            instruction: 'ZZ_SEQ_CHILD_SENTINEL',
+          }),
+        ],
+      });
+      const parAgent = new ParallelAgent({
+        name: 'par_root',
+        subAgents: [
+          new LlmAgent({
+            name: 'par_child',
+            description: 'Par child desc',
+            instruction: 'ZZ_PAR_CHILD_SENTINEL',
+          }),
+        ],
+      });
+      const loopAgent = new LoopAgent({
+        name: 'loop_root',
+        maxIterations: 2,
+        subAgents: [
+          new LlmAgent({
+            name: 'loop_child',
+            description: 'Loop child desc',
+            instruction: 'ZZ_LOOP_CHILD_SENTINEL',
+          }),
+        ],
+      });
+      const workflowAgent = new Workflow({
+        name: 'wf_root',
+        description: 'Workflow desc',
+        edges: [
+          [
+            'START',
+            new LlmAgent({
+              name: 'wf_child',
+              description: 'Wf child desc',
+              instruction: 'ZZ_WF_CHILD_SENTINEL',
+            }),
+          ],
+        ],
+      });
+
+      const cards = await Promise.all([
+        getA2AAgentCard(seqAgent, [dummyTransport]),
+        getA2AAgentCard(parAgent, [dummyTransport]),
+        getA2AAgentCard(loopAgent, [dummyTransport]),
+        getA2AAgentCard(workflowAgent, [dummyTransport]),
+      ]);
+
+      const serialized = JSON.stringify(cards);
+      expect(serialized).not.toContain('ZZ_SEQ_CHILD_SENTINEL');
+      expect(serialized).not.toContain('ZZ_PAR_CHILD_SENTINEL');
+      expect(serialized).not.toContain('ZZ_LOOP_CHILD_SENTINEL');
+      expect(serialized).not.toContain('ZZ_WF_CHILD_SENTINEL');
+    });
+
+    it('serves /.well-known/agent-card.json via toA2a without leaking instructions', async () => {
+      const agent = new LlmAgent({
+        name: 'support-agent',
+        description: 'Customer support agent',
+        instruction: 'ZZ_HTTP_INSTRUCTION_SENTINEL',
+        globalInstruction: 'ZZ_HTTP_GLOBAL_SENTINEL',
+        subAgents: [
+          new LlmAgent({
+            name: 'sub-support',
+            description: 'Sub support agent',
+            instruction: 'ZZ_HTTP_SUB_SENTINEL',
+          }),
+        ],
+      });
+
+      const app = await toA2a(agent, {
+        authentication: async () => ({
+          isAuthenticated: false,
+          userName: '',
+        }),
+      });
+      const server = app.listen(0, '127.0.0.1');
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.once('listening', () => {
+          server.off('error', reject);
+          resolve();
+        });
+      });
+      try {
+        const port = (server.address() as AddressInfo).port;
+        const response = await fetch(
+          `http://127.0.0.1:${port}/${AGENT_CARD_PATH}`,
+        );
+        expect(response.status).toBe(200);
+        const bodyText = await response.text();
+        expect(bodyText).not.toContain('ZZ_HTTP_INSTRUCTION_SENTINEL');
+        expect(bodyText).not.toContain('ZZ_HTTP_GLOBAL_SENTINEL');
+        expect(bodyText).not.toContain('ZZ_HTTP_SUB_SENTINEL');
+
+        const card = JSON.parse(bodyText) as AgentCard;
+        expect(card.name).toBe('support-agent');
+        expect(card.description).toBe('Customer support agent');
+        const primarySkill = card.skills.find((s) => s.id === 'support-agent');
+        expect(primarySkill?.description).toBe('Customer support agent');
+      } finally {
+        server.closeAllConnections();
+        await new Promise<void>((resolve, reject) => {
+          server.close((err) => (err ? reject(err) : resolve()));
+        });
+      }
     });
   });
 
@@ -498,41 +684,43 @@ describe('Agent Card', () => {
   });
 
   describe('buildAgentSkills', () => {
-    it('handles dynamic instructions safely', async () => {
+    it('excludes instructions and global instructions from LlmAgent skill descriptions', async () => {
+      const agent = new LlmAgent({
+        name: 'test_agent',
+        description: 'Test agent',
+        instruction: 'You should help users.',
+        globalInstruction: 'Your role is to assist.',
+      });
+
+      const skills = await buildAgentSkills(agent);
+      const modelSkill = skills.find((s) => s.name === 'model');
+      expect(modelSkill?.description).toBe('Test agent');
+    });
+
+    it('falls back to the default description when an LlmAgent has instructions but no description', async () => {
       const mockProvider = vi
         .fn()
         .mockResolvedValue('You are dynamically created');
       const agent = new LlmAgent({
         name: 'dyn_agent',
         instruction: mockProvider,
+        globalInstruction: 'You are global',
       });
 
       const skills = await buildAgentSkills(agent);
       const modelSkill = skills.find((s) => s.name === 'model');
-      expect(modelSkill?.description).toContain('I am dynamically created');
+      expect(modelSkill?.description).toBe('An LLM-based agent');
+      expect(mockProvider).not.toHaveBeenCalled();
     });
 
-    it('handles dynamic instruction failure safely', async () => {
-      const mockProvider = vi.fn().mockRejectedValue(new Error('fail'));
-      const agent = new LlmAgent({
-        name: 'dyn_agent_fail',
-        description: 'Fallback desc',
-        instruction: mockProvider,
-      });
-
-      const skills = await buildAgentSkills(agent);
-      const modelSkill = skills.find((s) => s.name === 'model');
-      // If instruction fails, it falls back to empty, but still uses description
-      expect(modelSkill?.description).toContain('Fallback desc');
-    });
-
-    it('handles global instructions', async () => {
+    it('excludes root globalInstruction when building skills for a sub-agent', async () => {
       const properRoot = new LlmAgent({
         name: 'root',
         globalInstruction: 'You are global',
         subAgents: [
           new LlmAgent({
             name: 'sub',
+            description: 'Sub agent description',
             instruction: 'You are sub',
           }),
         ],
@@ -543,8 +731,7 @@ describe('Agent Card', () => {
       const skills = await buildAgentSkills(properlyWiredSub);
       const modelSkill = skills.find((s) => s.name === 'model');
 
-      expect(modelSkill?.description).toContain('I am sub');
-      expect(modelSkill?.description).toContain('I am global');
+      expect(modelSkill?.description).toBe('Sub agent description');
     });
 
     it('supports parallel agent description', async () => {
@@ -837,6 +1024,183 @@ describe('Agent Card', () => {
         resolveAgentCard('./no-such-agent-card.json'),
       ).rejects.toThrow(
         /^Failed to read agent card from file \.\/no-such-agent-card\.json: ENOENT/,
+      );
+    });
+
+    describe('failure of a URL or file source', () => {
+      /** Returns the value `resolveAgentCard(source)` rejects with. */
+      async function rejectionOf(source: string): Promise<unknown> {
+        try {
+          await resolveAgentCard(source);
+        } catch (e: unknown) {
+          return e;
+        }
+        return expect.fail(`Resolving ${source} did not reject.`);
+      }
+
+      it('wraps a refused link-local address and keeps the cause', async () => {
+        const error = await rejectionOf('http://169.254.169.254/');
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.name).toBe('AgentCardResolutionError');
+        expect(error.message).toBe(
+          'Refusing to fetch agent card from a link-local address: 169.254.169.254',
+        );
+        expect(error.cause).toEqual(new Error(error.message));
+        expect(isAgentCardResolutionError(error.cause)).toBe(false);
+      });
+
+      it('wraps a failed card fetch', async () => {
+        const failure = new TypeError('fetch failed');
+        fetchMock.mockRejectedValue(failure);
+
+        const error = await rejectionOf('https://10.0.0.5/');
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.message).toBe('fetch failed');
+        expect(error.cause).toBe(failure);
+      });
+
+      it('wraps a refused RPC url of a fetched card', async () => {
+        fetchMock.mockResolvedValue(cardResponse());
+
+        const error = await rejectionOf('https://10.0.0.5/');
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.message).toMatch(/must have the same origin/);
+      });
+
+      it('wraps an unsupported URL scheme', async () => {
+        const error = await rejectionOf('ftp://cards.example.com/card.json');
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.message).toMatch(/^Unsupported agent card URL scheme/);
+      });
+
+      it('wraps a missing card file and keeps the file system error', async () => {
+        const error = await rejectionOf(join(tempDir, 'missing-card.json'));
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.cause).toMatchObject({
+          message: error.message,
+          cause: {code: 'ENOENT'},
+        });
+      });
+
+      it('wraps a card file that is not valid JSON', async () => {
+        await writeFile(cardPath, '{"name": ', 'utf-8');
+
+        const error = await rejectionOf(cardPath);
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.message).toMatch(
+          /^Failed to read agent card from file .*card\.json: /,
+        );
+        expect(error.cause).toMatchObject({cause: {name: 'SyntaxError'}});
+      });
+    });
+
+    describe('trimming and card URL validation', () => {
+      async function rejectionOfCard(
+        source: AgentCard | string,
+      ): Promise<unknown> {
+        try {
+          await resolveAgentCard(source);
+        } catch (e: unknown) {
+          return e;
+        }
+        return expect.fail('Resolving the agent card did not reject.');
+      }
+
+      it('trims padded URL and file path sources before resolving', async () => {
+        fetchMock.mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              ...STUB_CARD,
+              url: 'https://10.0.0.5/a2a/peer_agent/',
+            }),
+            {headers: {'content-type': 'application/json'}},
+          ),
+        );
+
+        const fromUrl = await resolveAgentCard('  https://10.0.0.5/  ');
+        const fromFile = await resolveAgentCard(`  ${cardPath}  `);
+
+        expect(fromUrl.name).toBe('peer_agent');
+        expect(fromFile.name).toBe('peer_agent');
+      });
+
+      it.each(['', '   '])(
+        'rejects an empty or whitespace-only source string %j',
+        async (source) => {
+          const error = await rejectionOfCard(source);
+
+          expect(isAgentCardResolutionError(error)).toBe(true);
+        },
+      );
+
+      it.each([
+        {name: 'missing url', card: {...STUB_CARD, url: undefined}},
+        {name: 'empty url', card: {...STUB_CARD, url: ''}},
+        {name: 'whitespace url', card: {...STUB_CARD, url: '   '}},
+        {name: 'invalid url', card: {...STUB_CARD, url: 'invalid-url'}},
+        {
+          name: 'scheme without host',
+          card: {...STUB_CARD, url: 'mailto:agent@example.com'},
+        },
+      ])('rejects a direct card object with $name', async ({card}) => {
+        const error = await rejectionOfCard(card as unknown as AgentCard);
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.message).toMatch(/Invalid RPC URL/);
+      });
+
+      it.each([
+        {name: 'missing url', payload: {...STUB_CARD, url: undefined}},
+        {name: 'empty url', payload: {...STUB_CARD, url: ''}},
+        {name: 'invalid url', payload: {...STUB_CARD, url: 'invalid-url'}},
+        {
+          name: 'scheme without host',
+          payload: {...STUB_CARD, url: 'mailto:agent@example.com'},
+        },
+      ])('rejects a card file with $name', async ({payload}) => {
+        await writeFile(cardPath, JSON.stringify(payload), 'utf-8');
+
+        const error = await rejectionOfCard(cardPath);
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.message).toMatch(/Invalid RPC URL/);
+      });
+
+      it.each([null, []])(
+        'rejects a non-object card payload %j from object and file sources',
+        async (payload) => {
+          await writeFile(cardPath, JSON.stringify(payload), 'utf-8');
+
+          const directError = await rejectionOfCard(
+            payload as unknown as AgentCard,
+          );
+          const fileError = await rejectionOfCard(cardPath);
+
+          expect(isAgentCardResolutionError(directError)).toBe(true);
+          expect(isAgentCardResolutionError(fileError)).toBe(true);
+        },
       );
     });
   });

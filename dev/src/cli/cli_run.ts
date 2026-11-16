@@ -7,12 +7,14 @@
 import {
   App,
   BaseArtifactService,
+  BaseCredentialService,
   BaseMemoryService,
   BaseSessionService,
   Event,
   getPendingUserInputRequests,
   getUserInputRequests,
   InMemoryArtifactService,
+  InMemoryCredentialService,
   InMemoryMemoryService,
   InMemorySessionService,
   isApp,
@@ -36,6 +38,7 @@ import {
   loadFileData,
   saveToFile,
 } from '../utils/file_utils.js';
+import {setupTelemetry} from '../utils/telemetry_utils.js';
 
 const HOW_TO_ANSWER: Record<UserInputKind, string> = {
   input: 'Type your reply at the next prompt to continue.',
@@ -223,6 +226,7 @@ interface RunFromInputFileOptions {
   artifactService: BaseArtifactService;
   sessionService: BaseSessionService;
   memoryService?: BaseMemoryService;
+  credentialService?: BaseCredentialService;
   fileContent: InputFile | undefined;
 }
 async function runFromInputFile(
@@ -282,6 +286,7 @@ interface RunInteractivelyOptions {
   artifactService: BaseArtifactService;
   sessionService: BaseSessionService;
   memoryService?: BaseMemoryService;
+  credentialService?: BaseCredentialService;
   onAgentFileReloaded?: (subscribe: (newAgent: RunnableRoot) => void) => void;
 }
 async function runInteractively(
@@ -299,9 +304,21 @@ async function runInteractively(
     artifactService: options.artifactService,
     sessionService: options.sessionService,
     memoryService: options.memoryService,
+    credentialService: options.credentialService,
   });
+  let turnInFlight = false;
+  const retiredRunners: Runner[] = [];
+
+  const closeRunnerSafely = async (target: Runner): Promise<void> => {
+    try {
+      await target.close();
+    } catch (e: unknown) {
+      console.warn('Failed to close previous runner:', e);
+    }
+  };
 
   options.onAgentFileReloaded?.((newAgent: RunnableRoot) => {
+    const previousRunner = runner;
     currentAgent = newAgent;
     runner = new Runner({
       appName: newAgent.name,
@@ -309,40 +326,56 @@ async function runInteractively(
       artifactService: options.artifactService,
       sessionService: options.sessionService,
       memoryService: options.memoryService,
+      credentialService: options.credentialService,
     });
+    if (turnInFlight) {
+      retiredRunners.push(previousRunner);
+    } else {
+      void closeRunnerSafely(previousRunner);
+    }
     console.log(`Agent reloaded. New runner created with existing session.`);
   });
 
-  while (true) {
-    const query = await getUserInput('[user]: ');
-    const trimmed = query.trim();
+  try {
+    while (true) {
+      const query = await getUserInput('[user]: ');
+      const trimmed = query.trim();
 
-    if (!trimmed) {
-      continue;
-    }
-
-    if (trimmed === 'exit') {
-      break;
-    }
-
-    try {
-      for await (const event of runner.runAsync({
-        userId: options.session.userId,
-        sessionId: options.session.id,
-        newMessage: {role: 'user', parts: [{text: query}]},
-        // Interactive CLI: let a plain-text "yes"/"no" resolve a pending tool
-        // confirmation (opt-in; off by default on non-interactive surfaces).
-        runConfig: {plainTextToolConfirmation: true},
-      })) {
-        printEvent(event);
+      if (!trimmed) {
+        continue;
       }
-    } catch (error) {
-      console.error(
-        `[ADK CLI] Turn failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+
+      if (trimmed === 'exit') {
+        break;
+      }
+
+      turnInFlight = true;
+      try {
+        for await (const event of runner.runAsync({
+          userId: options.session.userId,
+          sessionId: options.session.id,
+          newMessage: {role: 'user', parts: [{text: query}]},
+          // Interactive CLI: let a plain-text "yes"/"no" resolve a pending tool
+          // confirmation (opt-in; off by default on non-interactive surfaces).
+          runConfig: {plainTextToolConfirmation: true},
+        })) {
+          printEvent(event);
+        }
+      } catch (error) {
+        console.error(
+          `[ADK CLI] Turn failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      } finally {
+        turnInFlight = false;
+        const toClose = retiredRunners.splice(0, retiredRunners.length);
+        await Promise.all(toClose.map(closeRunnerSafely));
+      }
     }
+  } finally {
+    const toClose = retiredRunners.splice(0, retiredRunners.length);
+    await Promise.all([...toClose.map(closeRunnerSafely), runner.close()]);
   }
 }
 
@@ -358,6 +391,7 @@ export interface RunAgentOptions {
   artifactService?: BaseArtifactService;
   sessionService?: BaseSessionService;
   memoryService?: BaseMemoryService;
+  credentialService?: BaseCredentialService;
   otelToCloud?: boolean;
   agentFileLoadOptions?: AgentFileOptions;
   reloadAgents?: boolean;
@@ -368,6 +402,8 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
     options.artifactService || new InMemoryArtifactService();
   const sessionService = options.sessionService || new InMemorySessionService();
   const memoryService = options.memoryService || new InMemoryMemoryService();
+  const credentialService =
+    options.credentialService ?? new InMemoryCredentialService();
 
   // The whole run is wrapped so a failure loading, building or running the
   // agent is reported (with a readable stack) on stderr and marks the process
@@ -376,6 +412,11 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
   try {
     const absAgentPath = getAbsolutePath(options.agentPath);
     loadDotenvForAgent(path.basename(absAgentPath), path.dirname(absAgentPath));
+
+    // Telemetry reads credentials and project settings from the agent's .env.
+    if (options.otelToCloud) {
+      await setupTelemetry(true);
+    }
 
     const inputFileContent = options.inputFile
       ? await loadInputFile(options.inputFile)
@@ -428,6 +469,7 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
           artifactService,
           sessionService,
           memoryService,
+          credentialService,
           fileContent: inputFileContent,
         })) || session;
     } else if (options.savedSessionFile) {
@@ -458,6 +500,7 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
         artifactService,
         sessionService,
         memoryService,
+        credentialService,
         session,
         onAgentFileReloaded: options.reloadAgents
           ? onAgentFileReloaded
@@ -473,6 +516,7 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
         artifactService,
         sessionService,
         memoryService,
+        credentialService,
         session,
         onAgentFileReloaded: options.reloadAgents
           ? onAgentFileReloaded

@@ -48,6 +48,18 @@ describe('BuiltInCodeExecutor', () => {
     expect(llmRequest.config?.tools).toEqual([{codeExecution: {}}]);
   });
 
+  it('processLlmRequest should accept a full Vertex AI model resource name', () => {
+    const llmRequest: LlmRequest = {
+      model:
+        'projects/my-project/locations/us-central1/publishers/google/models/gemini-2.0-flash-001',
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+    expect(() => executor.processLlmRequest(llmRequest)).not.toThrow();
+    expect(llmRequest.config?.tools).toEqual([{codeExecution: {}}]);
+  });
+
   it('processLlmRequest should throw error if model is invalid', () => {
     const llmRequest: LlmRequest = {
       model: 'invalid-model',
@@ -58,5 +70,55 @@ describe('BuiltInCodeExecutor', () => {
     expect(() => executor.processLlmRequest(llmRequest)).toThrowError(
       'Gemini code execution tool is not supported for model invalid-model',
     );
+  });
+
+  it('processLlmRequest should initialize tools when config exists without tools', () => {
+    const llmRequest: LlmRequest = {
+      model: 'gemini-2.5-flash',
+      config: {},
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    executor.processLlmRequest(llmRequest);
+
+    expect(llmRequest.config?.tools).toEqual([{codeExecution: {}}]);
+  });
+
+  it('processLlmRequest should append codeExecution when config.tools is empty', () => {
+    const llmRequest: LlmRequest = {
+      model: 'gemini-2.5-flash',
+      config: {tools: []},
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    executor.processLlmRequest(llmRequest);
+
+    expect(llmRequest.config?.tools).toEqual([{codeExecution: {}}]);
+  });
+
+  it('processLlmRequest should preserve existing tools when appending codeExecution', () => {
+    const existingTool = {
+      functionDeclarations: [
+        {name: 'lookup_order', description: 'Looks up an order by ID.'},
+      ],
+    };
+    const llmRequest: LlmRequest = {
+      model: 'gemini-2.5-flash',
+      config: {tools: [existingTool]},
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    executor.processLlmRequest(llmRequest);
+
+    expect(llmRequest.config?.tools).toEqual([
+      existingTool,
+      {codeExecution: {}},
+    ]);
   });
 });

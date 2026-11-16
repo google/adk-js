@@ -1088,19 +1088,10 @@ function resolveFunctionResponseMatch(events: Event[]): {
  * be correctly resumed at all.
  *
  * This is a pure lookup: responses with no id, or whose id matches no
- * function call, are skipped rather than treated as an error, and when
- * several responses resolve to calls from more than one distinct
- * author, this does not throw -- it returns the last-resolved match by
- * iteration order (whichever response is checked last wins). That is a
- * change from the pre-existing behavior of resolving only
- * `functionResponses[0]` (which effectively made the first response
- * win): an external caller of {@link findEventByLastFunctionResponseId}
- * can now get a different event, and a different id, than before this
- * fix, even though {@link determineAgentForResumption} itself is
- * unaffected, since it only reads `.author` and every distinct-author
- * case is instead surfaced there as a thrown conflict (see
- * `getConflictingFunctionResponseAuthors`) after that caller's own
- * resumability gate, not from this function.
+ * function call, are skipped rather than treated as an error. When several
+ * responses resolve to calls from more than one distinct author, this does
+ * not throw; it returns the match for the response checked last. Callers that
+ * must reject that case use `getConflictingFunctionResponseAuthors`.
  */
 export function findMatchingFunctionCall(events: Event[]): Event | undefined {
   return resolveFunctionResponseMatch(events).resolved;
@@ -1113,14 +1104,10 @@ export function findMatchingFunctionCall(events: Event[]): Event | undefined {
  * nothing to resolve).
  *
  * This performs the same walk as {@link findMatchingFunctionCall} but
- * reports a conflict instead of silently resolving to one match, so
- * that a caller can decide when it is safe to raise it. {@link
- * determineAgentForResumption} is the only current caller, and calls
- * this only once resumability is confirmed enabled: this function
- * existing separately from `findMatchingFunctionCall`, rather than
- * that function throwing directly, is what keeps a session with such
- * an event from aborting every run (not only resumption attempts) --
- * see that caller's own comment for why the check has to live there.
+ * reports a conflict instead of resolving to one match, so that a caller can
+ * decide what a conflict means. {@link determineAgentForResumption} throws on
+ * a conflict when resumability is enabled, and otherwise skips routing to the
+ * calling agent.
  */
 export function getConflictingFunctionResponseAuthors(
   events: Event[],

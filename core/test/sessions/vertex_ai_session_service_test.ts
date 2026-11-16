@@ -13,7 +13,15 @@ import {
   VertexAiSessionService,
 } from '@google/adk';
 import {ApiError} from '@google/genai';
-import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from 'vitest';
 import {
   isFastForwardable,
   reconstructNodeStates,
@@ -457,6 +465,32 @@ describe('VertexAiSessionService', () => {
       loggerSpy.mockRestore();
     });
 
+    it('throws error if session does not belong to user when agentEngineId is configured', async () => {
+      const serviceWithEngineId = new VertexAiSessionService({
+        sessions: mockClient as unknown as Sessions,
+        agentEngineId: '123',
+      });
+      mockClient.get.mockResolvedValue({
+        name: 'reasoningEngines/123/sessions/my-session-id',
+        userId: 'otherUser',
+      });
+      const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+      onTestFinished(() => loggerSpy.mockRestore());
+
+      await expect(
+        serviceWithEngineId.getSession({
+          appName: '12345',
+          userId: 'testUser',
+          sessionId: 'my-session-id',
+        }),
+      ).rejects.toThrow(
+        'Session my-session-id does not belong to user testUser',
+      );
+      expect(mockClient.get).toHaveBeenCalledWith({
+        name: 'reasoningEngines/123/sessions/my-session-id',
+      });
+    });
+
     it('parses events from API response including compaction and usage metadata', async () => {
       const mockApiEvent = {
         name: 'projects/p/locations/l/sessions/s/events/e1',
@@ -656,6 +690,27 @@ describe('VertexAiSessionService', () => {
       expect(session).toBeUndefined();
       expect(loggerSpy).not.toHaveBeenCalled();
       loggerSpy.mockRestore();
+    });
+
+    it('uses agentEngineId when configured and returns undefined if session does not exist', async () => {
+      const serviceWithEngineId = new VertexAiSessionService({
+        sessions: mockClient as unknown as Sessions,
+        agentEngineId: 'custom-engine-id',
+      });
+      mockClient.get.mockRejectedValueOnce(
+        new ApiError({message: 'Session not found', status: 404}),
+      );
+
+      const session = await serviceWithEngineId.getSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'my-session-id',
+      });
+
+      expect(session).toBeUndefined();
+      expect(mockClient.get).toHaveBeenCalledWith({
+        name: 'reasoningEngines/custom-engine-id/sessions/my-session-id',
+      });
     });
 
     it('returns undefined when events.listInternal rejects with an ApiError 404', async () => {
@@ -1179,6 +1234,44 @@ describe('VertexAiSessionService', () => {
       });
 
       expect(mockClient.delete).not.toHaveBeenCalled();
+    });
+
+    it('logs and rethrows when sessions.delete rejects with an Error', async () => {
+      const deleteError = new Error('Delete RPC failed');
+      mockClient.delete.mockRejectedValueOnce(deleteError);
+      const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+      await expect(
+        service.deleteSession({
+          appName: '12345',
+          userId: 'testUser',
+          sessionId: 'delete-session',
+        }),
+      ).rejects.toThrow('Delete RPC failed');
+
+      expect(loggerSpy).toHaveBeenCalledWith(
+        'Error deleting session delete-session: Delete RPC failed',
+      );
+      loggerSpy.mockRestore();
+    });
+
+    it('logs the formatted message and rethrows when sessions.delete rejects with a non-Error object', async () => {
+      const plainRejection = {code: 13, message: 'Internal backend failure'};
+      mockClient.delete.mockRejectedValueOnce(plainRejection);
+      const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+      await expect(
+        service.deleteSession({
+          appName: '12345',
+          userId: 'testUser',
+          sessionId: 'delete-session',
+        }),
+      ).rejects.toEqual(plainRejection);
+
+      expect(loggerSpy).toHaveBeenCalledWith(
+        'Error deleting session delete-session: Internal backend failure',
+      );
+      loggerSpy.mockRestore();
     });
   });
 

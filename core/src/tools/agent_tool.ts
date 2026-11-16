@@ -118,7 +118,7 @@ export function isAgentTool(obj: unknown): obj is AgentTool {
  * application. The agent's input schema is used to define the tool's input
  * parameters, and the agent's output is returned as the tool's result.
  *
- *  @param config: The configuration of the agent tool.
+ * @param config The configuration of the agent tool.
  */
 export class AgentTool extends BaseTool {
   /** A unique symbol to identify ADK agent tool class. */

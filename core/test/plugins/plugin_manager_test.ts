@@ -6,6 +6,7 @@
 
 import {
   BaseAgent,
+  BaseNode,
   BasePlugin,
   BaseTool,
   Context,
@@ -13,14 +14,22 @@ import {
   InvocationContext,
   LlmRequest,
   LlmResponse,
+  NodeContext,
   PluginManager,
+  type PluginCallbackName,
 } from '@google/adk';
 import {Content} from '@google/genai';
-import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  expectTypeOf,
+  it,
+  vi,
+} from 'vitest';
 import {ContextCompactionTrigger} from '../../src/plugins/base_plugin.js';
 import {logger} from '../../src/utils/logger.js';
-
-type PluginCallbackName = keyof BasePlugin;
 
 class TestPlugin extends BasePlugin {
   callLog: PluginCallbackName[] = [];
@@ -139,6 +148,45 @@ class TestPlugin extends BasePlugin {
       LlmResponse | undefined;
   }
 
+  override async onAgentErrorCallback(_params: {
+    agent: BaseAgent;
+    callbackContext: Context;
+    error: Error;
+  }): Promise<void> {
+    await this.handleCallback('onAgentErrorCallback');
+  }
+
+  override async onRunErrorCallback(_params: {
+    invocationContext: InvocationContext;
+    error: Error;
+  }): Promise<void> {
+    await this.handleCallback('onRunErrorCallback');
+  }
+
+  override async beforeNodeCallback(_params: {
+    node: BaseNode;
+    nodeContext: NodeContext;
+    input: unknown;
+  }): Promise<unknown> {
+    return this.handleCallback('beforeNodeCallback');
+  }
+
+  override async afterNodeCallback(_params: {
+    node: BaseNode;
+    nodeContext: NodeContext;
+    output: unknown;
+  }): Promise<unknown> {
+    return this.handleCallback('afterNodeCallback');
+  }
+
+  override async beforeToolSelection(_params: {
+    callbackContext: Context;
+    tools: Readonly<Record<string, BaseTool>>;
+  }): Promise<Readonly<Record<string, BaseTool>> | undefined> {
+    return (await this.handleCallback('beforeToolSelection')) as
+      Readonly<Record<string, BaseTool>> | undefined;
+  }
+
   override async beforeContextCompaction(_params: {
     invocationContext: InvocationContext;
     trigger: ContextCompactionTrigger;
@@ -167,6 +215,8 @@ describe('PluginManager', () => {
   const mockLlmRequest = {} as LlmRequest;
   const mockLlmResponse = {} as LlmResponse;
   const mockEvent = {} as Event;
+  const mockNode = {} as BaseNode;
+  const mockNodeContext = {} as NodeContext;
   const mockError = new Error('mock error');
 
   beforeEach(() => {
@@ -350,6 +400,29 @@ describe('PluginManager', () => {
       llmRequest: mockLlmRequest,
       error: mockError,
     });
+    await service.runOnAgentErrorCallback({
+      agent: mockAgent,
+      callbackContext: mockCallbackContext,
+      error: mockError,
+    });
+    await service.runOnRunErrorCallback({
+      invocationContext: mockInvocationContext,
+      error: mockError,
+    });
+    await service.runBeforeNodeCallback({
+      node: mockNode,
+      nodeContext: mockNodeContext,
+      input: {},
+    });
+    await service.runAfterNodeCallback({
+      node: mockNode,
+      nodeContext: mockNodeContext,
+      output: {},
+    });
+    await service.runBeforeToolSelection({
+      callbackContext: mockCallbackContext,
+      tools: {},
+    });
     await service.runBeforeContextCompaction({
       invocationContext: mockInvocationContext,
       trigger: ContextCompactionTrigger.Auto,
@@ -372,9 +445,20 @@ describe('PluginManager', () => {
       'beforeModelCallback',
       'afterModelCallback',
       'onModelErrorCallback',
+      'onAgentErrorCallback',
+      'onRunErrorCallback',
+      'beforeNodeCallback',
+      'afterNodeCallback',
+      'beforeToolSelection',
       'beforeContextCompaction',
       'afterContextCompaction',
     ];
     expect(plugin1.callLog.sort()).toEqual(expectedCallbacks.sort());
+  });
+
+  it('names only BasePlugin callback methods', () => {
+    expectTypeOf<PluginCallbackName>().toEqualTypeOf<
+      Exclude<keyof BasePlugin, 'name'>
+    >();
   });
 });

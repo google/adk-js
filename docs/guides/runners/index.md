@@ -164,10 +164,15 @@ back after the generator finishes.
 A conversation with sub-agents does not always restart at the root. Before the
 agent runs, the runner reads the session and picks, in order:
 
-1. With `resumabilityConfig.isResumable` set, and the last event answering a
-   function call, the agent that made that call. When the answers resolve to
-   calls from more than one agent, the run throws, because no single agent can
-   be resumed.
+1. When the last event answers a function call, the agent that made that call.
+   A function response the user sends always routes there, so a sub-agent that
+   asked for a credential or a long-running result gets the answer even without
+   resumability. A function response written by an agent routes there only with
+   `resumabilityConfig.isResumable` set. A call that an abort closed is not
+   resumed: when the last event, or the newest event not from the user, is an
+   abort event, this step is skipped. When the answers resolve to calls from
+   more than one agent, the run throws with `isResumable` set, because no single
+   agent can be resumed; without it, this step is skipped.
 2. Otherwise, walking back from the newest event, the author of the most recent
    non-user event, when it is the root, or when it is an `LlmAgent` whose
    ancestors are all `LlmAgent`s with `disallowTransferToParent` unset. An

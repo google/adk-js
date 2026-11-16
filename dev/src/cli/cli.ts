@@ -7,23 +7,36 @@
 
 import {
   BaseArtifactService,
+  BaseMemoryService,
   BaseSessionService,
-  EvalEntry,
+  createGcsEvalManagersFromUri,
+  EvalCase,
   EvalMetric,
   EvalResult,
+  EvalSet,
+  EvalSetResultsManager,
+  EvalSetsManager,
   EvalStatus,
-  LogLevel,
+  GcsEvalManagers,
   getArtifactServiceFromUri,
   getEvaluationCriteriaOrDefault,
   getRootAgent,
   getSessionServiceFromUri,
+  InMemoryMemoryService,
   loadDotenvForAgent,
+  loadEvalSetFromFile,
+  LocalEvalSetResultsManager,
+  LogLevel,
   logToTmpFolder,
   parseAndGetEvalsToRun,
   runEvals,
   setLogLevel as setAdkCoreLogLevel,
   setupAdkLogger,
   tryGetResetFunc,
+  VertexAiMemoryBankService,
+  VertexAiRagMemoryService,
+  VertexAiSessionService,
+  walkToRootUntilFound,
 } from '@google/adk';
 import {Argument, Command, Option} from 'commander';
 import dotenv from 'dotenv';
@@ -34,6 +47,7 @@ import {AdkApiServer} from '../server/adk_api_server.js';
 import {FileModuleType} from '../utils/agent_loader.js';
 import {getAbsolutePath} from '../utils/file_utils.js';
 import {AdkLogger} from '../utils/logger.js';
+import {redactUriPassword} from '../utils/redact_uri.js';
 import {version} from '../version.js';
 import {createAgent} from './cli_create.js';
 import {runAgent} from './cli_run.js';
@@ -68,11 +82,102 @@ function getLogLevelFromOptions(options: {
   return LogLevel.INFO;
 }
 
-function getSessionServiceFromOptions(options: {
-  session_service_uri?: string;
-}): BaseSessionService {
+const AGENT_ENGINE_URI_SCHEME = 'agentengine://';
+
+/** The Agent Engine that an `agentengine://` URI names. */
+interface AgentEngineResource {
+  projectId: string;
+  location: string;
+  agentEngineId: string;
+}
+
+/**
+ * Parses an `agentengine://` URI.
+ *
+ * Accepts a bare resource ID, which reads the project and location from
+ * `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`, or a full resource name
+ * of the form
+ * `projects/{project}/locations/{location}/reasoningEngines/{id}`.
+ *
+ * @param uri A URI that starts with `agentengine://`.
+ * @returns The project, location, and Agent Engine ID.
+ * @throws Error if the URI is empty or malformed, or a bare ID is given
+ *     without the environment variables set.
+ */
+function parseAgentEngineUri(uri: string): AgentEngineResource {
+  const uriPart = uri.slice(AGENT_ENGINE_URI_SCHEME.length);
+  if (!uriPart || uriPart.trim() === '') {
+    throw new Error(
+      'Agent engine resource name or resource id cannot be empty.',
+    );
+  }
+  if (!uriPart.includes('/')) {
+    const projectId = process.env['GOOGLE_CLOUD_PROJECT'];
+    const location = process.env['GOOGLE_CLOUD_LOCATION'];
+    if (!projectId || !location) {
+      throw new Error('GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION not set.');
+    }
+    return {projectId, location, agentEngineId: uriPart};
+  }
+
+  const segments = uriPart.split('/');
+  const [projects, projectId, locations, location, engines, agentEngineId] =
+    segments;
+  if (
+    segments.length !== 6 ||
+    projects !== 'projects' ||
+    !projectId ||
+    locations !== 'locations' ||
+    !location ||
+    engines !== 'reasoningEngines' ||
+    !agentEngineId
+  ) {
+    throw new Error(
+      'Agent engine resource name is mal-formatted. It should be of format: projects/{project_id}/locations/{location}/reasoningEngines/{resource_id}',
+    );
+  }
+  return {projectId, location, agentEngineId};
+}
+
+/** Options that select the session service the CLI commands use. */
+export interface SessionServiceOptions {
+  sessionServiceUri?: string;
+  baseDir?: string;
+}
+
+/**
+ * Resolves a session service instance from command options or URI.
+ * @param optionsOrUri Command options containing `sessionServiceUri` or a URI string.
+ * @param baseDir Optional directory to load `.env` from before resolving GCP-backed services.
+ * @returns An instance of {@link BaseSessionService}.
+ */
+export function getSessionServiceFromOptions(
+  optionsOrUri?: SessionServiceOptions | string,
+  baseDir?: string,
+): BaseSessionService {
+  let uri: string | undefined;
+  let dir = baseDir;
+
+  if (typeof optionsOrUri === 'string') {
+    uri = optionsOrUri;
+  } else if (optionsOrUri) {
+    uri =
+      optionsOrUri.sessionServiceUri ??
+      ((optionsOrUri as Record<string, unknown>)['session_service_uri'] as
+        string | undefined);
+    dir = optionsOrUri.baseDir ?? dir;
+  }
+
+  if (dir) {
+    loadDotenvFromDirectory(dir);
+  }
+
+  if (uri && uri.startsWith(AGENT_ENGINE_URI_SCHEME)) {
+    return new VertexAiSessionService(parseAgentEngineUri(uri));
+  }
+
   return getSessionServiceFromUri(
-    options['session_service_uri'] || process.env.DATABASE_URL || 'memory://',
+    uri || process.env.DATABASE_URL || 'memory://',
   );
 }
 
@@ -82,6 +187,158 @@ function getArtifactServiceFromOptions(options: {
   return getArtifactServiceFromUri(
     options['artifact_service_uri'] || 'memory://',
   );
+}
+
+function loadDotenvFromDirectory(dir: string): void {
+  try {
+    const dotenvFilePath = walkToRootUntilFound(path.resolve(dir));
+    if (dotenvFilePath && fs.existsSync(dotenvFilePath)) {
+      dotenv.config({path: dotenvFilePath, override: true, quiet: true});
+    }
+  } catch {
+    // Ignore error loading .env
+  }
+}
+
+export interface MemoryServiceOptions {
+  memoryServiceUri?: string;
+  baseDir?: string;
+}
+
+/**
+ * Resolves a memory service instance from command options or URI.
+ * @param optionsOrUri Command options containing `memoryServiceUri` or a URI string.
+ * @param baseDir Optional directory to load `.env` from before resolving GCP-backed services.
+ * @returns An instance of {@link BaseMemoryService}.
+ */
+export function getMemoryServiceFromOptions(
+  optionsOrUri?: MemoryServiceOptions | string,
+  baseDir?: string,
+): BaseMemoryService {
+  let uri: string | undefined;
+  let dir = baseDir;
+
+  if (typeof optionsOrUri === 'string') {
+    uri = optionsOrUri;
+  } else if (optionsOrUri) {
+    uri =
+      optionsOrUri.memoryServiceUri ??
+      ((optionsOrUri as Record<string, unknown>)['memory_service_uri'] as
+        string | undefined);
+    dir = optionsOrUri.baseDir ?? dir;
+  }
+
+  if (dir) {
+    loadDotenvFromDirectory(dir);
+  }
+
+  if (!uri || uri === 'memory://') {
+    return new InMemoryMemoryService();
+  }
+
+  if (uri.startsWith('rag://')) {
+    const uriPart = uri.slice('rag://'.length);
+    if (!uriPart || uriPart.trim() === '') {
+      throw new Error('Rag corpus can not be empty.');
+    }
+    if (uriPart.includes('/')) {
+      const parts = uriPart.split('/');
+      if (
+        parts.length !== 6 ||
+        parts[0] !== 'projects' ||
+        !parts[1] ||
+        parts[2] !== 'locations' ||
+        !parts[3] ||
+        parts[4] !== 'ragCorpora' ||
+        !parts[5]
+      ) {
+        throw new Error(
+          `Malformed RAG corpus resource name: ${redactUriPassword(uri)}. Expected a bare corpus ID or 'projects/{project}/locations/{location}/ragCorpora/{id}'.`,
+        );
+      }
+    }
+    return new VertexAiRagMemoryService({ragCorpus: uriPart});
+  }
+
+  if (uri.startsWith(AGENT_ENGINE_URI_SCHEME)) {
+    return new VertexAiMemoryBankService(parseAgentEngineUri(uri));
+  }
+
+  throw new Error(`Unsupported memory service URI: ${redactUriPassword(uri)}`);
+}
+
+/**
+ * Builds the GCS eval managers that `--eval_storage_uri` names, or returns
+ * `undefined` when the option is not set.
+ */
+async function getEvalManagersFromOptions(options: {
+  eval_storage_uri?: string;
+}): Promise<GcsEvalManagers | undefined> {
+  const uri = options['eval_storage_uri'];
+  return uri ? createGcsEvalManagersFromUri(uri) : undefined;
+}
+
+/**
+ * Reads an eval set by ID from `evalSetsManager`.
+ *
+ * @throws Error if the eval set does not exist.
+ */
+async function getStoredEvalSet({
+  evalSetsManager,
+  appName,
+  evalSetId,
+}: {
+  evalSetsManager: EvalSetsManager;
+  appName: string;
+  evalSetId: string;
+}): Promise<EvalSet> {
+  const evalSet = await evalSetsManager.getEvalSet(appName, evalSetId);
+  if (!evalSet) {
+    throw new Error(
+      `Eval set '${evalSetId}' was not found in the eval storage for app '${appName}'.`,
+    );
+  }
+  return evalSet;
+}
+
+/**
+ * Loads the eval cases that `adk eval` runs, keyed by eval set ID.
+ *
+ * Each key of `evalSetToEvals` is an eval set file path. When an
+ * `evalSetsManager` is given and the first key is not an existing file, the
+ * keys are eval set IDs that the manager reads instead. An empty case list
+ * runs every case of the eval set.
+ */
+async function loadEvalCasesToRun({
+  evalSetToEvals,
+  evalSetsManager,
+  appName,
+}: {
+  evalSetToEvals: Record<string, string[]>;
+  evalSetsManager?: EvalSetsManager;
+  appName: string;
+}): Promise<Record<string, EvalCase[]>> {
+  const keys = Object.keys(evalSetToEvals);
+  const readFromStore =
+    evalSetsManager !== undefined &&
+    keys.length > 0 &&
+    !fs.existsSync(getAbsolutePath(keys[0]));
+  const evalSets = await Promise.all(
+    keys.map(async (key) =>
+      readFromStore
+        ? getStoredEvalSet({evalSetsManager, appName, evalSetId: key})
+        : loadEvalSetFromFile(getAbsolutePath(key), key),
+    ),
+  );
+  const evalCasesByEvalSetId: Record<string, EvalCase[]> = {};
+  evalSets.forEach((evalSet, i) => {
+    const evalsToRun = evalSetToEvals[keys[i]];
+    evalCasesByEvalSetId[evalSet.evalSetId] =
+      evalsToRun.length > 0
+        ? evalSet.evalCases.filter((e) => evalsToRun.includes(e.evalId))
+        : evalSet.evalCases;
+  });
+  return evalCasesByEvalSetId;
 }
 
 function getAgentFileOptions(options: {
@@ -143,13 +400,13 @@ const PORT_OPTION = new Option(
   'Optional. The port of the server. Default: 8000',
 ).default('8000');
 const ORIGINS_OPTION = new Option(
-  '--allow_origins <string>',
+  '--allow-origins, --allow_origins <string>',
   'Optional. Comma-separated list of origins allowed to send cross-origin ' +
     "requests to the server. Each origin's host is also accepted by the " +
     'DNS-rebinding guard.',
 ).default('');
 const ALLOWED_HOSTS_OPTION = new Option(
-  '--allowed_hosts <string>',
+  '--allowed-hosts, --allowed_hosts <string>',
   'Optional. Comma-separated list of additional Host header values the ' +
     'DNS-rebinding guard accepts, independent of --allow_origins. Use ' +
     'this to widen the guard for a reverse proxy in front of a ' +
@@ -160,19 +417,39 @@ const VERBOSE_OPTION = new Option(
   'Optional. Log at debug level. Shorthand for --log_level debug',
 ).default(false);
 const LOG_LEVEL_OPTION = new Option(
-  '--log_level <string>',
+  '--log-level, --log_level <string>',
   'Optional. The log level of the server',
 ).default('info');
 const SESSION_SERVICE_URI_OPTION = new Option(
-  '--session_service_uri <string>',
-  'Optional. The URI of the session service. Supported URIs: memory:// for in-memory session service.',
+  '--session-service-uri, --session_service_uri <string>',
+  'Optional. The URI of the session service. Supported URIs: agentengine://<agent_engine> for Agent Engine session service, memory:// for in-memory session service.',
 );
 const ARTIFACT_SERVICE_URI_OPTION = new Option(
-  '--artifact_service_uri <string>',
+  '--artifact-service-uri, --artifact_service_uri <string>',
   'Optional. The URI of the artifact service. Supported URIs: gs://<bucket name> for GCS artifact service.',
 );
+const MEMORY_SERVICE_URI_OPTION = new Option(
+  '--memory-service-uri, --memory_service_uri <string>',
+  'Optional. The URI of the memory service. Supported URIs: rag://<rag_corpus_id> for Vertex AI RAG memory service, agentengine://<agent_engine> for Agent Engine memory service, memory:// for in-memory.',
+);
+
+/**
+ * Adds ADK services options (--session_service_uri, --artifact_service_uri, --memory_service_uri) to a command.
+ * @param cmd The command to configure.
+ * @returns The configured command.
+ */
+export function adkServicesOptions(cmd: Command): Command {
+  return cmd
+    .addOption(SESSION_SERVICE_URI_OPTION)
+    .addOption(ARTIFACT_SERVICE_URI_OPTION)
+    .addOption(MEMORY_SERVICE_URI_OPTION);
+}
+const EVAL_STORAGE_URI_OPTION = new Option(
+  '--eval-storage-uri, --eval_storage_uri <string>',
+  'Optional. The evals storage URI to store agent evals, supported URIs: gs://<bucket name>.',
+);
 const OTEL_TO_CLOUD_OPTION = new Option(
-  '--otel_to_cloud [boolean]',
+  '--otel-to-cloud, --otel_to_cloud [boolean]',
   'Optional. Whether to send otel traces to cloud.',
 ).default(false);
 const COMPILE_AGENT_FILE = new Option(
@@ -182,25 +459,29 @@ const COMPILE_AGENT_FILE = new Option(
 const BUNDLE_AGENT_FILE = new Option(
   '--bundle [boolean]',
   'Optional. Whether to inline the agent file dependencies into a single ' +
-    'bundle before execution. Bundling also minifies the result.',
+    'bundle before execution. Deploy commands also minify the bundle; ' +
+    'local commands keep readable output.',
 ).default(true);
 const A2A_OPTION = new Option(
   '--a2a [boolean]',
   'Optional. Whether to enable A2A for web/api server. Default: false',
 ).default(false);
 const A2A_AUTH_TOKEN_OPTION = new Option(
-  '--a2a_auth_token <string>',
+  '--a2a-auth-token, --a2a_auth_token <string>',
   'Optional. Shared bearer token used to authenticate the A2A surface. Callers must send "Authorization: Bearer <token>". Can also be set via the ADK_A2A_AUTH_TOKEN environment variable. If unset, the A2A surface is served WITHOUT authentication.',
 );
 const A2A_AUTH_TOKEN_DEPLOY_OPTION = new Option(
-  '--a2a_auth_token <string>',
+  '--a2a-auth-token, --a2a_auth_token <string>',
   'Optional. Shared bearer token used to authenticate the deployed A2A surface. Callers must send "Authorization: Bearer <token>". It is sent to Cloud Run as the ADK_A2A_AUTH_TOKEN environment variable and is never written into the image. If unset, the deployed A2A surface is served WITHOUT authentication.',
 );
 const RELOAD_AGENTS_OPTION = new Option(
-  '--reload_agents [boolean]',
+  '--reload-agents, --reload_agents [boolean]',
   'Optional. Watch agent files for changes and automatically reload them. Default: false. To see any changes to your agent file, you need to initiate a new agent run.',
 ).default(false);
-const AGENT_FILE_MODULE_TYPE = new Option('--file_type <string>', 'Optional. ');
+const AGENT_FILE_MODULE_TYPE = new Option(
+  '--file-type, --file_type <string>',
+  'Optional. ',
+);
 AGENT_FILE_MODULE_TYPE.argChoices = [FileModuleType.CJS, FileModuleType.ESM];
 
 // Reusable deployment CLI option constants
@@ -212,16 +493,24 @@ export const REGION_DEPLOY_OPTION = new Option(
   '--region [string]',
   'Optional. Google Cloud region to deploy the agent. If not set, default run/region from gcloud config is used',
 );
+export const PROJECT_AGENT_ENGINE_DEPLOY_OPTION = new Option(
+  '--project [string]',
+  'Optional. Google Cloud project to deploy the agent. It will override GOOGLE_CLOUD_PROJECT in the .env file (if it exists). If not set, default project from gcloud config is used',
+);
+export const REGION_AGENT_ENGINE_DEPLOY_OPTION = new Option(
+  '--region [string]',
+  'Optional. Google Cloud region to deploy the agent. It will override GOOGLE_CLOUD_LOCATION in the .env file (if it exists). If not set, default run/region from gcloud config is used',
+);
 export const ADK_VERSION_OPTION = new Option(
-  '--adk_version [string]',
+  '--adk-version, --adk_version [string]',
   'Optional. Version or dist-tag of @google/adk-devtools to install in the deployed image',
 ).default(version, `${version}, this CLI's version`);
 export const WITH_UI_OPTION = new Option(
-  '--with_ui [boolean]',
+  '--with-ui, --with_ui [boolean]',
   'Optional. Deploy ADK Web UI if set. (default: deploy ADK API server only)',
 ).default(false);
 export const DISPLAY_NAME_OPTION = new Option(
-  '--display_name [string]',
+  '--display-name, --display_name [string]',
   'Optional. The display name for the Reasoning Engine. Defaults to agent directory name.',
 );
 export const DESCRIPTION_OPTION = new Option(
@@ -233,19 +522,19 @@ export const REPOSITORY_DEPLOY_OPTION = new Option(
   'Optional. Artifact Registry repository name to push docker images. Required for agent_engine deploy.',
 );
 export const STAGING_BUCKET_DEPLOY_OPTION = new Option(
-  '--staging_bucket [string]',
+  '--staging-bucket, --staging_bucket [string]',
   'Optional. Google Cloud Storage bucket name (no gs:// prefix) used for deployment staging. Cloud Build logs are written to gs://<staging_bucket>/logs. If not set, gs://<project>_cloudbuild/logs is used.',
 );
 export const AGENT_ENGINE_ID_OPTION = new Option(
-  '--agent_engine_id [id]',
+  '--agent-engine-id, --agent_engine_id [id]',
   'Optional. ID of the Agent Engine instance to update if it exists (default: undefined, which means a new instance will be created). If project and region are set, this should be the resource ID or the full resource name (projects/.../locations/.../reasoningEngines/...).',
 );
 export const MIN_INSTANCES_OPTION = new Option(
-  '--min_instances [number]',
+  '--min-instances, --min_instances [number]',
   'Optional. The minimum number of application instances that will be kept running at all times. Default: 1.',
 );
 export const MAX_INSTANCES_OPTION = new Option(
-  '--max_instances [number]',
+  '--max-instances, --max_instances [number]',
   'Optional. The maximum number of application instances that can be launched to handle increased traffic. Default: 10.',
 );
 
@@ -271,7 +560,7 @@ export function createProgram(): Command {
       console.log(version);
     });
 
-  program
+  const webCommand = program
     .command('web')
     .description('Start ADK web server')
     .addArgument(AGENT_DIR_ARGUMENT)
@@ -280,9 +569,9 @@ export function createProgram(): Command {
     .addOption(ORIGINS_OPTION)
     .addOption(ALLOWED_HOSTS_OPTION)
     .addOption(VERBOSE_OPTION)
-    .addOption(LOG_LEVEL_OPTION)
-    .addOption(SESSION_SERVICE_URI_OPTION)
-    .addOption(ARTIFACT_SERVICE_URI_OPTION)
+    .addOption(LOG_LEVEL_OPTION);
+  adkServicesOptions(webCommand)
+    .addOption(EVAL_STORAGE_URI_OPTION)
     .addOption(OTEL_TO_CLOUD_OPTION)
     .addOption(COMPILE_AGENT_FILE)
     .addOption(BUNDLE_AGENT_FILE)
@@ -295,17 +584,22 @@ export function createProgram(): Command {
       setupAdkLogger(logLevel);
 
       try {
+        const absAgentsDir = getAbsolutePath(agentsDir);
+        loadDotenvFromDirectory(absAgentsDir);
+
         const server = new AdkApiServer({
           logLevel,
-          agentsDir: getAbsolutePath(agentsDir),
+          agentsDir: absAgentsDir,
           host: options['host'],
           port: parseInt(options['port'], 10),
           serveDebugUI: true,
           allowOrigins: options['allow_origins'],
           allowedHosts: getAllowedHosts(options['allowed_hosts']),
-          sessionService: getSessionServiceFromOptions(options),
+          sessionService: getSessionServiceFromOptions(options, absAgentsDir),
           artifactService: getArtifactServiceFromOptions(options),
-          otelToCloud: options['otel_to_cloud'] ? true : false,
+          memoryService: getMemoryServiceFromOptions(options, absAgentsDir),
+          ...(await getEvalManagersFromOptions(options)),
+          otelToCloud: getBoolean(options['otel_to_cloud']),
           agentFileLoadOptions: getAgentFileOptions(options),
           a2a: getBoolean(options['a2a']),
           a2aAuthToken: options['a2a_auth_token'],
@@ -319,8 +613,9 @@ export function createProgram(): Command {
       }
     });
 
-  program
+  const apiServerCommand = program
     .command('api_server')
+    .alias('api-server')
     .description('Start ADK API server')
     .addArgument(AGENT_DIR_ARGUMENT)
     .addOption(HOST_OPTION)
@@ -328,9 +623,9 @@ export function createProgram(): Command {
     .addOption(ORIGINS_OPTION)
     .addOption(ALLOWED_HOSTS_OPTION)
     .addOption(VERBOSE_OPTION)
-    .addOption(LOG_LEVEL_OPTION)
-    .addOption(SESSION_SERVICE_URI_OPTION)
-    .addOption(ARTIFACT_SERVICE_URI_OPTION)
+    .addOption(LOG_LEVEL_OPTION);
+  adkServicesOptions(apiServerCommand)
+    .addOption(EVAL_STORAGE_URI_OPTION)
     .addOption(OTEL_TO_CLOUD_OPTION)
     .addOption(COMPILE_AGENT_FILE)
     .addOption(BUNDLE_AGENT_FILE)
@@ -343,17 +638,22 @@ export function createProgram(): Command {
       setupAdkLogger(logLevel);
 
       try {
+        const absAgentsDir = getAbsolutePath(agentsDir);
+        loadDotenvFromDirectory(absAgentsDir);
+
         const server = new AdkApiServer({
           logLevel,
-          agentsDir: getAbsolutePath(agentsDir),
+          agentsDir: absAgentsDir,
           host: options['host'],
           port: parseInt(options['port'], 10),
           serveDebugUI: false,
           allowOrigins: options['allow_origins'],
           allowedHosts: getAllowedHosts(options['allowed_hosts']),
-          sessionService: getSessionServiceFromOptions(options),
+          sessionService: getSessionServiceFromOptions(options, absAgentsDir),
           artifactService: getArtifactServiceFromOptions(options),
-          otelToCloud: options['otel_to_cloud'] ? true : false,
+          memoryService: getMemoryServiceFromOptions(options, absAgentsDir),
+          ...(await getEvalManagersFromOptions(options)),
+          otelToCloud: getBoolean(options['otel_to_cloud']),
           agentFileLoadOptions: getAgentFileOptions(options),
           a2a: getBoolean(options['a2a']),
           a2aAuthToken: options['a2a_auth_token'],
@@ -373,7 +673,7 @@ export function createProgram(): Command {
     .option('-y, --yes', 'Optional. Skip confirmation prompts.')
     .option('--model <string>', 'Optional. THe model used for the root_agent')
     .option(
-      '--api_key <string>',
+      '--api-key, --api_key <string>',
       'Optional. The API Key needed to access the model, e.g. Google AI API Key.',
     )
     .option(
@@ -401,20 +701,21 @@ export function createProgram(): Command {
         });
       } catch (error) {
         logger.error('Error creating agent:', (error as Error).message);
+        process.exitCode = 1;
       }
     });
 
-  program
+  const runCommand = program
     .command('run')
     .description('Runs agent')
     .argument('<agent>', 'Agent file path (.js or .ts)')
     .option(
-      '--save_session [boolean]',
+      '--save-session, --save_session [boolean]',
       'Optional. Whether to save the session to a json file on exit.',
       false,
     )
     .option(
-      '--session_id <string>',
+      '--session-id, --session_id <string>',
       'Optional. The session ID to save the session to on exit when --save_session is set to true. User will be prompted to enter a session ID if not set.',
     )
     .option(
@@ -426,9 +727,8 @@ export function createProgram(): Command {
       'The json file that contains a previously saved session (by --save_session option). The previous session will be re-displayed. And user can continue to interact with the agent.',
     )
     .addOption(VERBOSE_OPTION)
-    .addOption(LOG_LEVEL_OPTION)
-    .addOption(SESSION_SERVICE_URI_OPTION)
-    .addOption(ARTIFACT_SERVICE_URI_OPTION)
+    .addOption(LOG_LEVEL_OPTION);
+  adkServicesOptions(runCommand)
     .addOption(OTEL_TO_CLOUD_OPTION)
     .addOption(COMPILE_AGENT_FILE)
     .addOption(BUNDLE_AGENT_FILE)
@@ -436,18 +736,27 @@ export function createProgram(): Command {
     .addOption(RELOAD_AGENTS_OPTION)
     .action(async (agentPath: string, options: Record<string, string>) => {
       const logLevel = getLogLevelFromOptions(options);
-      logToTmpFolder({level: logLevel});
 
       try {
+        logToTmpFolder({level: logLevel});
+        const absAgentPath = path.resolve(getAbsolutePath(agentPath));
+
         await runAgent({
           agentPath,
           inputFile: options['replay'],
           savedSessionFile: options['resume'],
           saveSession: getBoolean(options['save_session']),
           sessionId: options['session_id'],
-          sessionService: getSessionServiceFromOptions(options),
+          sessionService: getSessionServiceFromOptions(
+            options,
+            path.dirname(absAgentPath),
+          ),
           artifactService: getArtifactServiceFromOptions(options),
-          otelToCloud: options['otel_to_cloud'] ? true : false,
+          memoryService: getMemoryServiceFromOptions(
+            options,
+            path.dirname(absAgentPath),
+          ),
+          otelToCloud: getBoolean(options['otel_to_cloud']),
           agentFileLoadOptions: getAgentFileOptions(options),
           reloadAgents: getBoolean(options['reload_agents']),
         });
@@ -465,15 +774,21 @@ export function createProgram(): Command {
       'The path to the agent directory or file that contains the rootAgent.',
     )
     .argument(
-      '[eval_set_file_path...]',
-      'Specify one or more eval set file paths, optionally followed by :eval_1,eval_2.',
+      '[eval_set_file_path_or_id...]',
+      'One or more eval set file paths, each optionally followed by ' +
+        ':eval_1,eval_2. With --eval_storage_uri, the values are eval set ' +
+        'IDs read from the storage, unless the first value is an existing file.',
     )
-    .option('--config_file_path <string>', 'Optional. The path to config file.')
     .option(
-      '--print_detailed_results [boolean]',
+      '--config-file-path, --config_file_path <string>',
+      'Optional. The path to config file.',
+    )
+    .option(
+      '--print-detailed-results, --print_detailed_results [boolean]',
       'Optional. Whether to print detailed results on console or not.',
       false,
     )
+    .addOption(EVAL_STORAGE_URI_OPTION)
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION)
     .addOption(COMPILE_AGENT_FILE)
@@ -482,7 +797,7 @@ export function createProgram(): Command {
     .action(
       async (
         agentModuleFilePath: string,
-        evalSetFilePaths: string[],
+        evalSetFilePathsOrIds: string[],
         options: Record<string, string>,
       ) => {
         setAdkCoreLogLevel(getLogLevelFromOptions(options));
@@ -507,21 +822,17 @@ export function createProgram(): Command {
           const rootAgent = await getRootAgent(absAgentPath);
           const resetFunc = await tryGetResetFunc(absAgentPath);
 
-          const evalSetToEvals = parseAndGetEvalsToRun(evalSetFilePaths);
-          const evalCasesByEvalSetId: Record<string, EvalEntry[]> = {};
-
-          for (const [evalSetFile, evalsToRun] of Object.entries(
-            evalSetToEvals,
-          )) {
-            const evalSetContent = JSON.parse(
-              fs.readFileSync(getAbsolutePath(evalSetFile), 'utf-8'),
-            ) as EvalEntry[];
-
-            evalCasesByEvalSetId[evalSetFile] =
-              evalsToRun.length > 0
-                ? evalSetContent.filter((e) => evalsToRun.includes(e.name))
-                : evalSetContent;
-          }
+          const isAgentFile =
+            fs.existsSync(absAgentPath) && fs.statSync(absAgentPath).isFile();
+          const appName = isAgentFile
+            ? path.basename(absAgentPath, path.extname(absAgentPath))
+            : path.basename(absAgentPath);
+          const evalManagers = await getEvalManagersFromOptions(options);
+          const evalCasesByEvalSetId = await loadEvalCasesToRun({
+            evalSetToEvals: parseAndGetEvalsToRun(evalSetFilePathsOrIds),
+            evalSetsManager: evalManagers?.evalSetsManager,
+            appName,
+          });
 
           const evalResults: EvalResult[] = [];
           for await (const result of runEvals(
@@ -534,23 +845,52 @@ export function createProgram(): Command {
             evalResults.push(result);
           }
 
+          const evalSetResultsManager: EvalSetResultsManager =
+            evalManagers?.evalSetResultsManager ??
+            new LocalEvalSetResultsManager(path.dirname(absAgentPath));
+          const evalSetIdToEvalResults: Record<string, EvalResult[]> = {};
+          for (const evalResult of evalResults) {
+            const rawSetId = evalResult.eval_set_id;
+            const evalSetId = path
+              .basename(rawSetId)
+              .replace(/\.evalset\.json$/, '')
+              .replace(/\.json$/, '');
+            if (
+              !Object.prototype.hasOwnProperty.call(
+                evalSetIdToEvalResults,
+                evalSetId,
+              )
+            ) {
+              evalSetIdToEvalResults[evalSetId] = [];
+            }
+            evalSetIdToEvalResults[evalSetId].push(evalResult);
+          }
+          await Promise.all(
+            Object.entries(evalSetIdToEvalResults).map(
+              async ([evalSetId, evalCaseResults]) =>
+                evalSetResultsManager.saveEvalSetResult({
+                  appName,
+                  evalSetId,
+                  evalCaseResults,
+                }),
+            ),
+          );
+
           process.stdout.write(
             '*********************************************************************\n',
           );
           const evalRunSummary: Record<string, [number, number]> = {};
           for (const evalResult of evalResults) {
+            const summaryKey = evalResult.eval_set_id;
             if (
-              !Object.prototype.hasOwnProperty.call(
-                evalRunSummary,
-                evalResult.eval_set_file,
-              )
+              !Object.prototype.hasOwnProperty.call(evalRunSummary, summaryKey)
             ) {
-              evalRunSummary[evalResult.eval_set_file] = [0, 0];
+              evalRunSummary[summaryKey] = [0, 0];
             }
             if (evalResult.final_eval_status === EvalStatus.PASSED) {
-              evalRunSummary[evalResult.eval_set_file][0] += 1;
+              evalRunSummary[summaryKey][0] += 1;
             } else {
-              evalRunSummary[evalResult.eval_set_file][1] += 1;
+              evalRunSummary[summaryKey][1] += 1;
             }
           }
 
@@ -575,7 +915,8 @@ export function createProgram(): Command {
     .allowUnknownOption()
     .allowExcessArguments();
 
-  DEPLOY_COMMAND.command('cloud_run')
+  const deployCloudRunCommand = DEPLOY_COMMAND.command('cloud_run')
+    .alias('cloud-run')
     .addArgument(AGENT_DIR_ARGUMENT)
     .allowUnknownOption()
     .allowExcessArguments()
@@ -583,29 +924,28 @@ export function createProgram(): Command {
     .addOption(PROJECT_DEPLOY_OPTION)
     .addOption(REGION_DEPLOY_OPTION)
     .option(
-      '--service_name [string]',
+      '--service-name, --service_name [string]',
       'Optional. The service name to use in Cloud Run. Default: "adk-default-service-name"',
       'adk-default-service-name',
     )
     .option(
-      '--app_name [string]',
+      '--app-name, --app_name [string]',
       'Optional. App name of the ADK API server. Default: folder or file name of the agent source.',
       '',
     )
     .option(
-      '--temp_folder [string]',
+      '--temp-folder, --temp_folder [string]',
       'Optional. Temp folder for the generated Cloud Run source files (default: a private directory created in the system temp directory).',
     )
     .addOption(ADK_VERSION_OPTION)
     .addOption(WITH_UI_OPTION)
     .addOption(ORIGINS_OPTION)
     .addOption(VERBOSE_OPTION)
-    .addOption(LOG_LEVEL_OPTION)
-    .addOption(SESSION_SERVICE_URI_OPTION)
-    .addOption(ARTIFACT_SERVICE_URI_OPTION)
+    .addOption(LOG_LEVEL_OPTION);
+  adkServicesOptions(deployCloudRunCommand)
     .addOption(OTEL_TO_CLOUD_OPTION)
     .option(
-      '--with_cloud_trace [boolean]',
+      '--with-cloud-trace, --with_cloud_trace [boolean]',
       'Optional. Whether to enable Cloud Trace for cloud_run.',
       false,
     )
@@ -621,7 +961,7 @@ export function createProgram(): Command {
         if (argName.includes('=')) {
           argName = argName.split('=')[0];
         }
-        if (argName in options) {
+        if (argName in options || argName.replace(/-/g, '_') in options) {
           continue;
         }
 
@@ -647,6 +987,7 @@ export function createProgram(): Command {
           allowOrigins: options['allow_origins'],
           sessionServiceUri: options['session_service_uri'],
           artifactServiceUri: options['artifact_service_uri'],
+          memoryServiceUri: options['memory_service_uri'],
           ...(otelToCloud ? {otelToCloud: true} : {}),
           agentFileLoadOptions: getAgentFileOptions({...options, minify: true}),
           a2a: getBoolean(options['a2a']),
@@ -655,6 +996,7 @@ export function createProgram(): Command {
         });
       } catch (error) {
         logger.error('Error deploying agent:', (error as Error).message);
+        process.exitCode = 1;
       }
     });
 
@@ -663,23 +1005,22 @@ export function createProgram(): Command {
       .addArgument(AGENT_DIR_ARGUMENT)
       .allowUnknownOption()
       .allowExcessArguments()
-      .addOption(PROJECT_DEPLOY_OPTION)
-      .addOption(REGION_DEPLOY_OPTION)
+      .addOption(PROJECT_AGENT_ENGINE_DEPLOY_OPTION)
+      .addOption(REGION_AGENT_ENGINE_DEPLOY_OPTION)
       .addOption(DISPLAY_NAME_OPTION)
       .addOption(DESCRIPTION_OPTION)
       .addOption(REPOSITORY_DEPLOY_OPTION)
       .addOption(STAGING_BUCKET_DEPLOY_OPTION)
       .option(
-        '--temp_folder [string]',
+        '--temp-folder, --temp_folder [string]',
         'Optional. Temp folder for the generated source files (default: a private directory created in the system temp directory).',
       )
       .addOption(ADK_VERSION_OPTION)
       .addOption(WITH_UI_OPTION)
       .addOption(ORIGINS_OPTION)
       .addOption(VERBOSE_OPTION)
-      .addOption(LOG_LEVEL_OPTION)
-      .addOption(SESSION_SERVICE_URI_OPTION)
-      .addOption(ARTIFACT_SERVICE_URI_OPTION)
+      .addOption(LOG_LEVEL_OPTION);
+    adkServicesOptions(cmd)
       .addOption(OTEL_TO_CLOUD_OPTION)
       .addOption(COMPILE_AGENT_FILE)
       .addOption(BUNDLE_AGENT_FILE)
@@ -707,6 +1048,7 @@ export function createProgram(): Command {
             allowOrigins: options['allow_origins'],
             sessionServiceUri: options['session_service_uri'],
             artifactServiceUri: options['artifact_service_uri'],
+            memoryServiceUri: options['memory_service_uri'],
             ...(otelToCloud ? {otelToCloud: true} : {}),
             agentFileLoadOptions: getAgentFileOptions({
               ...options,
@@ -725,12 +1067,17 @@ export function createProgram(): Command {
           });
         } catch (error) {
           logger.error('Error deploying agent:', (error as Error).message);
+          process.exitCode = 1;
         }
       });
   };
 
-  registerAgentEngineCommand(DEPLOY_COMMAND.command('agent_engine'));
-  registerAgentEngineCommand(DEPLOY_COMMAND.command('reasoning_engine'));
+  registerAgentEngineCommand(
+    DEPLOY_COMMAND.command('agent_engine').alias('agent-engine'),
+  );
+  registerAgentEngineCommand(
+    DEPLOY_COMMAND.command('reasoning_engine').alias('reasoning-engine'),
+  );
 
   const CONFORMANCE_COMMAND = program
     .command('integration')
@@ -741,22 +1088,30 @@ export function createProgram(): Command {
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION)
     .option(
-      '--agents_dir [dir]',
+      '--agents-dir, --agents_dir [dir]',
       'Directory of conformance test agent definitions. Recursively searched for .yaml files with agent definitions.',
       process.cwd(),
     )
     .option(
-      '--tests_dir [dir]',
+      '--tests-dir, --tests_dir [dir]',
       'Directory of conformance test definitions. Recursively searched for .yaml files with test definitions.',
       process.cwd(),
     )
     .option('--force', 'Force run skipped tests.')
     .action(async (options: Record<string, string>) => {
-      runIntegrationTests({
-        agentsDir: options['agents_dir'],
-        testsDir: options['tests_dir'],
-        forceRunAll: getBoolean(options['force']),
-      });
+      try {
+        await runIntegrationTests({
+          agentsDir: options['agents_dir'],
+          testsDir: options['tests_dir'],
+          forceRunAll: getBoolean(options['force']),
+        });
+      } catch (error) {
+        logger.error(
+          'Error running conformance tests:',
+          (error as Error).message,
+        );
+        process.exitCode = 1;
+      }
     });
 
   return program;

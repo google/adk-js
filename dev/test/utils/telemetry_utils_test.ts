@@ -11,7 +11,7 @@ import {
   SimpleSpanProcessor,
   SpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
-import {describe, expect, it, vi} from 'vitest';
+import {afterEach, describe, expect, it, vi} from 'vitest';
 
 import {
   ApiServerSpanExporter,
@@ -105,5 +105,51 @@ describe('setupTelemetry with otelToCloud', () => {
       ],
       mockResource,
     );
+  });
+});
+
+describe('setupTelemetry request hooks', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  function stubGcpSetup(spanProcessor: SpanProcessor) {
+    vi.spyOn(adk, 'getGcpProjectId').mockResolvedValue('resolved-project');
+    vi.spyOn(adk, 'getGcpExporters').mockResolvedValue({
+      spanProcessors: [spanProcessor],
+      metricReaders: [],
+      logRecordProcessors: [],
+    });
+    vi.spyOn(adk, 'getGcpResource').mockResolvedValue({
+      attributes: {},
+    } as unknown as Resource);
+    vi.spyOn(adk, 'maybeSetOtelProviders').mockReturnValue(undefined);
+  }
+
+  it('returns hooks that flush the cloud exporters on Agent Runtime', async () => {
+    vi.stubEnv('GOOGLE_CLOUD_AGENT_ENGINE_ID', 'agent-123');
+    const forceFlush = vi.fn().mockResolvedValue(undefined);
+    stubGcpSetup({forceFlush} as unknown as SpanProcessor);
+
+    const hooks = await setupTelemetry(true);
+    await hooks?.onRequestEnd();
+
+    expect(hooks).toBeDefined();
+    expect(forceFlush).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns no hooks off Agent Runtime', async () => {
+    vi.stubEnv('GOOGLE_CLOUD_AGENT_ENGINE_ID', undefined);
+    stubGcpSetup({} as SpanProcessor);
+
+    await expect(setupTelemetry(true)).resolves.toBeUndefined();
+  });
+
+  it('returns no hooks without cloud export', async () => {
+    vi.stubEnv('GOOGLE_CLOUD_AGENT_ENGINE_ID', 'agent-123');
+    vi.spyOn(adk, 'maybeSetOtelProviders').mockReturnValue(undefined);
+
+    await expect(setupTelemetry(false)).resolves.toBeUndefined();
   });
 });

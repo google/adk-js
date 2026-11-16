@@ -8,6 +8,12 @@ This index is the only table of contents. A guide that is not listed here is unr
 
 ## Index
 
+### A2A (Agent-to-Agent)
+
+Exposing ADK agents as A2A servers and calling remote A2A peers (`toA2a`, `bearerTokenUserBuilder`, `getA2AAgentCard`, `A2AAgentExecutor`, `AdkDefaultRequestHandler`, `getA2aRequestMetadata`, `RemoteA2AAgent`, and `AGENT_CARD_PATH`).
+
+- [A2A](a2a/index.md) - `toA2a`, `ToA2aOptions`, `bearerTokenUserBuilder`, `A2aUserBuilder`, `getA2AAgentCard`, `ResolveAgentCardOptions`, `AgentCardResolutionError`, `isAgentCardResolutionError`, `A2AAgentExecutor`, `AgentExecutorConfig`, `ExecutorContext`, `AdkDefaultRequestHandler`, `getA2aRequestMetadata`, `RemoteA2AAgent`, `RemoteA2AAgentConfig`, and `AGENT_CARD_PATH`.
+
 ### Agents
 
 Model-backed, workflow, and graph-backed agents (`BaseAgent`, `LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`, and `LangGraphAgent`), along with invocation contexts and `RunConfig`.
@@ -28,9 +34,9 @@ Credentials for tools that call protected APIs: how a credential is described, h
 
 ### CLI
 
-Environment loading, session-to-eval conversion, instruction placeholder initialization, log routing, and batch evaluation utilities backing the ADK CLI and development server.
+Environment loading, session-to-eval conversion, instruction placeholder initialization, log routing, runner cleanup, and batch evaluation utilities backing the ADK CLI and development server.
 
-- [CLI and Evaluation Utilities](cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalFormat`, `setupAdkLogger`, `logToTmpFolder`, `runEvals`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun`.
+- [CLI and Evaluation Utilities](cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalInvocations`, `convertSessionToEvalFormat`, `setupAdkLogger`, `logToTmpFolder`, `closeRunners`, `runEvals`, `LocalEvalSetsManager`, `LocalEvalSetResultsManager`, `EvalSetsManager`, `EvalSetResultsManager`, `GcsEvalSetsManager`, `GcsEvalSetResultsManager`, `createGcsEvalManagersFromUri`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun`.
 
 ### Code executors
 
@@ -60,9 +66,11 @@ The `LlmAgent` request/response processor pipeline, live streaming function-call
 
 Third-party model and ecosystem integrations packaged in `@google/adk-integrations`.
 
+- [BigQuery toolset](integrations/bigquery/index.md) - `BigQueryToolset`, `BigQueryTool`, `BigQueryCredentialsConfig`, `BigQueryToolConfig`, `getBigQueryClient`, and the first-party BigQuery metadata and SQL query tools.
 - [Claude on Vertex AI](integrations/models/anthropic_llm/index.md) - `Claude`, `LLMRegistry` registration for `claude-*` models on Vertex AI, and Anthropic message and tool conversion helpers.
 - [CrewAI tool](integrations/crewai/index.md) - `CrewaiTool`, `isCrewaiTool`, and adapting CrewAI tools into ADK tools.
 - [LangChain tool](integrations/langchain/index.md) - `LangchainTool`, `isLangchainTool`, and adapting LangChain structured and simple tools into ADK tools.
+- [BigQuery agent analytics](integrations/plugins/bigquery_agent_analytics_plugin/index.md) - `BigQueryAgentAnalyticsPlugin` from `@google/adk-integrations/bigquery`, logging agent events to BigQuery through the Storage Write API.
 
 ### Memory
 
@@ -82,6 +90,12 @@ Planning for an `LlmAgent` through its `planner` option: the model's built-in th
 
 - [Planners](planners/index.md) - `BasePlanner`, `BuiltInPlanner`, `PlanReActPlanner`, and the `isBasePlanner` and `isBuiltInPlanner` type guards.
 
+### Plugins
+
+Runner-wide callbacks: a plugin observes or changes the user message, the run, each agent, each model request, each tool call and each event of a runner.
+
+- [Plugins](plugins/index.md) - `BasePlugin`, `PluginManager`, `PluginCallbackName`, registration through `Runner`, `InMemoryRunner` and `App`, and the order, early exit and error handling of plugin callbacks.
+
 ### Runners
 
 - [Runner](runners/index.md) - Running an agent for an application, the entry points, which agent answers a resumed conversation, archiving a finished conversation into memory, and closing toolsets with `runner.close()`.
@@ -94,9 +108,9 @@ Conversations and their state: the events of each session, and the `app:`, `user
 
 ### Tools
 
-Function, agent, ecosystem-adapter, and built-in model tools (`BaseTool`, `FunctionTool`, `LongRunningFunctionTool`, `AgentTool`, `ToolContext`, `ToolboxToolset`, and built-in grounding and control-flow tools).
+Function, authenticated, agent, ecosystem-adapter, and built-in model tools (`BaseTool`, `BaseAuthenticatedTool`, `FunctionTool`, `AuthenticatedFunctionTool`, `LongRunningFunctionTool`, `AgentTool`, `ToolContext`, `ToolboxToolset`, and built-in grounding and control-flow tools).
 
-- [Tools](tools/index.md) - `BaseTool`, `FunctionTool` (with `response` schema and `_callLive` streaming), `LongRunningFunctionTool`, `AgentTool` (with `inputSchema` and `outputSchema`), `ToolContext`, `ToolboxToolset`, and built-in utility tools.
+- [Tools](tools/index.md) - `BaseTool`, `BaseAuthenticatedTool`, `FunctionTool` (with `response` schema and `_callLive` streaming), `AuthenticatedFunctionTool`, `LongRunningFunctionTool`, `AgentTool` (with `inputSchema` and `outputSchema`), `ToolContext`, `ToolboxToolset`, and built-in utility tools.
 
 #### Retrieval
 

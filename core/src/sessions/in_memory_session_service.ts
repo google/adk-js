@@ -33,6 +33,9 @@ export function isInMemoryConnectionString(uri?: string): boolean {
 /**
  * An in-memory implementation of the session service.
  *
+ * It is not suitable for multi-process or persistent production environments.
+ * Use it for testing and development only.
+ *
  * Every map below is keyed by untrusted input — `appName`, `userId`,
  * `sessionId` and state keys all arrive straight off the request path or body
  * on a dev server — so each is created with `Object.create(null)`. On an

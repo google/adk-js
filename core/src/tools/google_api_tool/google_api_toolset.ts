@@ -34,6 +34,7 @@ export interface GoogleApiToolsetOptions {
   clientId?: string;
   clientSecret?: string;
   toolFilter?: ToolPredicate | string[];
+  scopes?: string[];
 }
 
 /**
@@ -59,6 +60,7 @@ export class GoogleApiToolset extends BaseToolset {
   override toolFilter: ToolPredicate | string[];
   readonly apiName?: string;
   readonly apiVersion?: string;
+  readonly scopes?: string[];
   private clientId?: string;
   private clientSecret?: string;
   private openapiToolset?: OpenAPIToolset;
@@ -73,6 +75,7 @@ export class GoogleApiToolset extends BaseToolset {
     this.apiVersion = options.apiVersion;
     this.clientId = options.clientId;
     this.clientSecret = options.clientSecret;
+    this.scopes = options.scopes ? [...options.scopes] : undefined;
   }
 
   private async loadToolsetWithOidcAuth(): Promise<OpenAPIToolset> {
@@ -89,7 +92,12 @@ export class GoogleApiToolset extends BaseToolset {
       OpenAPIV3.OAuth2SecurityScheme | undefined;
     const scopesMap = oauth2Scheme?.flows?.authorizationCode?.scopes ?? {};
     const firstScope = Object.keys(scopesMap)[0];
-    const scopes = firstScope ? [firstScope] : undefined;
+    const scopes =
+      this.scopes !== undefined
+        ? [...this.scopes]
+        : firstScope
+          ? [firstScope]
+          : undefined;
 
     const authScheme: OpenIdConnectWithConfig = {
       type: 'openIdConnect',
@@ -114,7 +122,7 @@ export class GoogleApiToolset extends BaseToolset {
   }
 
   private async ensureToolsLoaded(): Promise<void> {
-    if (this.openapiToolset || !this.apiName || !this.apiVersion) {
+    if (this.openapiToolset) {
       return;
     }
     this.loadingPromise ??= (async () => {

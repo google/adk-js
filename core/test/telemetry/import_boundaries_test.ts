@@ -73,6 +73,15 @@ describe('telemetry import boundaries (no-restricted-imports)', () => {
     expect(violations).toEqual([]);
   });
 
+  it('forbids core/src/index.ts from re-exporting ./telemetry/api/', async () => {
+    const violations = await lintSnippet(
+      `export {recordInvocation} from './telemetry/api/instrumentation.js';\n`,
+      'core/src/index.ts',
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toContain('./telemetry/export/');
+  });
+
   it('forbids core/src/telemetry/api from importing core/src/telemetry/export', async () => {
     const violations = await lintSnippet(
       `import {maybeSetOtelProviders} from '../export/setup.js';\nexport const x = maybeSetOtelProviders;\n`,

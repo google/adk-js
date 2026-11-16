@@ -443,4 +443,61 @@ describe('NlPlanningResponseProcessor', () => {
     expect(llmResponse.content?.parts).toEqual([{text: 'processed'}]);
     expect(events).toHaveLength(0);
   });
+
+  it('yields a state-update event with partial true when the response is partial', async () => {
+    const agent = new LlmAgent({
+      name: 'agent',
+      planner: new StateUpdatingPlanner({planStep: 'step-1'}, [
+        {text: 'processed'},
+      ]),
+    });
+    const ctx = createInvocationContext(agent);
+    const llmResponse = createLlmResponse({partial: true});
+
+    const events = await collectEvents(
+      NL_PLANNING_RESPONSE_PROCESSOR.runAsync(ctx, llmResponse),
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0].partial).toBe(true);
+    expect(events[0].actions.stateDelta).toEqual({planStep: 'step-1'});
+  });
+
+  it('yields a state-update event with partial undefined when partial is false', async () => {
+    const agent = new LlmAgent({
+      name: 'agent',
+      planner: new StateUpdatingPlanner({planStep: 'step-1'}, [
+        {text: 'processed'},
+      ]),
+    });
+    const ctx = createInvocationContext(agent);
+    const llmResponse = createLlmResponse({partial: false});
+
+    const events = await collectEvents(
+      NL_PLANNING_RESPONSE_PROCESSOR.runAsync(ctx, llmResponse),
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0].partial).toBeUndefined();
+    expect(events[0].actions.stateDelta).toEqual({planStep: 'step-1'});
+  });
+
+  it('yields a state-update event with partial undefined when partial is undefined', async () => {
+    const agent = new LlmAgent({
+      name: 'agent',
+      planner: new StateUpdatingPlanner({planStep: 'step-1'}, [
+        {text: 'processed'},
+      ]),
+    });
+    const ctx = createInvocationContext(agent);
+    const llmResponse = createLlmResponse({partial: undefined});
+
+    const events = await collectEvents(
+      NL_PLANNING_RESPONSE_PROCESSOR.runAsync(ctx, llmResponse),
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0].partial).toBeUndefined();
+    expect(events[0].actions.stateDelta).toEqual({planStep: 'step-1'});
+  });
 });

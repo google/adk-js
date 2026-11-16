@@ -9,17 +9,15 @@ import {DefaultAgentCardResolver} from '@a2a-js/sdk/client';
 import * as fs from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {BaseAgent} from '../agents/base_agent.js';
-import {
-  InvocationContext,
-  InvocationContextParams,
-} from '../agents/invocation_context.js';
 import {isLlmAgent, LlmAgent} from '../agents/llm_agent.js';
 import {isLoopAgent, LoopAgent} from '../agents/loop_agent.js';
 import {isParallelAgent} from '../agents/parallel_agent.js';
-import {ReadonlyContext} from '../agents/readonly_context.js';
 import {isSequentialAgent} from '../agents/sequential_agent.js';
+import {propagateTraceContext} from '../telemetry/api/instrumentation.js';
 import {BaseTool, isBaseTool} from '../tools/base_tool.js';
 import {isBaseToolset} from '../tools/base_toolset.js';
+import {getErrorMessage} from '../utils/error_utils.js';
+import {fetchWithTimeout} from '../utils/fetch_utils.js';
 import {logger} from '../utils/logger.js';
 import {
   isLinkLocalAddress,
@@ -75,6 +73,52 @@ export interface ResolveAgentCardOptions {
 }
 
 /**
+ * Parameters of {@link resolveAgentCard}: the validation options, plus the
+ * request timeout of the caller that fetches the card.
+ */
+export interface ResolveAgentCardParams extends ResolveAgentCardOptions {
+  /**
+   * Maximum time to wait for the response headers of the card fetch, in
+   * milliseconds. Unset means the fetch has no timeout.
+   */
+  timeoutMs?: number;
+}
+
+const AGENT_CARD_RESOLUTION_ERROR_SIGNATURE_SYMBOL = Symbol.for(
+  'google.adk.agentCardResolutionError',
+);
+
+/**
+ * Error thrown when an agent card cannot be resolved from a URL or a file.
+ */
+export class AgentCardResolutionError extends Error {
+  readonly [AGENT_CARD_RESOLUTION_ERROR_SIGNATURE_SYMBOL] = true;
+
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'AgentCardResolutionError';
+    Object.setPrototypeOf(this, AgentCardResolutionError.prototype);
+  }
+}
+
+/**
+ * Type guard for {@link AgentCardResolutionError}.
+ *
+ * @param obj The value to check.
+ * @returns True if obj is an {@link AgentCardResolutionError}.
+ */
+export function isAgentCardResolutionError(
+  obj: unknown,
+): obj is AgentCardResolutionError {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    (AGENT_CARD_RESOLUTION_ERROR_SIGNATURE_SYMBOL in obj ||
+      (obj instanceof Error && obj.name === 'AgentCardResolutionError'))
+  );
+}
+
+/**
  * Resolves the AgentCard from the provided source.
  *
  * A source is either an {@link AgentCard}, an `http(s)://` URL to fetch it
@@ -85,33 +129,94 @@ export interface ResolveAgentCardOptions {
  * redirect from the card endpoint is refused rather than followed. Loopback and
  * private addresses stay allowed: they are where a locally served or
  * VPC-internal peer agent lives.
+ *
+ * @throws {@link AgentCardResolutionError} when a URL or file source cannot be
+ *     resolved. Its `cause` is the original error.
  */
 export async function resolveAgentCard(
   agentCard: AgentCard | string,
-  options: ResolveAgentCardOptions = {},
+  options: ResolveAgentCardParams = {},
 ): Promise<AgentCard> {
-  if (typeof agentCard === 'object') {
+  try {
+    if (typeof agentCard === 'string') {
+      const source = agentCard.trim();
+      if (!source) {
+        throw new Error('Agent card source string cannot be empty.');
+      }
+      return await resolveAgentCardSource(source, options);
+    }
+    validateResolvedAgentCard(agentCard);
     return agentCard;
+  } catch (e: unknown) {
+    throw new AgentCardResolutionError(getErrorMessage(e), {cause: e});
   }
+}
 
-  const source = agentCard as string;
+/** Fetches or reads the card that the URL or filesystem path `source` names. */
+async function resolveAgentCardSource(
+  source: string,
+  options: ResolveAgentCardParams,
+): Promise<AgentCard> {
   if (source.startsWith('http://') || source.startsWith('https://')) {
     await refuseLinkLocalHost(source);
     const resolver = new DefaultAgentCardResolver({
-      fetchImpl: refuseRedirectFetch,
+      fetchImpl:
+        options.timeoutMs === undefined
+          ? tracePropagatingRefuseRedirectFetch
+          : propagateTraceContext(
+              fetchWithTimeout({
+                timeoutMs: options.timeoutMs,
+                fetchImpl: refuseRedirectFetch,
+              }),
+            ),
     });
     const card = await resolver.resolve(source);
+    validateResolvedAgentCard(card);
     validateCardRpcTargets(card, source, options);
     return card;
   }
   const url = parseCardUrl(source);
   if (url && url.protocol !== 'file:') {
     throw new Error(
-      `Unsupported agent card URL scheme "${url.protocol}": ${agentCard}. ` +
+      `Unsupported agent card URL scheme "${url.protocol}": ${source}. ` +
         'Use http://, https:// or file://, or pass a filesystem path with no scheme.',
     );
   }
-  return readAgentCardFile(agentCard, url);
+  const card = await readAgentCardFile(source, url);
+  validateResolvedAgentCard(card);
+  return card;
+}
+
+/**
+ * Checks that a resolved card is a plain object whose `url` parses with a
+ * scheme and a host.
+ */
+function validateResolvedAgentCard(card: unknown): asserts card is AgentCard {
+  if (
+    typeof card !== 'object' ||
+    card === null ||
+    Array.isArray(card) ||
+    Object.prototype.toString.call(card) !== '[object Object]'
+  ) {
+    throw new Error('Agent card must be a non-null object.');
+  }
+  if (!('url' in card) || typeof card.url !== 'string' || !card.url.trim()) {
+    throw new Error(
+      'Invalid RPC URL in agent card: Agent card must have a valid URL.',
+    );
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(card.url);
+  } catch (err: unknown) {
+    throw new Error(
+      `Invalid RPC URL in agent card: ${card.url}: ${getErrorMessage(err)}`,
+      {cause: err},
+    );
+  }
+  if (!parsed.protocol || !parsed.host) {
+    throw new Error(`Invalid RPC URL in agent card: ${card.url}`);
+  }
 }
 
 /**
@@ -179,6 +284,13 @@ async function refuseRedirectFetch(
 }
 
 /**
+ * {@link refuseRedirectFetch} that also sends the active trace context, so the
+ * card fetch joins the caller's trace.
+ */
+const tracePropagatingRefuseRedirectFetch =
+  propagateTraceContext(refuseRedirectFetch);
+
+/**
  * Parses an absolute URL out of a card source, or returns `null` when the
  * source names a filesystem path.
  */
@@ -203,7 +315,8 @@ async function readAgentCardFile(
     return JSON.parse(content) as AgentCard;
   } catch (err: unknown) {
     throw new Error(
-      `Failed to read agent card from file ${source}: ${(err as Error).message}`,
+      `Failed to read agent card from file ${source}: ${getErrorMessage(err)}`,
+      {cause: err},
     );
   }
 }
@@ -449,11 +562,15 @@ async function buildSubAgentSkills(agent: RunnableRoot): Promise<AgentSkill[]> {
 }
 
 async function buildLLMAgentSkills(agent: LlmAgent): Promise<AgentSkill[]> {
+  // The card is a discovery document served without authentication (even when
+  // the A2A RPC endpoints require authentication), so the skill description
+  // comes from the agent's own public description and never from its
+  // instructions.
   const skills: AgentSkill[] = [
     {
       id: agent.name,
       name: 'model',
-      description: await buildDescriptionFromInstructions(agent),
+      description: buildAgentDescription(agent),
       tags: ['llm'],
     },
   ];
@@ -531,7 +648,7 @@ function buildAgentDescription(agent: BaseAgent): string {
     descriptionParts.push(agent.description);
   }
 
-  if (agent.subAgents.length > 0) {
+  if (!isLlmAgent(agent) && agent.subAgents.length > 0) {
     if (isLoopAgent(agent)) {
       descriptionParts.push(buildLoopAgentDescription(agent));
     } else if (isParallelAgent(agent)) {
@@ -621,93 +738,6 @@ function buildLoopAgentDescription(agent: LoopAgent): string {
   });
 
   return `${descriptions.join(' ')} in a loop (max ${maxIterations} iterations).`;
-}
-
-async function buildDescriptionFromInstructions(
-  agent: LlmAgent,
-): Promise<string> {
-  const descriptionParts: string[] = [];
-  if (agent.description) {
-    descriptionParts.push(agent.description);
-  }
-
-  if (agent.instruction) {
-    let instructionStr: string;
-    if (typeof agent.instruction === 'function') {
-      const dummyContext = new ReadonlyContext(
-        new InvocationContext({
-          agent: agent,
-        } as unknown as InvocationContextParams),
-      );
-      try {
-        instructionStr = await agent.instruction(dummyContext);
-      } catch (e) {
-        logger.warn('Failed to resolve dynamic instruction for AgentCard', e);
-        instructionStr = '';
-      }
-    } else {
-      instructionStr = agent.instruction;
-    }
-
-    if (instructionStr) {
-      descriptionParts.push(replacePronouns(instructionStr));
-    }
-  }
-
-  const root = agent.rootAgent;
-  if (isLlmAgent(root) && root.globalInstruction) {
-    let globalInstructionStr: string;
-    if (typeof root.globalInstruction === 'function') {
-      const dummyContext = new ReadonlyContext(
-        new InvocationContext({
-          agent: agent,
-        } as unknown as InvocationContextParams),
-      );
-      try {
-        globalInstructionStr = await root.globalInstruction(dummyContext);
-      } catch (e) {
-        logger.warn(
-          'Failed to resolve dynamic global instruction for AgentCard',
-          e,
-        );
-        globalInstructionStr = '';
-      }
-    } else {
-      globalInstructionStr = root.globalInstruction;
-    }
-
-    if (globalInstructionStr) {
-      descriptionParts.push(replacePronouns(globalInstructionStr));
-    }
-  }
-
-  if (descriptionParts.length > 0) {
-    return descriptionParts.join(' ');
-  } else {
-    return getDefaultAgentDescription(agent);
-  }
-}
-
-// Replaces pronouns and conjugate common verbs for agent description.
-// Examples: "You are" -> "I am", "your" -> "my"
-function replacePronouns(instruction: string): string {
-  const substitutions = [
-    {original: 'you were', target: 'I was'},
-    {original: 'you are', target: 'I am'},
-    {original: "you're", target: 'I am'},
-    {original: "you've", target: 'I have'},
-    {original: 'yours', target: 'mine'},
-    {original: 'your', target: 'my'},
-    {original: 'you', target: 'I'},
-  ];
-
-  let result = instruction;
-  for (const sub of substitutions) {
-    // Only replace whole words, case insensitive
-    const pattern = new RegExp(`\\b${sub.original}\\b`, 'gi');
-    result = result.replace(pattern, sub.target);
-  }
-  return result;
 }
 
 function getDefaultAgentDescription(agent: BaseAgent): string {

@@ -1014,31 +1014,33 @@ export function determineAgentForResumption(
   resumabilityConfig?: ResumabilityConfig,
 ): BaseAgent {
   // =========================================================================
-  // Case 1: If the last event is a function response and resumability is enabled,
-  // this returns the agent that made the original function call.
+  // Case 1: If the last event is a function response, this returns the agent
+  // that made the original function call. A response the user sends always
+  // routes there, because the agent that asked (for example for a credential
+  // or a long-running result) is the one waiting for the answer. A response
+  // written by an agent routes there only when resumability is enabled.
   // =========================================================================
-  // A synthetic abort response seals a cancelled call; it must not route the
-  // next turn back to the agent that issued the call.
-  const lastEvent = session.events[session.events.length - 1];
+  // A synthetic abort response seals a cancelled call; neither it nor a later
+  // user answer to that call may route the next turn back to the agent that
+  // issued the call.
+  const lastEvent = session.events.at(-1);
+  const lastNonUserEvent = findLastNonUserEvent(session.events);
   const event =
-    lastEvent && !isAbortEvent(lastEvent)
+    lastEvent &&
+    !isAbortEvent(lastEvent) &&
+    !(lastNonUserEvent && isAbortEvent(lastNonUserEvent))
       ? findEventByLastFunctionResponseId(session.events)
       : null;
   const isResumable = Boolean(resumabilityConfig?.isResumable);
-  if (event && event.author && isResumable) {
-    // Checked here, not inside findEventByLastFunctionResponseId /
-    // findMatchingFunctionCall: those run unconditionally above, on every
-    // runAsync for an agent root, not only when resumption is requested.
-    // Throwing there would abort a run whose result is thrown away
-    // whenever resumabilityConfig is unset, for a session whose last
-    // event merely happens to answer two agents' calls at once -- Cases
-    // 2 and 3 below would never get a chance to run. Gating the throw on
-    // isResumable, which is what actually decides whether this event
-    // matters, keeps that from happening.
+  if (event?.author && (isResumable || lastEvent?.author === 'user')) {
+    // The conflict check lives here rather than in findMatchingFunctionCall,
+    // which is a pure lookup. A last event that answers calls from two agents
+    // has no single agent to resume. With resumability enabled that is an
+    // error; without it, Case 2 picks the agent instead.
     const conflictingAuthors = getConflictingFunctionResponseAuthors(
       session.events,
     );
-    if (conflictingAuthors) {
+    if (conflictingAuthors && isResumable) {
       throw new Error(
         'Function responses in the last event resolve to function calls ' +
           `from more than one agent (at least "${conflictingAuthors[0]}" ` +
@@ -1046,14 +1048,16 @@ export function determineAgentForResumption(
           'agent to resume.',
       );
     }
-    const resumedAgent = rootAgent.findAgent(event.author);
-    if (resumedAgent) {
-      return resumedAgent;
-    }
-    if (!isWorkflowNodeEvent(event)) {
-      logger.warn(
-        `Function response from an unknown agent: ${event.author}, event id: ${event.id}`,
-      );
+    if (!conflictingAuthors) {
+      const resumedAgent = rootAgent.findAgent(event.author);
+      if (resumedAgent) {
+        return resumedAgent;
+      }
+      if (!isWorkflowNodeEvent(event)) {
+        logger.warn(
+          `Function response from an unknown agent: ${event.author}, event id: ${event.id}`,
+        );
+      }
     }
   }
 
@@ -1092,6 +1096,18 @@ export function determineAgentForResumption(
   // Case 3: default to root agent.
   // =========================================================================
   return rootAgent;
+}
+
+/**
+ * Returns the newest event in `events` not authored by the user, if any.
+ */
+function findLastNonUserEvent(events: Event[]): Event | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].author !== 'user') {
+      return events[i];
+    }
+  }
+  return undefined;
 }
 
 /**

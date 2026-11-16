@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Session, createSession} from '@google/adk';
+import {Session, createEvent, createSession} from '@google/adk';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 import {AdkApiClient} from '../../src/server/adk_api_client.js';
@@ -147,6 +147,45 @@ describe('AdkApiClient', () => {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({state: undefined}),
+        },
+      );
+      expect(result).toEqual(mockSession);
+    });
+
+    it('should forward initial events in the request body when provided', async () => {
+      const initialEvent = createEvent({
+        author: 'user',
+        invocationId: 'inv-1',
+        content: {role: 'user', parts: [{text: 'hello'}]},
+      });
+      const mockSession = createSession({
+        id: 'session1',
+        appName: 'app1',
+        userId: 'user1',
+        state: {key: 'value'},
+        events: [initialEvent],
+      });
+      (global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ok: true,
+        json: async () => mockSession,
+      });
+
+      const result = await client.createSession({
+        appName: 'app1',
+        userId: 'user1',
+        state: {key: 'value'},
+        events: [initialEvent],
+      });
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        `${mockBackendUrl}/apps/app1/users/user1/sessions`,
+        {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            state: {key: 'value'},
+            events: [initialEvent],
+          }),
         },
       );
       expect(result).toEqual(mockSession);

@@ -26,6 +26,7 @@ import {AuthConfig} from '../auth/auth_tool.js';
 import {Event, NodeInfo, Route} from '../events/event.js';
 import {EventActions} from '../events/event_actions.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
+import {formatError} from '../utils/error_utils.js';
 import {logger} from '../utils/logger.js';
 import {
   EXPRESS_MODE_UNSUPPORTED_MESSAGE,
@@ -480,9 +481,16 @@ export class VertexAiSessionService extends BaseSessionService {
       return;
     }
 
-    await this.sessions.delete({
-      name: `reasoningEngines/${reasoningEngineId}/sessions/${sessionId}`,
-    });
+    try {
+      await this.sessions.delete({
+        name: `reasoningEngines/${reasoningEngineId}/sessions/${sessionId}`,
+      });
+    } catch (error: unknown) {
+      logger.error(
+        `Error deleting session ${sessionId}: ${formatError(error)}`,
+      );
+      throw error;
+    }
   }
 
   override async appendEvent({

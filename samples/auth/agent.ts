@@ -13,7 +13,8 @@
  * auth request and its authorization URI, `AuthSchemeType` and
  * `getOAuthGrantTypeFromFlow` classify the scheme, and
  * `AutoAuthCredentialExchanger` and `generateAuthToken` turn an access token
- * into an HTTP bearer credential.
+ * into an HTTP bearer credential. `SessionStateCredentialService` keeps a
+ * credential in session state under its `credentialKey`.
  *
  * Easy to get wrong: the credential has no `redirectUri`, so the URI carries
  * no `redirect_uri` at all and the provider uses the redirect registered for
@@ -38,11 +39,15 @@ import {
   AuthSchemeType,
   AutoAuthCredentialExchanger,
   BaseAgent,
+  Context,
   createEvent,
+  CredentialManager,
   Event,
   generateAuthToken,
   getOAuthGrantTypeFromFlow,
+  InMemoryCredentialService,
   InvocationContext,
+  SessionStateCredentialService,
 } from '@google/adk';
 
 const PLACEHOLDER_ACCESS_TOKEN = 'placeholder-access-token';
@@ -123,6 +128,71 @@ async function describeExchange(): Promise<string[]> {
   ];
 }
 
+/** Describes how `CredentialManager` loads and persists credentials via `InMemoryCredentialService`. */
+async function describeCredentialManager(
+  ctx: InvocationContext,
+): Promise<string[]> {
+  const credentialService = new InMemoryCredentialService();
+  const toolContext = new Context({
+    invocationContext: ctx.clone({credentialService}),
+    functionCallId: 'sample-auth-call',
+  });
+  const manager = new CredentialManager(authConfig);
+  const beforeResponse = await manager.getAuthCredential(toolContext);
+
+  toolContext.state.set(`temp:${authConfig.credentialKey}`, {
+    authType: AuthCredentialTypes.OAUTH2,
+    oauth2: {accessToken: PLACEHOLDER_ACCESS_TOKEN},
+  });
+  const afterResponse = await manager.getAuthCredential(toolContext);
+  const stored = await credentialService.loadCredential(
+    authConfig,
+    toolContext,
+  );
+
+  return [
+    `CredentialManager before response: ${beforeResponse ?? 'undefined'}`,
+    `CredentialManager after response: ${afterResponse?.authType} ${redact(
+      afterResponse?.oauth2?.accessToken,
+    )}`,
+    `Saved in InMemoryCredentialService: ${Boolean(
+      stored?.oauth2?.accessToken,
+    )}`,
+  ];
+}
+
+/** Describes how `SessionStateCredentialService` keeps a credential in session state. */
+async function describeSessionStateCredentialService(
+  ctx: InvocationContext,
+): Promise<string[]> {
+  const credentialService = new SessionStateCredentialService();
+  const toolContext = new Context({
+    invocationContext: ctx,
+    functionCallId: 'sample-session-state-call',
+  });
+  const sessionAuthConfig: AuthConfig = {
+    ...authConfig,
+    credentialKey: 'example_session_state',
+    exchangedAuthCredential: {
+      authType: AuthCredentialTypes.OAUTH2,
+      oauth2: {accessToken: PLACEHOLDER_ACCESS_TOKEN},
+    },
+  };
+
+  await credentialService.saveCredential(sessionAuthConfig, toolContext);
+  const loaded = await credentialService.loadCredential(
+    sessionAuthConfig,
+    toolContext,
+  );
+
+  return [
+    `SessionStateCredentialService state key: ${sessionAuthConfig.credentialKey}`,
+    `SessionStateCredentialService loaded: ${loaded?.authType} ${redact(
+      loaded?.oauth2?.accessToken,
+    )}`,
+  ];
+}
+
 class AuthShowcaseAgent extends BaseAgent {
   constructor() {
     super({
@@ -140,6 +210,8 @@ class AuthShowcaseAgent extends BaseAgent {
       `Grant type: ${getOAuthGrantTypeFromFlow(flows)}`,
       ...describeAuthRequest(),
       ...(await describeExchange()),
+      ...(await describeCredentialManager(ctx)),
+      ...(await describeSessionStateCredentialService(ctx)),
     ];
 
     yield createEvent({

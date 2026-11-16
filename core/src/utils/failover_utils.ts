@@ -32,10 +32,7 @@ export async function* runWithRouting<T, C, TYield>(
 
   let selectedKey = initialKey;
   logger.debug(`Router selected initial key: ${selectedKey}`);
-  let selectedItem = items[selectedKey];
-  if (!selectedItem) {
-    throw new Error(`Item not found for key: ${selectedKey}`);
-  }
+  let selectedItem = getSelectedItem(items, selectedKey);
 
   const triedKeys = new Set<string>([selectedKey]);
 
@@ -75,10 +72,7 @@ export async function* runWithRouting<T, C, TYield>(
         }
 
         selectedKey = nextKey;
-        selectedItem = items[selectedKey];
-        if (!selectedItem) {
-          throw new Error(`Item not found for key: ${selectedKey}`);
-        }
+        selectedItem = getSelectedItem(items, selectedKey);
         triedKeys.add(selectedKey);
       } else {
         throw error;
@@ -87,11 +81,22 @@ export async function* runWithRouting<T, C, TYield>(
   }
 }
 
+function getSelectedItem<T>(
+  items: Readonly<Record<string, T>>,
+  key: string,
+): T {
+  if (!Object.hasOwn(items, key) || items[key] === undefined) {
+    throw new Error(`Item not found for key: ${key}`);
+  }
+  return items[key];
+}
+
 function isAsyncGenerator(
   obj: unknown,
 ): obj is AsyncGenerator<unknown, void, void> {
   return (
     typeof obj === 'object' &&
+    obj !== null &&
     typeof (obj as AsyncIterable<unknown>)[Symbol.asyncIterator] === 'function'
   );
 }

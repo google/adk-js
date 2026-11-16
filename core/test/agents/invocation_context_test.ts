@@ -8,6 +8,7 @@ import {
   BaseAgent,
   BaseAgentConfig,
   Event,
+  InMemoryCredentialService,
   InvocationContext,
   LlmCallsLimitExceededError,
   LoopAgent,
@@ -206,5 +207,35 @@ describe('LlmCallsLimitExceededError', () => {
     expect(isLlmCallsLimitExceededError(new Error('other'))).toBe(false);
     expect(isLlmCallsLimitExceededError(null)).toBe(false);
     expect(isLlmCallsLimitExceededError('limit exceeded')).toBe(false);
+  });
+});
+
+describe('InvocationContext services', () => {
+  it('keeps the credential service passed to the constructor and to clones', () => {
+    const credentialService = new InMemoryCredentialService();
+    const context = new InvocationContext({
+      invocationId: 'inv-credential-service',
+      agent: new LoopAgent({name: 'root'}),
+      session: makeSession(),
+      pluginManager: new PluginManager(),
+    });
+    const withService = context.clone({credentialService});
+
+    expect(context.credentialService).toBeUndefined();
+    expect(withService.credentialService).toBe(credentialService);
+    expect(withService.clone().credentialService).toBe(credentialService);
+  });
+
+  it('keeps the credential service passed straight to the constructor', () => {
+    const credentialService = new InMemoryCredentialService();
+    const context = new InvocationContext({
+      invocationId: 'inv-credential-service-constructor',
+      agent: new LoopAgent({name: 'root'}),
+      session: makeSession(),
+      pluginManager: new PluginManager(),
+      credentialService,
+    });
+
+    expect(context.credentialService).toBe(credentialService);
   });
 });

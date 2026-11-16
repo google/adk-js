@@ -15,14 +15,19 @@ import {
 import {describe, expect, it, vi} from 'vitest';
 import {toAdkEvent} from '../../src/a2a/event_converter_utils.js';
 import {
+  type A2AContextIdParts,
   A2AMetadataKeys,
+  ADK_CONTEXT_ID_PREFIX,
+  ADK_CONTEXT_ID_SEPARATOR,
   AdkMetadataKeys,
+  fromA2AContextId,
   getA2AEventMetadata,
   getAdkEventMetadata,
+  toA2AContextId,
 } from '../../src/a2a/metadata_converter_utils.js';
 import {logger} from '../../src/utils/logger.js';
 
-const contextData = {
+const contextData: A2AContextIdParts = {
   appName: 'my-app',
   userId: 'user-id',
   sessionId: 'session-id',
@@ -245,5 +250,101 @@ describe('metadata_converter_utils', () => {
         [A2AMetadataKeys.IS_LONG_RUNNING]: false,
       });
     });
+  });
+
+  describe('toA2AContextId', () => {
+    it('joins the prefix and the session fields with the separator', () => {
+      const parts: A2AContextIdParts = {
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session',
+      };
+      expect(ADK_CONTEXT_ID_PREFIX).toBe('ADK');
+      expect(ADK_CONTEXT_ID_SEPARATOR).toBe('/');
+      expect(toA2AContextId(parts)).toBe('ADK/test-app/test-user/test-session');
+    });
+
+    it.each([
+      {field: 'appName', parts: {appName: '', userId: 'u', sessionId: 's'}},
+      {field: 'userId', parts: {appName: 'a', userId: '', sessionId: 's'}},
+      {field: 'sessionId', parts: {appName: 'a', userId: 'u', sessionId: ''}},
+    ])('throws when $field is empty', ({parts}) => {
+      expect(() => toA2AContextId(parts)).toThrow(
+        'All parameters (appName, userId, sessionId) must be non-empty',
+      );
+    });
+
+    it('percent-encodes special characters in each field', () => {
+      expect(
+        toA2AContextId({
+          appName: 'test-app@2024',
+          userId: 'user_123',
+          sessionId: 'session-456',
+        }),
+      ).toBe('ADK/test-app%402024/user_123/session-456');
+    });
+  });
+
+  describe('fromA2AContextId', () => {
+    it('parses a well-formed context id', () => {
+      expect(fromA2AContextId('ADK/test-app/test-user/test-session')).toEqual({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session',
+      });
+    });
+
+    it('parses fields that contain unreserved special characters', () => {
+      expect(
+        fromA2AContextId('ADK/test-app@2024/user_123/session-456'),
+      ).toEqual({
+        appName: 'test-app@2024',
+        userId: 'user_123',
+        sessionId: 'session-456',
+      });
+    });
+
+    it.each([
+      {name: 'a missing context id', contextId: undefined},
+      {name: 'an empty context id', contextId: ''},
+      {
+        name: 'an invalid prefix',
+        contextId: 'INVALID/test-app/test-user/test-session',
+      },
+      {name: 'too few segments', contextId: 'ADK/test-app/test-user'},
+      {
+        name: 'too many segments',
+        contextId: 'ADK/test-app/test-user/test-session/extra',
+      },
+      {name: 'an empty field', contextId: 'ADK//test-user/test-session'},
+      {
+        name: 'a different separator',
+        contextId: 'ADK-test-app-test-user-test-session',
+      },
+      {name: 'a field that decodes to empty', contextId: 'ADK/a/u/'},
+      {name: 'malformed percent-encoding', contextId: 'ADK/%zz/u/s'},
+    ])('returns undefined for $name', ({contextId}) => {
+      expect(fromA2AContextId(contextId)).toBeUndefined();
+    });
+  });
+
+  describe('context id round trip', () => {
+    it.each([
+      {appName: 'test-app', userId: 'test-user', sessionId: 'test-session'},
+      {appName: 'app', userId: 'user', sessionId: 'projects/p/sessions/s'},
+      {
+        appName: 'app',
+        userId: 'projects/p/subscriptions/sub',
+        sessionId: 'session',
+      },
+      {appName: 'apps/a/versions/v', userId: 'user', sessionId: 'session'},
+      {appName: 'app', userId: 'user', sessionId: 'a/b/c'},
+      {appName: 'app%41', userId: 'user', sessionId: '100%'},
+    ])(
+      'returns the original fields for $appName, $userId, $sessionId',
+      (parts) => {
+        expect(fromA2AContextId(toA2AContextId(parts))).toEqual(parts);
+      },
+    );
   });
 });

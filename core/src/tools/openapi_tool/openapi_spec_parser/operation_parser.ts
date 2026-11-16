@@ -340,6 +340,9 @@ export class OperationParser {
   /**
    * Gets the Python-style type hint of the return value.
    *
+   * @deprecated Legacy Python type-hint helper retained for compatibility. In
+   *     `adk-js`, tool declarations pass the JSON schema from
+   *     {@link OperationParser.getJsonSchema} directly to the model.
    * @returns A type name such as `str`, or `Any` when the operation declares
    *     no typed 2xx response.
    */
@@ -352,9 +355,10 @@ export class OperationParser {
    * Generates a Python-style docstring describing the operation, every
    * parameter and the return value.
    *
-   * The type names inside it are Python's, because the artifact is a docstring
-   * in adk-python's format and the same text reaches the model in both SDKs.
-   *
+   * @deprecated Legacy Python docstring helper retained for compatibility. In
+   *     `adk-js`, tool declarations use {@link OperationParser.getDescription}
+   *     and {@link OperationParser.getJsonSchema} rather than sending a Python
+   *     docstring to the model.
    * @returns The generated docstring.
    */
   @experimental

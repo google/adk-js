@@ -5,6 +5,7 @@
  */
 
 import {
+  Context,
   createSession,
   GoogleApiTool,
   GoogleApiToolset,
@@ -13,6 +14,7 @@ import {
   isGoogleApiToolset,
   LlmAgent,
   OpenAPIToolset,
+  OpenIdConnectWithConfig,
   PluginManager,
   ReadonlyContext,
 } from '@google/adk';
@@ -99,6 +101,109 @@ describe('GoogleApiToolset', () => {
     expect(toolset.apiName).toBe('calendar');
     expect(toolset.apiVersion).toBe('v3');
     expect(toolset.toolFilter).toEqual(['calendar_calendars_get']);
+    expect(toolset.scopes).toBeUndefined();
+  });
+
+  it('throws when apiName or apiVersion is missing', async () => {
+    await expect(new GoogleApiToolset().getTools()).rejects.toThrow(
+      'Both apiName and apiVersion are required to load a GoogleApiToolset.',
+    );
+    await expect(
+      new GoogleApiToolset({apiName: 'calendar'}).getTools(),
+    ).rejects.toThrow(
+      'Both apiName and apiVersion are required to load a GoogleApiToolset.',
+    );
+    await expect(
+      new GoogleApiToolset({apiVersion: 'v3'}).getTools(),
+    ).rejects.toThrow(
+      'Both apiName and apiVersion are required to load a GoogleApiToolset.',
+    );
+  });
+
+  it('configures custom OAuth scopes on the underlying OIDC auth scheme when provided', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => MOCK_DISCOVERY_SPEC,
+    } as Response);
+
+    const customScopes = ['https://www.googleapis.com/auth/calendar.readonly'];
+    const toolset = new GoogleApiToolset({
+      apiName: 'calendar',
+      apiVersion: 'v3',
+      clientId: 'test-client-id',
+      clientSecret: 'test-client-secret',
+      scopes: customScopes,
+    });
+
+    expect(toolset.scopes).toEqual(customScopes);
+
+    const tools = await toolset.getTools();
+    const tool = tools[0];
+
+    const context = new Context({
+      invocationContext: new InvocationContext({
+        invocationId: 'inv-1',
+        agent: new LlmAgent({name: 'test_agent'}),
+        session: createSession({id: 'sess-1', appName: 'test_app'}),
+        pluginManager: new PluginManager(),
+      }),
+      functionCallId: 'call-custom-scopes',
+    });
+
+    await tool.runAsync({
+      args: {calendar_id: 'primary'},
+      toolContext: context,
+    });
+
+    const requestedAuth =
+      context.eventActions.requestedAuthConfigs['call-custom-scopes'];
+    expect(requestedAuth).toBeDefined();
+    const oidcScheme = requestedAuth.authScheme as OpenIdConnectWithConfig;
+    expect(oidcScheme.scopes).toEqual(customScopes);
+  });
+
+  it('defaults to the first scope from the discovery spec when scopes option is omitted', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => MOCK_DISCOVERY_SPEC,
+    } as Response);
+
+    const toolset = new GoogleApiToolset({
+      apiName: 'calendar',
+      apiVersion: 'v3',
+      clientId: 'test-client-id',
+      clientSecret: 'test-client-secret',
+    });
+
+    expect(toolset.scopes).toBeUndefined();
+
+    const tools = await toolset.getTools();
+    const tool = tools[0];
+
+    const context = new Context({
+      invocationContext: new InvocationContext({
+        invocationId: 'inv-2',
+        agent: new LlmAgent({name: 'test_agent'}),
+        session: createSession({id: 'sess-2', appName: 'test_app'}),
+        pluginManager: new PluginManager(),
+      }),
+      functionCallId: 'call-default-scopes',
+    });
+
+    await tool.runAsync({
+      args: {calendar_id: 'primary'},
+      toolContext: context,
+    });
+
+    const requestedAuth =
+      context.eventActions.requestedAuthConfigs['call-default-scopes'];
+    expect(requestedAuth).toBeDefined();
+    const oidcScheme = requestedAuth.authScheme as OpenIdConnectWithConfig;
+    expect(oidcScheme.scopes).toEqual([
+      'https://www.googleapis.com/auth/calendar',
+    ]);
   });
 
   it('creates a GoogleApiTool for every method in the discovery spec', async () => {

@@ -216,4 +216,46 @@ describe('A2ARemoteAgentRunProcessor', () => {
     expect(result[1].content?.parts?.[0].text).toBe('art 2');
     expect(result[2]).toBe(finalAdkEvent);
   });
+
+  describe('updateCustomMetadata', () => {
+    it('records a2a:context_id on a Message without taskId', () => {
+      const processor = new A2ARemoteAgentRunProcessor();
+      const event = createEvent({turnComplete: true});
+      const response: A2AEvent = {
+        kind: 'message',
+        messageId: 'msg-1',
+        role: 'agent',
+        contextId: 'ctx-message-only',
+        parts: [{kind: 'text', text: 'hello'}],
+      };
+
+      processor.updateCustomMetadata(event, response);
+
+      expect(event.customMetadata).toEqual({
+        'a2a:response': response,
+        'a2a:context_id': 'ctx-message-only',
+      });
+    });
+
+    it('records both task_id and context_id on a Message with taskId', () => {
+      const processor = new A2ARemoteAgentRunProcessor();
+      const event = createEvent({turnComplete: true});
+      const response: A2AEvent = {
+        kind: 'message',
+        messageId: 'msg-2',
+        role: 'agent',
+        taskId: 'task-1',
+        contextId: 'ctx-1',
+        parts: [{kind: 'text', text: 'hello'}],
+      };
+
+      processor.updateCustomMetadata(event, response);
+
+      expect(event.customMetadata).toEqual({
+        'a2a:response': response,
+        'a2a:task_id': 'task-1',
+        'a2a:context_id': 'ctx-1',
+      });
+    });
+  });
 });

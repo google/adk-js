@@ -68,7 +68,7 @@ export const rootAgent = new LlmAgent({
 
 `LlmRequest` is a plain object. `appendInstructions(llmRequest, instructions)` joins the instructions with a blank line and adds them to `config.systemInstruction`. You set the other request fields, such as `config.tools` and `config.responseSchema`, directly on the object.
 
-`LlmResponse` is a plain object too. A model sets `partial: true` on a streamed chunk, `turnComplete: true` at the end of a turn, and `errorCode` and `errorMessage` when the model returns no content. `createLlmResponse(response)` makes an `LlmResponse` from a `GenerateContentResponse` of the `@google/genai` SDK. It copies the first candidate, or it sets the error fields when there is no candidate content.
+`LlmResponse` is a plain object too. A model sets `partial: true` on a streamed chunk, `turnComplete: true` at the end of a turn, and `errorCode` and `errorMessage` when the model returns no content. `createLlmResponse(response)` makes an `LlmResponse` from a `GenerateContentResponse` of the `@google/genai` SDK. It copies the first candidate, or it sets the error fields when there is no candidate content. When `Gemini` streams, the final aggregated response carries `errorCode` and `errorMessage` only when the finish reason is not `STOP`.
 
 ### Model resolution
 

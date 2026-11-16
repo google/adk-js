@@ -938,6 +938,58 @@ describe('toGeminiSchema constraint preservation', () => {
 
     expect(schema).toEqual({type: Type.STRING});
   });
+
+  it('retains supported formats and drops unsupported formats in toGeminiSchema', () => {
+    const schema = toGeminiSchema({
+      type: 'object',
+      properties: {
+        int32Field: {type: 'integer', format: 'int32'},
+        int64Field: {type: 'integer', format: 'int64'},
+        unsignedInt: {type: 'integer', format: 'unsigned'},
+        numInt32: {type: 'number', format: 'int32'},
+        numInt64: {type: 'number', format: 'int64'},
+        numFloat: {type: 'number', format: 'float'},
+        numDouble: {type: 'number', format: 'double'},
+        dateTimeStr: {type: 'string', format: 'date-time'},
+        enumStr: {type: 'string', format: 'enum', enum: ['a', 'b']},
+        dateStr: {type: 'string', format: 'date'},
+        emailStr: {type: 'string', format: 'email'},
+        nullableWithFormat: {type: ['string', 'null'], format: 'date-time'},
+        untypedWithFormat: {format: 'date-time'},
+        anyOfWithFormat: {
+          anyOf: [{type: 'string', format: 'date-time'}, {type: 'null'}],
+        },
+      },
+    } as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.OBJECT,
+      properties: {
+        int32Field: {type: Type.INTEGER, format: 'int32'},
+        int64Field: {type: Type.INTEGER, format: 'int64'},
+        unsignedInt: {type: Type.INTEGER},
+        numInt32: {type: Type.NUMBER, format: 'int32'},
+        numInt64: {type: Type.NUMBER, format: 'int64'},
+        numFloat: {type: Type.NUMBER},
+        numDouble: {type: Type.NUMBER},
+        dateTimeStr: {type: Type.STRING, format: 'date-time'},
+        enumStr: {type: Type.STRING, format: 'enum', enum: ['a', 'b']},
+        dateStr: {type: Type.STRING},
+        emailStr: {type: Type.STRING},
+        nullableWithFormat: {
+          type: Type.STRING,
+          format: 'date-time',
+          nullable: true,
+        },
+        anyOfWithFormat: {
+          type: Type.STRING,
+          format: 'date-time',
+          nullable: true,
+        },
+        untypedWithFormat: {type: Type.TYPE_UNSPECIFIED},
+      },
+    });
+  });
 });
 
 describe('openApiSchemaToGeminiSchema', () => {
@@ -954,5 +1006,293 @@ describe('openApiSchemaToGeminiSchema', () => {
     const schema = openApiSchemaToGeminiSchema({type: 'custom'});
 
     expect(schema?.type).toBe(Type.TYPE_UNSPECIFIED);
+  });
+
+  it('preserves int32 and int64 formats and drops unsupported formats on integer types', () => {
+    const schema = openApiSchemaToGeminiSchema({
+      type: 'object',
+      properties: {
+        int32_field: {type: 'integer', format: 'int32'},
+        int64_field: {type: 'integer', format: 'int64'},
+        invalid_int_format: {type: 'integer', format: 'unsigned'},
+      },
+    });
+
+    expect(schema?.properties?.['int32_field']?.format).toBe('int32');
+    expect(schema?.properties?.['int64_field']?.format).toBe('int64');
+    expect(schema?.properties?.['invalid_int_format']?.format).toBeUndefined();
+  });
+
+  it('preserves date-time and enum formats and drops unsupported formats on string types', () => {
+    const schema = openApiSchemaToGeminiSchema({
+      type: 'object',
+      properties: {
+        datetime_field: {type: 'string', format: 'date-time'},
+        enum_field: {
+          type: 'string',
+          format: 'enum',
+          enum: ['a', 'b'],
+        },
+        date_field: {type: 'string', format: 'date'},
+        email_field: {type: 'string', format: 'email'},
+        byte_field: {type: 'string', format: 'byte'},
+      },
+    });
+
+    expect(schema?.properties?.['datetime_field']?.format).toBe('date-time');
+    expect(schema?.properties?.['enum_field']?.format).toBe('enum');
+    expect(schema?.properties?.['date_field']?.format).toBeUndefined();
+    expect(schema?.properties?.['email_field']?.format).toBeUndefined();
+    expect(schema?.properties?.['byte_field']?.format).toBeUndefined();
+  });
+
+  it('preserves int32 and int64 formats and drops float and double on number types', () => {
+    const schema = openApiSchemaToGeminiSchema({
+      type: 'object',
+      properties: {
+        float_field: {type: 'number', format: 'float'},
+        double_field: {type: 'number', format: 'double'},
+        int32_number: {type: 'number', format: 'int32'},
+        int64_number: {type: 'number', format: 'int64'},
+      },
+    });
+
+    expect(schema?.properties?.['float_field']?.format).toBeUndefined();
+    expect(schema?.properties?.['double_field']?.format).toBeUndefined();
+    expect(schema?.properties?.['int32_number']?.format).toBe('int32');
+    expect(schema?.properties?.['int64_number']?.format).toBe('int64');
+  });
+
+  it('sanitizes formats inside nested object properties and array items', () => {
+    const schema = openApiSchemaToGeminiSchema({
+      type: 'object',
+      properties: {
+        nested: {
+          type: 'object',
+          properties: {
+            date_str: {type: 'string', format: 'date'},
+            int_field: {type: 'integer', format: 'int64'},
+          },
+        },
+        array_field: {
+          type: 'array',
+          items: {type: 'string', format: 'uri'},
+        },
+      },
+    });
+
+    expect(
+      schema?.properties?.['nested']?.properties?.['date_str']?.format,
+    ).toBeUndefined();
+    expect(
+      schema?.properties?.['nested']?.properties?.['int_field']?.format,
+    ).toBe('int64');
+    expect(schema?.properties?.['array_field']?.items?.format).toBeUndefined();
+  });
+
+  it('sanitizes formats inside anyOf branches', () => {
+    const schema = openApiSchemaToGeminiSchema({
+      anyOf: [
+        {type: 'string', format: 'email'},
+        {type: 'integer', format: 'int32'},
+        {type: 'string', format: 'date-time'},
+      ],
+    });
+
+    expect(schema?.anyOf?.[0]?.format).toBeUndefined();
+    expect(schema?.anyOf?.[1]?.format).toBe('int32');
+    expect(schema?.anyOf?.[2]?.format).toBe('date-time');
+  });
+
+  it('preserves constraint fields and property names when converting OpenAPI schemas', () => {
+    const schema = openApiSchemaToGeminiSchema({
+      type: 'object',
+      minProperties: 1,
+      maxProperties: 10,
+      properties: {
+        firstName: {type: 'string', minLength: 1, maxLength: 50},
+        lastName: {type: 'string', minLength: 1, maxLength: 50},
+      },
+    });
+
+    expect(schema?.minProperties).toBe(1);
+    expect(schema?.maxProperties).toBe(10);
+    expect(schema?.properties?.['firstName']?.minLength).toBe(1);
+    expect(schema?.properties?.['firstName']?.maxLength).toBe(50);
+  });
+
+  it('drops format on untyped schemas and keeps it on nullable type arrays', () => {
+    const schema = openApiSchemaToGeminiSchema({
+      format: 'date-time',
+      properties: {
+        field1: {format: 'int32'},
+        nullableDateTime: {type: ['string', 'null'], format: 'date-time'},
+        nullableUuid: {type: ['string', 'null'], format: 'uuid'},
+      },
+    });
+
+    expect(schema?.format).toBeUndefined();
+    expect(schema?.properties?.['field1']?.format).toBeUndefined();
+    expect(schema?.properties?.['nullableDateTime']).toEqual({
+      type: Type.STRING,
+      format: 'date-time',
+      nullable: true,
+    });
+    expect(schema?.properties?.['nullableUuid']?.format).toBeUndefined();
+  });
+
+  it('filters unrecognized keys and unsupported formats across top-level and nested properties', () => {
+    const schema = openApiSchemaToGeminiSchema({
+      type: 'object',
+      description: 'Test schema',
+      properties: {
+        valid_int: {type: 'integer', format: 'int32'},
+        invalid_format_prop: {type: 'integer', format: 'unsigned'},
+        valid_string: {type: 'string', format: 'date-time'},
+        camelCaseKey: {type: 'string'},
+        prop_with_extra_key: {
+          type: 'boolean',
+          unknownInternalKey: 'discard_this_value',
+        },
+      },
+      required: ['valid_int'],
+      additionalProperties: false,
+      unknownTopLevelKey: 'discard_me_too',
+    });
+
+    expect(schema?.description).toBe('Test schema');
+    expect(schema?.required).toEqual(['valid_int']);
+    expect(schema).not.toHaveProperty('additionalProperties');
+    expect(schema).not.toHaveProperty('unknownTopLevelKey');
+    expect(schema?.properties?.['valid_int']).toEqual({
+      type: Type.INTEGER,
+      format: 'int32',
+    });
+    expect(schema?.properties?.['invalid_format_prop']).toEqual({
+      type: Type.INTEGER,
+    });
+    expect(schema?.properties?.['valid_string']).toEqual({
+      type: Type.STRING,
+      format: 'date-time',
+    });
+    expect(schema?.properties?.['camelCaseKey']).toEqual({
+      type: Type.STRING,
+    });
+    expect(schema?.properties?.['prop_with_extra_key']).toEqual({
+      type: Type.BOOLEAN,
+    });
+  });
+
+  it('converts nullable anyOf branches and drops title and default fields', () => {
+    const schema = openApiSchemaToGeminiSchema({
+      properties: {
+        case_id: {
+          description: 'The ID of the case.',
+          title: 'Case Id',
+          type: 'string',
+        },
+        next_page_token: {
+          anyOf: [{type: 'string'}, {type: 'null'}],
+          default: null,
+          description: 'The nextPageToken to fetch the next page of results.',
+          title: 'Next Page Token',
+        },
+      },
+      required: ['case_id'],
+      title: 'list_alerts_by_caseArguments',
+      type: 'object',
+    });
+
+    expect(schema).toEqual({
+      type: Type.OBJECT,
+      required: ['case_id'],
+      properties: {
+        case_id: {
+          type: Type.STRING,
+          description: 'The ID of the case.',
+        },
+        next_page_token: {
+          type: Type.STRING,
+          nullable: true,
+          description: 'The nextPageToken to fetch the next page of results.',
+        },
+      },
+    });
+  });
+
+  it('folds oneOf into anyOf and strips null branches into nullable', () => {
+    const schema = openApiSchemaToGeminiSchema({
+      description: 'An id or a name.',
+      oneOf: [
+        {type: 'integer', format: 'int64'},
+        {type: 'string'},
+        {type: 'null'},
+      ],
+    });
+
+    expect(schema).toEqual({
+      description: 'An id or a name.',
+      nullable: true,
+      anyOf: [{type: Type.INTEGER, format: 'int64'}, {type: Type.STRING}],
+    });
+  });
+
+  it('merges anyOf and oneOf branches on the same schema', () => {
+    const schema = openApiSchemaToGeminiSchema({
+      anyOf: [{type: 'string'}],
+      one_of: [{type: 'boolean'}],
+    });
+
+    expect(schema).toEqual({
+      anyOf: [{type: Type.STRING}, {type: Type.BOOLEAN}],
+    });
+  });
+
+  it('collapses a oneOf with a single non-null branch into that branch', () => {
+    const schema = openApiSchemaToGeminiSchema({
+      oneOf: [{type: 'string', format: 'date-time'}, {type: 'null'}],
+    });
+
+    expect(schema).toEqual({
+      type: Type.STRING,
+      format: 'date-time',
+      nullable: true,
+    });
+  });
+
+  it('converts a nested anyOf inside a collapsed single branch', () => {
+    const schema = openApiSchemaToGeminiSchema({
+      anyOf: [{anyOf: [{type: 'string'}, {type: 'integer'}]}, {type: 'null'}],
+    });
+
+    expect(schema).toEqual({
+      nullable: true,
+      anyOf: [{type: Type.STRING}, {type: Type.INTEGER}],
+    });
+  });
+
+  it('converts a nested oneOf inside a collapsed single branch', () => {
+    const schema = openApiSchemaToGeminiSchema({
+      description: 'An optional name.',
+      oneOf: [{oneOf: [{type: 'string'}, {type: 'null'}]}, {type: 'null'}],
+    });
+
+    expect(schema).toEqual({
+      description: 'An optional name.',
+      type: Type.STRING,
+      nullable: true,
+    });
+  });
+
+  it('treats a union of only null branches as a nullable object', () => {
+    const schema = openApiSchemaToGeminiSchema({anyOf: [{type: 'null'}]});
+
+    expect(schema).toEqual({type: Type.OBJECT, nullable: true});
+  });
+
+  it('throws a TypeError when the schema is not a plain object', () => {
+    expect(() => openApiSchemaToGeminiSchema(['not', 'an', 'object'])).toThrow(
+      new TypeError('openApiSchema must be a plain object'),
+    );
   });
 });
