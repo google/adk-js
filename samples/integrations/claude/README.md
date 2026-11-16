@@ -31,6 +31,7 @@ Set `ADK_SAMPLE_CLAUDE_MODEL` to override the default `'claude-sonnet-4-6@defaul
 
 - `Estimate express shipping for a 2.5 kg package to Tokyo, Japan (postal code 100-0001).`
 - `How much does standard shipping cost for a 4 kg package to Berlin, Germany?`
+- In the ADK web UI, attach a PNG or JPEG photo of a shipping label and ask: `Estimate standard shipping for the package on this label.` `Claude` sends the image to the model as a base64 image block.
 
 ## Running the Sample
 

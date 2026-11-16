@@ -36,7 +36,8 @@ export type ClaudeMessageBlockParam =
   | Anthropic.ThinkingBlockParam
   | Anthropic.RedactedThinkingBlockParam
   | Anthropic.ToolUseBlockParam
-  | Anthropic.ToolResultBlockParam;
+  | Anthropic.ToolResultBlockParam
+  | Anthropic.ImageBlockParam;
 
 const PART_CONTENT_PAYLOAD_FIELDS = [
   'audioTranscription',
@@ -66,6 +67,36 @@ function isContentFreeSignature(part: Part): boolean {
     return false;
   }
   return !hasPartContentPayload(part);
+}
+
+type ImageMediaType = Anthropic.Base64ImageSource['media_type'];
+
+const SUPPORTED_IMAGE_MEDIA_TYPES: ReadonlySet<string> =
+  new Set<ImageMediaType>([
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'image/webp',
+  ]);
+
+function isImagePart(part: Part): boolean {
+  return Boolean(
+    part.inlineData?.mimeType?.trimStart().toLowerCase().startsWith('image/'),
+  );
+}
+
+function isSupportedImageMediaType(
+  mediaType: string,
+): mediaType is ImageMediaType {
+  return SUPPORTED_IMAGE_MEDIA_TYPES.has(mediaType);
+}
+
+function normalizeImageMediaType(mimeType: string): ImageMediaType {
+  const mediaType = mimeType.split(';', 1)[0].trim().toLowerCase();
+  if (!isSupportedImageMediaType(mediaType)) {
+    throw new Error(`Unsupported Anthropic image MIME type: ${mimeType}`);
+  }
+  return mediaType;
 }
 
 function isEmptyOrWhitespaceTextBlock(block: Anthropic.ContentBlock): boolean {
@@ -125,12 +156,6 @@ function describeUnsupportedPartKind(part: Part): string {
   }
   if (part.fileData) {
     return 'fileData';
-  }
-  if (part.executableCode) {
-    return 'executableCode';
-  }
-  if (part.codeExecutionResult) {
-    return 'codeExecutionResult';
   }
   if (part.videoMetadata) {
     return 'videoMetadata';
@@ -387,6 +412,10 @@ export class ToolUseIdSanitizer {
  * A `thoughtSignature` on a non-thought text, function call or function
  * response part is dropped, because other models (such as Gemini) attach
  * signatures to those parts and Claude cannot verify them.
+ *
+ * An `inlineData` part with a JPEG, PNG, GIF or WebP MIME type becomes a
+ * base64 `image` block. `executableCode` and `codeExecutionResult` parts become
+ * fenced `text` blocks. Other `inlineData` and `fileData` parts throw.
  */
 export function partToMessageBlock(
   part: Part,
@@ -441,6 +470,34 @@ export function partToMessageBlock(
       is_error: isErrorFunctionResponse(part.functionResponse.response),
     };
   }
+  if (isImagePart(part)) {
+    if (!part.inlineData?.mimeType || !part.inlineData.data) {
+      throw new Error('Anthropic image parts require MIME type and data');
+    }
+    return {
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: normalizeImageMediaType(part.inlineData.mimeType),
+        data: part.inlineData.data,
+      },
+    };
+  }
+  if (part.executableCode) {
+    return {
+      type: 'text',
+      text: 'Code:```python\n' + (part.executableCode.code ?? '') + '\n```',
+    };
+  }
+  if (part.codeExecutionResult) {
+    return {
+      type: 'text',
+      text:
+        'Execution Result:```code_output\n' +
+        (part.codeExecutionResult.output ?? '') +
+        '\n```',
+    };
+  }
   if (isEmptyTextPart(part)) {
     return {
       type: 'text',
@@ -461,15 +518,24 @@ export function partToMessageBlock(
 
 /**
  * Converts an ADK `Content` object into an Anthropic `MessageParam`.
+ *
+ * Claude accepts an image on a user turn only, so an image part on an
+ * assistant turn (`role` `'model'` or `'assistant'`) is dropped with a warning.
  */
 export function contentToMessageParam(
   content: Content,
   sanitizer: ToolUseIdSanitizer = new ToolUseIdSanitizer(),
 ): Anthropic.MessageParam {
+  const role = toClaudeRole(content.role);
   const messageBlocks: ClaudeMessageBlockParam[] = [];
   let hadEmptyText = false;
 
   for (const part of content.parts ?? []) {
+    if (role !== ClaudeRole.USER && isImagePart(part)) {
+      logger.warn('Image data is not supported in Claude for assistant turns.');
+      continue;
+    }
+
     if (isContentFreeSignature(part)) {
       logger.warn('Dropping a thought signature from another model.');
       continue;
@@ -484,7 +550,6 @@ export function contentToMessageParam(
     messageBlocks.push(partToMessageBlock(part, sanitizer));
   }
 
-  const role = toClaudeRole(content.role);
   if (messageBlocks.length === 0 && hadEmptyText && role === ClaudeRole.USER) {
     messageBlocks.push({type: 'text', text: '.'});
   }

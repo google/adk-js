@@ -208,12 +208,43 @@ When the Anthropic response reports `usage.output_tokens_details.thinking_tokens
 
 When `thinking_tokens` is `null` or `undefined`, `thoughtsTokenCount` is omitted and `candidatesTokenCount` equals `output_tokens`. When `thinking_tokens` is `0`, `thoughtsTokenCount` is `0` and `candidatesTokenCount` equals `output_tokens`.
 
+## Image input and code execution parts
+
+`AnthropicLlm` and `Claude` convert these `Part` kinds in `LlmRequest.contents` in addition to text, function calls and thinking:
+
+| `Part`                                    | Anthropic content block                                                     |
+| :---------------------------------------- | :-------------------------------------------------------------------------- |
+| `inlineData` with an `image/*` `mimeType` | `{type: 'image', source: {type: 'base64', media_type, data}}`               |
+| `executableCode`                          | A `text` block: `Code:` and the code in a `python` fence                    |
+| `codeExecutionResult`                     | A `text` block: `Execution Result:` and the output in a `code_output` fence |
+
+- **Image types**: `media_type` is the `mimeType` without parameters, in lower case. It must be `image/jpeg`, `image/png`, `image/gif` or `image/webp`. A different image type throws `Unsupported Anthropic image MIME type: <mimeType>`.
+- **Image data**: `inlineData.data` is a base64 string and is sent unchanged. An image part without `data` throws an error.
+- **User turns only**: Claude accepts an image on a `user` turn only (including turns with an omitted `role`, which map to `'user'`). An image part on an assistant turn (`role` `'model'` or `'assistant'`) is dropped, and a warning is logged.
+
+```ts
+import type {Content} from '@google/genai';
+
+// The base64 text of a PNG file.
+declare const pngBase64: string;
+
+const newMessage: Content = {
+  role: 'user',
+  parts: [
+    {text: 'What is in this image?'},
+    {inlineData: {mimeType: 'image/png', data: pngBase64}},
+  ],
+};
+```
+
+Code execution parts are sent as text, so a session that used a code executor with a different model can continue with Claude.
+
 ## Limitations
 
 - **Streaming**: `generateContentAsync` accepts the `_stream` parameter required by `BaseLlm`, but always calls `client.messages.create` without `stream: true` and yields a single non-partial `LlmResponse`.
 - **Live connections**: `connect()` is not supported and rejects with an `Error`.
 - **Thinking level and effort**: `thinkingConfig.thinkingBudget` is mapped to Anthropic's `thinking` parameter, but `thinkingConfig.thinkingLevel` and Anthropic's `output_config.effort` parameter are not mapped.
-- **Images, PDFs, and inline data**: Only `text`, `functionCall`, `functionResponse`, and thinking parts are converted. `inlineData` and `fileData` parts throw an unsupported part error.
+- **PDFs, audio, and file data**: `inlineData` parts that are not images (such as PDF or audio) and `fileData` parts throw an unsupported part error. Images are sent on `user` turns only.
 - **Prompt caching**: `cache_control` markers and `cache_creation_input_tokens` / `cache_read_input_tokens` usage fields are not mapped.
 - **Generation parameters**: `temperature`, `topP`, `topK`, and `stopSequences` from `llmRequest.config` are not forwarded to `client.messages.create` (`maxOutputTokens` is forwarded as `max_tokens`).
 - **Tracking headers**: `BaseLlm.trackingHeaders` is not passed to `Anthropic` or `AnthropicVertex`.
