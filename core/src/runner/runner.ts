@@ -35,7 +35,7 @@ import {
   isBuiltInCodeExecutor,
 } from '../code_executors/built_in_code_executor.js';
 import {buildAbortEvents, isAbortEvent} from '../events/abort_events.js';
-import {createEvent, Event} from '../events/event.js';
+import {createEvent, Event, getFunctionResponses} from '../events/event.js';
 import {createEventActions} from '../events/event_actions.js';
 import {
   internalMetadata,
@@ -510,7 +510,11 @@ export class Runner {
       };
       try {
         for await (const event of this.runRoot(invocationContext)) {
-          if (invocationContext.abortSignal?.aborted) {
+          const abortedBeforeEvent =
+            invocationContext.abortSignal?.aborted === true;
+          const hasCompletedToolResponse =
+            getFunctionResponses(event).length > 0;
+          if (abortedBeforeEvent && !hasCompletedToolResponse) {
             break;
           }
 
@@ -521,7 +525,10 @@ export class Runner {
             invocationContext,
             event,
           );
-          if (invocationContext.abortSignal?.aborted) {
+          if (
+            invocationContext.abortSignal?.aborted &&
+            (!abortedBeforeEvent || !hasCompletedToolResponse)
+          ) {
             break;
           }
 

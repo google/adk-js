@@ -960,7 +960,10 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       let stepHadToolCalls = false;
       let stepTransferred = false;
       for await (const event of this.runOneStepAsync(context)) {
-        if (context.abortSignal?.aborted) {
+        if (
+          context.abortSignal?.aborted &&
+          getFunctionResponses(event).length === 0
+        ) {
           return;
         }
 
@@ -983,7 +986,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         yield event;
       }
 
-      if (!lastEvent) {
+      if (!lastEvent || context.abortSignal?.aborted) {
         break;
       }
 
@@ -1702,7 +1705,10 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
           llmResponse,
           modelResponseEvent,
         )) {
-          if (invocationContext.abortSignal?.aborted) {
+          if (
+            invocationContext.abortSignal?.aborted &&
+            getFunctionResponses(event).length === 0
+          ) {
             return;
           }
 
@@ -1744,6 +1750,9 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         }
 
         yield event;
+      }
+      if (invocationContext.abortSignal?.aborted) {
+        return;
       }
     }
 
@@ -1823,6 +1832,10 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       return;
     }
 
+    if (invocationContext.abortSignal?.aborted) {
+      return;
+    }
+
     // Call functions
     // TODO - b/425992518: bloated funciton input, fix.
     // Tool callback passed to get rid of cyclic dependency.
@@ -1853,6 +1866,9 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       }
     })();
     for await (const queuedEvent of eventQueue) {
+      if (invocationContext.abortSignal?.aborted) {
+        break;
+      }
       yield queuedEvent;
     }
     const {event: functionResponseEvent, error: toolError} = await toolTask;
@@ -1861,7 +1877,12 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       throw toolError;
     }
 
-    if (!functionResponseEvent || invocationContext.abortSignal?.aborted) {
+    if (!functionResponseEvent) {
+      return;
+    }
+
+    if (invocationContext.abortSignal?.aborted) {
+      yield functionResponseEvent;
       return;
     }
 
@@ -1913,7 +1934,10 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     if (nextAgentName) {
       const nextAgent = this.getAgentByName(invocationContext, nextAgentName);
       for await (const event of nextAgent.runAsync(invocationContext)) {
-        if (invocationContext.abortSignal?.aborted) {
+        if (
+          invocationContext.abortSignal?.aborted &&
+          getFunctionResponses(event).length === 0
+        ) {
           return;
         }
 
@@ -2134,7 +2158,10 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
   ): AsyncGenerator<T, void, void> {
     try {
       for await (const response of responseGenerator) {
-        if (invocationContext.abortSignal?.aborted) {
+        if (
+          invocationContext.abortSignal?.aborted &&
+          (!isEvent(response) || getFunctionResponses(response).length === 0)
+        ) {
           return;
         }
 

@@ -1161,7 +1161,17 @@ describe('LlmAgent Abort Handling', () => {
     ).toBe('mock_tool');
 
     const secondResult = await generator.next();
-    expect(secondResult.done).toBe(true);
+    expect(secondResult.done).toBe(false);
+    expect(
+      (secondResult.value as Event).content?.parts?.[0].functionResponse,
+    ).toEqual({
+      id: expect.any(String),
+      name: 'mock_tool',
+      response: {result: 'success'},
+    });
+
+    const thirdResult = await generator.next();
+    expect(thirdResult.done).toBe(true);
   });
 
   it('should stop execution when abortSignal is aborted during response processors', async () => {
