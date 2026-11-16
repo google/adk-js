@@ -225,6 +225,71 @@ describe('ReflectAndRetryToolPlugin', () => {
       });
       expect(res3!['retry_count']).toBe(3);
     });
+
+    it('should derive error_type and details from error.cause when wrapped in a plain Error', async () => {
+      class TimeoutError extends Error {
+        override name = 'TimeoutError';
+        code = 'ETIMEDOUT';
+      }
+      const plugin = new ReflectAndRetryToolPlugin({
+        maxRetries: 1,
+        throwExceptionIfRetryExceeded: false,
+      });
+      const tool = createMockTool('refund');
+      const toolContext = createMockContext('inv-cause');
+      const wrappedError = new Error(
+        "Error in tool 'refund': upstream timed out after 30000ms",
+        {cause: new TimeoutError('upstream timed out after 30000ms')},
+      );
+
+      const firstResponse = await plugin.onToolErrorCallback({
+        tool,
+        toolArgs: {},
+        toolContext,
+        error: wrappedError,
+      });
+
+      expect(firstResponse).toBeDefined();
+      expect(firstResponse!['error_type']).toBe('TimeoutError');
+      expect(firstResponse!['reflection_guidance']).toContain(
+        "TimeoutError: Error in tool 'refund': upstream timed out after 30000ms",
+      );
+
+      const exceedResponse = await plugin.onToolErrorCallback({
+        tool,
+        toolArgs: {},
+        toolContext,
+        error: wrappedError,
+      });
+
+      expect(exceedResponse).toBeDefined();
+      expect(exceedResponse!['error_type']).toBe('TimeoutError');
+      expect(exceedResponse!['reflection_guidance']).toContain(
+        "TimeoutError: Error in tool 'refund': upstream timed out after 30000ms",
+      );
+    });
+
+    it('should keep outer error_type when a typed Error has its own generic cause', async () => {
+      class TimeoutError extends Error {
+        override name = 'TimeoutError';
+      }
+      const plugin = new ReflectAndRetryToolPlugin({maxRetries: 2});
+      const tool = createMockTool('refund');
+      const toolContext = createMockContext('inv-typed-outer');
+      const typedError = new TimeoutError('upstream timed out', {
+        cause: new Error('socket closed'),
+      });
+
+      const response = await plugin.onToolErrorCallback({
+        tool,
+        toolArgs: {},
+        toolContext,
+        error: typedError,
+      });
+
+      expect(response).toBeDefined();
+      expect(response!['error_type']).toBe('TimeoutError');
+    });
   });
 
   describe('retry limit exceeded behavior', () => {
