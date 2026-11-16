@@ -264,9 +264,12 @@ export async function injectSessionState(
 }
 
 /**
- * Matches a valid ASCII identifier (`[a-zA-Z_][a-zA-Z0-9_]*`).
+ * Matches a valid identifier: `_` or an `XID_Start` character, then
+ * `XID_Continue` characters. This is the rule behind Python's
+ * `str.isidentifier()`, so non-ASCII state names such as `名前` or `café`
+ * resolve as they do in adk-python.
  */
-const IDENTIFIER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+const IDENTIFIER_PATTERN = /^[_\p{XID_Start}]\p{XID_Continue}*$/u;
 
 /**
  * Checks if a string is a valid identifier.

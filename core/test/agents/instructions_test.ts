@@ -210,6 +210,38 @@ describe('injectSessionState', () => {
     );
   });
 
+  // adk-python checks keys with str.isidentifier(), which accepts Unicode.
+  it('replaces non-ASCII keys', async () => {
+    const ctx = makeContext({
+      名前: 'Alice',
+      café: 'open',
+      नाम: 'Asha',
+      'user:язык': 'ru',
+    });
+    expect(
+      await injectSessionState('{名前}, {café}, {नाम}, {user:язык}', ctx),
+    ).toBe('Alice, open, Asha, ru');
+  });
+
+  it('replaces an optional non-ASCII key with empty string when absent', async () => {
+    const ctx = makeContext({});
+    expect(await injectSessionState('name={名前?}.', ctx)).toBe('name=.');
+  });
+
+  it('throws when a required non-ASCII key is absent from state', async () => {
+    const ctx = makeContext({});
+    await expect(injectSessionState('Hello {名前}', ctx)).rejects.toThrow(
+      'Context variable not found: `名前`',
+    );
+  });
+
+  it('passes through non-ASCII keys that are not identifiers', async () => {
+    const ctx = makeContext({});
+    expect(await injectSessionState('{1名前} {名 前} {€}', ctx)).toBe(
+      '{1名前} {名 前} {€}',
+    );
+  });
+
   describe('artifact injection', () => {
     it('loads artifact when {artifact.filename} pattern used', async () => {
       const fakeArtifact = 'artifact content here';
