@@ -62,7 +62,6 @@ describe('BigQueryCredentialsConfig', () => {
     ]);
   });
 
-  // reference: test_valid_credentials_object
   it('copies clientId, clientSecret, and scopes from credentials', () => {
     const mockCreds: GoogleOAuthCredentials = {
       clientId: 'test_client_id',
@@ -78,7 +77,6 @@ describe('BigQueryCredentialsConfig', () => {
     expect(config.scopes).toEqual(['https://www.googleapis.com/auth/calendar']);
   });
 
-  // reference: test_valid_credentials_object_auth_credentials
   it('uses default scopes for credentials without scopes', () => {
     const authCreds: GoogleOAuthCredentials = {
       valid: true,
@@ -109,7 +107,6 @@ describe('BigQueryCredentialsConfig', () => {
     expect(config.scopes).toEqual(BIGQUERY_SCOPES);
   });
 
-  // reference: test_valid_credentials_object_oauth2_credentials
   it('accepts BigQueryOAuthCredentials as credentials', () => {
     const oauth2Creds = new BigQueryOAuthCredentials({
       token: 'test_token',
@@ -126,7 +123,6 @@ describe('BigQueryCredentialsConfig', () => {
     expect(config.scopes).toEqual(['https://www.googleapis.com/auth/calendar']);
   });
 
-  // reference: test_valid_client_id_secret_pair
   it('accepts a clientId and clientSecret pair with scopes', () => {
     const config = new BigQueryCredentialsConfig({
       clientId: 'test_client_id',
@@ -140,7 +136,6 @@ describe('BigQueryCredentialsConfig', () => {
     expect(config.scopes).toEqual(['https://www.googleapis.com/auth/bigquery']);
   });
 
-  // reference: test_valid_client_id_secret_pair_default_scope
   it('uses default scopes when scopes are omitted', () => {
     const config = new BigQueryCredentialsConfig({
       clientId: 'test_client_id',
@@ -156,7 +151,6 @@ describe('BigQueryCredentialsConfig', () => {
     ]);
   });
 
-  // reference: test_valid_client_id_secret_pair_w_scope
   it('keeps custom scopes for a clientId and clientSecret pair', () => {
     const config = new BigQueryCredentialsConfig({
       clientId: 'test_client_id',
@@ -176,7 +170,6 @@ describe('BigQueryCredentialsConfig', () => {
     ]);
   });
 
-  // reference: test_valid_client_id_secret_pair_w_empty_scope
   it('uses default scopes when scopes are empty', () => {
     const config = new BigQueryCredentialsConfig({
       clientId: 'test_client_id',
@@ -193,7 +186,6 @@ describe('BigQueryCredentialsConfig', () => {
     ]);
   });
 
-  // reference: test_missing_client_secret_raises_error
   it('throws when clientSecret is missing', () => {
     expect(
       () => new BigQueryCredentialsConfig({clientId: 'test_client_id'}),
@@ -202,7 +194,6 @@ describe('BigQueryCredentialsConfig', () => {
     );
   });
 
-  // reference: test_missing_client_id_raises_error
   it('throws when clientId is missing', () => {
     expect(
       () => new BigQueryCredentialsConfig({clientSecret: 'test_client_secret'}),
@@ -211,7 +202,6 @@ describe('BigQueryCredentialsConfig', () => {
     );
   });
 
-  // reference: test_empty_configuration_raises_error
   it('throws when no credential source is configured', () => {
     expect(() => new BigQueryCredentialsConfig({})).toThrow(
       /Must provide one of credentials, externalAccessTokenKey, or clientId and clientSecret pair/,
@@ -287,7 +277,6 @@ describe('GoogleCredentialsManager', () => {
     return new GoogleCredentialsManager(config);
   }
 
-  // reference: test_get_valid_credentials_with_valid_existing_creds
   it('returns valid configured credentials without the OAuth2 flow', async () => {
     const manager = createManager();
     const {context, getAuthResponse, requestCredential} =
@@ -303,7 +292,6 @@ describe('GoogleCredentialsManager', () => {
     expect(requestCredential).not.toHaveBeenCalled();
   });
 
-  // reference: test_get_credentials_from_cache_when_none_in_manager
   it('loads credentials from the session cache', async () => {
     const manager = createManager();
     const mockCachedCredsJson = JSON.stringify({
@@ -333,7 +321,6 @@ describe('GoogleCredentialsManager', () => {
     fromJsonSpy.mockRestore();
   });
 
-  // reference: test_no_credentials_in_manager_or_cache
   it('requests credentials when none are configured or cached', async () => {
     const manager = createManager();
     const {context, requestCredential} = createMockToolContext();
@@ -344,7 +331,6 @@ describe('GoogleCredentialsManager', () => {
     expect(requestCredential).toHaveBeenCalledOnce();
   });
 
-  // reference: test_refresh_cached_credentials_success
   it('refreshes expired cached credentials and updates the cache', async () => {
     const manager = createManager();
     const mockCachedCredsJson = JSON.stringify({
@@ -394,7 +380,6 @@ describe('GoogleCredentialsManager', () => {
     fromJsonSpy.mockRestore();
   });
 
-  // reference: test_get_valid_credentials_with_refresh_success
   it('refreshes expired configured credentials', async () => {
     const manager = createManager();
     const {context, state} = createMockToolContext();
@@ -417,7 +402,6 @@ describe('GoogleCredentialsManager', () => {
     expect(state.get(BIGQUERY_TOKEN_CACHE_KEY)).toBeUndefined();
   });
 
-  // reference: test_get_valid_credentials_with_existing_non_oauth_creds
   it('refreshes credentials without a validity flag once and skips the OAuth2 flow', async () => {
     const manager = createManager();
     const {context, getAuthResponse, requestCredential} =
@@ -434,7 +418,6 @@ describe('GoogleCredentialsManager', () => {
     expect(requestCredential).not.toHaveBeenCalled();
   });
 
-  // reference: test_get_valid_credentials_with_non_oauth_refresh_failure
   it('returns credentials without a validity flag when their refresh fails', async () => {
     const manager = createManager();
     const {context, getAuthResponse, requestCredential} =
@@ -455,7 +438,6 @@ describe('GoogleCredentialsManager', () => {
     expect(requestCredential).not.toHaveBeenCalled();
   });
 
-  // reference: test_get_valid_credentials_with_refresh_failure
   it('starts the OAuth2 flow when refresh fails', async () => {
     const manager = createManager();
     const {context, requestCredential} = createMockToolContext();
@@ -476,7 +458,6 @@ describe('GoogleCredentialsManager', () => {
     expect(requestCredential).toHaveBeenCalledOnce();
   });
 
-  // reference: test_oauth_flow_completion_with_caching
   it('caches credentials from a completed OAuth2 flow', async () => {
     const manager = createManager();
     const {context, getAuthResponse, state} = createMockToolContext();
@@ -522,7 +503,6 @@ describe('GoogleCredentialsManager', () => {
     createCredsSpy.mockRestore();
   });
 
-  // reference: test_oauth_flow_in_progress
   it('requests OAuth2 credentials with the configured client', async () => {
     const manager = createManager();
     const {context, requestCredential} = createMockToolContext();
@@ -542,7 +522,6 @@ describe('GoogleCredentialsManager', () => {
     );
   });
 
-  // reference: test_cache_persistence_across_manager_instances
   it('shares cached credentials across manager instances', async () => {
     const credentialsConfig = new BigQueryCredentialsConfig({
       clientId: 'test_client_id',

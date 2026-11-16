@@ -34,8 +34,6 @@ import {
   isDefaultEventActions,
 } from '../events/event_actions.js';
 
-import {BaseExampleProvider} from '../examples/base_example_provider.js';
-import {Example} from '../examples/example.js';
 import {BaseLlm, isBaseLlm} from '../models/base_llm.js';
 import {BaseLlmConnection} from '../models/base_llm_connection.js';
 import {LlmRequest} from '../models/llm_request.js';
@@ -298,9 +296,6 @@ export type SingleAfterToolCallback = (params: {
  */
 export type AfterToolCallback =
   SingleAfterToolCallback | SingleAfterToolCallback[];
-
-/** A list of examples or an example provider. */
-export type ExamplesUnion = Example[] | BaseExampleProvider;
 
 /** A union of tool types that can be provided to an agent. */
 export type ToolUnion = BaseTool | BaseToolset | BaseNode;

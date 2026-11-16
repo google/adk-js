@@ -3647,3 +3647,87 @@ describe('LlmAgent canonical fields and config validation', () => {
     });
   });
 });
+
+describe('LlmAgent billing label', () => {
+  class LabelCapturingLlm extends BaseLlm {
+    capturedConfigs: Array<LlmRequest['config']> = [];
+
+    constructor() {
+      super({model: 'label-capturing-llm'});
+    }
+
+    async *generateContentAsync(
+      request: LlmRequest,
+    ): AsyncGenerator<LlmResponse, void, void> {
+      this.capturedConfigs.push(structuredClone(request.config));
+      yield {content: {role: 'model', parts: [{text: '{"customField":"ok"}'}]}};
+    }
+
+    async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+      return new MockLlmConnection();
+    }
+  }
+
+  async function runAndCaptureConfig(
+    agent: LlmAgent,
+  ): Promise<LlmRequest['config']> {
+    const llm = new LabelCapturingLlm();
+    agent.model = llm;
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'test_app',
+      userId: 'user_1',
+    });
+    const runner = new Runner({
+      appName: 'test_app',
+      agent,
+      sessionService,
+    });
+
+    for await (const _event of runner.runAsync({
+      userId: 'user_1',
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'test1'}]},
+    })) {
+      // Drain events so the model request is captured.
+    }
+
+    expect(llm.capturedConfigs).toHaveLength(1);
+    return llm.capturedConfigs[0];
+  }
+
+  it('sets adk_agent_name label to agent.name by default when unset', async () => {
+    const outputSchema = z4.object({customField: z4.string()});
+    const agent = new LlmAgent({
+      name: 'root_agent',
+      outputSchema,
+      disallowTransferToParent: true,
+      disallowTransferToPeers: true,
+    });
+
+    const config = await runAndCaptureConfig(agent);
+
+    expect(config?.responseMimeType).toBe('application/json');
+    expect(config?.responseSchema).toEqual(agent.outputSchema);
+    expect(config?.labels).toEqual({adk_agent_name: 'root_agent'});
+  });
+
+  it('does not overwrite a caller-supplied adk_agent_name label', async () => {
+    const agent = new LlmAgent({
+      name: 'root_agent',
+      generateContentConfig: {
+        labels: {
+          adk_agent_name: 'custom_billing_agent',
+          environment: 'staging',
+        },
+      },
+    });
+
+    const config = await runAndCaptureConfig(agent);
+
+    expect(config?.labels).toEqual({
+      adk_agent_name: 'custom_billing_agent',
+      environment: 'staging',
+    });
+  });
+});
