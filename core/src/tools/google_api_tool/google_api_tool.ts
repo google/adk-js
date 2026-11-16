@@ -5,9 +5,14 @@
  */
 
 import {FunctionDeclaration} from '@google/genai';
-import {AuthCredentialTypes} from '../../auth/auth_credential.js';
+import {OpenAPIV3} from 'openapi-types';
+import {
+  AuthCredentialTypes,
+  ServiceAccount,
+} from '../../auth/auth_credential.js';
 import {experimental} from '../../utils/experimental.js';
 import {BaseTool, RunAsyncToolRequest} from '../base_tool.js';
+import {serviceAccountSchemeCredential} from '../openapi_tool/auth/auth_helpers.js';
 import {RestApiTool} from '../openapi_tool/rest_api_tool.js';
 
 const GOOGLE_API_TOOL_SIGNATURE_SYMBOL = Symbol.for('google.adk.googleApiTool');
@@ -18,6 +23,7 @@ const GOOGLE_API_TOOL_SIGNATURE_SYMBOL = Symbol.for('google.adk.googleApiTool');
 export interface GoogleApiToolOptions {
   clientId?: string;
   clientSecret?: string;
+  serviceAccount?: ServiceAccount;
 }
 
 /**
@@ -34,12 +40,14 @@ export function isGoogleApiTool(obj: unknown): obj is GoogleApiTool {
 
 /**
  * Wraps a {@link RestApiTool} created from a Google API specification and adds
- * helper methods for configuring Google OpenID Connect credentials.
+ * helper methods for configuring Google OpenID Connect or service account
+ * credentials.
  */
 @experimental
 export class GoogleApiTool extends BaseTool {
   readonly [GOOGLE_API_TOOL_SIGNATURE_SYMBOL] = true;
   private readonly restApiTool: RestApiTool;
+  private readonly initialAuthScheme?: OpenAPIV3.SecuritySchemeObject;
 
   constructor(restApiTool: RestApiTool, options: GoogleApiToolOptions = {}) {
     super({
@@ -48,7 +56,13 @@ export class GoogleApiTool extends BaseTool {
       isLongRunning: restApiTool.isLongRunning,
     });
     this.restApiTool = restApiTool;
-    if (options.clientId !== undefined || options.clientSecret !== undefined) {
+    this.initialAuthScheme = restApiTool.getAuthScheme();
+    if (options.serviceAccount !== undefined) {
+      this.configureSaAuth(options.serviceAccount);
+    } else if (
+      options.clientId !== undefined ||
+      options.clientSecret !== undefined
+    ) {
       this.configureAuth(options.clientId, options.clientSecret);
     }
   }
@@ -65,10 +79,14 @@ export class GoogleApiTool extends BaseTool {
 
   /**
    * Configures OpenID Connect OAuth2 client credentials on the underlying
-   * {@link RestApiTool}.
+   * {@link RestApiTool}, restoring its original auth scheme if service account
+   * authentication was configured previously.
    */
   @experimental
   configureAuth(clientId?: string, clientSecret?: string): void {
+    if (this.initialAuthScheme !== undefined) {
+      this.restApiTool.configureAuthScheme(this.initialAuthScheme);
+    }
     this.restApiTool.configureAuthCredential({
       authType: AuthCredentialTypes.OPEN_ID_CONNECT,
       oauth2: {
@@ -76,5 +94,17 @@ export class GoogleApiTool extends BaseTool {
         clientSecret,
       },
     });
+  }
+
+  /**
+   * Configures Google service account credentials and bearer auth scheme on
+   * the underlying {@link RestApiTool}.
+   */
+  @experimental
+  configureSaAuth(serviceAccount: ServiceAccount): void {
+    const [authScheme, authCredential] =
+      serviceAccountSchemeCredential(serviceAccount);
+    this.restApiTool.configureAuthScheme(authScheme);
+    this.restApiTool.configureAuthCredential(authCredential);
   }
 }
