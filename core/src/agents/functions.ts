@@ -629,7 +629,7 @@ export async function handleFunctionCallList({
           args: functionArgs,
           context: toolContext,
         });
-        if (functionResponse) {
+        if (functionResponse != null) {
           break;
         }
       }
@@ -708,7 +708,7 @@ export async function handleFunctionCallList({
           context: toolContext,
           response: callbackResult,
         });
-        if (alteredFunctionResponse) {
+        if (alteredFunctionResponse != null) {
           break;
         }
       }
