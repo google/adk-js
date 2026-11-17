@@ -8,8 +8,12 @@ import {
   BaseTool,
   BaseToolset,
   Context,
+  createSession,
+  InMemorySessionService,
   InvocationContext,
+  LlmAgent,
   LlmRequest,
+  PluginManager,
   ReadonlyContext,
   ToolPredicate,
 } from '@google/adk';
@@ -206,5 +210,78 @@ describe('BaseToolset integration with LLM Request', () => {
     expect(toolKeys).toContain('prefixA_tool2');
     expect(toolKeys).toContain('prefixB_tool1');
     expect(toolKeys).toContain('prefixB_tool2');
+  });
+
+  it('leaves llmRequest unchanged in the default processLlmRequest implementation', async () => {
+    const toolset = new DummyToolset();
+    const llmRequest: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+    const context = new Context({
+      invocationContext: new InvocationContext({
+        invocationId: 'test-invocation',
+        agent: new LlmAgent({name: 'testAgent'}),
+        session: createSession({
+          id: 'test-session',
+          appName: 'test-app',
+          userId: 'test-user',
+        }),
+        pluginManager: new PluginManager([]),
+        sessionService: new InMemorySessionService(),
+      }),
+    });
+
+    await toolset.processLlmRequest(context, llmRequest);
+
+    expect(llmRequest).toEqual({
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    });
+  });
+
+  it('allows subclasses to override processLlmRequest and mutate llmRequest', async () => {
+    class CustomToolset extends DummyToolset {
+      override async processLlmRequest(
+        _toolContext: Context,
+        llmRequest: LlmRequest,
+      ): Promise<void> {
+        llmRequest.contents.push({
+          role: 'user',
+          parts: [{text: 'Custom processing applied'}],
+        });
+      }
+    }
+
+    const toolset = new CustomToolset();
+    const llmRequest: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+    const context = new Context({
+      invocationContext: new InvocationContext({
+        invocationId: 'test-invocation',
+        agent: new LlmAgent({name: 'testAgent'}),
+        session: createSession({
+          id: 'test-session',
+          appName: 'test-app',
+          userId: 'test-user',
+        }),
+        pluginManager: new PluginManager([]),
+        sessionService: new InMemorySessionService(),
+      }),
+    });
+
+    await toolset.processLlmRequest(context, llmRequest);
+
+    expect(llmRequest.contents).toEqual([
+      {
+        role: 'user',
+        parts: [{text: 'Custom processing applied'}],
+      },
+    ]);
   });
 });
