@@ -2104,6 +2104,10 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         callbackContext,
         llmResponse,
       });
+    if (invocationContext.abortSignal?.aborted) {
+      return undefined;
+    }
+
     if (afterModelCallbackResponse) {
       return afterModelCallbackResponse;
     }
