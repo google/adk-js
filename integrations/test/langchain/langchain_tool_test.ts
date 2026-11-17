@@ -203,12 +203,28 @@ describe('LangchainTool', () => {
       }
     }
 
+    class FakeDynamicStructuredTool extends FakeStructuredTool {
+      func = (input: SearchInput, runManager?: FakeRunManager): string => {
+        runManager?.getChild();
+        return `dynamic:${input.query}`;
+      };
+
+      protected override _call(
+        input: SearchInput,
+        runManager?: FakeRunManager,
+      ): string {
+        return this.func(input, runManager);
+      }
+    }
+
     it('accepts the class instance without a cast and calls invoke', async () => {
       const directTool = new LangchainTool(new FakeStructuredTool());
       const configTool = new LangchainTool({tool: new FakeStructuredTool()});
+      const dynamicTool = new LangchainTool(new FakeDynamicStructuredTool());
 
       expect(directTool.name).toBe('fake_search');
       expect(configTool.name).toBe('fake_search');
+      expect(dynamicTool.name).toBe('fake_search');
       expect(
         await directTool.runAsync({
           args: {query: 'adk'},
@@ -221,6 +237,12 @@ describe('LangchainTool', () => {
           toolContext: emptyContext,
         }),
       ).toBe('found:adk:0');
+      expect(
+        await dynamicTool.runAsync({
+          args: {query: 'adk'},
+          toolContext: emptyContext,
+        }),
+      ).toBe('dynamic:adk:0');
     });
   });
 
@@ -307,56 +329,21 @@ describe('LangchainTool', () => {
     expect(runSpy).toHaveBeenCalledWith({n: 3}, emptyContext);
   });
 
-  it('calls func with the arguments only', async () => {
-    const funcSpy = vi.fn(
-      (args: Record<string, unknown>) => `func:${args['input']}`,
-    );
-    const tool = new LangchainTool({
-      name: 'func_tool',
-      description: 'Wraps a function',
-      func: funcSpy,
-    });
-
-    const result = await tool.runAsync({
-      args: {input: 'hello'},
-      toolContext: emptyContext,
-    });
-
-    expect(result).toBe('func:hello');
-    expect(funcSpy).toHaveBeenCalledWith({input: 'hello'});
-  });
-
-  it('executes a structured tool with a sync or async func and an argsSchema', async () => {
-    const addSchema = z.object({x: z.number(), y: z.number()});
-    const syncTool = new LangchainTool({
-      tool: {
-        name: 'add',
-        description: 'Adds two numbers',
-        argsSchema: addSchema,
-        func: ({x, y}: {x: number; y: number}) => x + y,
-      },
-    });
-    const asyncTool = new LangchainTool({
-      tool: {
-        name: 'add',
-        description: 'Adds two numbers',
-        argsSchema: addSchema,
-        func: async ({x, y}: {x: number; y: number}) => x + y,
-      },
-    });
-
+  it('rejects objects that expose only func or coroutine without a runner method', () => {
     expect(
-      await syncTool.runAsync({
-        args: {x: 1, y: 3},
-        toolContext: emptyContext,
-      }),
-    ).toBe(4);
+      () =>
+        new LangchainTool({
+          name: 'func_only',
+          func: () => 'ok',
+        } as unknown as LangchainToolLike),
+    ).toThrow(TypeError);
     expect(
-      await asyncTool.runAsync({
-        args: {x: 1, y: 3},
-        toolContext: emptyContext,
-      }),
-    ).toBe(4);
+      () =>
+        new LangchainTool({
+          name: 'coroutine_only',
+          coroutine: async () => 'ok',
+        } as unknown as LangchainToolLike),
+    ).toThrow(TypeError);
   });
 
   it('does not mark fields as required when every schema field is optional', () => {
