@@ -4,7 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Role, Task, TaskState, TaskStatusUpdateEvent} from '@a2a-js/sdk';
+import {
+  Role,
+  Task,
+  TaskArtifactUpdateEvent,
+  TaskState,
+  TaskStatusUpdateEvent,
+} from '@a2a-js/sdk';
 import {
   AgentExecutionEvent,
   ExecutionEventBus,
@@ -240,6 +246,71 @@ describe('A2AAgentExecutor', () => {
     // The run ends with a completed status update
     const finalEvent = dataOf<TaskStatusUpdateEvent>(4, 'statusUpdate');
     expect(finalEvent.status?.state).toBe(TaskState.TASK_STATE_COMPLETED);
+  });
+
+  it('creates a streamed artifact with its first chunk and appends only later chunks', async () => {
+    mockSessionService.getSession.mockResolvedValue({
+      id: 'session-id',
+      userId: 'test-user',
+      appName: 'test-app',
+      events: [],
+      state: {},
+    } as unknown as Session);
+
+    const chunk = (text: string, partial: boolean) =>
+      createEvent({
+        author: 'model',
+        content: {role: 'model', parts: [{text}]},
+        partial,
+        actions: createEventActions(),
+      });
+    const adkEvents = [
+      chunk('Hel', true),
+      chunk('lo', true),
+      chunk('!', true),
+      chunk('Hello!', false),
+    ];
+
+    vi.mocked(Runner).mockImplementation(function (config: RunnerConfig) {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: async function* () {
+          yield* adkEvents;
+        },
+      } as unknown as Runner;
+    });
+
+    const executor = new A2AAgentExecutor({
+      runner: {
+        appName: 'test-app',
+        sessionService: mockSessionService,
+      } as unknown as RunnerConfig,
+    });
+    await executor.execute(createRequestContext(), mockEventBus);
+
+    // Task + Working + 4 artifact updates + final status
+    const artifactUpdates = publishedEvents()
+      .map((event, index) => ({event, index}))
+      .filter(({event}) => event.kind === 'artifactUpdate')
+      .map(({index}) =>
+        dataOf<TaskArtifactUpdateEvent>(index, 'artifactUpdate'),
+      );
+    expect(artifactUpdates.map((e) => e.append)).toEqual([
+      false,
+      true,
+      true,
+      false,
+    ]);
+    expect(artifactUpdates.map((e) => e.lastChunk)).toEqual([
+      false,
+      false,
+      false,
+      true,
+    ]);
+    expect(
+      new Set(artifactUpdates.map((e) => e.artifact?.artifactId)).size,
+    ).toBe(1);
   });
 
   it('opens a continued task with a snapshot of the existing task, not a new task', async () => {

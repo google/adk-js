@@ -267,7 +267,8 @@ describe('A2A Agent Executor', () => {
     expect(workingEvent!.status?.message).toBeUndefined();
     expect(artifacts).toHaveLength(3);
     expect(artifacts[0].artifact!.parts).toEqual([textPart('hello ')]);
-    expect(artifacts[0].append).toBe(true);
+    // The first chunk creates the artifact; only later chunks append.
+    expect(artifacts[0].append).toBe(false);
     expect(artifacts[0].lastChunk).toBe(false);
 
     expect(artifacts[1].artifact!.parts).toEqual([textPart('world')]);
@@ -754,13 +755,14 @@ describe('A2A Agent Executor', () => {
       isTaskArtifactUpdateEvent(e),
     ) as TaskArtifactUpdateEvent[];
 
-    // According to AgentExecutor, each adkEvent generates an artifact-update
-    // partial=true means append=true, lastChunk=false
+    // According to AgentExecutor, each adkEvent generates an artifact-update:
+    // the first partial chunk of an artifact has append=false (it creates the
+    // artifact), later partial chunks append=true, all lastChunk=false;
     // partial=false means append=false, lastChunk=true
 
     expect(artifacts).toHaveLength(5);
     expect(artifacts[0].artifact!.parts).toEqual([textPart('1')]);
-    expect(artifacts[0].append).toBe(true);
+    expect(artifacts[0].append).toBe(false);
     expect(artifacts[0].lastChunk).toBe(false);
 
     expect(artifacts[1].artifact!.parts).toEqual([textPart('2')]);
@@ -772,7 +774,8 @@ describe('A2A Agent Executor', () => {
     expect(artifacts[2].lastChunk).toBe(true);
 
     expect(artifacts[3].artifact!.parts).toEqual([textPart('4')]);
-    expect(artifacts[3].append).toBe(true);
+    // A new streamed artifact after the final event: its first chunk creates it.
+    expect(artifacts[3].append).toBe(false);
     expect(artifacts[3].lastChunk).toBe(false);
 
     expect(artifacts[4].artifact!.parts).toEqual([textPart('5')]);

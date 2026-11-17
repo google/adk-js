@@ -295,8 +295,9 @@ export class A2AAgentExecutor implements AgentExecutor {
       return undefined;
     }
 
-    const artifactId =
-      this.agentPartialArtifactIdsMap[adkEvent.author!] || randomUUID();
+    const existingArtifactId =
+      this.agentPartialArtifactIdsMap[adkEvent.author!];
+    const artifactId = existingArtifactId || randomUUID();
 
     const a2aEvent = createTaskArtifactUpdateEvent({
       taskId: executorContext.requestContext.taskId,
@@ -304,7 +305,11 @@ export class A2AAgentExecutor implements AgentExecutor {
       artifactId,
       parts: a2aParts,
       metadata: getA2AEventMetadata(adkEvent, executorContext),
-      append: adkEvent.partial,
+      // Only a later partial chunk appends: the first chunk creates the
+      // artifact, and the final (non-partial) event replaces the streamed
+      // chunks with the complete content. A2A clients reject append=true for
+      // an artifact they have not seen.
+      append: !!adkEvent.partial && !!existingArtifactId,
       lastChunk: !adkEvent.partial,
     });
 
