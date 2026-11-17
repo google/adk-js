@@ -72,6 +72,40 @@ function decodeHtmlEntities(text: string): string {
  * blocks and comments, strips remaining tags, decodes common entities, and
  * keeps only lines with more than three words.
  */
+/**
+ * A letter of a script written without spaces between words: Thai and Lao,
+ * Myanmar, Khmer, Hiragana and Katakana (including half-width), and the CJK
+ * ideographs (including the supplementary planes). Captured so `split` keeps
+ * the letters at the odd indexes.
+ */
+const UNSPACED_LETTER =
+  /((?=\p{L})[฀-໿က-႟ក-៿぀-ヿ㐀-䶿一-鿿豈-﫿ｦ-ﾟ\u{20000}-\u{3FFFF}])/u;
+const LETTER_OR_DIGIT = /[\p{L}\p{N}]/u;
+
+/**
+ * Counts the words in a line of page text.
+ *
+ * Words are separated by whitespace. In a script written without spaces, such
+ * as Chinese, Japanese or Thai, each letter counts as a word, and the runs of
+ * other characters around those letters count only if they hold a letter or a
+ * digit, so that a full stop such as "。" is not counted as a word.
+ */
+function countWords(line: string): number {
+  let count = 0;
+  for (const token of line.split(/\s+/).filter(Boolean)) {
+    if (!UNSPACED_LETTER.test(token)) {
+      count++;
+      continue;
+    }
+    token.split(UNSPACED_LETTER).forEach((part, index) => {
+      if (index % 2 === 1 || LETTER_OR_DIGIT.test(part)) {
+        count++;
+      }
+    });
+  }
+  return count;
+}
+
 function htmlToText(html: string): string {
   const withoutCode = html
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
@@ -81,7 +115,7 @@ function htmlToText(html: string): string {
   return text
     .split('\n')
     .map((line) => line.trim())
-    .filter((line) => line.split(/\s+/).filter(Boolean).length > 3)
+    .filter((line) => countWords(line) > 3)
     .join('\n');
 }
 
