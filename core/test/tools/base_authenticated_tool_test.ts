@@ -36,8 +36,8 @@ class TestAuthenticatedTool extends BaseAuthenticatedTool {
     });
   }
 
-  get configuredCredentialsManager(): CredentialManager | undefined {
-    return this.credentialsManager;
+  get configuredCredentialManager(): CredentialManager | undefined {
+    return this.credentialManager;
   }
 
   get configuredResponseForAuthRequired():
@@ -102,7 +102,7 @@ describe('BaseAuthenticatedTool', () => {
 
     expect(tool.name).toBe('test_tool');
     expect(tool.description).toBe('Test description');
-    expect(tool.configuredCredentialsManager).toBeDefined();
+    expect(tool.configuredCredentialManager).toBeDefined();
     expect(tool.configuredResponseForAuthRequired).toEqual(
       responseForAuthRequired,
     );
@@ -113,7 +113,7 @@ describe('BaseAuthenticatedTool', () => {
 
     expect(tool.name).toBe('test_auth_tool');
     expect(tool.description).toBe('Test authenticated tool');
-    expect(tool.configuredCredentialsManager).toBeUndefined();
+    expect(tool.configuredCredentialManager).toBeUndefined();
     expect(tool.configuredResponseForAuthRequired).toBeUndefined();
   });
 
@@ -126,7 +126,7 @@ describe('BaseAuthenticatedTool', () => {
       authConfig: authConfigWithoutScheme,
     });
 
-    expect(tool.configuredCredentialsManager).toBeUndefined();
+    expect(tool.configuredCredentialManager).toBeUndefined();
   });
 
   it('leaves responseForAuthRequired undefined when omitted', () => {

@@ -149,7 +149,7 @@ describe('GoogleApiTool', () => {
     const googleApiTool = new GoogleApiTool(restApiTool);
     const serviceAccount = createTestServiceAccount();
 
-    googleApiTool.configureSaAuth(serviceAccount);
+    googleApiTool.configureServiceAccountAuth(serviceAccount);
 
     expect(schemeSpy).toHaveBeenCalledTimes(1);
     expect(schemeSpy).toHaveBeenCalledWith({
@@ -164,7 +164,7 @@ describe('GoogleApiTool', () => {
     });
   });
 
-  it('restores the initial OpenID Connect auth scheme when configureAuth follows configureSaAuth', async () => {
+  it('restores the initial OpenID Connect auth scheme when configureAuth follows configureServiceAccountAuth', async () => {
     const restApiTool = createTestRestApiTool();
     const oidcScheme: OpenAPIV3.OpenIdSecurityScheme = {
       type: 'openIdConnect',

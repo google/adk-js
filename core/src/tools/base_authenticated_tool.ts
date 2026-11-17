@@ -69,7 +69,7 @@ export abstract class BaseAuthenticatedTool extends BaseTool {
   readonly [BASE_AUTHENTICATED_TOOL_SIGNATURE_SYMBOL] = true;
 
   protected readonly authConfig?: AuthConfig;
-  protected readonly credentialsManager?: CredentialManager;
+  protected readonly credentialManager?: CredentialManager;
   protected readonly responseForAuthRequired?: Record<string, unknown> | string;
 
   /**
@@ -82,7 +82,7 @@ export abstract class BaseAuthenticatedTool extends BaseTool {
     this.authConfig = params.authConfig;
 
     if (params.authConfig?.authScheme) {
-      this.credentialsManager = new CredentialManager(params.authConfig);
+      this.credentialManager = new CredentialManager(params.authConfig);
     } else {
       logger.debug(
         'authConfig or authConfig.authScheme is missing, so authentication will be skipped.',
@@ -103,10 +103,10 @@ export abstract class BaseAuthenticatedTool extends BaseTool {
     toolContext,
   }: RunAsyncToolRequest): Promise<unknown> {
     let credential: AuthCredential | undefined;
-    if (this.credentialsManager) {
-      credential = await this.credentialsManager.getAuthCredential(toolContext);
+    if (this.credentialManager) {
+      credential = await this.credentialManager.getAuthCredential(toolContext);
       if (!credential) {
-        await this.credentialsManager.requestCredential(toolContext);
+        await this.credentialManager.requestCredential(toolContext);
         return (
           this.responseForAuthRequired ?? DEFAULT_RESPONSE_FOR_AUTH_REQUIRED
         );

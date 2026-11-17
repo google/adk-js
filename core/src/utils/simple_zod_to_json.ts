@@ -67,6 +67,63 @@ export function isZodObject(
   return isZodSchema(obj) && getZodTypeName(obj) === 'ZodObject';
 }
 
+/**
+ * Returns true if the given object is a ZodVoid (supports both Zod v3 and v4).
+ */
+export function isZodVoid(obj: unknown): obj is z3.ZodVoid | z4.ZodVoid {
+  return isZodSchema(obj) && getZodTypeName(obj) === 'ZodVoid';
+}
+
+function unwrapOptionalOrNullable(schema: ZodSchema): ZodSchema {
+  let current: ZodSchema = schema;
+  while (
+    getZodTypeName(current) === 'ZodOptional' ||
+    getZodTypeName(current) === 'ZodNullable'
+  ) {
+    const inner = (current as {_def?: {innerType?: unknown}})._def?.innerType;
+    if (!isZodSchema(inner)) {
+      break;
+    }
+    current = inner;
+  }
+  return current;
+}
+
+/**
+ * Returns true if `obj` is a Zod `void` or `undefined` schema, including when
+ * wrapped in `.optional()` or `.nullable()` (supports both Zod v3 and v4).
+ */
+export function isZodVoidOrUndefined(obj: unknown): obj is ZodSchema {
+  if (!isZodSchema(obj)) {
+    return false;
+  }
+  const typeName = getZodTypeName(unwrapOptionalOrNullable(obj));
+  return typeName === 'ZodVoid' || typeName === 'ZodUndefined';
+}
+
+/**
+ * Returns the outermost non-empty description on a Zod schema, falling back
+ * through `.optional()` / `.nullable()` wrappers (Zod v4 keeps inner
+ * `.describe()` metadata on `innerType` rather than the outer wrapper).
+ */
+export function getZodDescription(schema: ZodSchema): string | undefined {
+  let current: unknown = schema;
+  while (isZodSchema(current)) {
+    if (
+      typeof current.description === 'string' &&
+      current.description.length > 0
+    ) {
+      return current.description;
+    }
+    const typeName = getZodTypeName(current);
+    if (typeName !== 'ZodOptional' && typeName !== 'ZodNullable') {
+      break;
+    }
+    current = (current as {_def?: {innerType?: unknown}})._def?.innerType;
+  }
+  return undefined;
+}
+
 export function zodObjectToSchema(
   schema: z3.ZodObject<z3.ZodRawShape> | z4.ZodObject<z4.ZodRawShape>,
 ): Schema {
@@ -78,6 +135,7 @@ export function zodObjectToSchema(
     return toJSONSchemaV4(schema, {
       target: 'openapi-3.0',
       io: 'input',
+      unrepresentable: 'any',
       override: (ctx) => {
         const {jsonSchema} = ctx;
 
@@ -130,6 +188,12 @@ export function zodObjectToSchema(
           undefined
         ) {
           delete (jsonSchema as JsonSchema7ObjectType).additionalProperties;
+        }
+
+        // `zod-to-json-schema` represents `z3.undefined()` as `{not: {}}`,
+        // which `@google/genai` `Schema` rejects; degrade it to `{}` like v4.
+        if ('not' in jsonSchema) {
+          delete (jsonSchema as Record<string, unknown>)['not'];
         }
 
         // Counts, lengths, patterns and numeric bounds are carried by the same

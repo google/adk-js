@@ -117,7 +117,9 @@ export function parseWithSchema<T>(
  */
 export function toJsonSchema(schema: SchemaLike): Record<string, unknown> {
   if (isZodV4Schema(schema)) {
-    return toJSONSchemaV4(schema) as Record<string, unknown>;
+    return toJSONSchemaV4(schema, {
+      unrepresentable: 'any',
+    }) as Record<string, unknown>;
   }
   if (isZodV3Schema(schema)) {
     return toJSONSchemaV3(schema) as Record<string, unknown>;

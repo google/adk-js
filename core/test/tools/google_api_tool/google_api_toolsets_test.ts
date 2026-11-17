@@ -135,20 +135,22 @@ describe('GoogleApiToolset prebuilt service classes', () => {
         status: 200,
         json: async () => createDiscoverySpecFor(apiName, apiVersion),
       } as Response);
-      const configureSaAuthSpy = vi.spyOn(
+      const configureServiceAccountAuthSpy = vi.spyOn(
         GoogleApiTool.prototype,
-        'configureSaAuth',
+        'configureServiceAccountAuth',
       );
 
       const toolset = new ToolsetClass({serviceAccount});
       const tools = await toolset.getTools();
 
       expect(tools.map((t) => t.name)).toEqual([`${apiName}_items_list`]);
-      expect(configureSaAuthSpy).toHaveBeenCalledTimes(1);
-      expect(configureSaAuthSpy).toHaveBeenCalledWith(serviceAccount);
+      expect(configureServiceAccountAuthSpy).toHaveBeenCalledTimes(1);
+      expect(configureServiceAccountAuthSpy).toHaveBeenCalledWith(
+        serviceAccount,
+      );
 
       fetchSpy.mockRestore();
-      configureSaAuthSpy.mockRestore();
+      configureServiceAccountAuthSpy.mockRestore();
     }
   });
 });

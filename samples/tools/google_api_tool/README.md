@@ -2,7 +2,7 @@
 
 ## Overview
 
-`CalendarToolset` wraps Google Calendar API operations in `GoogleApiTool` instances configured with Google OpenID Connect or service account authentication. This sample demonstrates toolset construction, tool filtering, and credential configuration (including `configureSaAuth`) offline through a deterministic `BaseAgent` subclass.
+`CalendarToolset` wraps Google Calendar API operations in `GoogleApiTool` instances configured with Google OpenID Connect or service account authentication. This sample demonstrates toolset construction, tool filtering, and credential configuration (including `configureServiceAccountAuth`) offline through a deterministic `BaseAgent` subclass.
 
 ## Sample Inputs
 
@@ -47,13 +47,13 @@ const toolset = new CalendarToolset({
 const tools = await toolset.getTools();
 ```
 
-**Configure Google service account credentials.** Pass `serviceAccount` in the constructor options or call `configureSaAuth(serviceAccount)`:
+**Configure Google service account credentials.** Pass `serviceAccount` in the constructor options or call `configureServiceAccountAuth(serviceAccount)`:
 
 ```ts
 const saToolset = new CalendarToolset({
   toolFilter: ['calendar_calendars_get'],
 });
-saToolset.configureSaAuth({
+saToolset.configureServiceAccountAuth({
   useDefaultCredential: true,
   scopes: ['https://www.googleapis.com/auth/calendar.readonly'],
 });

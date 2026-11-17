@@ -58,7 +58,7 @@ export class GoogleApiTool extends BaseTool {
     this.restApiTool = restApiTool;
     this.initialAuthScheme = restApiTool.getAuthScheme();
     if (options.serviceAccount !== undefined) {
-      this.configureSaAuth(options.serviceAccount);
+      this.configureServiceAccountAuth(options.serviceAccount);
     } else if (
       options.clientId !== undefined ||
       options.clientSecret !== undefined
@@ -101,7 +101,7 @@ export class GoogleApiTool extends BaseTool {
    * the underlying {@link RestApiTool}.
    */
   @experimental
-  configureSaAuth(serviceAccount: ServiceAccount): void {
+  configureServiceAccountAuth(serviceAccount: ServiceAccount): void {
     const [authScheme, authCredential] =
       serviceAccountSchemeCredential(serviceAccount);
     this.restApiTool.configureAuthScheme(authScheme);
