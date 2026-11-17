@@ -96,6 +96,23 @@ describe('InMemoryMemoryService', () => {
       expect(aliceResult.memories).toHaveLength(1);
       expect(bobResult.memories).toHaveLength(0);
     });
+
+    it('handles adding a session with no events', async () => {
+      const session = await sessionService.createSession({
+        appName: 'myApp',
+        userId: 'alice',
+      });
+
+      await service.addSessionToMemory(session);
+
+      const result = await service.searchMemory({
+        appName: 'myApp',
+        userId: 'alice',
+        query: 'hello',
+      });
+
+      expect(result.memories).toEqual([]);
+    });
   });
 
   describe('searchMemory', () => {
@@ -265,6 +282,48 @@ describe('InMemoryMemoryService', () => {
       });
 
       expect(result.memories).toHaveLength(1);
+    });
+
+    it('matches multiple events when the query contains punctuation', async () => {
+      const event1 = createEvent({
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [{text: 'The ADK is a great toolkit.'}],
+        },
+      });
+      const event2 = createEvent({
+        author: 'model',
+        content: {
+          role: 'model',
+          parts: [{text: 'I agree. The Agent Development Kit (ADK) rocks!'}],
+        },
+      });
+      const session = await sessionService.createSession({
+        appName: 'myApp',
+        userId: 'alice',
+      });
+      await sessionService.appendEvent({session, event: event1});
+      await sessionService.appendEvent({session, event: event2});
+
+      await service.addSessionToMemory(session);
+
+      const result = await service.searchMemory({
+        appName: 'myApp',
+        userId: 'alice',
+        query: 'How about ADK?',
+      });
+
+      expect(result.memories).toHaveLength(2);
+      const texts = new Set(
+        result.memories.map((memory) => memory.content.parts?.[0]?.text),
+      );
+      expect(texts).toEqual(
+        new Set([
+          'The ADK is a great toolkit.',
+          'I agree. The Agent Development Kit (ADK) rocks!',
+        ]),
+      );
     });
   });
 
