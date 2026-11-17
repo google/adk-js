@@ -18,6 +18,23 @@ import {
   ToolProcessLlmRequest,
 } from './base_tool.js';
 
+const EXAMPLE_TOOL_SIGNATURE_SYMBOL = Symbol.for('google.adk.exampleTool');
+
+/**
+ * Type guard to check if an object is an instance of {@link ExampleTool}.
+ *
+ * @param obj The object to check.
+ * @returns True if the object is an instance of {@link ExampleTool}.
+ */
+export function isExampleTool(obj: unknown): obj is ExampleTool {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    EXAMPLE_TOOL_SIGNATURE_SYMBOL in obj &&
+    obj[EXAMPLE_TOOL_SIGNATURE_SYMBOL] === true
+  );
+}
+
 /**
  * A tool that adds (few-shot) examples to the LLM request.
  *
@@ -29,6 +46,9 @@ import {
  * where it is supplied rather than on every later LLM request.
  */
 export class ExampleTool extends BaseTool {
+  /** A unique symbol to identify ADK ExampleTool class. */
+  readonly [EXAMPLE_TOOL_SIGNATURE_SYMBOL] = true;
+
   /** The examples to add to the LLM request. */
   readonly examples: Example[] | BaseExampleProvider;
 

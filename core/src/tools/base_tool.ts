@@ -34,6 +34,7 @@ export interface BaseToolParams {
   name: string;
   description: string;
   isLongRunning?: boolean;
+  customMetadata?: Record<string, unknown>;
 }
 
 /**
@@ -85,6 +86,7 @@ export abstract class BaseTool {
   readonly name: string;
   readonly description: string;
   readonly isLongRunning: boolean;
+  customMetadata?: Record<string, unknown>;
 
   /**
    * Base constructor for a tool.
@@ -95,6 +97,7 @@ export abstract class BaseTool {
     this.name = params.name;
     this.description = params.description;
     this.isLongRunning = params.isLongRunning ?? false;
+    this.customMetadata = params.customMetadata;
   }
 
   /**

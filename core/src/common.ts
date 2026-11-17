@@ -429,7 +429,7 @@ export {
   ENTERPRISE_WEB_SEARCH,
   EnterpriseWebSearchTool,
 } from './tools/enterprise_web_search_tool.js';
-export {ExampleTool} from './tools/example_tool.js';
+export {ExampleTool, isExampleTool} from './tools/example_tool.js';
 export {EXIT_LOOP, ExitLoopTool} from './tools/exit_loop_tool.js';
 export {
   FINISH_TASK_SUCCESS_RESULT,

@@ -95,6 +95,7 @@ export type ToolOptions<TParameters extends ToolInputParameters> = {
   response?: SchemaLike;
   execute: ToolExecuteFunction<TParameters>;
   isLongRunning?: boolean;
+  customMetadata?: Record<string, unknown>;
   /**
    * Whether this tool requires user confirmation before it runs. A boolean, or
    * a predicate over the (validated) call arguments and tool context returning
@@ -243,6 +244,7 @@ export class FunctionTool<
       name,
       description: options.description,
       isLongRunning: options.isLongRunning,
+      customMetadata: options.customMetadata,
     });
     this.execute = options.execute;
     this.parameters = options.parameters;
