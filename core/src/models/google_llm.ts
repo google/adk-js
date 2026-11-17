@@ -138,6 +138,8 @@ export class Gemini extends BaseLlm {
    */
   static override readonly supportedModels: Array<string | RegExp> = [
     /gemini-.*/,
+    // model optimizer pattern
+    /^model-optimizer-.*/,
     // fine-tuned vertex endpoint pattern
     /projects\/.+\/locations\/.+\/endpoints\/.+/,
     // vertex gemini long name

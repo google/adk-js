@@ -140,6 +140,10 @@ Client-side retrieval tools. The agent calls a one-argument search function, you
 
 - [MCP tool](tools/mcp_tool/index.md) - Connecting `MCPToolset` over stdio, Streamable HTTP, or SSE, loading MCP resources with `LoadMcpResourceTool`, and converting schemas with `toGeminiSchema` and `genaiSchemaToJsonSchema`.
 
+#### Computer Use
+
+- [Computer use](tools/computer_use/index.md) - Operating a browser or sandbox through `BaseComputer`, `ComputerUseTool`, `ComputerUseToolset`, and `adaptComputerUseTool`.
+
 ### Telemetry
 
 - [Telemetry](telemetry/index.md) - The spans and attributes ADK writes, attaching exporters with `maybeSetOtelProviders`, and turning off message content in spans.

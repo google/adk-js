@@ -4,7 +4,7 @@ A model in the Agent Development Kit (ADK) is a `BaseLlm` subclass that turns an
 
 All models extend `BaseLlm`. The package exports these implementations:
 
-- `Gemini` - Calls Gemini through the Gemini API or Vertex AI. It is registered by default, so a `gemini-…` name resolves to it.
+- `Gemini` - Calls Gemini through the Gemini API or Vertex AI. It is registered by default, so a `gemini-…` or `model-optimizer-…` name (as well as Vertex AI endpoint and publisher model paths) resolves to it.
 - `ApigeeLlm` - A `Gemini` subclass that reaches the provider through an Apigee proxy. It is registered by default, so an `apigee/…` name resolves to it.
 - `ChromeBuiltInLlm` - Calls Chrome's built-in on-device model through the Prompt API. It is registered by default, so a `chrome-on-device` or `chrome/…` name resolves to it.
 - `RoutedLlm` - Delegates each request to one of several models that a router function selects. You create it directly; it has no name pattern.
