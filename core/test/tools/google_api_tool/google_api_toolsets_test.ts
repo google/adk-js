@@ -13,6 +13,7 @@ import {
   GoogleApiToolset,
   GoogleApiToolsetOptions,
   isGoogleApiToolset,
+  ServiceAccount,
   SheetsToolset,
   SlidesToolset,
   YoutubeToolset,
@@ -119,6 +120,35 @@ describe('GoogleApiToolset prebuilt service classes', () => {
 
       fetchSpy.mockRestore();
       configureAuthSpy.mockRestore();
+    }
+  });
+
+  it('forwards serviceAccount constructor option from each prebuilt toolset', async () => {
+    const serviceAccount: ServiceAccount = {
+      useDefaultCredential: true,
+      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+    };
+
+    for (const {ToolsetClass, apiName, apiVersion} of PREBUILT_TOOLSETS) {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => createDiscoverySpecFor(apiName, apiVersion),
+      } as Response);
+      const configureSaAuthSpy = vi.spyOn(
+        GoogleApiTool.prototype,
+        'configureSaAuth',
+      );
+
+      const toolset = new ToolsetClass({serviceAccount});
+      const tools = await toolset.getTools();
+
+      expect(tools.map((t) => t.name)).toEqual([`${apiName}_items_list`]);
+      expect(configureSaAuthSpy).toHaveBeenCalledTimes(1);
+      expect(configureSaAuthSpy).toHaveBeenCalledWith(serviceAccount);
+
+      fetchSpy.mockRestore();
+      configureSaAuthSpy.mockRestore();
     }
   });
 });

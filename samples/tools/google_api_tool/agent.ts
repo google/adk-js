@@ -5,13 +5,14 @@
  */
 
 /**
- * Google API tool: CalendarToolset, OpenID Connect auth, and tool filtering
+ * Google API tool: CalendarToolset, OpenID Connect and service account auth, and tool filtering
  * ../../../docs/guides/tools/google_api_tool/index.md
  *
  * A deterministic `BaseAgent` that instantiates a `CalendarToolset`,
  * narrows exposed operations with `toolFilter`, configures OAuth 2.0 client
- * credentials across all `GoogleApiTool` instances with `configureAuth`, and
- * invokes a tool to observe the generated OpenID Connect authorization request.
+ * credentials and service account credentials (`configureSaAuth`) across
+ * `GoogleApiTool` instances, and invokes a tool to observe the generated
+ * OpenID Connect authorization request.
  *
  * Easy to get wrong: `CalendarToolset` normalizes each Discovery method `id` to
  * `snake_case`, so `calendar.calendars.get` becomes `calendar_calendars_get`.
@@ -33,6 +34,7 @@ import {
   InvocationContext,
   isGoogleApiTool,
   isGoogleApiToolset,
+  type ServiceAccount,
 } from '@google/adk';
 import {readFileSync} from 'node:fs';
 import {dirname, join} from 'node:path';
@@ -118,8 +120,19 @@ async function describeCalendarToolset(
       toolContext.eventActions.requestedAuthConfigs['call_calendar_get'];
     const oauth2Cred = requestedAuth?.exchangedAuthCredential?.oauth2;
 
+    const serviceAccount: ServiceAccount = {
+      useDefaultCredential: true,
+      scopes: ['https://www.googleapis.com/auth/calendar.readonly'],
+    };
+    const saToolset = new CalendarToolset({
+      toolFilter: ['calendar_calendars_get'],
+    });
+    saToolset.configureSaAuth(serviceAccount);
+    const saTools = await saToolset.getTools();
+
     await unfilteredToolset.close();
     await toolset.close();
+    await saToolset.close();
 
     return [
       `All tools (${allTools.length}): ${allTools.map((t) => t.name).join(', ')}`,
@@ -129,6 +142,7 @@ async function describeCalendarToolset(
       `calendar_calendars_get parameters: ${paramNames.join(', ')}`,
       `Configured OIDC clientId: ${oauth2Cred?.clientId ?? '<none>'}`,
       `Configured OIDC clientSecret: ${redact(oauth2Cred?.clientSecret)}`,
+      `Service account tools (${saTools.length}): ${saTools.map((t) => t.name).join(', ')}`,
     ];
   } finally {
     activeStubCount--;

@@ -2,7 +2,7 @@
 
 ## Overview
 
-`CalendarToolset` wraps Google Calendar API operations in `GoogleApiTool` instances configured with Google OpenID Connect authentication. This sample demonstrates toolset construction, tool filtering, and credential configuration offline through a deterministic `BaseAgent` subclass.
+`CalendarToolset` wraps Google Calendar API operations in `GoogleApiTool` instances configured with Google OpenID Connect or service account authentication. This sample demonstrates toolset construction, tool filtering, and credential configuration (including `configureSaAuth`) offline through a deterministic `BaseAgent` subclass.
 
 ## Sample Inputs
 
@@ -47,7 +47,20 @@ const toolset = new CalendarToolset({
 const tools = await toolset.getTools();
 ```
 
+**Configure Google service account credentials.** Pass `serviceAccount` in the constructor options or call `configureSaAuth(serviceAccount)`:
+
+```ts
+const saToolset = new CalendarToolset({
+  toolFilter: ['calendar_calendars_get'],
+});
+saToolset.configureSaAuth({
+  useDefaultCredential: true,
+  scopes: ['https://www.googleapis.com/auth/calendar.readonly'],
+});
+const saTools = await saToolset.getTools();
+```
+
 ## Related Guides
 
-- [Google API tool](../../../docs/guides/tools/google_api_tool/index.md) - Converting Google Discovery specifications into `GoogleApiToolset` instances and configuring OpenID Connect credentials.
+- [Google API tool](../../../docs/guides/tools/google_api_tool/index.md) - Converting Google Discovery specifications into `GoogleApiToolset` instances and configuring OpenID Connect or service account credentials.
 - [OpenAPI tool](../../../docs/guides/tools/openapi_tool/index.md) - Turning an OpenAPI v3 document into `RestApiTool` instances with `OpenAPIToolset`.
