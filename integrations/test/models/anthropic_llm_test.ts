@@ -63,6 +63,9 @@ const {mockAnthropicCtor, mockAnthropicSdkState} = vi.hoisted(() => {
     shouldFailImport: boolean;
     ctorError?: Error;
     credentials?: unknown;
+    authStateFactory?: (client: {
+      credentials?: unknown;
+    }) => {resolution?: Promise<unknown> | null; error?: unknown} | undefined;
   } = {
     shouldFailImport: false,
   };
@@ -72,6 +75,7 @@ const {mockAnthropicCtor, mockAnthropicSdkState} = vi.hoisted(() => {
       apiKey?: string | null;
       authToken?: string | null;
       credentials?: unknown;
+      _authState?: {resolution?: Promise<unknown> | null; error?: unknown};
       messages?: {create: typeof mockMessagesCreate};
     },
     options: unknown,
@@ -83,6 +87,9 @@ const {mockAnthropicCtor, mockAnthropicSdkState} = vi.hoisted(() => {
     this.apiKey = process.env['ANTHROPIC_API_KEY'] || null;
     this.authToken = process.env['ANTHROPIC_AUTH_TOKEN'] || null;
     this.credentials = anthropicSdkState.credentials ?? null;
+    if (anthropicSdkState.authStateFactory) {
+      this._authState = anthropicSdkState.authStateFactory(this);
+    }
     this.messages = {
       create: mockMessagesCreate,
     };
@@ -1043,6 +1050,7 @@ describe('AnthropicLlm', () => {
     mockAnthropicSdkState.shouldFailImport = false;
     mockAnthropicSdkState.ctorError = undefined;
     mockAnthropicSdkState.credentials = undefined;
+    mockAnthropicSdkState.authStateFactory = undefined;
     vi.stubEnv('ANTHROPIC_API_KEY', 'placeholder-not-a-real-key');
     vi.stubEnv('ANTHROPIC_AUTH_TOKEN', '');
     vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
@@ -1525,16 +1533,15 @@ describe('AnthropicLlm', () => {
     expect(thrownError.message).toContain('Claude');
     expect(thrownError.message).toContain('Vertex AI');
 
-    const ctorFailure = new Error('SDK missing apiKey');
-    mockAnthropicSdkState.ctorError = ctorFailure;
+    mockAnthropicSdkState.authStateFactory = () => ({
+      resolution: Promise.resolve(),
+      error: null,
+    });
     await expect(async () => {
       for await (const _ of llm.generateContentAsync(request)) {
         // should fail before yielding
       }
-    }).rejects.toMatchObject({
-      message: expect.stringContaining('ANTHROPIC_API_KEY'),
-      cause: ctorFailure,
-    });
+    }).rejects.toThrow('ANTHROPIC_API_KEY');
   });
 
   it('creates an Anthropic client from ANTHROPIC_API_KEY', async () => {
@@ -1636,6 +1643,67 @@ describe('AnthropicLlm', () => {
     expect(createdClient?.apiKey).toBeNull();
     expect(createdClient?.authToken).toBeNull();
     expect(createdClient?.credentials).toBe(resolvedCredentials);
+  });
+
+  it('awaits async SDK credential resolution when generating a response', async () => {
+    mockMessagesCreate.mockResolvedValue(createSampleAnthropicMessage());
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+    vi.stubEnv('ANTHROPIC_AUTH_TOKEN', '');
+    const provider = vi.fn();
+    mockAnthropicSdkState.authStateFactory = (client) => ({
+      resolution: Promise.resolve().then(() => {
+        client.credentials = provider;
+      }),
+      error: null,
+    });
+
+    const llm = new AnthropicLlm({model: 'claude-sonnet-5-5'});
+    const request: LlmRequest = {
+      contents: [{role: 'user', parts: [{text: 'Hi'}]}],
+      liveConnectConfig: {},
+      toolsDict: {},
+    };
+
+    const responses: LlmResponse[] = [];
+    for await (const response of llm.generateContentAsync(request)) {
+      responses.push(response);
+    }
+
+    expect(responses).toHaveLength(1);
+    expect(mockAnthropicCtor.mock.instances[0]?.credentials).toBe(provider);
+  });
+
+  it('propagates Anthropic constructor errors directly without masking them', async () => {
+    const browserError = new Error(
+      "It looks like you're running in a browser-like environment.\n\n" +
+        'This is disabled by default, as it risks exposing your secret API credentials to attackers.\n' +
+        'you can set the `dangerouslyAllowBrowser` option to `true`.',
+    );
+    mockAnthropicSdkState.ctorError = browserError;
+
+    const llm = new AnthropicLlm({model: 'claude-sonnet-5-5'});
+    const request: LlmRequest = {
+      contents: [{role: 'user', parts: [{text: 'Hi'}]}],
+      liveConnectConfig: {},
+      toolsDict: {},
+    };
+
+    await expect(async () => {
+      for await (const _ of llm.generateContentAsync(request)) {
+        // should fail before yielding
+      }
+    }).rejects.toBe(browserError);
+
+    const conflictingOptionsError = new TypeError(
+      'Pass at most one of apiKey, authToken, credentials, or none',
+    );
+    mockAnthropicSdkState.ctorError = conflictingOptionsError;
+
+    await expect(async () => {
+      for await (const _ of llm.generateContentAsync(request)) {
+        // should fail before yielding
+      }
+    }).rejects.toBe(conflictingOptionsError);
   });
 
   it('throws an installation error when @anthropic-ai/sdk is unavailable', async () => {
