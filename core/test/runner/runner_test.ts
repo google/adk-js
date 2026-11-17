@@ -7,6 +7,8 @@
 import {
   App,
   BaseAgent,
+  BaseLlm,
+  BaseLlmConnection,
   BasePlugin,
   BaseTool,
   BaseToolset,
@@ -14,6 +16,7 @@ import {
   createResumabilityConfig,
   determineAgentForResumption,
   Event,
+  FunctionTool,
   InMemoryArtifactService,
   InMemoryCredentialService,
   InMemoryRunner,
@@ -22,7 +25,10 @@ import {
   InvocationContext,
   isParallelWorker,
   isRoutableLlmAgent,
+  LiveRequestQueue,
   LlmAgent,
+  LlmRequest,
+  LlmResponse,
   ParallelWorker,
   RESTORED_EVENT_KEY,
   Runner,
@@ -32,6 +38,7 @@ import {
 } from '@google/adk';
 import {Content, FunctionCall, FunctionResponse} from '@google/genai';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {z} from 'zod';
 import {buildAbortEvents} from '../../src/events/abort_events.js';
 import {logger} from '../../src/utils/logger.js';
 
@@ -2646,5 +2653,343 @@ describe('Runner credentialService', () => {
     expect(capturedInvocationContext?.credentialService).toBe(
       credentialService,
     );
+  });
+});
+
+class GatedToolCallLlm extends BaseLlm {
+  constructor() {
+    super({model: 'fake-gated-llm'});
+  }
+
+  override async *generateContentAsync(
+    req: LlmRequest,
+  ): AsyncGenerator<LlmResponse, void, void> {
+    const last = req.contents.at(-1)!;
+    if (last.parts?.some((p) => p.functionResponse)) {
+      yield {content: {role: 'model', parts: [{text: 'done'}]}};
+      return;
+    }
+    const mode = last.parts?.[0]?.text ?? 'fast';
+    yield {
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: `call_${mode}`, name: 'work', args: {mode}}},
+        ],
+      },
+    };
+  }
+
+  override async connect(): Promise<BaseLlmConnection> {
+    throw new Error('unused');
+  }
+}
+
+class GatedToolset extends BaseToolset {
+  pending = 0;
+  closesWhilePending = 0;
+  closeSpy = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+
+  constructor(
+    private readonly onSlowEntered?: () => void,
+    private readonly slowGate?: Promise<void>,
+  ) {
+    super();
+  }
+
+  override async getTools(): Promise<BaseTool[]> {
+    return [
+      new FunctionTool({
+        name: 'work',
+        description: 'performs fast or gated slow work',
+        parameters: z.object({mode: z.string()}),
+        execute: async ({mode}) => {
+          this.pending++;
+          try {
+            if (mode === 'slow') {
+              this.onSlowEntered?.();
+              await this.slowGate;
+            }
+            return 'ok';
+          } finally {
+            this.pending--;
+          }
+        },
+      }),
+    ];
+  }
+
+  override async close(): Promise<void> {
+    if (this.pending > 0) {
+      this.closesWhilePending++;
+    }
+    return this.closeSpy();
+  }
+}
+
+describe('Runner concurrent toolset lifecycle', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('does not close a toolset while another concurrent run on the same Runner is still using it', async () => {
+    let markSlowEntered!: () => void;
+    const slowEntered = new Promise<void>((resolve) => {
+      markSlowEntered = resolve;
+    });
+    let releaseSlow!: () => void;
+    const slowGate = new Promise<void>((resolve) => {
+      releaseSlow = resolve;
+    });
+
+    const toolset = new GatedToolset(markSlowEntered, slowGate);
+    const agent = new LlmAgent({
+      name: 'concurrent_agent',
+      model: new GatedToolCallLlm(),
+      tools: [toolset],
+    });
+    const runner = new InMemoryRunner({agent, appName: TEST_APP_ID});
+
+    const runTurn = async (mode: string) => {
+      const session = await runner.sessionService.createSession({
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+      });
+      const events: Event[] = [];
+      for await (const event of runner.runAsync({
+        userId: TEST_USER_ID,
+        sessionId: session.id,
+        newMessage: {role: 'user', parts: [{text: mode}]},
+      })) {
+        events.push(event);
+      }
+      return events;
+    };
+
+    const slowRun = runTurn('slow');
+    await slowEntered;
+
+    const fastEvents = await runTurn('fast');
+    expect(fastEvents.at(-1)?.content?.parts?.[0]?.text).toBe('done');
+    expect(toolset.closesWhilePending).toBe(0);
+    expect(toolset.closeSpy).not.toHaveBeenCalled();
+
+    releaseSlow();
+    const slowEvents = await slowRun;
+    expect(slowEvents.at(-1)?.content?.parts?.[0]?.text).toBe('done');
+    expect(toolset.closesWhilePending).toBe(0);
+    expect(toolset.closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps shared toolsets open across separate Runners while closing unshared idle toolsets immediately', async () => {
+    let markSlowEntered!: () => void;
+    const slowEntered = new Promise<void>((resolve) => {
+      markSlowEntered = resolve;
+    });
+    let releaseSlow!: () => void;
+    const slowGate = new Promise<void>((resolve) => {
+      releaseSlow = resolve;
+    });
+
+    const sharedToolset = new GatedToolset(markSlowEntered, slowGate);
+    const fastOnlyToolset = new MockCleanupToolset();
+    const slowOnlyToolset = new MockCleanupToolset();
+
+    const slowAgent = new LlmAgent({
+      name: 'slow_agent',
+      model: new GatedToolCallLlm(),
+      tools: [sharedToolset, slowOnlyToolset],
+    });
+    const fastAgent = new LlmAgent({
+      name: 'fast_agent',
+      model: new GatedToolCallLlm(),
+      tools: [sharedToolset, fastOnlyToolset],
+    });
+
+    const slowRunner = new InMemoryRunner({
+      agent: slowAgent,
+      appName: 'slow_app',
+    });
+    const fastRunner = new InMemoryRunner({
+      agent: fastAgent,
+      appName: 'fast_app',
+    });
+
+    const slowSession = await slowRunner.sessionService.createSession({
+      appName: 'slow_app',
+      userId: TEST_USER_ID,
+    });
+    const fastSession = await fastRunner.sessionService.createSession({
+      appName: 'fast_app',
+      userId: TEST_USER_ID,
+    });
+
+    const slowRun = (async () => {
+      for await (const _ of slowRunner.runAsync({
+        userId: TEST_USER_ID,
+        sessionId: slowSession.id,
+        newMessage: {role: 'user', parts: [{text: 'slow'}]},
+      })) {
+        // consume
+      }
+    })();
+    await slowEntered;
+
+    for await (const _ of fastRunner.runAsync({
+      userId: TEST_USER_ID,
+      sessionId: fastSession.id,
+      newMessage: {role: 'user', parts: [{text: 'fast'}]},
+    })) {
+      // consume
+    }
+
+    expect(fastOnlyToolset.closeSpy).toHaveBeenCalledTimes(1);
+    expect(sharedToolset.closesWhilePending).toBe(0);
+    expect(sharedToolset.closeSpy).not.toHaveBeenCalled();
+    expect(slowOnlyToolset.closeSpy).not.toHaveBeenCalled();
+
+    releaseSlow();
+    await slowRun;
+
+    expect(sharedToolset.closesWhilePending).toBe(0);
+    expect(sharedToolset.closeSpy).toHaveBeenCalledTimes(1);
+    expect(slowOnlyToolset.closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases toolset retention cleanly when a concurrent run errors or aborts early', async () => {
+    let markSlowEntered!: () => void;
+    const slowEntered = new Promise<void>((resolve) => {
+      markSlowEntered = resolve;
+    });
+    let releaseSlow!: () => void;
+    const slowGate = new Promise<void>((resolve) => {
+      releaseSlow = resolve;
+    });
+
+    const toolset = new GatedToolset(markSlowEntered, slowGate);
+    const agent = new LlmAgent({
+      name: 'error_tolerant_agent',
+      model: new GatedToolCallLlm(),
+      tools: [toolset],
+    });
+    const runner = new InMemoryRunner({agent, appName: TEST_APP_ID});
+
+    const slowSession = await runner.sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+    });
+
+    const slowRun = (async () => {
+      for await (const _ of runner.runAsync({
+        userId: TEST_USER_ID,
+        sessionId: slowSession.id,
+        newMessage: {role: 'user', parts: [{text: 'slow'}]},
+      })) {
+        // consume
+      }
+    })();
+    await slowEntered;
+
+    await expect(async () => {
+      for await (const _ of runner.runAsync({
+        userId: TEST_USER_ID,
+        sessionId: 'missing_session_id',
+        newMessage: {role: 'user', parts: [{text: 'fast'}]},
+      })) {
+        // should fail session lookup
+      }
+    }).rejects.toThrow('Session not found');
+
+    expect(toolset.closesWhilePending).toBe(0);
+    expect(toolset.closeSpy).not.toHaveBeenCalled();
+
+    releaseSlow();
+    await slowRun;
+
+    expect(toolset.closesWhilePending).toBe(0);
+    expect(toolset.closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not close toolsets retained by an active runLive session when a concurrent runAsync finishes', async () => {
+    let markLiveStarted!: () => void;
+    const liveStarted = new Promise<void>((resolve) => {
+      markLiveStarted = resolve;
+    });
+    let releaseLive!: () => void;
+    const liveGate = new Promise<void>((resolve) => {
+      releaseLive = resolve;
+    });
+
+    class DualModeAgent extends LlmAgent {
+      protected override async *runAsyncImpl(
+        ctx: InvocationContext,
+      ): AsyncGenerator<Event, void, void> {
+        yield createEvent({
+          invocationId: ctx.invocationId,
+          author: this.name,
+          content: {role: 'model', parts: [{text: 'async done'}]},
+        });
+      }
+
+      protected override async *runLiveImpl(
+        ctx: InvocationContext,
+      ): AsyncGenerator<Event, void, void> {
+        markLiveStarted();
+        await liveGate;
+        yield createEvent({
+          invocationId: ctx.invocationId,
+          author: this.name,
+          content: {role: 'model', parts: [{text: 'live done'}]},
+        });
+      }
+    }
+
+    const toolset = new MockCleanupToolset();
+    const agent = new DualModeAgent({
+      name: 'dual_mode_agent',
+      model: 'gemini-2.5-flash',
+      tools: [toolset],
+    });
+    const runner = new InMemoryRunner({agent, appName: TEST_APP_ID});
+
+    const liveQueue = new LiveRequestQueue();
+    const liveRun = (async () => {
+      for await (const _ of runner.runLive({
+        userId: TEST_USER_ID,
+        sessionId: 'live_session',
+        liveRequestQueue: liveQueue,
+      })) {
+        // consume
+      }
+    })();
+    await liveStarted;
+
+    const asyncSession = await runner.sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+    });
+    for await (const _ of runner.runAsync({
+      userId: TEST_USER_ID,
+      sessionId: asyncSession.id,
+      newMessage: {role: 'user', parts: [{text: 'hi'}]},
+    })) {
+      // consume
+    }
+
+    expect(toolset.closeSpy).not.toHaveBeenCalled();
+
+    releaseLive();
+    liveQueue.close();
+    await liveRun;
+
+    for await (const _ of runner.runAsync({
+      userId: TEST_USER_ID,
+      sessionId: asyncSession.id,
+      newMessage: {role: 'user', parts: [{text: 'hi again'}]},
+    })) {
+      // consume
+    }
+
+    expect(toolset.closeSpy).toHaveBeenCalledTimes(1);
   });
 });
