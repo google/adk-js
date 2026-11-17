@@ -464,6 +464,7 @@ const SCHEMA_TYPE_MAP: Readonly<Record<string, Type>> = {
   OBJECT: Type.OBJECT,
   NULL: Type.NULL,
   null: Type.NULL,
+  void: Type.NULL,
   TYPE_UNSPECIFIED: Type.TYPE_UNSPECIFIED,
 };
 
@@ -645,19 +646,25 @@ function resolveReturnSchema(
 ): Schema | undefined {
   const funcObj =
     typeof func === 'function' || isPlainRecord(func)
-      ? (func as {response?: SchemaLike; returnType?: string})
+      ? (func as {response?: SchemaLike | null; returnType?: string | null})
       : undefined;
   const responseCandidate =
-    funcObj?.response ??
-    (beforeParamSchema['response'] as SchemaLike | undefined);
+    funcObj?.response !== undefined
+      ? funcObj.response
+      : beforeParamSchema['response'];
+  if (responseCandidate === null) {
+    return {type: Type.NULL};
+  }
   if (responseCandidate !== undefined) {
-    return toResponseSchema(responseCandidate);
+    return toResponseSchema(responseCandidate as SchemaLike);
   }
   const returnTypeCandidate =
-    funcObj?.returnType ??
-    (typeof beforeParamSchema['returnType'] === 'string'
-      ? beforeParamSchema['returnType']
-      : undefined);
+    funcObj?.returnType !== undefined
+      ? funcObj.returnType
+      : beforeParamSchema['returnType'];
+  if (returnTypeCandidate === null) {
+    return {type: Type.NULL};
+  }
   if (typeof returnTypeCandidate === 'string') {
     return {
       type: SCHEMA_TYPE_MAP[returnTypeCandidate] ?? Type.TYPE_UNSPECIFIED,
@@ -679,7 +686,8 @@ export function buildFunctionDeclarationUtil(
   func: unknown,
   beforeParamSchema: Record<string, unknown>,
 ): FunctionDeclaration {
-  const schemaCopy = structuredClone(beforeParamSchema);
+  const {response: _response, ...clonableSchema} = beforeParamSchema;
+  const schemaCopy = structuredClone(clonableSchema);
   mapSchemaTypes(schemaCopy);
   const properties = isPlainRecord(schemaCopy['properties'])
     ? (schemaCopy['properties'] as Record<string, Schema>)
@@ -703,7 +711,7 @@ export function buildFunctionDeclarationUtil(
     declaration.parameters = parameters;
   }
   if (vertexai) {
-    const responseSchema = resolveReturnSchema(func, schemaCopy);
+    const responseSchema = resolveReturnSchema(func, beforeParamSchema);
     if (responseSchema !== undefined) {
       declaration.response = responseSchema;
     }
