@@ -1002,6 +1002,39 @@ describe('HybridContentParser hardening', () => {
     expect(String(parts[0]?.part_attributes)).toContain('"__proto__"');
   });
 
+  it('emits valid RFC 8259 JSON in part_attributes when functionResponse contains NaN or Infinity', async () => {
+    const {parts} = await parser(1000).parse(
+      {
+        parts: [
+          {
+            functionResponse: {
+              name: 'score',
+              response: {
+                nan: Number.NaN,
+                inf: Number.POSITIVE_INFINITY,
+                negInf: Number.NEGATIVE_INFINITY,
+                finite: 0.75,
+              },
+            },
+          },
+        ],
+      },
+      {kind: 'content'},
+    );
+    const attrs = String(parts[0]?.part_attributes);
+    expect(JSON.parse(attrs)).toEqual({
+      function_response: {
+        name: 'score',
+        response: {
+          nan: null,
+          inf: null,
+          negInf: null,
+          finite: 0.75,
+        },
+      },
+    });
+  });
+
   it('logs upload failures through the ADK logger', async () => {
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
     const offloader = new FakeOffloader();

@@ -276,6 +276,112 @@ describe('getBigQueryClient and BigQueryClient', () => {
     expect(rows).toEqual([{id: 0}, {id: 1}, {id: 2}]);
   });
 
+  it('disables autoPaginate when maxResults is 0 or negative in query()', async () => {
+    const querySpy = vi.fn(
+      async (
+        _options: unknown,
+        _resultsOptions?: unknown,
+      ): Promise<[Array<Record<string, unknown>>]> => [[{id: 0}, {id: 1}]],
+    );
+    const fakeSdkClient: BigQuerySdkClient = {
+      getDatasets: async () => [[]],
+      dataset: () => ({}),
+      query: querySpy,
+      createQueryJob: async () => [
+        {
+          id: 'job-1',
+          metadata: {statistics: {query: {statementType: 'SELECT'}}},
+        },
+      ],
+    };
+    const fakeModule: BigQuerySdkModule = {
+      BigQuery: class {
+        constructor() {
+          return fakeSdkClient;
+        }
+      } as unknown as BigQuerySdkModule['BigQuery'],
+    };
+
+    const client = getBigQueryClient({
+      projectId: 'proj',
+      sdkLoader: async () => fakeModule,
+    } as InternalGetBigQueryClientOptions);
+
+    const zeroRows = await client.query({
+      query: 'SELECT id FROM tbl',
+      maxResults: 0,
+    });
+    expect(querySpy).toHaveBeenCalledWith(
+      {
+        query: 'SELECT id FROM tbl',
+        projectId: 'proj',
+        location: undefined,
+        maxResults: 0,
+      },
+      {maxResults: 0, autoPaginate: false},
+    );
+    expect(zeroRows).toEqual([]);
+
+    const negativeRows = await client.query({
+      query: 'SELECT id FROM tbl',
+      maxResults: -5,
+    });
+    expect(querySpy).toHaveBeenLastCalledWith(
+      {
+        query: 'SELECT id FROM tbl',
+        projectId: 'proj',
+        location: undefined,
+        maxResults: -5,
+      },
+      {maxResults: 0, autoPaginate: false},
+    );
+    expect(negativeRows).toEqual([]);
+  });
+
+  it('instantiates an SDK client with effective projectId when options.projectId differs in query()', async () => {
+    const capturedProjectIds: Array<unknown> = [];
+    const querySpy = vi.fn(
+      async (): Promise<[Array<Record<string, unknown>>]> => [[{ok: true}]],
+    );
+    const fakeSdkClient: BigQuerySdkClient = {
+      getDatasets: async () => [[]],
+      dataset: () => ({}),
+      query: querySpy,
+      createQueryJob: async () => [
+        {
+          id: 'job-1',
+          metadata: {statistics: {query: {statementType: 'SELECT'}}},
+        },
+      ],
+    };
+    const fakeModule: BigQuerySdkModule = {
+      BigQuery: class {
+        constructor(options?: Record<string, unknown>) {
+          capturedProjectIds.push(options?.['projectId']);
+          return fakeSdkClient;
+        }
+      } as unknown as BigQuerySdkModule['BigQuery'],
+    };
+
+    const client = getBigQueryClient({
+      projectId: 'client-proj',
+      sdkLoader: async () => fakeModule,
+    } as InternalGetBigQueryClientOptions);
+
+    const rows = await client.query({
+      query: 'SELECT 1',
+      projectId: 'override-proj',
+    });
+
+    expect(rows).toEqual([{ok: true}]);
+    expect(capturedProjectIds).toEqual(['override-proj']);
+    expect(querySpy).toHaveBeenCalledWith({
+      query: 'SELECT 1',
+      projectId: 'override-proj',
+      location: undefined,
+    });
+  });
+
   it('passes getRequestHeaders-capable credentials directly as authClient', async () => {
     let capturedOptions: Record<string, unknown> | undefined;
     const fakeSdkClient: BigQuerySdkClient = {
@@ -1557,6 +1663,73 @@ describe('executeSql query tool', () => {
     ]);
     expect(querySpy.mock.calls[2]?.[0]?.connectionProperties).toEqual([
       {key: 'session_id', value: 'other-app-bq-session-id'},
+    ]);
+  });
+
+  it('creates a separate BigQuery session per projectId within the same ADK session in WriteMode.PROTECTED', async () => {
+    const sessionIdsByProject: Record<string, string> = {
+      'project-a': 'bq-session-project-a',
+      'project-b': 'bq-session-project-b',
+    };
+    const dryRunSpy = vi
+      .spyOn(BigQueryClient.prototype, 'dryRun')
+      .mockImplementation(async (opts) => {
+        if (opts.createSession) {
+          const sessionId =
+            sessionIdsByProject[opts.projectId ?? ''] ?? 'unknown-session';
+          return {
+            statementType: 'SELECT',
+            sessionInfo: {sessionId},
+            destinationTable: {datasetId: `_anon_${sessionId}`},
+          };
+        }
+        return {
+          statementType: 'SELECT',
+        };
+      });
+    const querySpy = vi
+      .spyOn(BigQueryClient.prototype, 'query')
+      .mockResolvedValue([]);
+    const toolContext = createSessionToolContext('multi-project-session');
+
+    await executeSql(
+      {
+        project_id: 'project-a',
+        query: 'SELECT 1',
+        credentials: mockCredentials,
+        config: {writeMode: WriteMode.PROTECTED},
+      },
+      toolContext,
+    );
+    await executeSql(
+      {
+        project_id: 'project-b',
+        query: 'SELECT 2',
+        credentials: mockCredentials,
+        config: {writeMode: WriteMode.PROTECTED},
+      },
+      toolContext,
+    );
+    await executeSql(
+      {
+        project_id: 'project-a',
+        query: 'SELECT 3',
+        credentials: mockCredentials,
+        config: {writeMode: WriteMode.PROTECTED},
+      },
+      toolContext,
+    );
+
+    expect(dryRunSpy).toHaveBeenCalledTimes(5);
+    expect(querySpy).toHaveBeenCalledTimes(3);
+    expect(querySpy.mock.calls[0]?.[0]?.connectionProperties).toEqual([
+      {key: 'session_id', value: 'bq-session-project-a'},
+    ]);
+    expect(querySpy.mock.calls[1]?.[0]?.connectionProperties).toEqual([
+      {key: 'session_id', value: 'bq-session-project-b'},
+    ]);
+    expect(querySpy.mock.calls[2]?.[0]?.connectionProperties).toEqual([
+      {key: 'session_id', value: 'bq-session-project-a'},
     ]);
   });
 

@@ -6,8 +6,11 @@
 
 import {version} from '../version.js';
 import {
+  type BigQueryAuthClient,
   type BigQueryCredentials,
+  type GoogleOAuthCredentials,
   isBigQueryAuthClient,
+  normalizeBigQueryCredentials,
 } from './bigquery_credentials.js';
 
 /**
@@ -305,7 +308,7 @@ function buildUserAgent(
  */
 export class BigQueryClient {
   readonly projectId?: string;
-  readonly credentials?: BigQueryCredentials;
+  readonly credentials?: GoogleOAuthCredentials | BigQueryAuthClient;
   readonly location?: string;
   readonly userAgent: string;
   private readonly sdkLoader: () => Promise<BigQuerySdkModule>;
@@ -317,7 +320,10 @@ export class BigQueryClient {
   constructor(options: GetBigQueryClientOptions = {}) {
     this.projectId =
       options.projectId || process.env['GOOGLE_CLOUD_PROJECT'] || undefined;
-    this.credentials = options.credentials;
+    this.credentials =
+      options.credentials !== undefined
+        ? normalizeBigQueryCredentials(options.credentials)
+        : undefined;
     this.location = options.location;
     this.userAgent = buildUserAgent(options.userAgent);
     this.sdkLoader =
@@ -403,23 +409,29 @@ export class BigQueryClient {
   async query(
     options: BigQueryQueryOptions,
   ): Promise<Array<Record<string, unknown>>> {
-    const sdk = await this.getSdkClient();
+    const effectiveProjectId = options.projectId || this.projectId;
+    const sdk = await this.getSdkClient(effectiveProjectId);
     const queryOptions: BigQueryQueryOptions = {
       ...options,
-      projectId: options.projectId || this.projectId,
+      projectId: effectiveProjectId,
       location: options.location ?? this.location,
     };
     const resultsOptions: BigQueryQueryResultsOptions | undefined =
       options.maxResults !== undefined
-        ? {maxResults: options.maxResults}
+        ? options.maxResults <= 0
+          ? {maxResults: 0, autoPaginate: false}
+          : {maxResults: options.maxResults}
         : undefined;
     const response =
       resultsOptions !== undefined
         ? await sdk.query(queryOptions, resultsOptions)
         : await sdk.query(queryOptions);
     const rows = response[0];
-    if (options.maxResults !== undefined && rows.length > options.maxResults) {
-      return rows.slice(0, options.maxResults);
+    if (options.maxResults !== undefined) {
+      const limit = Math.max(0, options.maxResults);
+      if (rows.length > limit) {
+        return rows.slice(0, limit);
+      }
     }
     return rows;
   }
