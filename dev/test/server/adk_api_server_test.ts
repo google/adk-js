@@ -80,30 +80,54 @@ interface JsonRpcResponse {
  * `Authorization` header and extra headers, and reports the raw HTTP status so
  * authentication failures can be told apart from agent responses.
  */
+/**
+ * Sends an A2A v1.0 `SendMessage` call, or with `protocol: '0.3'` the A2A v0.3
+ * `message/send` call that the compatibility layer still answers.
+ */
 async function sendA2aMessage(
   baseUrl: string,
   authorization?: string,
   headers: Record<string, string> = {},
+  protocol: '1.0' | '0.3' = '1.0',
 ): Promise<{status: number; body: JsonRpcResponse}> {
+  const request: {
+    method: string;
+    headers: Record<string, string>;
+    message: Record<string, unknown>;
+  } =
+    protocol === '1.0'
+      ? {
+          method: 'SendMessage',
+          headers: {'A2A-Version': '1.0'},
+          message: {
+            messageId: 'a2a-test-message',
+            role: 'ROLE_USER',
+            parts: [{text: 'Hello'}],
+          },
+        }
+      : {
+          method: 'message/send',
+          headers: {},
+          message: {
+            kind: 'message',
+            messageId: 'a2a-test-message',
+            role: 'user',
+            parts: [{kind: 'text', text: 'Hello'}],
+          },
+        };
   const response = await fetch(`${baseUrl}/a2a/testApp/jsonrpc`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...request.headers,
       ...(authorization ? {Authorization: authorization} : {}),
       ...headers,
     },
     body: JSON.stringify({
       jsonrpc: '2.0',
       id: 'a2a-test-request',
-      method: 'message/send',
-      params: {
-        message: {
-          kind: 'message',
-          messageId: 'a2a-test-message',
-          role: 'user',
-          parts: [{kind: 'text', text: 'Hello'}],
-        },
-      },
+      method: request.method,
+      params: {message: request.message},
     }),
   });
 
@@ -2372,17 +2396,47 @@ describe('AdkWebServer', () => {
       async (a2aAuthToken) => {
         const a2aClient = new HttpClient(await startA2aServer(a2aAuthToken));
 
-        const response = await a2aClient.get<AgentCard>(
+        const response = await a2aClient.get<Record<string, unknown>>(
           `/a2a/testApp/${AGENT_CARD_PATH}`,
         );
 
+        // Without an A2A-Version header the card is the A2A v0.3 one, with
+        // the v1.0 interfaces embedded.
         expect(response.status).toBe(200);
-        expect(response.data?.name).toBe('testAgent');
-        expect(response.data?.url).toBe(
+        expect(response.data?.['name']).toBe('testAgent');
+        expect(response.data?.['url']).toBe(
           `${a2aServer!.url}/a2a/testApp/jsonrpc`,
         );
       },
     );
+
+    it('should serve the A2A v1.0 agent card to an A2A-Version 1.0 request', async () => {
+      const url = await startA2aServer();
+
+      const response = await fetch(`${url}/a2a/testApp/${AGENT_CARD_PATH}`, {
+        headers: {'A2A-Version': '1.0'},
+      });
+      const card = (await response.json()) as AgentCard;
+
+      expect(response.status).toBe(200);
+      expect(card.name).toBe('testAgent');
+      expect(card.supportedInterfaces).toContainEqual({
+        url: `${url}/a2a/testApp/jsonrpc`,
+        protocolBinding: 'JSONRPC',
+        protocolVersion: '1.0',
+        tenant: '',
+      });
+    });
+
+    it('should still answer an A2A v0.3 message/send call', async () => {
+      const url = await startA2aServer();
+
+      const response = await sendA2aMessage(url, undefined, {}, '0.3');
+
+      expect(response.status).toBe(200);
+      expect(response.body.error).toBeUndefined();
+      expect(response.body.result).toBeDefined();
+    });
 
     it('should run the agent for a call carrying the configured token', async () => {
       const url = await startA2aServer(A2A_TOKEN);

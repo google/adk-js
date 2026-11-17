@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type {AgentCard} from '@a2a-js/sdk';
+import {AgentCard} from '@a2a-js/sdk';
 import {
   Client,
   ClientFactory,
@@ -38,19 +38,52 @@ import {logger} from '../../src/utils/logger.js';
 const AGENT_NAME = 'remote_peer';
 const CARD_PATH = '/.well-known/agent-card.json';
 
-function buildCard(overrides: Partial<AgentCard> = {}): AgentCard {
+/** Builds an A2A v1.0 agent card with one v1.0 JSON-RPC interface. */
+function buildCard({
+  url = 'http://127.0.0.1:1/',
+  description = 'Answers pings.',
+  streaming = false,
+}: {url?: string; description?: string; streaming?: boolean} = {}): AgentCard {
   return {
     name: 'peer',
-    description: 'Answers pings.',
-    protocolVersion: '0.3.0',
+    description,
     version: '1.0.0',
-    url: 'http://127.0.0.1:1/',
-    preferredTransport: 'JSONRPC',
-    capabilities: {streaming: false},
+    supportedInterfaces: [
+      {
+        url,
+        protocolBinding: 'JSONRPC',
+        protocolVersion: '1.0',
+        tenant: '',
+      },
+    ],
+    provider: undefined,
+    capabilities: {streaming, extensions: []},
+    securitySchemes: {},
+    securityRequirements: [],
     skills: [],
     defaultInputModes: ['text/plain'],
     defaultOutputModes: ['text/plain'],
-    ...overrides,
+    signatures: [],
+  };
+}
+
+/** The JSON a server sends for a v1.0 agent card. */
+function cardJson(card: AgentCard): string {
+  return JSON.stringify(AgentCard.toJSON(card));
+}
+
+/** The A2A v1.0 JSON-RPC result of a `SendMessage` that answers `text`. */
+function v1MessageResult(
+  text: string,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    message: {
+      messageId: 'message-1',
+      role: 'ROLE_AGENT',
+      parts: [{text}],
+      ...extra,
+    },
   };
 }
 
@@ -294,8 +327,8 @@ describe('RemoteA2AAgent', () => {
           'a2a:error': 'A2A request failed: Connection refused.',
           'a2a:request': {
             message: {
-              role: 'user',
-              parts: [{kind: 'text', text: 'ping'}],
+              role: 'ROLE_USER',
+              parts: [{text: 'ping'}],
             },
           },
         },
@@ -371,10 +404,7 @@ describe('RemoteA2AAgent', () => {
       expect(events[0].customMetadata).toMatchObject({
         'a2a:request': {
           message: {
-            parts: [
-              {kind: 'text', text: 'ping'},
-              {kind: 'text', text: 'ping again'},
-            ],
+            parts: [{text: 'ping'}, {text: 'ping again'}],
           },
         },
       });
@@ -389,7 +419,7 @@ describe('RemoteA2AAgent', () => {
         const baseUrl = await listen(() => {});
         const agent = new RemoteA2AAgent({
           name: AGENT_NAME,
-          agentCard: buildCard({url: `${baseUrl}/`, capabilities: {streaming}}),
+          agentCard: buildCard({url: `${baseUrl}/`, streaming}),
           timeoutMs: 50,
         });
 
@@ -407,27 +437,26 @@ describe('RemoteA2AAgent', () => {
 
   it('fetches the agent card one time across two runs', async () => {
     const requests: string[] = [];
+    const rpcCalls: Array<{method: string; version?: string}> = [];
     const baseUrl: string = await listen((req, res) => {
       requests.push(`${req.method} ${req.url}`);
       res.setHeader('content-type', 'application/json');
       if (req.url === CARD_PATH) {
-        res.end(JSON.stringify(buildCard({url: `${baseUrl}/`})));
+        res.end(cardJson(buildCard({url: `${baseUrl}/`})));
         return;
       }
       const chunks: Buffer[] = [];
       req.on('data', (chunk: Buffer) => chunks.push(chunk));
       req.on('end', () => {
-        const {id} = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+        const {id, method} = JSON.parse(
+          Buffer.concat(chunks).toString('utf-8'),
+        );
+        rpcCalls.push({method, version: req.headers['a2a-version'] as string});
         res.end(
           JSON.stringify({
             jsonrpc: '2.0',
             id,
-            result: {
-              kind: 'message',
-              messageId: 'message-1',
-              role: 'agent',
-              parts: [{kind: 'text', text: 'pong'}],
-            },
+            result: v1MessageResult('pong'),
           }),
         );
       });
@@ -444,6 +473,66 @@ describe('RemoteA2AAgent', () => {
       expect(replies[0].content?.parts).toMatchObject([{text: 'pong'}]);
     }
     expect(requests).toEqual([`GET ${CARD_PATH}`, 'POST /', 'POST /']);
+    // The client speaks A2A v1.0 to a card that declares a v1.0 interface.
+    expect(rpcCalls).toEqual([
+      {method: 'SendMessage', version: '1.0'},
+      {method: 'SendMessage', version: '1.0'},
+    ]);
+  });
+
+  it('speaks v0.3 to a card with the v0.3 shape', async () => {
+    const rpcCalls: Array<{method: string; version?: string}> = [];
+    const baseUrl: string = await listen((req, res) => {
+      res.setHeader('content-type', 'application/json');
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('end', () => {
+        const {id, method} = JSON.parse(
+          Buffer.concat(chunks).toString('utf-8'),
+        );
+        rpcCalls.push({method, version: req.headers['a2a-version'] as string});
+        res.end(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id,
+            result: {
+              kind: 'message',
+              messageId: 'message-1',
+              role: 'agent',
+              parts: [{kind: 'text', text: 'pong'}],
+            },
+          }),
+        );
+      });
+    });
+    // A card object in the A2A v0.3 shape: a top-level url, no interfaces.
+    const legacyCard = {
+      name: 'peer',
+      description: 'Answers pings.',
+      protocolVersion: '0.3.0',
+      version: '1.0.0',
+      url: `${baseUrl}/`,
+      preferredTransport: 'JSONRPC',
+      capabilities: {streaming: false},
+      skills: [],
+      defaultInputModes: ['text/plain'],
+      defaultOutputModes: ['text/plain'],
+    };
+    const agent = new RemoteA2AAgent({
+      name: AGENT_NAME,
+      agentCard: legacyCard as unknown as AgentCard,
+    });
+
+    const replies = (await runWithRunner(agent)).filter(
+      (event) => event.author === AGENT_NAME,
+    );
+
+    expect(replies).toHaveLength(1);
+    expect(replies[0].errorMessage).toBeUndefined();
+    expect(replies[0].content?.parts).toMatchObject([{text: 'pong'}]);
+    expect(rpcCalls).toEqual([
+      {method: 'message/send', version: expect.not.stringMatching(/^1/)},
+    ]);
   });
 
   describe('description adoption and URL trimming', () => {
@@ -468,12 +557,7 @@ describe('RemoteA2AAgent', () => {
             JSON.stringify({
               jsonrpc: '2.0',
               id,
-              result: {
-                kind: 'message',
-                messageId: 'message-1',
-                role: 'agent',
-                parts: [{kind: 'text', text: 'pong'}],
-              },
+              result: v1MessageResult('pong'),
             }),
           );
         });
@@ -481,7 +565,7 @@ describe('RemoteA2AAgent', () => {
       const cardFile = join(tempDir, 'card.json');
       await writeFile(
         cardFile,
-        JSON.stringify(
+        cardJson(
           buildCard({
             url: `${baseUrl}/`,
             description: 'File-sourced agent description.',
@@ -521,7 +605,7 @@ describe('RemoteA2AAgent', () => {
         res.setHeader('content-type', 'application/json');
         if (req.url === CARD_PATH) {
           res.end(
-            JSON.stringify(
+            cardJson(
               buildCard({
                 url: `${baseUrl}/`,
                 description: longDescription,
@@ -538,12 +622,7 @@ describe('RemoteA2AAgent', () => {
             JSON.stringify({
               jsonrpc: '2.0',
               id,
-              result: {
-                kind: 'message',
-                messageId: 'message-1',
-                role: 'agent',
-                parts: [{kind: 'text', text: 'pong'}],
-              },
+              result: v1MessageResult('pong'),
             }),
           );
         });
@@ -585,7 +664,7 @@ describe('RemoteA2AAgent', () => {
     const baseUrl: string = await listen((req, res) => {
       res.setHeader('content-type', 'application/json');
       if (req.url === CARD_PATH) {
-        res.end(JSON.stringify(buildCard({url: `${baseUrl}/`})));
+        res.end(cardJson(buildCard({url: `${baseUrl}/`})));
         return;
       }
       const chunks: Buffer[] = [];
@@ -597,13 +676,10 @@ describe('RemoteA2AAgent', () => {
           JSON.stringify({
             jsonrpc: '2.0',
             id: body.id,
-            result: {
-              kind: 'message',
+            result: v1MessageResult('pong', {
               messageId: `msg-${receivedContextIds.length}`,
-              role: 'agent',
               contextId: 'ctx-message-only',
-              parts: [{kind: 'text', text: 'pong'}],
-            },
+            }),
           }),
         );
       });

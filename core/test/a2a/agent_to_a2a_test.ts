@@ -78,9 +78,25 @@ vi.mock('../../src/a2a/agent_executor.js', () => ({
   }),
 }));
 
+/** An interface of a mocked card, for the given A2A protocol version. */
+function mockInterface(protocolVersion: string) {
+  return {
+    url: 'http://localhost:8000/jsonrpc',
+    protocolBinding: 'JSONRPC',
+    protocolVersion,
+    tenant: '',
+  };
+}
+
 vi.mock('../../src/a2a/agent_card.js', () => ({
-  getA2AAgentCard: vi.fn().mockResolvedValue({name: 'mocked_card'}),
-  resolveAgentCard: vi.fn().mockResolvedValue({name: 'resolved_card'}),
+  getA2AAgentCard: vi.fn().mockResolvedValue({
+    name: 'mocked_card',
+    supportedInterfaces: [mockInterface('1.0'), mockInterface('0.3')],
+  }),
+  resolveAgentCard: vi.fn().mockResolvedValue({
+    name: 'resolved_card',
+    supportedInterfaces: [mockInterface('1.0'), mockInterface('0.3')],
+  }),
 }));
 
 describe('toA2a', () => {
@@ -104,9 +120,33 @@ describe('toA2a', () => {
     expect(expressMock.json).toHaveBeenCalledWith({limit: '50mb'});
     expect(app.use).toHaveBeenCalledWith('json_middleware');
 
+    // A2A v1.0 first, then v0.3 on the same URLs so the compatibility layer
+    // answers v0.3 clients.
     expect(getA2AAgentCard).toHaveBeenCalledWith(agent, [
-      {url: 'http://localhost:8000/jsonrpc', transport: 'JSONRPC'},
-      {url: 'http://localhost:8000/rest', transport: 'HTTP+JSON'},
+      {
+        url: 'http://localhost:8000/jsonrpc',
+        protocolBinding: 'JSONRPC',
+        protocolVersion: '1.0',
+        tenant: '',
+      },
+      {
+        url: 'http://localhost:8000/rest',
+        protocolBinding: 'HTTP+JSON',
+        protocolVersion: '1.0',
+        tenant: '',
+      },
+      {
+        url: 'http://localhost:8000/jsonrpc',
+        protocolBinding: 'JSONRPC',
+        protocolVersion: '0.3',
+        tenant: '',
+      },
+      {
+        url: 'http://localhost:8000/rest',
+        protocolBinding: 'HTTP+JSON',
+        protocolVersion: '0.3',
+        tenant: '',
+      },
     ]);
 
     expect(A2AAgentExecutor).toHaveBeenCalledWith(
@@ -120,11 +160,19 @@ describe('toA2a', () => {
 
     expect(DefaultRequestHandler).toHaveBeenCalled();
 
-    expect(agentCardHandler).toHaveBeenCalled();
-    expect(restHandler).toHaveBeenCalled();
+    expect(agentCardHandler).toHaveBeenCalledWith({
+      agentCardProvider: expect.any(Object),
+      legacyCompat: {enabled: true},
+    });
+    expect(restHandler).toHaveBeenCalledWith({
+      requestHandler: expect.any(Object),
+      userBuilder: 'noAuthentication',
+      legacyCompat: {enabled: true},
+    });
     expect(jsonRpcHandler).toHaveBeenCalledWith({
       requestHandler: expect.any(Object),
       userBuilder: 'noAuthentication',
+      legacyCompat: {enabled: true},
     });
 
     expect(app.use).toHaveBeenCalledWith(
@@ -161,8 +209,30 @@ describe('toA2a', () => {
 
     expect(express).not.toHaveBeenCalled();
     expect(getA2AAgentCard).toHaveBeenCalledWith(agent, [
-      {url: 'https://custom-host:9000api/v1/jsonrpc', transport: 'JSONRPC'},
-      {url: 'https://custom-host:9000api/v1/rest', transport: 'HTTP+JSON'},
+      {
+        url: 'https://custom-host:9000api/v1/jsonrpc',
+        protocolBinding: 'JSONRPC',
+        protocolVersion: '1.0',
+        tenant: '',
+      },
+      {
+        url: 'https://custom-host:9000api/v1/rest',
+        protocolBinding: 'HTTP+JSON',
+        protocolVersion: '1.0',
+        tenant: '',
+      },
+      {
+        url: 'https://custom-host:9000api/v1/jsonrpc',
+        protocolBinding: 'JSONRPC',
+        protocolVersion: '0.3',
+        tenant: '',
+      },
+      {
+        url: 'https://custom-host:9000api/v1/rest',
+        protocolBinding: 'HTTP+JSON',
+        protocolVersion: '0.3',
+        tenant: '',
+      },
     ]);
 
     expect(A2AAgentExecutor).toHaveBeenCalledWith(
@@ -213,6 +283,32 @@ describe('toA2a', () => {
     expect(getA2AAgentCard).not.toHaveBeenCalled();
   });
 
+  it('turns the v0.3 compatibility layer off for a card that declares only v1.0', async () => {
+    vi.mocked(resolveAgentCard).mockResolvedValueOnce({
+      name: 'v1_only_card',
+      supportedInterfaces: [mockInterface('1.0')],
+    } as unknown as AgentCard);
+
+    await toA2a(agent, {
+      agentCard: 'path/to/card.json',
+      allowUnauthenticated: true,
+    });
+
+    // With it on, the card endpoint would answer a request without an
+    // A2A-Version header with an error: the card has no v0.3 interface to
+    // build a v0.3 card from.
+    const legacyCompat = {enabled: false};
+    expect(agentCardHandler).toHaveBeenCalledWith(
+      expect.objectContaining({legacyCompat}),
+    );
+    expect(restHandler).toHaveBeenCalledWith(
+      expect.objectContaining({legacyCompat}),
+    );
+    expect(jsonRpcHandler).toHaveBeenCalledWith(
+      expect.objectContaining({legacyCompat}),
+    );
+  });
+
   it('forwards resolveAgentCardOptions to resolveAgentCard when provided', async () => {
     await toA2a(agent, {
       agentCard: 'path/to/card.json',
@@ -254,10 +350,12 @@ describe('toA2a', () => {
       expect(restHandler).toHaveBeenCalledWith({
         requestHandler: expect.any(Object),
         userBuilder: 'noAuthentication',
+        legacyCompat: {enabled: true},
       });
       expect(jsonRpcHandler).toHaveBeenCalledWith({
         requestHandler: expect.any(Object),
         userBuilder: 'noAuthentication',
+        legacyCompat: {enabled: true},
       });
 
       warnSpy.mockRestore();
@@ -277,10 +375,12 @@ describe('toA2a', () => {
       expect(restHandler).toHaveBeenCalledWith({
         requestHandler: expect.any(Object),
         userBuilder: authenticator,
+        legacyCompat: {enabled: true},
       });
       expect(jsonRpcHandler).toHaveBeenCalledWith({
         requestHandler: expect.any(Object),
         userBuilder: authenticator,
+        legacyCompat: {enabled: true},
       });
       expect(warnSpy).not.toHaveBeenCalled();
 

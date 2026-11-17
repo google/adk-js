@@ -4,8 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Task, TaskStatusUpdateEvent, TextPart} from '@a2a-js/sdk';
-import {ExecutionEventBus, RequestContext} from '@a2a-js/sdk/server';
+import {Role, Task, TaskState, TaskStatusUpdateEvent} from '@a2a-js/sdk';
+import {
+  AgentExecutionEvent,
+  ExecutionEventBus,
+  RequestContext,
+} from '@a2a-js/sdk/server';
 import {
   A2AAgentExecutor,
   Event as AdkEvent,
@@ -18,6 +22,11 @@ import {
   Session,
 } from '@google/adk';
 import {beforeEach, describe, expect, it, Mocked, vi} from 'vitest';
+import {
+  createMessage,
+  createTextPart,
+  isFinalTaskStatusUpdateEvent,
+} from '../../src/a2a/a2a_event.js';
 
 // Mock the Runner to control its async generator
 vi.mock('../../src/runner/runner.js', async (importOriginal) => {
@@ -42,6 +51,35 @@ const EXPECTED_SESSION_METADATA = {
   'adk_session_id': 'session-id',
 };
 
+/** An existing task that waits for the user to answer a function call. */
+function inputRequiredTask(): Task {
+  return {
+    id: 'test-task',
+    contextId: 'test-context',
+    status: {
+      state: TaskState.TASK_STATE_INPUT_REQUIRED,
+      message: createMessage({
+        role: Role.ROLE_AGENT,
+        parts: [
+          {
+            content: {
+              $case: 'data',
+              value: {id: 'fc-123', name: 'mockFunction'},
+            },
+            metadata: {'adk_type': 'function_call'},
+            filename: '',
+            mediaType: '',
+          },
+        ],
+      }),
+      timestamp: undefined,
+    },
+    artifacts: [],
+    history: [],
+    metadata: undefined,
+  };
+}
+
 describe('A2AAgentExecutor', () => {
   let mockSessionService: Mocked<BaseSessionService>;
   let mockEventBus: Mocked<ExecutionEventBus>;
@@ -63,11 +101,27 @@ describe('A2AAgentExecutor', () => {
     } as unknown as Mocked<ExecutionEventBus>;
   });
 
+  /** The events published to the event bus, in order. */
+  const publishedEvents = (): AgentExecutionEvent[] =>
+    mockEventBus.publish.mock.calls.map(
+      ([event]) => event as AgentExecutionEvent,
+    );
+
+  /** Unwraps the data of an event published to the event bus. */
+  const dataOf = <T>(index: number, kind: AgentExecutionEvent['kind']): T => {
+    const event = publishedEvents()[index];
+    expect(event.kind).toBe(kind);
+    return event.data as T;
+  };
+
   const createRequestContext = (overrides = {}): RequestContext => {
     return {
       contextId: 'test-context',
       taskId: 'test-task',
-      userMessage: {role: 'user', parts: [{kind: 'text', text: 'hello'}]}, // a2a UserMessage
+      userMessage: createMessage({
+        role: Role.ROLE_USER,
+        parts: [createTextPart('hello')],
+      }), // a2a UserMessage
       ...overrides,
     } as unknown as RequestContext;
   };
@@ -163,12 +217,115 @@ describe('A2AAgentExecutor', () => {
     // Task + Working + 2 task artifact updates + 1 final task status
     expect(mockEventBus.publish).toHaveBeenCalledTimes(5);
 
+    // The run opens with a new task: submitted, with the user message in its history
+    const task = dataOf<Task>(0, 'task');
+    expect(task.id).toBe('test-task');
+    expect(task.contextId).toBe('test-context');
+    expect(task.status?.state).toBe(TaskState.TASK_STATE_SUBMITTED);
+    expect(task.history).toHaveLength(1);
+    expect(task.history[0].role).toBe(Role.ROLE_USER);
+    expect(task.history[0].parts[0].content).toEqual({
+      $case: 'text',
+      value: 'hello',
+    });
+
     // Assert that the second published event is the "Working" event
-    expect(mockEventBus.publish).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        kind: 'status-update',
+    expect(publishedEvents()[1].kind).toBe('statusUpdate');
+    expect(dataOf<TaskStatusUpdateEvent>(1, 'statusUpdate').status?.state).toBe(
+      TaskState.TASK_STATE_WORKING,
+    );
+    expect(publishedEvents()[2].kind).toBe('artifactUpdate');
+    expect(publishedEvents()[3].kind).toBe('artifactUpdate');
+
+    // The run ends with a completed status update
+    const finalEvent = dataOf<TaskStatusUpdateEvent>(4, 'statusUpdate');
+    expect(finalEvent.status?.state).toBe(TaskState.TASK_STATE_COMPLETED);
+  });
+
+  it('opens a continued task with a snapshot of the existing task, not a new task', async () => {
+    mockSessionService.getSession.mockResolvedValue(
+      createSession({
+        id: 'session-id',
+        userId: 'test-user',
+        appName: 'test-app',
       }),
+    );
+
+    async function* mockRunAsync() {
+      yield createEvent({
+        author: 'model',
+        content: {role: 'model', parts: [{text: 'response'}]},
+        partial: false,
+        actions: createEventActions(),
+      });
+    }
+
+    vi.mocked(Runner).mockImplementation(function (config: RunnerConfig) {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: mockRunAsync,
+      } as unknown as Runner;
+    });
+
+    const executor = new A2AAgentExecutor({
+      runner: {appName: 'test-app', sessionService: mockSessionService},
+    });
+
+    const existingTask: Task = {
+      ...inputRequiredTask(),
+      id: 'existing-task',
+      contextId: 'existing-context',
+      // No pending request, so the run proceeds; a state other than WORKING
+      // shows the snapshot's state comes from the executor.
+      status: {
+        state: TaskState.TASK_STATE_SUBMITTED,
+        message: undefined,
+        timestamp: undefined,
+      },
+      history: [
+        createMessage({
+          role: Role.ROLE_USER,
+          parts: [createTextPart('earlier turn')],
+        }),
+      ],
+      artifacts: [
+        {
+          artifactId: 'earlier-artifact',
+          name: '',
+          description: '',
+          parts: [createTextPart('earlier output')],
+          metadata: undefined,
+          extensions: [],
+        },
+      ],
+    };
+    await executor.execute(
+      createRequestContext({task: existingTask}),
+      mockEventBus,
+    );
+
+    // The snapshot carries the id and context of the existing task, a working
+    // state, and no history or artifacts of earlier turns.
+    const snapshot = dataOf<Task>(0, 'task');
+    expect(snapshot.id).toBe('existing-task');
+    expect(snapshot.contextId).toBe('existing-context');
+    expect(snapshot.status?.state).toBe(TaskState.TASK_STATE_WORKING);
+    expect(snapshot.history).toEqual([]);
+    expect(snapshot.artifacts).toEqual([]);
+    expect(snapshot.metadata).toEqual(EXPECTED_SESSION_METADATA);
+
+    expect(publishedEvents().map((event) => event.kind)).toEqual([
+      'task',
+      'statusUpdate',
+      'artifactUpdate',
+      'statusUpdate',
+    ]);
+    expect(dataOf<TaskStatusUpdateEvent>(1, 'statusUpdate').status?.state).toBe(
+      TaskState.TASK_STATE_WORKING,
+    );
+    expect(dataOf<TaskStatusUpdateEvent>(3, 'statusUpdate').status?.state).toBe(
+      TaskState.TASK_STATE_COMPLETED,
     );
   });
 
@@ -189,35 +346,19 @@ describe('A2AAgentExecutor', () => {
       } as unknown as RunnerConfig,
     });
 
-    const ctx = createRequestContext({
-      task: {
-        kind: 'task',
-        id: 'test-task',
-        contextId: 'test-context',
-        status: {
-          state: 'input-required',
-          message: {
-            role: 'agent',
-            parts: [
-              {
-                kind: 'data',
-                metadata: {'adk_type': 'function_call'},
-                data: {id: 'fc-123', name: 'mockFunction'},
-              },
-            ],
-          },
-        },
-      },
-    });
+    const ctx = createRequestContext({task: inputRequiredTask()});
 
     await executor.execute(ctx, mockEventBus);
 
-    // No runner execution should happen, just publish input required event
-    expect(mockEventBus.publish).toHaveBeenCalledTimes(1);
-    const event = mockEventBus.publish.mock
-      .calls[0][0] as TaskStatusUpdateEvent;
-    expect(event.kind).toBe('status-update');
-    expect(event.status.state).toBe('input-required');
+    // No runner execution should happen: a snapshot of the existing task, then
+    // the input required event
+    expect(mockEventBus.publish).toHaveBeenCalledTimes(2);
+    const snapshot = dataOf<Task>(0, 'task');
+    expect(snapshot.id).toBe('test-task');
+    expect(snapshot.contextId).toBe('test-context');
+    expect(snapshot.status?.state).toBe(TaskState.TASK_STATE_INPUT_REQUIRED);
+    const event = dataOf<TaskStatusUpdateEvent>(1, 'statusUpdate');
+    expect(event.status?.state).toBe(TaskState.TASK_STATE_INPUT_REQUIRED);
   });
 
   it('should publish the task and working events with ADK session metadata', async () => {
@@ -252,13 +393,11 @@ describe('A2AAgentExecutor', () => {
 
     await executor.execute(createRequestContext(), mockEventBus);
 
-    const task = mockEventBus.publish.mock.calls[0][0] as Task;
-    expect(task.kind).toBe('task');
+    const task = dataOf<Task>(0, 'task');
     expect(task.metadata).toEqual(EXPECTED_SESSION_METADATA);
 
-    const workingEvent = mockEventBus.publish.mock
-      .calls[1][0] as TaskStatusUpdateEvent;
-    expect(workingEvent.status.state).toBe('working');
+    const workingEvent = dataOf<TaskStatusUpdateEvent>(1, 'statusUpdate');
+    expect(workingEvent.status?.state).toBe(TaskState.TASK_STATE_WORKING);
     expect(workingEvent.metadata).toEqual(EXPECTED_SESSION_METADATA);
   });
 
@@ -275,33 +414,14 @@ describe('A2AAgentExecutor', () => {
       runner: {appName: 'test-app', sessionService: mockSessionService},
     });
 
-    const ctx = createRequestContext({
-      task: {
-        kind: 'task',
-        id: 'test-task',
-        contextId: 'test-context',
-        status: {
-          state: 'input-required',
-          message: {
-            role: 'agent',
-            parts: [
-              {
-                kind: 'data',
-                metadata: {'adk_type': 'function_call'},
-                data: {id: 'fc-123', name: 'mockFunction'},
-              },
-            ],
-          },
-        },
-      },
-    });
+    const ctx = createRequestContext({task: inputRequiredTask()});
 
     await executor.execute(ctx, mockEventBus);
 
-    expect(mockEventBus.publish).toHaveBeenCalledTimes(1);
-    const event = mockEventBus.publish.mock
-      .calls[0][0] as TaskStatusUpdateEvent;
-    expect(event.status.state).toBe('input-required');
+    expect(mockEventBus.publish).toHaveBeenCalledTimes(2);
+    expect(dataOf<Task>(0, 'task').metadata).toEqual(EXPECTED_SESSION_METADATA);
+    const event = dataOf<TaskStatusUpdateEvent>(1, 'statusUpdate');
+    expect(event.status?.state).toBe(TaskState.TASK_STATE_INPUT_REQUIRED);
     expect(event.metadata).toEqual(EXPECTED_SESSION_METADATA);
   });
 
@@ -352,12 +472,90 @@ describe('A2AAgentExecutor', () => {
     }
     expect(mockEventBus.publish).toHaveBeenCalledTimes(4);
 
-    const lastCallArg = mockEventBus.publish.mock
-      .calls[3][0] as TaskStatusUpdateEvent;
-    expect(lastCallArg.kind).toBe('status-update');
-    expect(lastCallArg.status.state).toBe('failed');
-    const firstPart = lastCallArg.status.message!.parts[0] as TextPart;
-    expect(firstPart.text).toContain('LLM failed');
+    expect(publishedEvents().map((event) => event.kind)).toEqual([
+      'task',
+      'statusUpdate',
+      'artifactUpdate',
+      'statusUpdate',
+    ]);
+    const lastCallArg = dataOf<TaskStatusUpdateEvent>(3, 'statusUpdate');
+    expect(lastCallArg.status?.state).toBe(TaskState.TASK_STATE_FAILED);
+    const content = lastCallArg.status!.message!.parts[0].content;
+    expect(content?.$case).toBe('text');
+    expect((content as {value: string}).value).toContain('LLM failed');
+  });
+
+  it('publishes the task before the failed status when an error happens before the task is published', async () => {
+    mockSessionService.getSession.mockResolvedValue(
+      createSession({
+        id: 'session-id',
+        userId: 'test-user',
+        appName: 'test-app',
+      }),
+    );
+    const mockRunAsync = vi.fn(async function* () {});
+    vi.mocked(Runner).mockImplementation(function (config: RunnerConfig) {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: mockRunAsync,
+      } as unknown as Runner;
+    });
+
+    const executor = new A2AAgentExecutor({
+      runner: {appName: 'test-app', sessionService: mockSessionService},
+      beforeExecuteCallback: async () => {
+        throw new Error('rejected by callback');
+      },
+    });
+
+    await executor.execute(createRequestContext(), mockEventBus);
+
+    expect(mockRunAsync).not.toHaveBeenCalled();
+    expect(publishedEvents().map((event) => event.kind)).toEqual([
+      'task',
+      'statusUpdate',
+    ]);
+    const task = dataOf<Task>(0, 'task');
+    expect(task.id).toBe('test-task');
+    expect(task.status?.state).toBe(TaskState.TASK_STATE_SUBMITTED);
+    expect(task.history).toHaveLength(1);
+    const failed = dataOf<TaskStatusUpdateEvent>(1, 'statusUpdate');
+    expect(failed.status?.state).toBe(TaskState.TASK_STATE_FAILED);
+    const content = failed.status!.message!.parts[0].content;
+    expect((content as {value: string}).value).toContain(
+      'rejected by callback',
+    );
+  });
+
+  it('publishes a snapshot of the existing task before the failed status when a continued task fails early', async () => {
+    mockSessionService.getSession.mockResolvedValue(
+      createSession({
+        id: 'session-id',
+        userId: 'test-user',
+        appName: 'test-app',
+      }),
+    );
+    const executor = new A2AAgentExecutor({
+      runner: {appName: 'test-app', sessionService: mockSessionService},
+      beforeExecuteCallback: async () => {
+        throw new Error('rejected by callback');
+      },
+    });
+
+    await executor.execute(
+      createRequestContext({task: inputRequiredTask()}),
+      mockEventBus,
+    );
+
+    const snapshot = dataOf<Task>(0, 'task');
+    expect(snapshot.id).toBe('test-task');
+    expect(snapshot.status?.state).toBe(TaskState.TASK_STATE_INPUT_REQUIRED);
+    expect(snapshot.history).toEqual([]);
+    expect(snapshot.artifacts).toEqual([]);
+    expect(dataOf<TaskStatusUpdateEvent>(1, 'statusUpdate').status?.state).toBe(
+      TaskState.TASK_STATE_FAILED,
+    );
   });
 
   it('marks the run as remote-delivered, preserving the configured run config', async () => {
@@ -488,14 +686,14 @@ describe('A2AAgentExecutor', () => {
       });
     });
 
-    const finalStates = (): string[] =>
-      mockEventBus.publish.mock.calls
-        .map(([event]) => event)
+    const finalStates = (): TaskState[] =>
+      publishedEvents()
         .filter(
-          (event): event is TaskStatusUpdateEvent =>
-            event.kind === 'status-update' && event.final,
+          (event) =>
+            event.kind === 'statusUpdate' &&
+            isFinalTaskStatusUpdateEvent(event.data),
         )
-        .map((event) => event.status.state);
+        .map((event) => (event.data as TaskStatusUpdateEvent).status!.state);
 
     it.each([
       {kind: 'a sync', factory: () => vi.fn(runnerConfig)},
@@ -511,7 +709,10 @@ describe('A2AAgentExecutor', () => {
 
         expect(runnerFactory).toHaveBeenCalledTimes(1);
         expect(Runner).toHaveBeenCalledTimes(1);
-        expect(finalStates()).toEqual(['completed', 'completed']);
+        expect(finalStates()).toEqual([
+          TaskState.TASK_STATE_COMPLETED,
+          TaskState.TASK_STATE_COMPLETED,
+        ]);
       },
     );
 
@@ -550,7 +751,7 @@ describe('A2AAgentExecutor', () => {
       await executor.execute(createRequestContext(), mockEventBus);
 
       expect(runnerFactory).toHaveBeenCalledTimes(2);
-      expect(finalStates()).toEqual(['completed']);
+      expect(finalStates()).toEqual([TaskState.TASK_STATE_COMPLETED]);
     });
   });
 
@@ -596,12 +797,11 @@ describe('A2AAgentExecutor', () => {
 
     await executor.execute(createRequestContext(), mockEventBus);
 
-    expect(mockEventBus.publish).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        kind: 'status-update',
-        final: true,
-        status: expect.objectContaining({state: 'auth-required'}),
-      }),
-    );
+    expect(publishedEvents()[0].kind).toBe('task');
+    const lastEvent = publishedEvents().at(-1)!;
+    expect(lastEvent.kind).toBe('statusUpdate');
+    const finalStatus = lastEvent.data as TaskStatusUpdateEvent;
+    expect(finalStatus.status?.state).toBe(TaskState.TASK_STATE_AUTH_REQUIRED);
+    expect(isFinalTaskStatusUpdateEvent(finalStatus)).toBe(true);
   });
 });

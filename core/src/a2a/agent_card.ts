@@ -6,6 +6,7 @@
 
 import {AgentCard, AgentInterface, AgentSkill} from '@a2a-js/sdk';
 import {DefaultAgentCardResolver} from '@a2a-js/sdk/client';
+import {isLegacyAgentCard} from '@a2a-js/sdk/compat/v0_3/client';
 import * as fs from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {BaseAgent} from '../agents/base_agent.js';
@@ -145,8 +146,7 @@ export async function resolveAgentCard(
       }
       return await resolveAgentCardSource(source, options);
     }
-    validateResolvedAgentCard(agentCard);
-    return agentCard;
+    return normalizeAgentCard(agentCard);
   } catch (e: unknown) {
     throw new AgentCardResolutionError(getErrorMessage(e), {cause: e});
   }
@@ -160,6 +160,7 @@ async function resolveAgentCardSource(
   if (source.startsWith('http://') || source.startsWith('https://')) {
     await refuseLinkLocalHost(source);
     const resolver = new DefaultAgentCardResolver({
+      legacyCompat: {enabled: true},
       fetchImpl:
         options.timeoutMs === undefined
           ? tracePropagatingRefuseRedirectFetch
@@ -182,16 +183,48 @@ async function resolveAgentCardSource(
         'Use http://, https:// or file://, or pass a filesystem path with no scheme.',
     );
   }
-  const card = await readAgentCardFile(source, url);
-  validateResolvedAgentCard(card);
-  return card;
+  return normalizeAgentCard(await readAgentCardFile(source, url));
 }
 
 /**
- * Checks that a resolved card is a plain object whose `url` parses with a
- * scheme and a host.
+ * Resolves cards with the A2A v0.3 shape (a top-level `url`, `protocolVersion`
+ * and `additionalInterfaces`) into the A2A v1.0 shape, whose interfaces carry
+ * their own protocol version.
  */
-function validateResolvedAgentCard(card: unknown): asserts card is AgentCard {
+const legacyAwareCardResolver = new DefaultAgentCardResolver({
+  legacyCompat: {enabled: true},
+});
+
+/**
+ * Validates a card provided as an object or read from a file and converts it
+ * to the A2A v1.0 shape.
+ *
+ * An A2A v0.3 card keeps working: its interfaces are marked with protocol
+ * version 0.3, so a client created from it speaks 0.3. The fields v0.3 requires
+ * but older cards often omit (`capabilities`, the default modes and `skills`)
+ * default to empty values rather than failing the conversion.
+ */
+function normalizeAgentCard(card: unknown): AgentCard {
+  validateAgentCardObject(card);
+  const normalized = legacyAwareCardResolver.normalizeAgentCard(
+    isLegacyAgentCard(card)
+      ? {
+          capabilities: {},
+          defaultInputModes: [],
+          defaultOutputModes: [],
+          skills: [],
+          ...card,
+        }
+      : card,
+  );
+  validateResolvedAgentCard(normalized);
+  return normalized;
+}
+
+/** Checks that a card is a plain, non-null object. */
+function validateAgentCardObject(
+  card: unknown,
+): asserts card is Record<string, unknown> {
   if (
     typeof card !== 'object' ||
     card === null ||
@@ -200,22 +233,44 @@ function validateResolvedAgentCard(card: unknown): asserts card is AgentCard {
   ) {
     throw new Error('Agent card must be a non-null object.');
   }
-  if (!('url' in card) || typeof card.url !== 'string' || !card.url.trim()) {
+}
+
+/**
+ * Checks that a resolved card is a plain object that declares at least one
+ * interface, and that the `url` of each interface parses with a scheme and a
+ * host.
+ */
+function validateResolvedAgentCard(card: unknown): asserts card is AgentCard {
+  validateAgentCardObject(card);
+  const interfaces = card['supportedInterfaces'];
+  if (!Array.isArray(interfaces) || interfaces.length === 0) {
     throw new Error(
-      'Invalid RPC URL in agent card: Agent card must have a valid URL.',
+      'Invalid RPC URL in agent card: Agent card must declare at least one ' +
+        'supported interface with a valid URL.',
     );
   }
-  let parsed: URL;
-  try {
-    parsed = new URL(card.url);
-  } catch (err: unknown) {
-    throw new Error(
-      `Invalid RPC URL in agent card: ${card.url}: ${getErrorMessage(err)}`,
-      {cause: err},
-    );
-  }
-  if (!parsed.protocol || !parsed.host) {
-    throw new Error(`Invalid RPC URL in agent card: ${card.url}`);
+  for (const agentInterface of interfaces as unknown[]) {
+    const url =
+      typeof agentInterface === 'object' && agentInterface !== null
+        ? (agentInterface as Partial<AgentInterface>).url
+        : undefined;
+    if (typeof url !== 'string' || !url.trim()) {
+      throw new Error(
+        'Invalid RPC URL in agent card: Agent card must have a valid URL.',
+      );
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch (err: unknown) {
+      throw new Error(
+        `Invalid RPC URL in agent card: ${url}: ${getErrorMessage(err)}`,
+        {cause: err},
+      );
+    }
+    if (!parsed.protocol || !parsed.host) {
+      throw new Error(`Invalid RPC URL in agent card: ${url}`);
+    }
   }
 }
 
@@ -308,11 +363,11 @@ function parseCardUrl(source: string): URL | null {
 async function readAgentCardFile(
   source: string,
   url: URL | null,
-): Promise<AgentCard> {
+): Promise<unknown> {
   try {
     const path = url ? fileURLToPath(url) : source;
     const content = await fs.readFile(path, 'utf-8');
-    return JSON.parse(content) as AgentCard;
+    return JSON.parse(content) as unknown;
   } catch (err: unknown) {
     throw new Error(
       `Failed to read agent card from file ${source}: ${getErrorMessage(err)}`,
@@ -334,8 +389,8 @@ async function readAgentCardFile(
  * carries, would go to wherever the card says, not wherever it was
  * actually fetched from.
  *
- * Every URL the card offers is checked (the primary `url` and each of
- * `additionalInterfaces`), not only whichever one a given transport
+ * Every URL the card offers is checked (the `url` of each of its
+ * `supportedInterfaces`), not only whichever one a given transport
  * negotiation would select, since any of them could end up being used.
  * This applies two independent checks, each with its own escape hatch
  * (see {@link ResolveAgentCardOptions}), since they defend against
@@ -367,10 +422,9 @@ function validateCardRpcTargets(
     );
   }
 
-  const rpcUrls: string[] = [
-    card.url,
-    ...(card.additionalInterfaces ?? []).map((i: AgentInterface) => i.url),
-  ];
+  const rpcUrls: string[] = card.supportedInterfaces.map(
+    (i: AgentInterface) => i.url,
+  );
 
   for (const rpcUrl of rpcUrls) {
     let parsed: URL;
@@ -475,7 +529,12 @@ function isLoopbackHost(hostname: string): boolean {
 }
 
 /**
- * Converts an ADK agent to an A2A AgentCard.
+ * Converts an ADK agent to an A2A v1.0 AgentCard.
+ *
+ * @param agent The agent the card describes.
+ * @param transports The interfaces the agent is served on, in order of
+ *     preference. Each one names its URL, protocol binding and A2A protocol
+ *     version.
  */
 export async function getA2AAgentCard(
   agent: RunnableRoot,
@@ -484,22 +543,27 @@ export async function getA2AAgentCard(
   return {
     name: agent.name,
     description: agent.description || '',
-    protocolVersion: '0.3.0',
+    supportedInterfaces: transports,
+    provider: undefined,
     version: '1.0.0',
     skills: await buildAgentSkills(agent),
-    url: transports[0].url,
-    preferredTransport: transports[0].transport,
     capabilities: {
       extensions: [],
-      stateTransitionHistory: false,
       pushNotifications: false,
       streaming: true,
     },
+    securitySchemes: {},
+    securityRequirements: [],
     defaultInputModes: ['text'],
     defaultOutputModes: ['text'],
-    additionalInterfaces: transports,
+    signatures: [],
   };
 }
+
+/**
+ * The fields of a skill the builders below set; the rest take their defaults.
+ */
+type SkillFields = Pick<AgentSkill, 'id' | 'name' | 'description' | 'tags'>;
 
 /**
  * Builds a list of AgentSkills based on agent descriptions and types.
@@ -516,10 +580,16 @@ export async function buildAgentSkills(
     buildSubAgentSkills(agent),
   ]);
 
-  return [...primarySkills, ...subAgentSkills];
+  return [...primarySkills, ...subAgentSkills].map((skill) => ({
+    ...skill,
+    examples: [],
+    inputModes: [],
+    outputModes: [],
+    securityRequirements: [],
+  }));
 }
 
-async function buildPrimarySkills(agent: RunnableRoot): Promise<AgentSkill[]> {
+async function buildPrimarySkills(agent: RunnableRoot): Promise<SkillFields[]> {
   if (isWorkflow(agent)) {
     // A workflow advertises itself as one skill. It has no sub-agents to
     // enumerate, and its internals are a graph rather than a roster.
@@ -539,16 +609,18 @@ async function buildPrimarySkills(agent: RunnableRoot): Promise<AgentSkill[]> {
   return buildNonLLMAgentSkills(agent);
 }
 
-async function buildSubAgentSkills(agent: RunnableRoot): Promise<AgentSkill[]> {
+async function buildSubAgentSkills(
+  agent: RunnableRoot,
+): Promise<SkillFields[]> {
   // A workflow has nodes, not sub-agents: its shape is described by the single
   // `workflow` skill rather than one skill per child.
   const subAgents = isWorkflow(agent) ? [] : agent.subAgents;
-  const result: AgentSkill[] = [];
+  const result: SkillFields[] = [];
 
   for (const sub of subAgents) {
     const skills = await buildPrimarySkills(sub);
     for (const subSkill of skills) {
-      const skill: AgentSkill = {
+      const skill: SkillFields = {
         id: `${sub.name}_${subSkill.id}`,
         name: `${sub.name}: ${subSkill.name}`,
         description: subSkill.description,
@@ -561,12 +633,12 @@ async function buildSubAgentSkills(agent: RunnableRoot): Promise<AgentSkill[]> {
   return result;
 }
 
-async function buildLLMAgentSkills(agent: LlmAgent): Promise<AgentSkill[]> {
+async function buildLLMAgentSkills(agent: LlmAgent): Promise<SkillFields[]> {
   // The card is a discovery document served without authentication (even when
   // the A2A RPC endpoints require authentication), so the skill description
   // comes from the agent's own public description and never from its
   // instructions.
-  const skills: AgentSkill[] = [
+  const skills: SkillFields[] = [
     {
       id: agent.name,
       name: 'model',
@@ -601,7 +673,7 @@ async function buildLLMAgentSkills(agent: LlmAgent): Promise<AgentSkill[]> {
   return skills;
 }
 
-function toolToSkill(prefix: string, tool: BaseTool): AgentSkill {
+function toolToSkill(prefix: string, tool: BaseTool): SkillFields {
   let description = tool.description;
   if (!description) {
     description = `Tool: ${tool.name}`;
@@ -615,8 +687,8 @@ function toolToSkill(prefix: string, tool: BaseTool): AgentSkill {
   };
 }
 
-function buildNonLLMAgentSkills(agent: BaseAgent): AgentSkill[] {
-  const skills: AgentSkill[] = [
+function buildNonLLMAgentSkills(agent: BaseAgent): SkillFields[] {
+  const skills: SkillFields[] = [
     {
       id: agent.name,
       name: getAgentSkillName(agent),

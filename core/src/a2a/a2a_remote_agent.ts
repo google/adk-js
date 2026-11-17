@@ -9,8 +9,8 @@ import {
   AGENT_CARD_PATH,
   AgentCard,
   Message,
-  MessageSendConfiguration,
-  MessageSendParams,
+  SendMessageConfiguration,
+  SendMessageRequest,
   Task,
   TaskArtifactUpdateEvent,
   TaskStatusUpdateEvent,
@@ -19,6 +19,7 @@ import {
   Client,
   ClientFactory,
   ClientFactoryOptions,
+  DefaultAgentCardResolver,
   JsonRpcTransportFactory,
   RestTransportFactory,
 } from '@a2a-js/sdk/client';
@@ -26,11 +27,15 @@ import {BaseAgent, BaseAgentConfig} from '../agents/base_agent.js';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {Event as AdkEvent, createEvent} from '../events/event.js';
 import {propagateTraceContext} from '../telemetry/api/instrumentation.js';
-import {randomUUID} from '../utils/env_aware_utils.js';
 import {getErrorMessage} from '../utils/error_utils.js';
 import {fetchWithTimeout} from '../utils/fetch_utils.js';
 import {logger} from '../utils/logger.js';
-import {MessageRole} from './a2a_event.js';
+import {
+  createMessage,
+  isTask,
+  isTurnEndingTaskState,
+  Role,
+} from './a2a_event.js';
 import {A2ARemoteAgentRunProcessor} from './a2a_remote_agent_run_processor.js';
 import {
   getUserFunctionCallAt,
@@ -49,7 +54,8 @@ import {
 export {AGENT_CARD_PATH};
 
 /**
- * Type alias for A2A stream event data.
+ * Type alias for A2A stream event data: the payload of one A2A v1.0
+ * `StreamResponse`, or the result of a `SendMessage` call.
  */
 export type A2AStreamEventData =
   Message | Task | TaskStatusUpdateEvent | TaskArtifactUpdateEvent;
@@ -60,14 +66,14 @@ export type A2AStreamEventData =
  *
  * @param ctx - The current invocation context, providing access to session
  *   state, agent metadata, and services.
- * @param params - The A2A message send parameters that will be sent to the
+ * @param params - The A2A `SendMessageRequest` that will be sent to the
  *   remote agent. Mutations to this object are reflected in the outgoing
  *   request.
  * @returns A Promise or void. Returning a rejected Promise aborts the request.
  */
 export type BeforeA2ARequestCallback = (
   ctx: InvocationContext,
-  params: MessageSendParams,
+  params: SendMessageRequest,
 ) => Promise<void> | void;
 
 /**
@@ -92,6 +98,11 @@ export type AfterA2ARequestCallback = (
 export interface RemoteA2AAgentConfig extends BaseAgentConfig {
   /**
    * Loaded AgentCard or URL to AgentCard.
+   *
+   * The agent speaks the A2A protocol version the card declares: A2A v1.0
+   * when the card lists a v1.0 interface, and otherwise A2A v0.3. A card in
+   * the A2A v0.3 shape (with a top-level `url`) is accepted too, and is spoken
+   * to over v0.3.
    */
   agentCard?: AgentCard | string;
 
@@ -120,9 +131,10 @@ export interface RemoteA2AAgentConfig extends BaseAgentConfig {
    */
   clientFactory?: ClientFactory;
   /**
-   * Optional default configuration for sending messages.
+   * Optional default configuration for sending messages. Fields left unset
+   * take their A2A defaults.
    */
-  messageSendConfig?: MessageSendConfiguration;
+  messageSendConfig?: Partial<SendMessageConfiguration>;
   /**
    * Callbacks run before the remote request is sent.
    */
@@ -190,17 +202,58 @@ function adoptCardDescription(
  * Creates the default client factory, whose JSON-RPC and REST transports send
  * the active trace context with each request, streaming ones included, and
  * abort a request whose response headers do not arrive within `timeoutMs`.
+ *
+ * The client speaks A2A v1.0 when the card declares a v1.0 interface. For a
+ * card that declares only A2A v0.3 interfaces, the transports fall back to the
+ * v0.3 compatibility transports of `@a2a-js/sdk`.
  */
 function createTracePropagatingClientFactory(timeoutMs: number): ClientFactory {
   const fetchImpl = propagateTraceContext(fetchWithTimeout({timeoutMs}));
+  const legacyCompat = {enabled: true};
   return new ClientFactory(
     ClientFactoryOptions.createFrom(ClientFactoryOptions.default, {
+      cardResolver: new DefaultAgentCardResolver({legacyCompat}),
       transports: [
-        new JsonRpcTransportFactory({fetchImpl}),
-        new RestTransportFactory({fetchImpl}),
+        new JsonRpcTransportFactory({fetchImpl, legacyCompat}),
+        new RestTransportFactory({fetchImpl, legacyCompat}),
       ],
     }),
   );
+}
+
+/**
+ * Fills the fields of a message send configuration that the caller left unset
+ * with their A2A defaults.
+ */
+function toSendMessageConfiguration(
+  config: Partial<SendMessageConfiguration> | undefined,
+): SendMessageConfiguration | undefined {
+  if (!config) {
+    return undefined;
+  }
+  return {
+    acceptedOutputModes: [],
+    taskPushNotificationConfig: undefined,
+    returnImmediately: false,
+    ...config,
+  };
+}
+
+/**
+ * Returns the part of a streamed event that is new output.
+ *
+ * An A2A v1.0 stream opens with the task. When the request continues an
+ * existing task, that task carries the artifacts and history of the earlier
+ * turns, which were already relayed; the output of this turn arrives in the
+ * updates that follow. So a task that has not ended the turn is converted
+ * without its artifacts and history. A task that ended the turn is the result
+ * itself and is converted whole.
+ */
+function toStreamedEvent(event: A2AStreamEventData): A2AStreamEventData {
+  if (isTask(event) && !isTurnEndingTaskState(event)) {
+    return {...event, artifacts: [], history: []};
+  }
+  return event;
 }
 
 /**
@@ -306,7 +359,7 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
       return;
     }
 
-    let params: MessageSendParams | undefined;
+    let params: SendMessageRequest | undefined;
     try {
       // 1. Convert current ADK state to A2A Message
       const events = context.session.events;
@@ -346,25 +399,26 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
         contextId = missing.contextId;
       }
 
-      const message: Message = {
-        kind: 'message',
-        messageId: randomUUID(),
-        role: MessageRole.USER,
+      const message: Message = createMessage({
+        role: Role.ROLE_USER,
         parts,
+        taskId,
+        contextId,
         metadata: getA2ASessionMetadata({
           appName: context.session.appName,
           userId: context.session.userId,
           sessionId: context.session.id,
         }),
-      };
-      if (taskId) message.taskId = taskId;
-      if (contextId) message.contextId = contextId;
+      });
 
       const metadata = this.a2aConfig.metadata ?? context.a2aMetadata;
       params = {
+        tenant: '',
         message,
-        configuration: this.a2aConfig.messageSendConfig,
-        ...(metadata ? {metadata} : {}),
+        configuration: toSendMessageConfiguration(
+          this.a2aConfig.messageSendConfig,
+        ),
+        metadata,
       };
 
       const processor = new A2ARemoteAgentRunProcessor(params);
@@ -381,7 +435,11 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
         ? this.card.capabilities?.streaming !== false
         : true;
       if (useStreaming) {
-        for await (const chunk of this.client!.sendMessageStream(params)) {
+        for await (const response of this.client!.sendMessageStream(params)) {
+          const chunk: A2AStreamEventData | undefined = response.payload?.value;
+          if (!chunk) {
+            continue;
+          }
           logger.debug(buildA2AResponseLog(chunk));
 
           if (this.a2aConfig.afterRequestCallbacks) {
@@ -391,7 +449,7 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
           }
 
           const adkEvent = toAdkEvent(
-            chunk,
+            toStreamedEvent(chunk),
             context.invocationId,
             this.name,
             context.branch,
@@ -442,7 +500,12 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
         errorMessage,
         customMetadata: {
           [`${A2A_METADATA_KEY_PREFIX}error`]: errorMessage,
-          ...(params ? {[`${A2A_METADATA_KEY_PREFIX}request`]: params} : {}),
+          ...(params
+            ? {
+                [`${A2A_METADATA_KEY_PREFIX}request`]:
+                  SendMessageRequest.toJSON(params),
+              }
+            : {}),
         },
         turnComplete: true,
       });

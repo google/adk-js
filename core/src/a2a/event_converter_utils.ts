@@ -22,20 +22,21 @@ import {
 import {Event as AdkEvent, createEvent} from '../events/event.js';
 import {createEventActions} from '../events/event_actions.js';
 import {withoutInternalMetadata} from '../events/internal_metadata.js';
-import {randomUUID} from '../utils/env_aware_utils.js';
 import {
   A2AEvent,
+  createMessage,
   getEventMetadata,
   getFailedTaskStatusUpdateEventError,
   isAuthRequiredTaskStatusUpdateEvent,
   isFailedTaskStatusUpdateEvent,
+  isFinalTaskStatusUpdateEvent,
   isInputRequiredTaskStatusUpdateEvent,
   isMessage,
   isTask,
   isTaskArtifactUpdateEvent,
   isTaskStatusUpdateEvent,
   isTerminalTaskStatusUpdateEvent,
-  MessageRole,
+  Role,
   TaskState,
 } from './a2a_event.js';
 import {
@@ -61,14 +62,11 @@ export function toA2AMessage(
     sessionId,
   }: {appName: string; userId: string; sessionId: string},
 ): Message {
-  return {
-    kind: 'message',
-    messageId: randomUUID(),
-    role:
-      event.author === MessageRole.USER ? MessageRole.USER : MessageRole.AGENT,
+  return createMessage({
+    role: event.author === 'user' ? Role.ROLE_USER : Role.ROLE_AGENT,
     parts: toA2AParts(event.content?.parts || [], event.longRunningToolIds),
     metadata: getA2AEventMetadata(event, {appName, userId, sessionId}),
-  };
+  });
 }
 
 /**
@@ -103,7 +101,7 @@ export function toAdkEvent(
   }
 
   if (isTaskStatusUpdateEvent(event)) {
-    return event.final
+    return isFinalTaskStatusUpdateEvent(event)
       ? finalTaskStatusUpdateToAdkEvent(event, invocationId, agentName, branch)
       : taskStatusUpdateToAdkEvent(event, invocationId, agentName, branch);
   }
@@ -121,7 +119,7 @@ function messageToAdkEvent(
   const content =
     parts.length === 0
       ? undefined
-      : msg.role === MessageRole.USER
+      : msg.role === Role.ROLE_USER
         ? createUserContent(parts)
         : createModelContent(parts);
 
@@ -175,7 +173,7 @@ function finalTaskStatusUpdateToAdkEvent(
   agentName: string,
   branch?: string,
 ): AdkEvent | undefined {
-  const partsToConvert = a2aEvent.status.message?.parts || [];
+  const partsToConvert = a2aEvent.status?.message?.parts || [];
   if (partsToConvert.length === 0) {
     return undefined;
   }
@@ -204,7 +202,7 @@ function taskStatusUpdateToAdkEvent(
   agentName: string,
   branch?: string,
 ): AdkEvent | undefined {
-  const msg = a2aEvent.status.message;
+  const msg = a2aEvent.status?.message;
   if (!msg) {
     return undefined;
   }
@@ -300,7 +298,7 @@ function taskToAdkEvent(
  */
 function getLastAgentMessageParts(history: Message[] = []): A2APart[] {
   for (let index = history.length - 1; index >= 0; index--) {
-    if (history[index].role === MessageRole.AGENT) {
+    if (history[index].role === Role.ROLE_AGENT) {
       return history[index].parts ?? [];
     }
   }
@@ -314,8 +312,8 @@ function getLastAgentMessageParts(history: Message[] = []): A2APart[] {
  */
 function isFinishedTask(a2aTask: Task): boolean {
   return (
-    a2aTask.status?.state === TaskState.COMPLETED ||
-    a2aTask.status?.state === TaskState.CANCELED
+    a2aTask.status?.state === TaskState.TASK_STATE_COMPLETED ||
+    a2aTask.status?.state === TaskState.TASK_STATE_CANCELED
   );
 }
 

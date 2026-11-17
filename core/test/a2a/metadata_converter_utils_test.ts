@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Message, Task} from '@a2a-js/sdk';
+import {Message, Role, Task, TaskState} from '@a2a-js/sdk';
 import {
   Event as AdkEvent,
   createEvent,
@@ -13,6 +13,7 @@ import {
   RESTORED_EVENT_KEY,
 } from '@google/adk';
 import {describe, expect, it, vi} from 'vitest';
+import {createMessage, createTextPart} from '../../src/a2a/a2a_event.js';
 import {toAdkEvent} from '../../src/a2a/event_converter_utils.js';
 import {
   type A2AContextIdParts,
@@ -37,10 +38,16 @@ describe('metadata_converter_utils', () => {
   describe('getAdkEventMetadata', () => {
     it('creates metadata for a Task', () => {
       const task: Task = {
-        kind: 'task',
         id: 'task-123',
         contextId: 'ctx-456',
-        status: {state: 'working'},
+        status: {
+          state: TaskState.TASK_STATE_WORKING,
+          message: undefined,
+          timestamp: undefined,
+        },
+        artifacts: [],
+        history: [],
+        metadata: undefined,
       };
       const metadata = getAdkEventMetadata(task);
       expect(metadata).toEqual({
@@ -50,14 +57,13 @@ describe('metadata_converter_utils', () => {
     });
 
     it('creates metadata for a Message (not a Task)', () => {
-      const message: Message = {
-        kind: 'message',
+      const message: Message = createMessage({
         messageId: 'msg-123',
-        role: 'user',
+        role: Role.ROLE_USER,
         taskId: 'task-789',
         contextId: 'ctx-012',
         parts: [],
-      };
+      });
       const metadata = getAdkEventMetadata(message);
       expect(metadata).toEqual({
         [AdkMetadataKeys.TASK_ID]: 'task-789',
@@ -159,13 +165,12 @@ describe('metadata_converter_utils', () => {
         userId: 'user-id',
         sessionId: 'session-id',
       });
-      const message: Message = {
-        kind: 'message',
+      const message: Message = createMessage({
         messageId: 'msg-1',
-        role: 'agent',
-        parts: [{kind: 'text', text: 'error'}],
+        role: Role.ROLE_AGENT,
+        parts: [createTextPart('error')],
         metadata,
-      };
+      });
 
       const roundTrippedEvent = toAdkEvent(message, 'inv-1', 'agent-1');
 
@@ -197,11 +202,10 @@ describe('metadata_converter_utils', () => {
     });
 
     it('drops ADK-internal customMetadata keys set by a remote peer', () => {
-      const message: Message = {
-        kind: 'message',
+      const message: Message = createMessage({
         messageId: 'msg-1',
-        role: 'agent',
-        parts: [{kind: 'text', text: 'hi'}],
+        role: Role.ROLE_AGENT,
+        parts: [createTextPart('hi')],
         metadata: {
           [A2AMetadataKeys.CUSTOM_METADATA]: {
             keep: 1,
@@ -209,7 +213,7 @@ describe('metadata_converter_utils', () => {
             [RESTORED_EVENT_KEY]: true,
           },
         },
-      };
+      });
 
       const event = toAdkEvent(message, 'inv-1', 'agent-1');
 

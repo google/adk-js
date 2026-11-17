@@ -6,6 +6,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import {AgentCard} from '@a2a-js/sdk';
 import {Client, ClientFactory} from '@a2a-js/sdk/client';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {
@@ -577,7 +578,8 @@ describe('AgentRegistry', () => {
             capabilities: {},
             defaultInputModes: [],
             defaultOutputModes: [],
-          },
+            // The registry can hold an A2A v0.3 card.
+          } as unknown as AgentCard,
         },
       };
 
@@ -623,7 +625,46 @@ describe('AgentRegistry', () => {
         description: '',
         tags: [],
         examples: [],
+        inputModes: [],
+        outputModes: [],
+        securityRequirements: [],
       });
+      // An interface whose version the registry does not name predates
+      // A2A v1.0.
+      expect((agent as any).a2aConfig.agentCard.supportedInterfaces).toEqual([
+        {
+          url: 'https://my-dynamic-agent.com',
+          protocolBinding: 'HTTP+JSON',
+          protocolVersion: '0.3',
+          tenant: '',
+        },
+      ]);
+    });
+
+    it('should keep the protocol version the registry names for an interface', async () => {
+      const agentInfo = {
+        displayName: 'DynamicV1Agent',
+        protocols: [
+          {
+            type: ProtocolType.A2A_AGENT,
+            protocolVersion: '1.0',
+            interfaces: [
+              {url: 'https://my-dynamic-agent.com', protocolBinding: 'JSONRPC'},
+            ],
+          },
+        ],
+      };
+
+      vi.spyOn(registry, 'getAgentInfo').mockResolvedValue(agentInfo);
+      const agent = await registry.getRemoteA2AAgent('agents/agent-1');
+      expect((agent as any).a2aConfig.agentCard.supportedInterfaces).toEqual([
+        {
+          url: 'https://my-dynamic-agent.com',
+          protocolBinding: 'JSONRPC',
+          protocolVersion: '1.0',
+          tenant: '',
+        },
+      ]);
     });
 
     it('should construct RemoteA2AAgent dynamically with empty options passed', async () => {
@@ -699,9 +740,10 @@ describe('AgentRegistry', () => {
       const agent = await registry.getRemoteA2AAgent('agents/agent-1');
       expect(agent).toBeInstanceOf(RemoteA2AAgent);
       expect(agent.name).toBe('DynamicAgentNoSkills');
-      expect((agent as any).a2aConfig.agentCard.preferredTransport).toBe(
-        'HTTP+JSON',
-      );
+      expect(
+        (agent as any).a2aConfig.agentCard.supportedInterfaces[0]
+          .protocolBinding,
+      ).toBe('HTTP+JSON');
       expect((agent as any).a2aConfig.agentCard.skills).toEqual([]);
     });
 
@@ -720,7 +762,8 @@ describe('AgentRegistry', () => {
             capabilities: {},
             defaultInputModes: [],
             defaultOutputModes: [],
-          },
+            // The registry can hold an A2A v0.3 card.
+          } as unknown as AgentCard,
         },
       };
 

@@ -5,7 +5,14 @@
  */
 
 import {describe, expect, it} from 'vitest';
-import {A2AEvent} from '../../src/a2a/a2a_event.js';
+import {
+  A2AEvent,
+  createMessage,
+  createTaskArtifactUpdateEvent,
+  createTaskCompletedEvent,
+  createTextPart,
+  Role,
+} from '../../src/a2a/a2a_event.js';
 import {A2ARemoteAgentRunProcessor} from '../../src/a2a/a2a_remote_agent_run_processor.js';
 import {InvocationContext} from '../../src/agents/invocation_context.js';
 import {createEvent} from '../../src/events/event.js';
@@ -23,26 +30,24 @@ describe('A2ARemoteAgentRunProcessor', () => {
     const processor = new A2ARemoteAgentRunProcessor();
     const context = createMockContext();
 
-    const a2aEvent1: A2AEvent = {
-      kind: 'artifact-update',
-      append: true,
-      lastChunk: false,
-      artifact: {artifactId: 'art-1', parts: []},
+    const a2aEvent1: A2AEvent = createTaskArtifactUpdateEvent({
       taskId: 't1',
       contextId: 'c1',
-    };
+      artifactId: 'art-1',
+      append: true,
+      lastChunk: false,
+    });
     const adkEvent1 = createEvent({
       content: {role: 'model', parts: [{text: 'Hello'}]},
     });
 
-    const a2aEvent2: A2AEvent = {
-      kind: 'artifact-update',
-      append: true,
-      lastChunk: true,
-      artifact: {artifactId: 'art-1', parts: []},
+    const a2aEvent2: A2AEvent = createTaskArtifactUpdateEvent({
       taskId: 't1',
       contextId: 'c1',
-    };
+      artifactId: 'art-1',
+      append: true,
+      lastChunk: true,
+    });
     const adkEvent2 = createEvent({
       content: {role: 'model', parts: [{text: ' World'}]},
     });
@@ -62,26 +67,24 @@ describe('A2ARemoteAgentRunProcessor', () => {
     const processor = new A2ARemoteAgentRunProcessor();
     const context = createMockContext();
 
-    const a2aEvent1: A2AEvent = {
-      kind: 'artifact-update',
-      append: true,
-      lastChunk: false,
-      artifact: {artifactId: 'art-1', parts: []},
+    const a2aEvent1: A2AEvent = createTaskArtifactUpdateEvent({
       taskId: 't1',
       contextId: 'c1',
-    };
+      artifactId: 'art-1',
+      append: true,
+      lastChunk: false,
+    });
     const adkEvent1 = createEvent({
       content: {role: 'model', parts: [{thought: true, text: 'Thinking'}]},
     });
 
-    const a2aEvent2: A2AEvent = {
-      kind: 'artifact-update',
-      append: true,
-      lastChunk: true,
-      artifact: {artifactId: 'art-1', parts: []},
+    const a2aEvent2: A2AEvent = createTaskArtifactUpdateEvent({
       taskId: 't1',
       contextId: 'c1',
-    };
+      artifactId: 'art-1',
+      append: true,
+      lastChunk: true,
+    });
     const adkEvent2 = createEvent({
       content: {role: 'model', parts: [{thought: true, text: ' hard'}]},
     });
@@ -97,26 +100,24 @@ describe('A2ARemoteAgentRunProcessor', () => {
     const processor = new A2ARemoteAgentRunProcessor();
     const context = createMockContext();
 
-    const a2aEvent1: A2AEvent = {
-      kind: 'artifact-update',
-      append: true,
-      lastChunk: false,
-      artifact: {artifactId: 'art-1', parts: []},
+    const a2aEvent1: A2AEvent = createTaskArtifactUpdateEvent({
       taskId: 't1',
       contextId: 'c1',
-    };
+      artifactId: 'art-1',
+      append: true,
+      lastChunk: false,
+    });
     const adkEvent1 = createEvent({
       citationMetadata: {citations: [{uri: 'http://a.com'}]},
     });
 
-    const a2aEvent2: A2AEvent = {
-      kind: 'artifact-update',
-      append: true,
-      lastChunk: true,
-      artifact: {artifactId: 'art-1', parts: []},
+    const a2aEvent2: A2AEvent = createTaskArtifactUpdateEvent({
       taskId: 't1',
       contextId: 'c1',
-    };
+      artifactId: 'art-1',
+      append: true,
+      lastChunk: true,
+    });
     const adkEvent2 = createEvent({
       citationMetadata: {citations: [{uri: 'http://b.com'}]},
     });
@@ -138,26 +139,24 @@ describe('A2ARemoteAgentRunProcessor', () => {
     const processor = new A2ARemoteAgentRunProcessor();
     const context = createMockContext();
 
-    const a2aEvent1: A2AEvent = {
-      kind: 'artifact-update',
-      append: true,
-      lastChunk: false,
-      artifact: {artifactId: 'art-1', parts: []},
+    const a2aEvent1: A2AEvent = createTaskArtifactUpdateEvent({
       taskId: 't1',
       contextId: 'c1',
-    };
+      artifactId: 'art-1',
+      append: true,
+      lastChunk: false,
+    });
     const adkEvent1 = createEvent({
       customMetadata: {foo: 'bar'},
     });
 
-    const a2aEvent2: A2AEvent = {
-      kind: 'artifact-update',
-      append: true,
-      lastChunk: true,
-      artifact: {artifactId: 'art-1', parts: []},
+    const a2aEvent2: A2AEvent = createTaskArtifactUpdateEvent({
       taskId: 't1',
       contextId: 'c1',
-    };
+      artifactId: 'art-1',
+      append: true,
+      lastChunk: true,
+    });
     const adkEvent2 = createEvent({
       customMetadata: {baz: 'qux'},
     });
@@ -173,36 +172,31 @@ describe('A2ARemoteAgentRunProcessor', () => {
     const processor = new A2ARemoteAgentRunProcessor();
     const context = createMockContext();
 
-    const a2aEvent1: A2AEvent = {
-      kind: 'artifact-update',
-      append: true,
-      lastChunk: false,
-      artifact: {artifactId: 'art-1', parts: []},
+    const a2aEvent1: A2AEvent = createTaskArtifactUpdateEvent({
       taskId: 't1',
       contextId: 'c1',
-    };
-    const adkEvent1 = createEvent({content: {parts: [{text: 'art 1'}]}});
-
-    const a2aEvent2: A2AEvent = {
-      kind: 'artifact-update',
+      artifactId: 'art-1',
       append: true,
       lastChunk: false,
-      artifact: {artifactId: 'art-2', parts: []},
+    });
+    const adkEvent1 = createEvent({content: {parts: [{text: 'art 1'}]}});
+
+    const a2aEvent2: A2AEvent = createTaskArtifactUpdateEvent({
       taskId: 't2',
       contextId: 'c2',
-    };
+      artifactId: 'art-2',
+      append: true,
+      lastChunk: false,
+    });
     const adkEvent2 = createEvent({content: {parts: [{text: 'art 2'}]}});
 
     processor.aggregatePartial(context, a2aEvent1, adkEvent1);
     processor.aggregatePartial(context, a2aEvent2, adkEvent2);
 
-    const finalEvent: A2AEvent = {
-      kind: 'status-update',
-      final: true,
-      status: {state: 'completed', timestamp: ''},
+    const finalEvent: A2AEvent = createTaskCompletedEvent({
       taskId: 't',
       contextId: 'c',
-    } as unknown as A2AEvent; // Cast to avoid full interface completion
+    });
     const finalAdkEvent = createEvent({turnComplete: true});
 
     const result = processor.aggregatePartial(
@@ -221,18 +215,22 @@ describe('A2ARemoteAgentRunProcessor', () => {
     it('records a2a:context_id on a Message without taskId', () => {
       const processor = new A2ARemoteAgentRunProcessor();
       const event = createEvent({turnComplete: true});
-      const response: A2AEvent = {
-        kind: 'message',
+      const response: A2AEvent = createMessage({
         messageId: 'msg-1',
-        role: 'agent',
+        role: Role.ROLE_AGENT,
         contextId: 'ctx-message-only',
-        parts: [{kind: 'text', text: 'hello'}],
-      };
+        parts: [createTextPart('hello')],
+      });
 
       processor.updateCustomMetadata(event, response);
 
       expect(event.customMetadata).toEqual({
-        'a2a:response': response,
+        'a2a:response': {
+          messageId: 'msg-1',
+          contextId: 'ctx-message-only',
+          role: 'ROLE_AGENT',
+          parts: [{text: 'hello'}],
+        },
         'a2a:context_id': 'ctx-message-only',
       });
     });
@@ -240,19 +238,24 @@ describe('A2ARemoteAgentRunProcessor', () => {
     it('records both task_id and context_id on a Message with taskId', () => {
       const processor = new A2ARemoteAgentRunProcessor();
       const event = createEvent({turnComplete: true});
-      const response: A2AEvent = {
-        kind: 'message',
+      const response: A2AEvent = createMessage({
         messageId: 'msg-2',
-        role: 'agent',
+        role: Role.ROLE_AGENT,
         taskId: 'task-1',
         contextId: 'ctx-1',
-        parts: [{kind: 'text', text: 'hello'}],
-      };
+        parts: [createTextPart('hello')],
+      });
 
       processor.updateCustomMetadata(event, response);
 
       expect(event.customMetadata).toEqual({
-        'a2a:response': response,
+        'a2a:response': {
+          messageId: 'msg-2',
+          contextId: 'ctx-1',
+          taskId: 'task-1',
+          role: 'ROLE_AGENT',
+          parts: [{text: 'hello'}],
+        },
         'a2a:task_id': 'task-1',
         'a2a:context_id': 'ctx-1',
       });

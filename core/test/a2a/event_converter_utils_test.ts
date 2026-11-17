@@ -5,6 +5,7 @@
  */
 
 import {
+  Artifact,
   Message,
   Part,
   Task,
@@ -13,7 +14,13 @@ import {
 } from '@a2a-js/sdk';
 import {createEvent, createEventActions} from '@google/adk';
 import {describe, expect, it, vi} from 'vitest';
-import {A2AEvent} from '../../src/a2a/a2a_event.js';
+import {
+  A2AEvent,
+  createMessage,
+  createTextPart,
+  Role,
+  TaskState,
+} from '../../src/a2a/a2a_event.js';
 import {toA2AMessage, toAdkEvent} from '../../src/a2a/event_converter_utils.js';
 import * as envAwareUtils from '../../src/utils/env_aware_utils.js';
 
@@ -26,18 +33,86 @@ vi.mock('../../src/utils/env_aware_utils.js', async (importOriginal) => {
   };
 });
 
-const LONG_RUNNING_CALL_PART: Part = {
-  kind: 'data',
-  data: {id: 'approval-call', name: 'approve', args: {}},
-  metadata: {'adk_is_long_running': true, 'adk_type': 'function_call'},
-};
-
-function createHistoryMessage(role: Message['role'], text: string): Message {
+function dataPart(
+  value: Record<string, unknown>,
+  metadata?: Record<string, unknown>,
+): Part {
   return {
-    kind: 'message',
+    content: {$case: 'data', value},
+    metadata,
+    filename: '',
+    mediaType: '',
+  };
+}
+
+const LONG_RUNNING_CALL_PART: Part = dataPart(
+  {id: 'approval-call', name: 'approve', args: {}},
+  {'adk_is_long_running': true, 'adk_type': 'function_call'},
+);
+
+function createHistoryMessage(role: Role, text: string): Message {
+  return createMessage({
     messageId: `history-${role}-${text}`,
     role,
-    parts: [{kind: 'text', text}],
+    parts: [createTextPart(text)],
+  });
+}
+
+function createStatusUpdate(
+  state: TaskState,
+  message?: Message,
+): TaskStatusUpdateEvent {
+  return {
+    taskId: 'task1',
+    contextId: 'context1',
+    status: {state, message, timestamp: undefined},
+    metadata: undefined,
+  };
+}
+
+function createTask(
+  fields: Partial<Omit<Task, 'status'>> & {
+    state: TaskState;
+    message?: Message;
+  },
+): Task {
+  const {state, message, ...rest} = fields;
+  return {
+    id: 'task1',
+    contextId: 'context1',
+    status: {state, message, timestamp: undefined},
+    artifacts: [],
+    history: [],
+    metadata: undefined,
+    ...rest,
+  };
+}
+
+function createArtifact(
+  fields: Partial<Artifact> & {artifactId: string},
+): Artifact {
+  return {
+    name: '',
+    description: '',
+    parts: [],
+    metadata: undefined,
+    extensions: [],
+    ...fields,
+  };
+}
+
+function createArtifactUpdate(
+  artifact: Artifact,
+  fields: Partial<Omit<TaskArtifactUpdateEvent, 'artifact'>> = {},
+): TaskArtifactUpdateEvent {
+  return {
+    taskId: 'task1',
+    contextId: 'context1',
+    artifact,
+    append: false,
+    lastChunk: false,
+    metadata: undefined,
+    ...fields,
   };
 }
 
@@ -61,10 +136,9 @@ describe('event_converter_utils', () => {
       });
       expect(message).toBeDefined();
       expect(message).toMatchObject({
-        kind: 'message',
         messageId: 'test-uuid-1',
-        role: 'user',
-        parts: [{kind: 'text', text: 'hello'}],
+        role: Role.ROLE_USER,
+        parts: [createTextPart('hello')],
         metadata: {
           'adk_app_name': 'test-app',
           'adk_user_id': 'test-user',
@@ -99,10 +173,9 @@ describe('event_converter_utils', () => {
       });
       expect(message).toBeDefined();
       expect(message).toMatchObject({
-        kind: 'message',
         messageId: 'test-uuid-2',
-        role: 'agent',
-        parts: [{kind: 'text', text: 'response'}],
+        role: Role.ROLE_AGENT,
+        parts: [createTextPart('response')],
         metadata: {
           'adk_escalate': true,
           'adk_transfer_to_agent': 'human',
@@ -127,9 +200,8 @@ describe('event_converter_utils', () => {
         sessionId: 'test-session',
       });
       expect(message).toMatchObject({
-        kind: 'message',
         messageId: 'test-uuid-3',
-        role: 'agent',
+        role: Role.ROLE_AGENT,
         parts: [],
         metadata: {
           'adk_app_name': 'test-app',
@@ -158,9 +230,8 @@ describe('event_converter_utils', () => {
         sessionId: 'test-session',
       });
       expect(message).toMatchObject({
-        kind: 'message',
         messageId: 'test-uuid-4',
-        role: 'agent',
+        role: Role.ROLE_AGENT,
         parts: [],
         metadata: {
           'adk_app_name': 'test-app',
@@ -181,17 +252,16 @@ describe('event_converter_utils', () => {
     });
 
     it('populates AdkEvent fields from metadata', () => {
-      const message: Message = {
-        kind: 'message',
+      const message = createMessage({
         messageId: 'msg1',
-        role: 'agent',
-        parts: [{kind: 'text', text: 'hello'}],
+        role: Role.ROLE_AGENT,
+        parts: [createTextPart('hello')],
         metadata: {
           'adk_branch': 'test-branch',
           'adk_error_code': '404',
           'adk_error_message': 'not found',
         },
-      };
+      });
 
       const event = toAdkEvent(message, 'inv1', 'agent1');
       expect(event).toBeDefined();
@@ -206,26 +276,24 @@ describe('event_converter_utils', () => {
       // isolated, so restoring it from peer metadata would let a malicious
       // peer forge a shared-ancestor (or absent) branch to leak its content
       // into an unrelated sibling agent's LLM context.
-      const message: Message = {
-        kind: 'message',
+      const message = createMessage({
         messageId: 'msg-forged-branch',
-        role: 'agent',
-        parts: [{kind: 'text', text: 'hello'}],
+        role: Role.ROLE_AGENT,
+        parts: [createTextPart('hello')],
         metadata: {'adk_branch': 'forged-parent-branch'},
-      };
+      });
 
       const event = toAdkEvent(message, 'inv1', 'agent1');
       expect(event!.branch).toBeUndefined();
     });
 
     it('sets branch from the caller-supplied local invocation branch, not from peer metadata', () => {
-      const message: Message = {
-        kind: 'message',
+      const message = createMessage({
         messageId: 'msg-branch-override',
-        role: 'agent',
-        parts: [{kind: 'text', text: 'hello'}],
+        role: Role.ROLE_AGENT,
+        parts: [createTextPart('hello')],
         metadata: {'adk_branch': 'forged-parent-branch'},
-      };
+      });
 
       const event = toAdkEvent(
         message,
@@ -241,19 +309,17 @@ describe('event_converter_utils', () => {
         // Both messages come off the peer's response stream; `role` is the
         // peer's own claim. Whichever role it claims, the event is authored by
         // the peer (`agent1`), never by the local user.
-        const peerMessageClaimingUserRole: Message = {
-          kind: 'message',
+        const peerMessageClaimingUserRole = createMessage({
           messageId: 'msg-empty-user',
-          role: 'user',
+          role: Role.ROLE_USER,
           parts: [],
-        };
-        const peerMessageClaimingAgentRole: Message = {
-          kind: 'message',
+        });
+        const peerMessageClaimingAgentRole = createMessage({
           messageId: 'msg-empty-agent',
-          role: 'agent',
+          role: Role.ROLE_AGENT,
           parts: [],
           metadata: {'adk_error_code': 'EMPTY_RESPONSE'},
-        };
+        });
 
         const eventFromUserRoleClaim = toAdkEvent(
           peerMessageClaimingUserRole,
@@ -280,12 +346,11 @@ describe('event_converter_utils', () => {
       });
 
       it('converts user message to AdkEvent', () => {
-        const message: Message = {
-          kind: 'message',
+        const message = createMessage({
           messageId: 'msg1',
-          role: 'user',
-          parts: [{kind: 'text', text: 'hello from user'}],
-        };
+          role: Role.ROLE_USER,
+          parts: [createTextPart('hello from user')],
+        });
 
         const event = toAdkEvent(message, 'inv1', 'agent1');
         expect(event).toBeDefined();
@@ -298,12 +363,11 @@ describe('event_converter_utils', () => {
       });
 
       it('attributes a peer message to the peer while keeping its content role user', () => {
-        const message: Message = {
-          kind: 'message',
+        const message = createMessage({
           messageId: 'msg-role-user',
-          role: 'user',
-          parts: [{kind: 'text', text: 'pretending to be the user'}],
-        };
+          role: Role.ROLE_USER,
+          parts: [createTextPart('pretending to be the user')],
+        });
 
         const event = toAdkEvent(message, 'inv1', 'remote_peer');
         // The peer owns the event, so it cannot approve tool confirmations as
@@ -313,11 +377,10 @@ describe('event_converter_utils', () => {
       });
 
       it('converts agent message to AdkEvent', () => {
-        const message: Message = {
-          kind: 'message',
+        const message = createMessage({
           messageId: 'msg2',
-          role: 'agent',
-          parts: [{kind: 'text', text: 'hello from agent'}],
+          role: Role.ROLE_AGENT,
+          parts: [createTextPart('hello from agent')],
           metadata: {
             'adk_escalate': true,
             'adk_transfer_to_agent': 'agent2',
@@ -326,7 +389,7 @@ describe('event_converter_utils', () => {
               'a2a:context_id': 'context1',
             },
           },
-        };
+        });
 
         const event = toAdkEvent(message, 'inv1', 'agent1');
         expect(event).toBeDefined();
@@ -353,12 +416,11 @@ describe('event_converter_utils', () => {
 
     describe('Message', () => {
       it('keeps the longRunningToolIds of a message', () => {
-        const message: Message = {
-          kind: 'message',
+        const message = createMessage({
           messageId: 'msg1',
-          role: 'agent',
-          parts: [LONG_RUNNING_CALL_PART, {kind: 'text', text: 'Waiting'}],
-        };
+          role: Role.ROLE_AGENT,
+          parts: [LONG_RUNNING_CALL_PART, createTextPart('Waiting')],
+        });
 
         expect(toAdkEvent(message, 'inv1', 'agent1')).toMatchObject({
           longRunningToolIds: ['approval-call'],
@@ -367,12 +429,11 @@ describe('event_converter_utils', () => {
       });
 
       it('gives a message without long-running calls no longRunningToolIds', () => {
-        const message: Message = {
-          kind: 'message',
+        const message = createMessage({
           messageId: 'msg1',
-          role: 'agent',
-          parts: [{kind: 'text', text: 'Done'}],
-        };
+          role: Role.ROLE_AGENT,
+          parts: [createTextPart('Done')],
+        });
 
         expect(
           toAdkEvent(message, 'inv1', 'agent1')?.longRunningToolIds,
@@ -381,22 +442,15 @@ describe('event_converter_utils', () => {
     });
 
     describe('TaskStatusUpdateEvent', () => {
-      it('keeps the longRunningToolIds of a status update that is not final', () => {
-        const update: TaskStatusUpdateEvent = {
-          kind: 'status-update',
-          taskId: 'task1',
-          contextId: 'context1',
-          status: {
-            state: 'working',
-            message: {
-              kind: 'message',
-              messageId: 'msg1',
-              role: 'agent',
-              parts: [LONG_RUNNING_CALL_PART],
-            },
-          },
-          final: false,
-        };
+      it('keeps the longRunningToolIds of a status update that does not end the turn', () => {
+        const update = createStatusUpdate(
+          TaskState.TASK_STATE_WORKING,
+          createMessage({
+            messageId: 'msg1',
+            role: Role.ROLE_AGENT,
+            parts: [LONG_RUNNING_CALL_PART],
+          }),
+        );
 
         expect(toAdkEvent(update, 'inv1', 'agent1')).toMatchObject({
           longRunningToolIds: ['approval-call'],
@@ -405,22 +459,15 @@ describe('event_converter_utils', () => {
         });
       });
 
-      it('converts final status update', () => {
-        const finalUpdate: TaskStatusUpdateEvent = {
-          kind: 'status-update',
-          taskId: 'task1',
-          contextId: 'context1',
-          status: {
-            state: 'completed',
-            message: {
-              kind: 'message',
-              messageId: 'msg1',
-              role: 'agent',
-              parts: [{kind: 'text', text: 'done'}],
-            },
-          },
-          final: true,
-        };
+      it('converts a status update that ends the turn (completed)', () => {
+        const finalUpdate = createStatusUpdate(
+          TaskState.TASK_STATE_COMPLETED,
+          createMessage({
+            messageId: 'msg1',
+            role: Role.ROLE_AGENT,
+            parts: [createTextPart('done')],
+          }),
+        );
 
         const event = toAdkEvent(finalUpdate, 'inv1', 'agent1');
         expect(event).toBeDefined();
@@ -430,37 +477,22 @@ describe('event_converter_utils', () => {
         expect(event!.turnComplete).toBe(true);
       });
 
-      it('converts final status update (failed without message parts)', () => {
-        const finalUpdate: TaskStatusUpdateEvent = {
-          kind: 'status-update',
-          taskId: 'task1',
-          contextId: 'context1',
-          status: {
-            state: 'failed',
-          },
-          final: true,
-        };
+      it('converts a status update that ends the turn (failed without message parts)', () => {
+        const finalUpdate = createStatusUpdate(TaskState.TASK_STATE_FAILED);
 
         const event = toAdkEvent(finalUpdate, 'inv1', 'agent1');
         expect(event).toBeUndefined();
       });
 
-      it('converts final status update (failed with text part)', () => {
-        const finalUpdate: TaskStatusUpdateEvent = {
-          kind: 'status-update',
-          taskId: 'task1',
-          contextId: 'context1',
-          status: {
-            state: 'failed',
-            message: {
-              kind: 'message',
-              messageId: 'msg1',
-              role: 'agent',
-              parts: [{kind: 'text', text: 'error occurred'}],
-            },
-          },
-          final: true,
-        };
+      it('converts a status update that ends the turn (failed with text part)', () => {
+        const finalUpdate = createStatusUpdate(
+          TaskState.TASK_STATE_FAILED,
+          createMessage({
+            messageId: 'msg1',
+            role: Role.ROLE_AGENT,
+            parts: [createTextPart('error occurred')],
+          }),
+        );
 
         const event = toAdkEvent(finalUpdate, 'inv1', 'agent1');
         expect(event).toBeDefined();
@@ -469,22 +501,37 @@ describe('event_converter_utils', () => {
         expect(event!.turnComplete).toBe(true);
       });
 
-      it('converts non-final status update with partial message', () => {
-        const nonFinalUpdate: TaskStatusUpdateEvent = {
-          kind: 'status-update',
-          taskId: 'task1',
-          contextId: 'context1',
-          status: {
-            state: 'working',
-            message: {
-              kind: 'message',
+      it.each([
+        {state: TaskState.TASK_STATE_INPUT_REQUIRED, name: 'input-required'},
+        {state: TaskState.TASK_STATE_AUTH_REQUIRED, name: 'auth-required'},
+      ])(
+        'converts an $name status update to a turn-complete event',
+        ({state}) => {
+          const update = createStatusUpdate(
+            state,
+            createMessage({
               messageId: 'msg1',
-              role: 'agent',
-              parts: [{kind: 'text', text: 'thinking loudly...'}],
-            },
-          },
-          final: false,
-        };
+              role: Role.ROLE_AGENT,
+              parts: [LONG_RUNNING_CALL_PART],
+            }),
+          );
+
+          expect(toAdkEvent(update, 'inv1', 'agent1')).toMatchObject({
+            longRunningToolIds: ['approval-call'],
+            turnComplete: true,
+          });
+        },
+      );
+
+      it('converts a status update that does not end the turn with a partial message', () => {
+        const nonFinalUpdate = createStatusUpdate(
+          TaskState.TASK_STATE_WORKING,
+          createMessage({
+            messageId: 'msg1',
+            role: Role.ROLE_AGENT,
+            parts: [createTextPart('thinking loudly...')],
+          }),
+        );
 
         const event = toAdkEvent(nonFinalUpdate, 'inv1', 'agent1');
         expect(event).toBeDefined();
@@ -495,36 +542,21 @@ describe('event_converter_utils', () => {
         ]);
       });
 
-      it('returns undefined for non-final status update with no parts', () => {
-        const nonFinalUpdate: TaskStatusUpdateEvent = {
-          kind: 'status-update',
-          taskId: 'task1',
-          contextId: 'context1',
-          status: {
-            state: 'working',
-            message: {
-              kind: 'message',
-              messageId: 'msg-empty',
-              role: 'agent',
-              parts: [],
-            },
-          },
-          final: false,
-        };
+      it('returns undefined for a status update that does not end the turn and has no parts', () => {
+        const nonFinalUpdate = createStatusUpdate(
+          TaskState.TASK_STATE_WORKING,
+          createMessage({
+            messageId: 'msg-empty',
+            role: Role.ROLE_AGENT,
+            parts: [],
+          }),
+        );
 
         expect(toAdkEvent(nonFinalUpdate, 'inv1', 'agent1')).toBeUndefined();
       });
 
-      it('returns undefined if non-final status update has no message', () => {
-        const nonFinalUpdate: TaskStatusUpdateEvent = {
-          kind: 'status-update',
-          taskId: 'task1',
-          contextId: 'context1',
-          status: {
-            state: 'working',
-          },
-          final: false,
-        };
+      it('returns undefined if a status update that does not end the turn has no message', () => {
+        const nonFinalUpdate = createStatusUpdate(TaskState.TASK_STATE_WORKING);
 
         expect(toAdkEvent(nonFinalUpdate, 'inv1', 'agent1')).toBeUndefined();
       });
@@ -532,91 +564,52 @@ describe('event_converter_utils', () => {
 
     describe('TaskArtifactUpdateEvent', () => {
       it('converts artifact update with no parts to undefined', () => {
-        const artifactUpdate: TaskArtifactUpdateEvent = {
-          kind: 'artifact-update',
-          taskId: 'task1',
-          contextId: 'context1',
-          artifact: {
-            artifactId: 'art1',
-            parts: [],
-          },
-        };
+        const artifactUpdate = createArtifactUpdate(
+          createArtifact({artifactId: 'art1'}),
+        );
 
         expect(toAdkEvent(artifactUpdate, 'inv1', 'agent1')).toBeUndefined();
       });
 
       it('sets partial to true when append is true', () => {
-        const artifactUpdate: TaskArtifactUpdateEvent = {
-          kind: 'artifact-update',
-          taskId: 'task1',
-          contextId: 'context1',
-          append: true,
-          lastChunk: true,
-          artifact: {
-            artifactId: 'art1',
-            parts: [{kind: 'text', text: 'part'}],
-          },
-        };
+        const artifactUpdate = createArtifactUpdate(
+          createArtifact({artifactId: 'art1', parts: [createTextPart('part')]}),
+          {append: true, lastChunk: true},
+        );
 
         const event = toAdkEvent(artifactUpdate, 'inv1', 'agent1');
         expect(event?.partial).toBe(true);
       });
 
       it('sets partial to true when lastChunk is false', () => {
-        const artifactUpdate: TaskArtifactUpdateEvent = {
-          kind: 'artifact-update',
-          taskId: 'task1',
-          contextId: 'context1',
-          append: false,
-          lastChunk: false,
-          artifact: {
-            artifactId: 'art1',
-            parts: [{kind: 'text', text: 'part'}],
-          },
-        };
+        const artifactUpdate = createArtifactUpdate(
+          createArtifact({artifactId: 'art1', parts: [createTextPart('part')]}),
+          {append: false, lastChunk: false},
+        );
 
         const event = toAdkEvent(artifactUpdate, 'inv1', 'agent1');
         expect(event?.partial).toBe(true);
       });
 
       it('sets partial to false when append is false and lastChunk is true', () => {
-        const artifactUpdate: TaskArtifactUpdateEvent = {
-          kind: 'artifact-update',
-          taskId: 'task1',
-          contextId: 'context1',
-          append: false,
-          lastChunk: true,
-          artifact: {
-            artifactId: 'art1',
-            parts: [{kind: 'text', text: 'part'}],
-          },
-        };
+        const artifactUpdate = createArtifactUpdate(
+          createArtifact({artifactId: 'art1', parts: [createTextPart('part')]}),
+          {append: false, lastChunk: true},
+        );
 
         const event = toAdkEvent(artifactUpdate, 'inv1', 'agent1');
         expect(event?.partial).toBe(false);
       });
 
       it('converts artifact update', () => {
-        const artifactUpdate: TaskArtifactUpdateEvent = {
-          kind: 'artifact-update',
-          taskId: 'task1',
-          contextId: 'context1',
-          metadata: {
-            'adk_custom_metadata': {
-              'a2a:task_id': 'task2',
-            },
-          },
-          artifact: {
+        const artifactUpdate = createArtifactUpdate(
+          createArtifact({
             artifactId: 'art1',
             parts: [
-              {
-                kind: 'data',
-                data: {id: 'testTool', name: 'testTool', args: {}},
-                metadata: {
-                  'adk_is_long_running': true,
-                  'adk_type': 'function_call',
-                },
-              },
+              dataPart(
+                {id: 'testTool', name: 'testTool', args: {}},
+                {'adk_is_long_running': true, 'adk_type': 'function_call'},
+              ),
             ],
             metadata: {
               'adk_partial': true,
@@ -625,8 +618,15 @@ describe('event_converter_utils', () => {
               },
               'adk_type': 'function_call',
             },
+          }),
+          {
+            metadata: {
+              'adk_custom_metadata': {
+                'a2a:task_id': 'task2',
+              },
+            },
           },
-        };
+        );
 
         const event = toAdkEvent(artifactUpdate, 'inv1', 'agent1');
         expect(event).toBeDefined();
@@ -641,73 +641,48 @@ describe('event_converter_utils', () => {
 
     describe('Task', () => {
       it('returns undefined for task with no parts and non-terminal state', () => {
-        const task: Task = {
-          kind: 'task',
-          id: 'task1',
-          contextId: 'context1',
-          status: {state: 'working'},
-        };
+        const task = createTask({state: TaskState.TASK_STATE_WORKING});
         expect(toAdkEvent(task, 'inv1', 'agent1')).toBeUndefined();
       });
 
       it('returns undefined for completed task with no parts', () => {
-        const task: Task = {
-          kind: 'task',
-          id: 'task1',
-          contextId: 'context1',
-          status: {state: 'completed'},
-        };
+        const task = createTask({state: TaskState.TASK_STATE_COMPLETED});
 
         expect(toAdkEvent(task, 'inv1', 'agent1')).toBeUndefined();
       });
 
       it('returns undefined for input-required task with no parts', () => {
-        const task: Task = {
-          kind: 'task',
-          id: 'task1',
-          contextId: 'context1',
-          status: {state: 'input-required'},
-        };
+        const task = createTask({state: TaskState.TASK_STATE_INPUT_REQUIRED});
 
         expect(toAdkEvent(task, 'inv1', 'agent1')).toBeUndefined();
       });
 
       it('converts completed task with artifacts and status message', () => {
-        const task: Task = {
-          kind: 'task',
-          id: 'task1',
-          contextId: 'context1',
+        const task = createTask({
           artifacts: [
-            {
+            createArtifact({
               artifactId: 'art1',
               parts: [
-                {
-                  kind: 'data',
-                  data: {id: 'artTool', name: 'artTool', args: {}},
-                  metadata: {
-                    'adk_is_long_running': true,
-                    'adk_type': 'function_call',
-                  },
-                },
+                dataPart(
+                  {id: 'artTool', name: 'artTool', args: {}},
+                  {'adk_is_long_running': true, 'adk_type': 'function_call'},
+                ),
               ],
-            },
+            }),
           ],
-          status: {
-            state: 'completed',
-            message: {
-              kind: 'message',
-              messageId: 'msg1',
-              role: 'agent',
-              parts: [{kind: 'text', text: 'task complete'}],
-            },
-          },
+          state: TaskState.TASK_STATE_COMPLETED,
+          message: createMessage({
+            messageId: 'msg1',
+            role: Role.ROLE_AGENT,
+            parts: [createTextPart('task complete')],
+          }),
           metadata: {
             'adk_custom_metadata': {
               'a2a:task_id': 't1',
               'a2a:context_id': 'c1',
             },
           },
-        };
+        });
 
         const event = toAdkEvent(task, 'inv1', 'agent1');
         expect(event).toBeDefined();
@@ -724,20 +699,14 @@ describe('event_converter_utils', () => {
       });
 
       it('converts failed task with text error message', () => {
-        const task: Task = {
-          kind: 'task',
-          id: 'task1',
-          contextId: 'context1',
-          status: {
-            state: 'failed',
-            message: {
-              kind: 'message',
-              messageId: 'msg1',
-              role: 'agent',
-              parts: [{kind: 'text', text: 'task failed miserably'}],
-            },
-          },
-        };
+        const task = createTask({
+          state: TaskState.TASK_STATE_FAILED,
+          message: createMessage({
+            messageId: 'msg1',
+            role: Role.ROLE_AGENT,
+            parts: [createTextPart('task failed miserably')],
+          }),
+        });
 
         const event = toAdkEvent(task, 'inv1', 'agent1');
         expect(event).toBeDefined();
@@ -747,29 +716,19 @@ describe('event_converter_utils', () => {
       });
 
       it('converts input-required task and extracts longRunningToolIds', () => {
-        const task: Task = {
-          kind: 'task',
-          id: 'task1',
-          contextId: 'context1',
-          status: {
-            state: 'input-required',
-            message: {
-              kind: 'message',
-              messageId: 'msg1',
-              role: 'agent',
-              parts: [
-                {
-                  kind: 'data',
-                  data: {id: 'inputTool', name: 'inputTool', args: {}},
-                  metadata: {
-                    'adk_is_long_running': true,
-                    'adk_type': 'function_call',
-                  },
-                },
-              ],
-            },
-          },
-        };
+        const task = createTask({
+          state: TaskState.TASK_STATE_INPUT_REQUIRED,
+          message: createMessage({
+            messageId: 'msg1',
+            role: Role.ROLE_AGENT,
+            parts: [
+              dataPart(
+                {id: 'inputTool', name: 'inputTool', args: {}},
+                {'adk_is_long_running': true, 'adk_type': 'function_call'},
+              ),
+            ],
+          }),
+        });
 
         const event = toAdkEvent(task, 'inv1', 'agent1');
         expect(event).toBeDefined();
@@ -778,33 +737,23 @@ describe('event_converter_utils', () => {
       });
 
       it('converts auth-required task to a turn-complete event with its longRunningToolIds', () => {
-        const task: Task = {
-          kind: 'task',
-          id: 'task1',
-          contextId: 'context1',
-          status: {
-            state: 'auth-required',
-            message: {
-              kind: 'message',
-              messageId: 'msg1',
-              role: 'agent',
-              parts: [
+        const task = createTask({
+          state: TaskState.TASK_STATE_AUTH_REQUIRED,
+          message: createMessage({
+            messageId: 'msg1',
+            role: Role.ROLE_AGENT,
+            parts: [
+              dataPart(
                 {
-                  kind: 'data',
-                  data: {
-                    id: 'credential-call',
-                    name: 'adk_request_credential',
-                    args: {},
-                  },
-                  metadata: {
-                    'adk_is_long_running': true,
-                    'adk_type': 'function_call',
-                  },
+                  id: 'credential-call',
+                  name: 'adk_request_credential',
+                  args: {},
                 },
-              ],
-            },
-          },
-        };
+                {'adk_is_long_running': true, 'adk_type': 'function_call'},
+              ),
+            ],
+          }),
+        });
 
         const event = toAdkEvent(task, 'inv1', 'agent1');
 
@@ -815,26 +764,19 @@ describe('event_converter_utils', () => {
       });
 
       it('reads the last agent message in the history when a task has no other parts', () => {
-        const task: Task = {
-          kind: 'task',
-          id: 'task1',
-          contextId: 'context1',
-          status: {state: 'completed'},
+        const task = createTask({
+          state: TaskState.TASK_STATE_COMPLETED,
           history: [
-            createHistoryMessage('user', 'What is the weather?'),
-            createHistoryMessage('agent', 'Checking the forecast'),
-            {
-              kind: 'message',
+            createHistoryMessage(Role.ROLE_USER, 'What is the weather?'),
+            createHistoryMessage(Role.ROLE_AGENT, 'Checking the forecast'),
+            createMessage({
               messageId: 'history-final',
-              role: 'agent',
-              parts: [
-                {kind: 'text', text: 'It is sunny'},
-                LONG_RUNNING_CALL_PART,
-              ],
-            },
-            createHistoryMessage('user', 'Thanks'),
+              role: Role.ROLE_AGENT,
+              parts: [createTextPart('It is sunny'), LONG_RUNNING_CALL_PART],
+            }),
+            createHistoryMessage(Role.ROLE_USER, 'Thanks'),
           ],
-        };
+        });
 
         const event = toAdkEvent(task, 'inv1', 'agent1');
 
@@ -854,13 +796,12 @@ describe('event_converter_utils', () => {
       });
 
       it('returns undefined when the history of a task holds only user messages', () => {
-        const task: Task = {
-          kind: 'task',
-          id: 'task1',
-          contextId: 'context1',
-          status: {state: 'completed'},
-          history: [createHistoryMessage('user', 'What is the weather?')],
-        };
+        const task = createTask({
+          state: TaskState.TASK_STATE_COMPLETED,
+          history: [
+            createHistoryMessage(Role.ROLE_USER, 'What is the weather?'),
+          ],
+        });
 
         expect(toAdkEvent(task, 'inv1', 'agent1')).toBeUndefined();
       });
@@ -868,51 +809,42 @@ describe('event_converter_utils', () => {
       it.each([
         {
           source: 'a status message',
-          task: {
-            status: {
-              state: 'completed' as const,
-              message: createHistoryMessage('agent', 'From the status'),
-            },
-          },
+          task: createTask({
+            state: TaskState.TASK_STATE_COMPLETED,
+            message: createHistoryMessage(Role.ROLE_AGENT, 'From the status'),
+            history: [
+              createHistoryMessage(Role.ROLE_AGENT, 'From the history'),
+            ],
+          }),
           text: 'From the status',
         },
         {
           source: 'an artifact',
-          task: {
-            status: {state: 'completed' as const},
+          task: createTask({
+            state: TaskState.TASK_STATE_COMPLETED,
             artifacts: [
-              {
+              createArtifact({
                 artifactId: 'artifact1',
-                parts: [{kind: 'text' as const, text: 'From the artifact'}],
-              },
+                parts: [createTextPart('From the artifact')],
+              }),
             ],
-          },
+            history: [
+              createHistoryMessage(Role.ROLE_AGENT, 'From the history'),
+            ],
+          }),
           text: 'From the artifact',
         },
       ])('ignores the history of a task that has $source', ({task, text}) => {
-        const event = toAdkEvent(
-          {
-            kind: 'task',
-            id: 'task1',
-            contextId: 'context1',
-            history: [createHistoryMessage('agent', 'From the history')],
-            ...task,
-          },
-          'inv1',
-          'agent1',
-        );
+        const event = toAdkEvent(task, 'inv1', 'agent1');
 
         expect(event?.content?.parts).toEqual([{text, thought: false}]);
       });
 
       it('does not read the history of a failed task as content', () => {
-        const task: Task = {
-          kind: 'task',
-          id: 'task1',
-          contextId: 'context1',
-          status: {state: 'failed'},
-          history: [createHistoryMessage('agent', 'Partial answer')],
-        };
+        const task = createTask({
+          state: TaskState.TASK_STATE_FAILED,
+          history: [createHistoryMessage(Role.ROLE_AGENT, 'Partial answer')],
+        });
 
         const event = toAdkEvent(task, 'inv1', 'agent1');
 
@@ -921,33 +853,28 @@ describe('event_converter_utils', () => {
         expect(event?.actions.skipSummarization).toBeUndefined();
       });
 
-      it.each([{state: 'completed' as const}, {state: 'canceled' as const}])(
-        'skips summarization for a $state task with content',
-        ({state}) => {
-          const task: Task = {
-            kind: 'task',
-            id: 'task1',
-            contextId: 'context1',
-            status: {state, message: createHistoryMessage('agent', 'Answer')},
-          };
+      it.each([
+        {name: 'completed', state: TaskState.TASK_STATE_COMPLETED},
+        {name: 'canceled', state: TaskState.TASK_STATE_CANCELED},
+      ])('skips summarization for a $name task with content', ({state}) => {
+        const task = createTask({
+          state,
+          message: createHistoryMessage(Role.ROLE_AGENT, 'Answer'),
+        });
 
-          const event = toAdkEvent(task, 'inv1', 'agent1');
+        const event = toAdkEvent(task, 'inv1', 'agent1');
 
-          expect(event?.content?.parts).toEqual([
-            {text: 'Answer', thought: false},
-          ]);
-          expect(event?.actions.skipSummarization).toBe(true);
-        },
-      );
+        expect(event?.content?.parts).toEqual([
+          {text: 'Answer', thought: false},
+        ]);
+        expect(event?.actions.skipSummarization).toBe(true);
+      });
 
       it('skips summarization for a completed task whose content comes from the history', () => {
-        const task: Task = {
-          kind: 'task',
-          id: 'task1',
-          contextId: 'context1',
-          status: {state: 'completed'},
-          history: [createHistoryMessage('agent', 'Answer')],
-        };
+        const task = createTask({
+          state: TaskState.TASK_STATE_COMPLETED,
+          history: [createHistoryMessage(Role.ROLE_AGENT, 'Answer')],
+        });
 
         expect(
           toAdkEvent(task, 'inv1', 'agent1')?.actions.skipSummarization,
@@ -955,17 +882,15 @@ describe('event_converter_utils', () => {
       });
 
       it.each([
-        {state: 'submitted' as const},
-        {state: 'working' as const},
-        {state: 'input-required' as const},
-        {state: 'auth-required' as const},
-      ])('does not skip summarization for a task that is $state', ({state}) => {
-        const task: Task = {
-          kind: 'task',
-          id: 'task1',
-          contextId: 'context1',
-          status: {state, message: createHistoryMessage('agent', 'Answer')},
-        };
+        {name: 'submitted', state: TaskState.TASK_STATE_SUBMITTED},
+        {name: 'working', state: TaskState.TASK_STATE_WORKING},
+        {name: 'input-required', state: TaskState.TASK_STATE_INPUT_REQUIRED},
+        {name: 'auth-required', state: TaskState.TASK_STATE_AUTH_REQUIRED},
+      ])('does not skip summarization for a task that is $name', ({state}) => {
+        const task = createTask({
+          state,
+          message: createHistoryMessage(Role.ROLE_AGENT, 'Answer'),
+        });
 
         const event = toAdkEvent(task, 'inv1', 'agent1');
 

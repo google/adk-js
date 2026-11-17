@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {TextPart} from '@a2a-js/sdk';
+import {Part} from '@a2a-js/sdk';
 import {describe, expect, it} from 'vitest';
 import {
   getFunctionResponseCallId,
@@ -18,6 +18,11 @@ import {BaseAgent} from '../../src/agents/base_agent.js';
 import {InvocationContext} from '../../src/agents/invocation_context.js';
 import {createEvent} from '../../src/events/event.js';
 import {Session} from '../../src/sessions/session.js';
+
+/** Returns the text of an A2A v1 text part, or undefined for other parts. */
+function textOf(part: Part): string | undefined {
+  return part.content?.$case === 'text' ? part.content.value : undefined;
+}
 
 describe('remote_agent_utils', () => {
   const mockAgent = {
@@ -230,7 +235,7 @@ describe('remote_agent_utils', () => {
 
       const result = toMissingRemoteSessionParts(mockCtx, session);
       expect(result.parts.length).toBe(1);
-      expect((result.parts[0] as TextPart).text).toBe('hello');
+      expect(textOf(result.parts[0])).toBe('hello');
       expect(result.contextId).toBeUndefined();
     });
 
@@ -253,7 +258,7 @@ describe('remote_agent_utils', () => {
 
       const result = toMissingRemoteSessionParts(mockCtx, session);
       expect(result.parts.length).toBe(1);
-      expect((result.parts[0] as TextPart).text).toBe('new message');
+      expect(textOf(result.parts[0])).toBe('new message');
       expect(result.contextId).toBe('ctx-remote');
     });
 
@@ -267,8 +272,8 @@ describe('remote_agent_utils', () => {
 
       const result = toMissingRemoteSessionParts(mockCtx, session);
       expect(result.parts.length).toBe(2); // "For context:" and "[other-agent] said: ..."
-      expect((result.parts[0] as TextPart).text).toBe('For context:');
-      expect((result.parts[1] as TextPart).text).toBe(
+      expect(textOf(result.parts[0])).toBe('For context:');
+      expect(textOf(result.parts[1])).toBe(
         '[other-agent] said: other response',
       );
     });
@@ -315,9 +320,7 @@ describe('remote_agent_utils', () => {
       expect(dumped).not.toContain('SUPER_SECRET_DO_NOT_LEAK');
       expect(dumped).not.toContain('adk_request_credential');
       expect(
-        result.parts.some((p) =>
-          (p as TextPart).text?.includes('accompanying text'),
-        ),
+        result.parts.some((p) => textOf(p)?.includes('accompanying text')),
       ).toBe(true);
     });
 
@@ -582,7 +585,11 @@ describe('remote_agent_utils', () => {
         content: {role: 'model', parts: [{text: 'response'}]},
         customMetadata: {
           [AdkMetadataKeys.CONTEXT_ID]: 'ctx-remote',
-          'a2a:response': {kind: 'message'},
+          'a2a:response': {
+            messageId: 'm1',
+            role: 'ROLE_AGENT',
+            parts: [{text: 'response'}],
+          },
         },
       });
       const unsentMessage = createEvent({
@@ -603,7 +610,7 @@ describe('remote_agent_utils', () => {
 
       const result = toMissingRemoteSessionParts(mockCtx, session);
 
-      expect(result.parts.map((part) => (part as TextPart).text)).toEqual([
+      expect(result.parts.map(textOf)).toEqual([
         'unsent message',
         'new message',
       ]);
@@ -620,7 +627,10 @@ describe('remote_agent_utils', () => {
         errorMessage: 'The task failed.',
         customMetadata: {
           [AdkMetadataKeys.CONTEXT_ID]: 'ctx-remote',
-          'a2a:response': {kind: 'task'},
+          'a2a:response': {
+            id: 'task-1',
+            status: {state: 'TASK_STATE_FAILED'},
+          },
         },
       });
       const newUserMessage = createEvent({
@@ -633,9 +643,7 @@ describe('remote_agent_utils', () => {
 
       const result = toMissingRemoteSessionParts(mockCtx, session);
 
-      expect(result.parts.map((part) => (part as TextPart).text)).toEqual([
-        'new message',
-      ]);
+      expect(result.parts.map(textOf)).toEqual(['new message']);
       expect(result.contextId).toBe('ctx-remote');
     });
 

@@ -146,7 +146,9 @@ async function servePeer({
   httpServer.on('request', served);
   const baseUrl = `http://127.0.0.1:${port}`;
   const card = (await (
-    await fetch(`${baseUrl}/.well-known/agent-card.json`)
+    await fetch(`${baseUrl}/.well-known/agent-card.json`, {
+      headers: {'A2A-Version': '1.0'},
+    })
   ).json()) as AgentCard;
   requests.length = 0;
   return {baseUrl, card, requests};
@@ -165,23 +167,23 @@ afterEach(async () => {
   });
 });
 
-/** Returns the card with `transport` as its preferred transport. */
+/** Returns the card with only the v1.0 interface of `transport`. */
 function withTransport(
   card: AgentCard,
   transport: 'JSONRPC' | 'HTTP+JSON',
   streaming: boolean,
 ): AgentCard {
-  const url = card.additionalInterfaces?.find(
-    (entry) => entry.transport === transport,
-  )?.url;
-  if (!url) {
+  const agentInterface = card.supportedInterfaces.find(
+    (entry) =>
+      entry.protocolBinding === transport && entry.protocolVersion === '1.0',
+  );
+  if (!agentInterface) {
     return expect.fail(`The card has no ${transport} interface.`);
   }
   return {
     ...card,
-    url,
-    preferredTransport: transport,
-    capabilities: {...card.capabilities, streaming},
+    supportedInterfaces: [agentInterface],
+    capabilities: {extensions: [], ...card.capabilities, streaming},
   };
 }
 
@@ -239,7 +241,7 @@ function expectChildOf(span: ReadableSpan, parent: ReadableSpan): void {
   expect(span.attributes).not.toHaveProperty('supportID');
 }
 
-/** Sends a raw JSON-RPC `message/send` request. */
+/** Sends a raw v1.0 JSON-RPC `SendMessage` request. */
 async function sendRaw(
   baseUrl: string,
   {
@@ -249,19 +251,22 @@ async function sendRaw(
 ): Promise<Response> {
   return fetch(`${baseUrl}/jsonrpc`, {
     method: 'POST',
-    headers: {'content-type': 'application/json', ...headers},
+    headers: {
+      'content-type': 'application/json',
+      'a2a-version': '1.0',
+      ...headers,
+    },
     body: JSON.stringify({
       jsonrpc: '2.0',
       id: 1,
-      method: 'message/send',
+      method: 'SendMessage',
       params: {
         message: {
-          kind: 'message',
           messageId: crypto.randomUUID(),
-          role: 'user',
-          parts: [{kind: 'text', text: 'ping'}],
+          role: 'ROLE_USER',
+          parts: [{text: 'ping'}],
         },
-        configuration: {blocking},
+        configuration: {returnImmediately: !blocking},
       },
     }),
   });
@@ -362,7 +367,7 @@ describe('A2A trace context propagation', () => {
     );
   });
 
-  it('continues the trace of a non-blocking message/send', async () => {
+  it('continues the trace of a non-blocking SendMessage', async () => {
     const {baseUrl} = await servePeer({agent: new PeerAgent(50)});
 
     await expectSuccess(

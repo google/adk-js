@@ -4,98 +4,54 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {
-  Message,
-  MessageSendParams,
-  Task,
-  TaskArtifactUpdateEvent,
-  TaskStatusUpdateEvent,
-} from '@a2a-js/sdk';
-import {
-  DefaultRequestHandler,
-  RequestContext,
-  ServerCallContext,
-} from '@a2a-js/sdk/server';
-
-interface RequestContextWithRequest extends RequestContext {
-  request?: {
-    metadata?: Record<string, unknown>;
-  };
-}
+import {DefaultRequestHandler, RequestContext} from '@a2a-js/sdk/server';
 
 /**
- * Request-scoped metadata store for A2A request metadata propagation.
- * Bridges SDK versions (such as 0.3.x) where DefaultRequestHandler does not attach
- * params.metadata to RequestContext, while SDK >= 1.0.0 provides ctx.request.metadata natively.
- */
-const requestMetadataStore = new Map<string, Record<string, unknown>>();
-
-/**
- * Extracts request-level A2A metadata from a RequestContext.
- *
- * Supports @a2a-js/sdk >= 1.0.0 (`ctx.request.metadata`) and @a2a-js/sdk 0.3.x via
- * `AdkDefaultRequestHandler`.
+ * Extracts request-level A2A metadata (`SendMessageRequest.metadata`) from a
+ * RequestContext.
  */
 export function getA2aRequestMetadata(
   ctx: RequestContext,
 ): Record<string, unknown> | undefined {
-  const reqContext = ctx as RequestContextWithRequest;
-  if (reqContext.request?.metadata) {
-    return reqContext.request.metadata;
-  }
-  const messageId = ctx.userMessage?.messageId;
-  if (messageId && requestMetadataStore.has(messageId)) {
-    return requestMetadataStore.get(messageId);
-  }
-  return undefined;
+  return ctx.request?.metadata || undefined;
 }
 
 /**
- * A2A DefaultRequestHandler extension that preserves request-level metadata (`params.metadata`)
- * across agent executions regardless of @a2a-js/sdk version.
+ * The `DefaultRequestHandler` of `@a2a-js/sdk`, configured for
+ * {@link A2AAgentExecutor}.
+ *
+ * {@link A2AAgentExecutor} returns once a run pauses for input or a credential,
+ * and the client resumes the task with a new message. So unless the caller
+ * passes its own `keepBusAliveStates`, this handler keeps no event bus alive
+ * after the executor returns: with the SDK default, a stream that ends on
+ * `TASK_STATE_AUTH_REQUIRED` would stay open with nothing left to publish.
+ *
+ * Request-level metadata reaches the executor natively through
+ * `RequestContext.request.metadata`; see {@link getA2aRequestMetadata}.
  */
 export class AdkDefaultRequestHandler extends DefaultRequestHandler {
-  override async sendMessage(
-    params: MessageSendParams,
-    context?: ServerCallContext,
-  ): Promise<Message | Task> {
-    const messageId = params.message?.messageId;
-    if (messageId && params.metadata) {
-      requestMetadataStore.set(
-        messageId,
-        params.metadata as Record<string, unknown>,
-      );
-    }
-    try {
-      return await super.sendMessage(params, context);
-    } finally {
-      if (messageId) {
-        requestMetadataStore.delete(messageId);
-      }
-    }
-  }
-
-  override async *sendMessageStream(
-    params: MessageSendParams,
-    context?: ServerCallContext,
-  ): AsyncGenerator<
-    Message | Task | TaskStatusUpdateEvent | TaskArtifactUpdateEvent,
-    void,
-    undefined
-  > {
-    const messageId = params.message?.messageId;
-    if (messageId && params.metadata) {
-      requestMetadataStore.set(
-        messageId,
-        params.metadata as Record<string, unknown>,
-      );
-    }
-    try {
-      yield* super.sendMessageStream(params, context);
-    } finally {
-      if (messageId) {
-        requestMetadataStore.delete(messageId);
-      }
-    }
+  constructor(...args: ConstructorParameters<typeof DefaultRequestHandler>) {
+    const [
+      agentCard,
+      taskStore,
+      agentExecutor,
+      eventBusManager,
+      pushNotificationStore,
+      pushNotificationSender,
+      extendedAgentCardProvider,
+      agentCardSignatureGenerator,
+      options,
+    ] = args;
+    super(
+      agentCard,
+      taskStore,
+      agentExecutor,
+      eventBusManager,
+      pushNotificationStore,
+      pushNotificationSender,
+      extendedAgentCardProvider,
+      agentCardSignatureGenerator,
+      {keepBusAliveStates: [], ...options},
+    );
   }
 }
