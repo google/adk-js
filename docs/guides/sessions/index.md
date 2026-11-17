@@ -104,7 +104,7 @@ Inside an agent, the delta is what reaches storage. The `stateDelta` on an event
 | `deleteSession(request)`      | `Promise<void>`                 | Deletes a session.                                                                                 |
 | `appendEvent(request)`        | `Promise<Event>`                | Applies the event's `stateDelta` to the session and appends the event. Partial events are skipped. |
 
-`getSession` takes an optional `config` of type `GetSessionConfig`. `numRecentEvents` keeps only that many of the most recent events, and `afterTimestamp` keeps only events after that time in milliseconds. Use them to bound the size of a long session when you only need its tail.
+`getSession` takes an optional `config` of type `GetSessionConfig`. `numRecentEvents` keeps only that many of the most recent events (returning no events when set to `0`), and `afterTimestamp` keeps only events at or after that time in milliseconds. Use them to bound the size of a long session when you only need its tail.
 
 `listSessions` takes a `ListSessionsRequest`. `limit` sets the page size, `page` is a 1-based page number that takes precedence over `offset`, and `offset` is a zero-based index of the first session. `order` is `'asc'` or `'desc'` by last update time, and no order is applied when it is omitted. The response carries `sessions`, `page`, `limit`, `totalItems` and `totalPages`. Listed sessions carry no events, because loading every event of every session would make a list call as expensive as reading each session.
 

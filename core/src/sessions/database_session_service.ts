@@ -434,24 +434,27 @@ export class DatabaseSessionService extends BaseSessionService {
       return undefined;
     }
 
-    const eventWhere: FilterQuery<StorageEventEntity> = {
-      appName,
-      userId,
-      sessionId,
-    };
+    let storageEvents: StorageEventEntity[] = [];
+    if (config?.numRecentEvents !== 0) {
+      const eventWhere: FilterQuery<StorageEventEntity> = {
+        appName,
+        userId,
+        sessionId,
+      };
 
-    if (config?.afterTimestamp) {
-      eventWhere.timestamp = {$gt: new Date(config.afterTimestamp)};
+      if (config?.afterTimestamp !== undefined) {
+        eventWhere.timestamp = {$gte: new Date(config.afterTimestamp)};
+      }
+
+      // Get latest numRecentEvents events or all events in DESC order
+      storageEvents = await em.find(StorageEvent, eventWhere, {
+        orderBy: {timestamp: 'DESC'},
+        limit: config?.numRecentEvents,
+      });
+      // Reverse the events to maintain the original order as we get events in DESC order
+      // to get the latest events first.
+      storageEvents.reverse();
     }
-
-    // Get latest numRecentEvents events or all events in DESC order
-    const storageEvents = await em.find(StorageEvent, eventWhere, {
-      orderBy: {timestamp: 'DESC'},
-      limit: config?.numRecentEvents,
-    });
-    // Reverse the events to maintain the original order as we get events in DESC order
-    // to get the latest events first.
-    storageEvents.reverse();
 
     const appStateModel = await em.findOne(StorageAppState, {appName});
     const userStateModel = await em.findOne(StorageUserState, {
