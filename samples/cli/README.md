@@ -9,7 +9,7 @@ This sample demonstrates how the CLI evaluation utilities prepare state placehol
 - A query containing `'order'` emits a `lookup_order` `functionCall` event, its `functionResponse` event, and the final text `'Order ORD-100 has shipped.'`.
 - Any other query replies with the active `locale` from `ctx.session.state`.
 
-The `main()` driver calls `createEmptyState(rootAgent, {locale: 'en-GB'})` to populate `{department: '', locale: 'en-GB'}`, runs two turns through `InMemoryRunner`, converts the stored session into `EvalInvocation` records with `convertSessionToEvalInvocations`, wraps them in an `EvalCase`, parses an evalset selector with `parseAndGetEvalsToRun`, scores the agent against that `EvalCase` with `runEvals`, exercises `LocalEvalSetsManager` case CRUD (`createEvalSet`, `addEvalCase`, `getEvalCase`, `updateEvalCase`, `deleteEvalCase`), persists and reloads the `EvalSetResult` with `LocalEvalSetResultsManager`, and cleans up the runner with `closeRunners`.
+The `main()` driver calls `createEmptyState(rootAgent, {locale: 'en-GB'})` to populate `{department: '', locale: 'en-GB'}`, runs two turns through `InMemoryRunner`, converts the stored session into `EvalInvocation` records with `convertSessionToEvalInvocations`, wraps them in an `EvalCase`, parses evalset file path and ID selectors with `parseAndGetEvalsToRun`, scores the agent against that `EvalCase` with `runEvals`, exercises `LocalEvalSetsManager` case CRUD (`createEvalSet`, `addEvalCase`, `getEvalCase`, `updateEvalCase`, `deleteEvalCase`), persists and reloads the `EvalSetResult` with `LocalEvalSetResultsManager`, and cleans up the runner with `closeRunners`.
 
 ## Sample Inputs
 

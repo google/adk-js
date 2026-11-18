@@ -190,6 +190,7 @@ async function main() {
 
   const parsedSpecs = parseAndGetEvalsToRun([
     'support.evalset.json:order_flow',
+    'support:order_flow',
   ]);
   process.stdout.write(`Parsed eval spec: ${JSON.stringify(parsedSpecs)}\n`);
 

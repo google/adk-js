@@ -10,6 +10,8 @@ import {
   Context,
   convertEvalSetToSchema,
   createEvent,
+  DatabaseSessionService,
+  type DatabaseSessionServiceOptions,
   DEFAULT_CRITERIA,
   EVAL_SESSION_ID_PREFIX,
   EvalCase,
@@ -21,6 +23,7 @@ import {
   Event,
   getEvaluationCriteriaOrDefault,
   getRootAgent,
+  getSessionServiceFromUri,
   InMemorySessionService,
   InputValidationError,
   INTERNAL_METADATA_PREFIX,
@@ -37,10 +40,11 @@ import {
   TOOL_TRAJECTORY_SCORE_KEY,
   tryGetResetFunc,
 } from '@google/adk';
+import {MikroORM} from '@mikro-orm/core';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 import {
   createEvalSetResult,
@@ -191,6 +195,83 @@ describe('cli/cli_eval', () => {
         'C:\\evals\\set2.evalset.json': ['case_a', 'case_b'],
         'd:/evals/set3.evalset.json': ['case_c'],
       });
+    });
+
+    it('trims eval case IDs and omits empty or whitespace-only entries in comma-separated lists', () => {
+      const parsed = parseAndGetEvalsToRun([
+        'set1: caseA , , caseB ,   ,',
+        'set2: ,  ',
+      ]);
+
+      expect(parsed).toEqual({
+        set1: ['caseA', 'caseB'],
+        set2: [],
+      });
+    });
+
+    it('handles eval set IDs matching Object.prototype property names safely', () => {
+      const parsed = parseAndGetEvalsToRun([
+        'constructor:caseA',
+        'toString:caseB',
+        'constructor:caseC',
+      ]);
+
+      expect(parsed).toEqual({
+        constructor: ['caseA', 'caseC'],
+        toString: ['caseB'],
+      });
+    });
+  });
+
+  describe('getSessionServiceFromUri', () => {
+    it('forwards DatabaseSessionServiceOptions to DatabaseSessionService', async () => {
+      const initSpy = vi.spyOn(MikroORM, 'init');
+      try {
+        const dbOptions: DatabaseSessionServiceOptions = {
+          debug: false,
+          allowGlobalContext: true,
+          staleSession: 'reload',
+        };
+        const service = getSessionServiceFromUri(
+          'sqlite:///:memory:',
+          dbOptions,
+        );
+
+        expect(service).toBeInstanceOf(DatabaseSessionService);
+
+        const key = {
+          appName: 'evalApp',
+          userId: 'user-1',
+          sessionId: 'session-1',
+        };
+        const session = await service.createSession(key);
+        const concurrentSession = await service.getSession(key);
+        expect(concurrentSession).toBeDefined();
+        if (concurrentSession) {
+          await service.appendEvent({
+            session: concurrentSession,
+            event: createEvent({timestamp: Date.now() + 10}),
+          });
+        }
+        await expect(
+          service.appendEvent({
+            session,
+            event: createEvent({timestamp: Date.now() + 20}),
+          }),
+        ).resolves.toBeDefined();
+
+        expect(initSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            dbName: ':memory:',
+            debug: false,
+            allowGlobalContext: true,
+          }),
+        );
+        const orm = await initSpy.mock.results[0]?.value;
+        await orm?.close();
+      } finally {
+        initSpy.mockRestore();
+      }
     });
   });
 
