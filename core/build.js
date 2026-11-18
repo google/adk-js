@@ -57,11 +57,12 @@ function build({
     // `@experimental` logs `target.name`, which otherwise reads "Class oR is
     // experimental". User code that logs `constructor.name` sees the same
     // mangling, so keep the original names in the bundle.
-    keepNames: true,
+    keepNames: bundle,
     sourcemap: bundle,
     // The web target ships a self-contained bundle so a browser can load it
     // directly; bare specifiers like '@google/genai' are not resolvable there.
     packages: platform === 'browser' ? 'bundle' : 'external',
+    supported: {'dynamic-import': true},
     logLevel: 'info',
   };
 
