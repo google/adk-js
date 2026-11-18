@@ -5,6 +5,7 @@
  */
 
 import {FileArtifactService} from '@google/adk';
+import {Part} from '@google/genai';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
@@ -14,6 +15,7 @@ import {
   getSessionArtifactsDir,
   getUserRoot,
 } from '../../src/artifacts/file_artifact_service.js';
+import {InputValidationError} from '../../src/errors/input_validation_error.js';
 import {runArtifactServiceTests} from './artifact_service_test_utils.js';
 
 describe('FileArtifactService', () => {
@@ -31,6 +33,90 @@ describe('FileArtifactService', () => {
       }
     },
   );
+
+  describe('reserved metadata filenames', () => {
+    const key = {appName: 'app', userId: 'user', sessionId: 'session'};
+
+    it.each([
+      'metadata.json',
+      'Metadata.JSON',
+      'nested/metadata.json',
+      'user:metadata.json',
+      'METADATA.JSON. ',
+      'nested/metadata.json...',
+      'private-sentinel/metadata.json',
+    ])('rejects saving %s before creating any files', async (filename) => {
+      const service = new FileArtifactService(rootDir);
+      const artifacts: Part[] = [
+        {text: 'hello'},
+        {inlineData: {data: 'aGVsbG8=', mimeType: 'text/plain'}},
+        {fileData: {fileUri: 'gs://bucket/report'}},
+      ];
+      for (const artifact of artifacts) {
+        const failure = service.saveArtifact({...key, filename, artifact});
+        await expect(failure).rejects.toBeInstanceOf(InputValidationError);
+        await expect(failure).rejects.toThrow('reserved for version metadata');
+        await expect(failure).rejects.not.toThrow('private-sentinel');
+      }
+      expect(await fs.readdir(rootDir)).toEqual([]);
+    });
+
+    it.each([
+      'note.json',
+      'metadata.json.txt',
+      'nested/metadata.json/report.txt',
+    ])('keeps the standard payload layout for %s', async (filename) => {
+      const service = new FileArtifactService(rootDir);
+      const artifactKey = {...key, filename};
+      await service.saveArtifact({...artifactKey, artifact: {text: 'hello'}});
+      expect(await service.loadArtifact(artifactKey)).toEqual({text: 'hello'});
+      const metadata = await service.getArtifactVersion(artifactKey);
+      expect(metadata).not.toHaveProperty('contentFileName');
+      expect(
+        metadata?.canonicalUri?.endsWith('/' + path.basename(filename)),
+      ).toBe(true);
+    });
+
+    it.each(['metadata.json', 'nested/Metadata.JSON', 'user:metadata.json'])(
+      'allows reading, listing and deleting legacy %s records',
+      async (filename) => {
+        const userRoot = getUserRoot(rootDir, key.userId);
+        const scopeRoot = filename.startsWith('user:')
+          ? path.join(userRoot, 'artifacts')
+          : getSessionArtifactsDir(userRoot, key.sessionId);
+        const versionDir = path.join(
+          scopeRoot,
+          filename.replace(/^user:/, ''),
+          'versions',
+          '0',
+        );
+        await fs.mkdir(versionDir, {recursive: true});
+        const metadata = {
+          fileName: filename,
+          version: 0,
+          fileUri: 'gs://bucket/legacy',
+          mimeType: 'text/plain',
+        };
+        await fs.writeFile(
+          path.join(versionDir, 'metadata.json'),
+          JSON.stringify(metadata),
+        );
+        const service = new FileArtifactService(rootDir);
+        const artifactKey = {...key, filename};
+        expect(await service.loadArtifact(artifactKey)).toEqual({
+          fileData: {fileUri: metadata.fileUri, mimeType: metadata.mimeType},
+        });
+        expect(await service.listArtifactKeys(key)).toEqual([filename]);
+        expect(await service.listVersions(artifactKey)).toEqual([0]);
+        expect(await service.getArtifactVersion(artifactKey)).toEqual(metadata);
+        expect(await service.listArtifactVersions(artifactKey)).toEqual([
+          metadata,
+        ]);
+        await service.deleteArtifact(artifactKey);
+        expect(await service.listArtifactKeys(key)).toEqual([]);
+      },
+    );
+  });
 
   describe('fileData storage', () => {
     it('stores fileData as a metadata-only pointer with no content file', async () => {
