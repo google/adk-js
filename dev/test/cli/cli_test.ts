@@ -5,9 +5,13 @@
  */
 
 import {
+  createEvent,
+  DatabaseSessionService,
+  type DatabaseSessionServiceOptions,
   InMemoryMemoryService,
   InMemorySessionService,
   LocalEvalSetResultsManager,
+  LocalEvalSetsManager,
   LogLevel,
   logToTmpFolder,
   setupAdkLogger,
@@ -32,6 +36,7 @@ import {deployToAgentEngine} from '../../src/cli/deploy/cli_deploy_agent_engine.
 import {deployToCloudRun} from '../../src/cli/deploy/cli_deploy_cloud_run.js';
 import {runIntegrationTests} from '../../src/integration/run_integration_tests.js';
 import {AdkApiServer} from '../../src/server/adk_api_server.js';
+import {AdkLogger} from '../../src/utils/logger.js';
 import {version} from '../../src/version.js';
 
 vi.mock('../../src/server/adk_api_server', () => {
@@ -76,10 +81,12 @@ const {
   vertexAiSessionServiceOptions,
   vertexAiMemoryBankServiceOptions,
   createGcsEvalManagersFromUriMock,
+  getSessionServiceFromUriCalls,
 } = vi.hoisted(() => ({
   vertexAiSessionServiceOptions: vi.fn(),
   vertexAiMemoryBankServiceOptions: vi.fn(),
   createGcsEvalManagersFromUriMock: vi.fn(),
+  getSessionServiceFromUriCalls: vi.fn(),
 }));
 
 vi.mock('@google/adk', async (importOriginal) => {
@@ -114,6 +121,12 @@ vi.mock('@google/adk', async (importOriginal) => {
     VertexAiSessionService: RecordingVertexAiSessionService,
     VertexAiMemoryBankService: RecordingVertexAiMemoryBankService,
     createGcsEvalManagersFromUri: createGcsEvalManagersFromUriMock,
+    getSessionServiceFromUri: (
+      ...args: Parameters<typeof actual.getSessionServiceFromUri>
+    ) => {
+      getSessionServiceFromUriCalls(...args);
+      return actual.getSessionServiceFromUri(...args);
+    },
     setupAdkLogger: vi.fn(),
     logToTmpFolder: vi.fn(),
   };
@@ -1010,7 +1023,11 @@ describe('CLI Entrypoint', () => {
       const stdoutSpy = vi
         .spyOn(process.stdout, 'write')
         .mockImplementation((chunk: string | Uint8Array) => {
-          stdoutChunks.push(String(chunk));
+          stdoutChunks.push(
+            typeof chunk === 'string'
+              ? chunk
+              : Buffer.from(chunk).toString('utf-8'),
+          );
           return true;
         });
 
@@ -1097,7 +1114,11 @@ describe('CLI Entrypoint', () => {
       const stdoutSpy = vi
         .spyOn(process.stdout, 'write')
         .mockImplementation((chunk: string | Uint8Array) => {
-          stdoutChunks.push(String(chunk));
+          stdoutChunks.push(
+            typeof chunk === 'string'
+              ? chunk
+              : Buffer.from(chunk).toString('utf-8'),
+          );
           return true;
         });
 
@@ -1185,7 +1206,11 @@ describe('CLI Entrypoint', () => {
       const stdoutSpy = vi
         .spyOn(process.stdout, 'write')
         .mockImplementation((chunk: string | Uint8Array) => {
-          stdoutChunks.push(String(chunk));
+          stdoutChunks.push(
+            typeof chunk === 'string'
+              ? chunk
+              : Buffer.from(chunk).toString('utf-8'),
+          );
           return true;
         });
 
@@ -1210,6 +1235,222 @@ describe('CLI Entrypoint', () => {
         expect(storedResult.evalCaseResults[0].evalId).toBe('selected_case');
       } finally {
         stdoutSpy.mockRestore();
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
+    });
+
+    it('runs the eval command with a local eval set ID and persists the evaluation result', async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-cli-eval-id-'),
+      );
+      const appName = 'evalApp';
+      const evalSetId = 'sampleEvalSet';
+      const agentDir = path.join(tempDir, appName);
+      fs.mkdirSync(agentDir, {recursive: true});
+
+      const agentFile = path.join(agentDir, 'agent.js');
+      fs.writeFileSync(
+        agentFile,
+        [
+          `import {BaseAgent, createEvent} from '@google/adk';`,
+          `class EvalAgent extends BaseAgent {`,
+          `  constructor() { super({name: 'evalAgent'}); }`,
+          `  async *runAsyncImpl(ctx) {`,
+          `    const text = ctx.userContent?.parts?.[0]?.text ?? '';`,
+          `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'Echo: ' + text}]}});`,
+          `  }`,
+          `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+          `}`,
+          `export const rootAgent = new EvalAgent();`,
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const evalSetsManager = new LocalEvalSetsManager(tempDir);
+      evalSetsManager.createEvalSet(appName, evalSetId);
+      evalSetsManager.addEvalCase(appName, evalSetId, {
+        evalId: 'case1',
+        conversation: [
+          {
+            invocationId: 'inv-1',
+            userContent: {role: 'user', parts: [{text: 'ping'}]},
+            finalResponse: {role: 'model', parts: [{text: 'Echo: ping'}]},
+          },
+        ],
+      });
+      evalSetsManager.addEvalCase(appName, evalSetId, {
+        evalId: 'case2',
+        conversation: [
+          {
+            invocationId: 'inv-2',
+            userContent: {role: 'user', parts: [{text: 'pong'}]},
+            finalResponse: {role: 'model', parts: [{text: 'Echo: pong'}]},
+          },
+        ],
+      });
+
+      const stdoutChunks: string[] = [];
+      const stdoutSpy = vi
+        .spyOn(process.stdout, 'write')
+        .mockImplementation((chunk: string | Uint8Array) => {
+          stdoutChunks.push(
+            typeof chunk === 'string'
+              ? chunk
+              : Buffer.from(chunk).toString('utf-8'),
+          );
+          return true;
+        });
+
+      try {
+        await parse(['eval', agentDir, `${evalSetId}: case1 , case2 `]);
+
+        expect(process.exitCode).toBeUndefined();
+        const output = stdoutChunks.join('');
+        expect(output).toContain('Eval Run Summary');
+        expect(output).toContain('Tests passed: 2');
+        expect(output).toContain('Tests failed: 0');
+
+        const evalSetResultsManager = new LocalEvalSetResultsManager(tempDir);
+        const evalSetResults =
+          evalSetResultsManager.listEvalSetResults(appName);
+        expect(evalSetResults).toHaveLength(1);
+        const storedResult = evalSetResultsManager.getEvalSetResult(
+          appName,
+          evalSetResults[0],
+        );
+        expect(storedResult.evalSetId).toBe(evalSetId);
+        expect(storedResult.evalCaseResults.map((c) => c.evalId)).toEqual([
+          'case1',
+          'case2',
+        ]);
+      } finally {
+        stdoutSpy.mockRestore();
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
+    });
+
+    it('resolves an eval set ID when a directory with the same name exists in the working directory', async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-cli-eval-dir-collision-'),
+      );
+      const appName = 'evalApp';
+      const evalSetId = 'evalApp';
+      const agentDir = path.join(tempDir, appName);
+      fs.mkdirSync(agentDir, {recursive: true});
+
+      fs.writeFileSync(
+        path.join(agentDir, 'agent.js'),
+        [
+          `import {BaseAgent, createEvent} from '@google/adk';`,
+          `class EvalAgent extends BaseAgent {`,
+          `  constructor() { super({name: 'evalAgent'}); }`,
+          `  async *runAsyncImpl(ctx) {`,
+          `    const text = ctx.userContent?.parts?.[0]?.text ?? '';`,
+          `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'Echo: ' + text}]}});`,
+          `  }`,
+          `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+          `}`,
+          `export const rootAgent = new EvalAgent();`,
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const evalSetsManager = new LocalEvalSetsManager(tempDir);
+      evalSetsManager.createEvalSet(appName, evalSetId);
+      evalSetsManager.addEvalCase(appName, evalSetId, {
+        evalId: 'case1',
+        conversation: [
+          {
+            invocationId: 'inv-1',
+            userContent: {role: 'user', parts: [{text: 'ping'}]},
+            finalResponse: {role: 'model', parts: [{text: 'Echo: ping'}]},
+          },
+        ],
+      });
+
+      const originalCwd = process.cwd();
+      const stdoutSpy = vi
+        .spyOn(process.stdout, 'write')
+        .mockImplementation(() => true);
+
+      try {
+        process.chdir(tempDir);
+        await parse(['eval', agentDir, evalSetId]);
+
+        expect(process.exitCode).toBeUndefined();
+        const evalSetResultsManager = new LocalEvalSetResultsManager(tempDir);
+        expect(evalSetResultsManager.listEvalSetResults(appName)).toHaveLength(
+          1,
+        );
+      } finally {
+        process.chdir(originalCwd);
+        stdoutSpy.mockRestore();
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
+    });
+
+    it('rejects mixing eval set file paths and eval set IDs in either order', async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-cli-eval-mixed-'),
+      );
+      const appName = 'evalApp';
+      const evalSetId = 'sampleEvalSet';
+      const agentDir = path.join(tempDir, appName);
+      fs.mkdirSync(agentDir, {recursive: true});
+
+      fs.writeFileSync(
+        path.join(agentDir, 'agent.js'),
+        [
+          `import {BaseAgent, createEvent} from '@google/adk';`,
+          `class EvalAgent extends BaseAgent {`,
+          `  constructor() { super({name: 'evalAgent'}); }`,
+          `  async *runAsyncImpl(ctx) {`,
+          `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'pong'}]}});`,
+          `  }`,
+          `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+          `}`,
+          `export const rootAgent = new EvalAgent();`,
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const evalSetsManager = new LocalEvalSetsManager(tempDir);
+      evalSetsManager.createEvalSet(appName, evalSetId);
+      const evalSetFile = path.join(tempDir, 'external.evalset.json');
+      fs.writeFileSync(
+        evalSetFile,
+        JSON.stringify({evalSetId: 'external', evalCases: []}),
+        'utf-8',
+      );
+
+      const errorSpy = vi
+        .spyOn(AdkLogger.prototype, 'error')
+        .mockImplementation(() => {});
+
+      try {
+        process.exitCode = undefined;
+        await parse(['eval', agentDir, evalSetFile, evalSetId]);
+        expect(process.exitCode).toBe(1);
+        expect(errorSpy).toHaveBeenCalledWith(
+          'Error evaluating agent:',
+          expect.stringContaining(
+            'Mixing eval set file paths and eval set IDs is not allowed',
+          ),
+        );
+
+        errorSpy.mockClear();
+        process.exitCode = undefined;
+        await parse(['eval', agentDir, evalSetId, evalSetFile]);
+        expect(process.exitCode).toBe(1);
+        expect(errorSpy).toHaveBeenCalledWith(
+          'Error evaluating agent:',
+          expect.stringContaining(
+            'Mixing eval set file paths and eval set IDs is not allowed',
+          ),
+        );
+      } finally {
+        process.exitCode = undefined;
+        errorSpy.mockRestore();
         fs.rmSync(tempDir, {recursive: true, force: true});
       }
     });
@@ -2256,6 +2497,7 @@ describe('getMemoryServiceFromOptions', () => {
 describe('getSessionServiceFromOptions', () => {
   beforeEach(() => {
     vertexAiSessionServiceOptions.mockClear();
+    getSessionServiceFromUriCalls.mockClear();
   });
 
   afterEach(() => {
@@ -2361,5 +2603,44 @@ describe('getSessionServiceFromOptions', () => {
         sessionServiceUri: 'agentengine://123',
       }),
     ).toThrow('GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION not set.');
+  });
+
+  it('forwards sessionDbOptions when constructing a DatabaseSessionService', async () => {
+    const sessionDbOptions: DatabaseSessionServiceOptions = {
+      debug: false,
+      allowGlobalContext: true,
+      staleSession: 'reload',
+    };
+    const service = getSessionServiceFromOptions({
+      sessionServiceUri: 'sqlite:///:memory:',
+      sessionDbOptions,
+    });
+
+    expect(service).toBeInstanceOf(DatabaseSessionService);
+    expect(getSessionServiceFromUriCalls).toHaveBeenCalledWith(
+      'sqlite:///:memory:',
+      sessionDbOptions,
+    );
+
+    const key = {
+      appName: 'cliApp',
+      userId: 'user-1',
+      sessionId: 'session-1',
+    };
+    const session = await service.createSession(key);
+    const concurrentSession = await service.getSession(key);
+    expect(concurrentSession).toBeDefined();
+    if (concurrentSession) {
+      await service.appendEvent({
+        session: concurrentSession,
+        event: createEvent({timestamp: Date.now() + 10}),
+      });
+    }
+    await expect(
+      service.appendEvent({
+        session,
+        event: createEvent({timestamp: Date.now() + 20}),
+      }),
+    ).resolves.toBeDefined();
   });
 });

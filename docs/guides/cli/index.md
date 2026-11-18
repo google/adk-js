@@ -197,15 +197,17 @@ adk api_server path/to/agents --a2a
 
 ### Storing eval data in Google Cloud Storage
 
-`adk web`, `adk api_server`, and `adk eval` accept `--eval-storage-uri, --eval_storage_uri <string>`. The only supported form is `gs://<bucket name>`. When the URI has a path, such as `gs://my-bucket/some/path`, only the bucket is used. Without the option, the commands keep eval data in the agents directory.
+`adk web`, `adk api_server`, and `adk eval` accept `--eval-storage-uri, --eval_storage_uri <string>`. The only supported form is `gs://<bucket name>`. When the URI has a path, such as `gs://my-bucket/some/path`, only the bucket is used. Without the option, the commands keep eval data in the agents directory (`LocalEvalSetsManager` and `LocalEvalSetResultsManager`).
 
 ```bash
+adk eval path/to/agents/my_app my_eval_set:case_1,case_2
+
 export GOOGLE_CLOUD_PROJECT=my-project
 adk web --eval_storage_uri gs://my-bucket path/to/agents
 adk eval path/to/agents/my_app my_eval_set:case_1,case_2 --eval_storage_uri gs://my-bucket
 ```
 
-With the option, `adk eval` treats its positional arguments as eval set IDs, unless the first one is an existing file. It reads each eval set from the bucket and fails when an ID is not there. It saves the results to the bucket in both cases.
+`adk eval` accepts either existing eval set file paths or eval set IDs (mixing file paths and IDs in one invocation is rejected). Existing regular files take precedence over eval set IDs with the same name in the working directory; otherwise each eval set ID is read from the local agents directory (or from the bucket when `--eval_storage_uri` is set) and the command fails when an ID is not there. It saves the results to the configured eval results manager in both cases.
 
 The bucket uses this layout:
 
@@ -264,17 +266,17 @@ The GCS managers implement the same interfaces as the local managers, with async
 
 ### Filtering eval cases from CLI arguments
 
-`parseAndGetEvalsToRun(evalSetFilePaths)` splits CLI specifications of the form `'path/to/set.evalset.json:case_1,case_2'` into a map from file path to requested case names. An entry without a colon maps to an empty array `[]`, indicating that all cases in the file should run.
+`parseAndGetEvalsToRun(evalsToRunInfo)` splits CLI specifications of the form `'path/to/set.evalset.json:case_1,case_2'` or `'eval_set_id:case_1,case_2'` into a map from file path or eval set ID to trimmed case IDs, ignoring empty and whitespace-only entries in the comma-separated list. An entry without a colon maps to an empty array `[]`, indicating that all cases in the eval set should run.
 
 ```ts
 import {parseAndGetEvalsToRun} from '@google/adk';
 
 const mapping = parseAndGetEvalsToRun([
-  'weather.evalset.json:sunny_day,rainy_day',
+  'weather:sunny_day,rainy_day',
   'billing.evalset.json',
 ]);
 // {
-//   'weather.evalset.json': ['sunny_day', 'rainy_day'],
+//   weather: ['sunny_day', 'rainy_day'],
 //   'billing.evalset.json': [],
 // }
 ```
