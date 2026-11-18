@@ -174,8 +174,9 @@ Parameter names are snake_cased the same way unless `preservePropertyNames` is
 set, and two that collide — a `userId` query parameter and a `user_id` body
 property both become `user_id` — are disambiguated with `_1`, `_2` and so on,
 because a function declaration cannot carry the same argument twice. A name
-that is one of the 46 ECMAScript reserved words is prefixed, so an OpenAPI
-parameter named `in` reaches the model as `param_in`.
+that is in Python's reserved keyword set (`PYTHON_KEYWORDS`) is prefixed with
+`param_` for cross-SDK schema parity with `adk-python`, so an OpenAPI parameter
+named `in` reaches the model as `param_in`.
 
 The snake-case pass follows adk-python exactly, including the results that look
 wrong in isolation: `XMLHTTPRequest` becomes `xmlhttp_request` and `fromAtoB`
@@ -220,20 +221,22 @@ for offline inspection and compatibility.
 
 ### What a failed call returns
 
-Two outcomes are error objects rather than exceptions:
+HTTP error responses (`status >= 400`) are returned to the model as error
+objects rather than thrown as exceptions, whereas `fetch` transport rejections
+(such as DNS or connection failures) propagate as errors:
 
-| Outcome             | What the tool returns                               |
-| :------------------ | :-------------------------------------------------- |
-| A non-2xx response  | `{error: 'Tool <name> execution failed. … <body>'}` |
-| A transport failure | `{error: 'Failed to execute API call: <message>'}`  |
+| Outcome                     | Behavior                                                                 |
+| :-------------------------- | :----------------------------------------------------------------------- |
+| HTTP status `>= 400`        | Returns `{error: 'Tool <name> execution failed. … <errorDetails>'}`      |
+| A `fetch` transport failure | Rejects and propagates the error to the caller                           |
 
-Returning the failure is deliberate. The model is the caller, and it can act on
-a failure it can read: correct an argument, try another value, or tell the user.
-An exception would end the turn instead. The message names the tool and
-includes the response body, and tells the model to stop after three attempts,
-because a model that reads only "the call failed" tends to repeat the call.
-Say in the agent's instruction what to do with an error, or it may report the
-error text as though it were the answer.
+Returning HTTP `>= 400` failures as objects is deliberate. The model is the
+caller, and it can act on a failure it can read: correct an argument, try
+another value, or tell the user. An exception would end the turn instead. The
+message names the tool, includes the response body, and tells the model to stop
+after three attempts, because a model that reads only "the call failed" tends to
+repeat the call. Say in the agent's instruction what to do with an error, or it
+may report the error text as though it were the answer.
 
 ## Configuring authentication
 
@@ -270,8 +273,9 @@ rather than the object inside it.
 
 ### Where the credential lands
 
-`in: 'header'` sets that header, `in: 'query'` appends the parameter,
-`in: 'cookie'` sets a cookie, and a credential with no `apiKey` but an
+`in: 'header'` sets that header, `in: 'query'` appends the query parameter,
+`in: 'cookie'` (or an unspecified location) falls back to setting the
+`Authorization` header directly, and a credential with no `apiKey` but an
 `http.credentials.token` becomes `Authorization: Bearer <token>` whatever the
 scheme says.
 
@@ -446,15 +450,16 @@ tell the two apart has to read the message: the exchange-failure messages name
 the path (`Failed to exchange default service account token`), while the
 missing-credential messages name what is absent.
 
-**`OAuth2CredentialExchanger` is different: it throws a plain `Error`.** So
-`catch (e) { if (e instanceof AuthCredentialMissingError) … }` will miss the
-OAuth2 case entirely. The split is not this port's taste — it follows
-adk-python, where the service-account exchanger raises
-`AuthCredentialMissingError` and `oauth2_exchanger.py` raises `ValueError`
-(`:37`, `:46`, `:52`), and a Python-only error type becomes a plain `Error`
-here. A missing OAuth2 **client secret** is separate again and does raise
-`AuthCredentialMissingError`, in `ToolAuthHandler.requestCredential`, so the
-retry-catch warning above still holds for that case.
+**`OAuth2CredentialExchanger` and `OAuth2BearerExchanger` throw different error
+types.** `OAuth2CredentialExchanger` (used by `AutoAuthCredentialExchanger` to
+fetch tokens) throws `CredentialExchangeError`, whereas `OAuth2BearerExchanger`
+(the token-to-bearer converter ported from `oauth2_exchanger.py`) throws a
+plain `Error`. Neither throws `AuthCredentialMissingError`, so
+`catch (e) { if (e instanceof AuthCredentialMissingError) … }` misses both
+OAuth2 exchangers. A missing OAuth2 `clientId` or `clientSecret` is separate
+again and does raise `AuthCredentialMissingError` in
+`ToolAuthHandler.requestCredential`, so the retry-catch warning above still holds
+for that case.
 
 ## Configuration options
 
@@ -696,32 +701,32 @@ credentials have no expiry and must be cleared manually if revoked. A `pending`
 result needs a client that can resume; nothing happens until the application
 reads the parked auth request and starts a new run.
 
-`ServiceAccountCredentialExchanger` ignores `tokenUri`, because
-`google-auth-library` hardcodes `https://oauth2.googleapis.com/token` as both
-the audience claim and the target, so a key file naming a different endpoint
-still reaches Google's; adk-python honours the field. `privateKeyId` reaches the
-JWT client as `keyId` and is not forwarded to the signer, so it does not become
-the `kid` header. `useIdToken` and `audience` exist on `ServiceAccount` and are
-not read, so a caller setting `useIdToken: true` receives an access token, not
-an ID token. The exchanger is not exported from `@google/adk`, so a custom
-exchanger cannot delegate to it; `OAuth2CredentialExchanger` is exported and can
-be.
+`ServiceAccountCredentialExchanger` uses `creds.tokenUri` when it differs from
+`https://oauth2.googleapis.com/token` (posting an RS256 JWT-bearer grant that
+includes `kid: creds.privateKeyId` when set, with `aud` set to
+`https://oauth2.googleapis.com/token`), and otherwise delegates to
+`google-auth-library`'s `JWT` client with `keyId: creds.privateKeyId`.
+`useIdToken` and `audience` exist on `ServiceAccount` and are not read, so a
+caller setting `useIdToken: true` receives an access token, not an ID token.
+`ServiceAccountCredentialExchanger` and `OAuth2CredentialExchanger` are both
+exported from `@google/adk`, so a custom exchanger can delegate to either.
 
 `openidUrlToSchemeCredential` uses the URL exactly as given, with no check on
 scheme or host, matching adk-python. A caller that accepts the URL from a user,
 a model or configuration it does not control should validate it first, because
 the helper turns that value into an outbound request.
 
-**Shipped but unreached.** Three pieces have no caller inside adk-js and exist
-for parity or for your own code. `credentialToParam` builds the synthesized
-parameter form that adk-python's `rest_api_tool.py` consumes, while adk-js
-applies the credential to the request directly. `BaseAuthCredentialExchanger`
-is subclassed by nothing here. `OAuth2BearerExchanger` reformats an OAuth2
-access token into an HTTP bearer credential, but `ToolAuthHandler` routes an
-OAuth2 credential to `OAuth2CredentialExchanger` in `core/src/auth/oauth2/` —
-the class that fetches tokens, not the one that converts them — so a caller
-wanting the bearer conversion in a request path performs it explicitly.
-`AutoAuthCredentialExchanger` is likewise constructed with no arguments by
+**Shipped but unreached.** Three pieces have no direct caller inside adk-js and
+exist for parity or for your own code. `credentialToParam` builds the
+synthesized parameter form that adk-python's `rest_api_tool.py` consumes, while
+adk-js applies the credential to the request directly.
+`BaseAuthCredentialExchanger` is subclassed by nothing here.
+`OAuth2BearerExchanger` reformats an OAuth2 access token into an HTTP bearer
+credential, while `ToolAuthHandler` uses `AutoAuthCredentialExchanger`, whose
+default `OAUTH2`/`OPEN_ID_CONNECT` exchanger composes
+`OAuth2CredentialExchanger` (to fetch tokens) with `generateAuthToken` (to
+convert the access token into an HTTP bearer credential).
+`AutoAuthCredentialExchanger` is constructed with no arguments by
 `ToolAuthHandler`, so `customExchangers` applies where your own code constructs
 it.
 

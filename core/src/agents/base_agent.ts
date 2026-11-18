@@ -458,18 +458,18 @@ export abstract class BaseAgent<
   }
 
   /**
-   * The resolved beforeAgentCallback field as a list of SingleAgentCallback.
+   * The resolved beforeAgentCallback field as an array of SingleAgentCallback.
    *
-   * This method is only for use by Agent Development Kit.
+   * This getter is only for use by Agent Development Kit.
    */
   get canonicalBeforeAgentCallbacks(): SingleAgentCallback[] {
     return this.beforeAgentCallback;
   }
 
   /**
-   * The resolved afterAgentCallback field as a list of SingleAgentCallback.
+   * The resolved afterAgentCallback field as an array of SingleAgentCallback.
    *
-   * This method is only for use by Agent Development Kit.
+   * This getter is only for use by Agent Development Kit.
    */
   get canonicalAfterAgentCallbacks(): SingleAgentCallback[] {
     return this.afterAgentCallback;

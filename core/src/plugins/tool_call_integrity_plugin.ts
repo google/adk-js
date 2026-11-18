@@ -195,7 +195,7 @@ function getSubtleCrypto(): SubtleCrypto {
  *
  * Events without function calls are ignored. Events marked as restored are not
  * verified, and their function calls are never executed. ADK marks events
- * restored by `adk run --replay`, and {@link prepareRestoredEvent} marks events
+ * restored by `adk run --resume`, and {@link prepareRestoredEvent} marks events
  * that your code copies. Anyone who can write to the session store can also
  * set the marker, but `beforeToolCallback` still refuses those events' calls.
  *
@@ -209,13 +209,25 @@ function getSubtleCrypto(): SubtleCrypto {
  * Requires the Web Crypto API (`globalThis.crypto.subtle`), available in
  * browsers and in Node.js 19 and later.
  *
- * Example:
+ * @example
  * ```typescript
- * const plugin = new ToolCallIntegrityPlugin({secretKey: keyBytes});
- * const app = {name: 'my_app', rootAgent: agent, plugins: [plugin]};
+ * import {App, LlmAgent, ToolCallIntegrityPlugin} from '@google/adk';
+ *
+ * const keyBytes = crypto.getRandomValues(new Uint8Array(32));
+ * const rootAgent = new LlmAgent({
+ *   name: 'my_agent',
+ *   model: 'gemini-flash-latest',
+ * });
+ * const integrityPlugin = new ToolCallIntegrityPlugin({secretKey: keyBytes});
+ * const app = new App({
+ *   name: 'my_app',
+ *   rootAgent,
+ *   plugins: [integrityPlugin],
+ * });
  *
  * // Key rotation: stamp with the new key, accept both.
- * new ToolCallIntegrityPlugin({secretKey: [newKeyBytes, oldKeyBytes]});
+ * const newKeyBytes = crypto.getRandomValues(new Uint8Array(32));
+ * new ToolCallIntegrityPlugin({secretKey: [newKeyBytes, keyBytes]});
  * ```
  */
 export class ToolCallIntegrityPlugin extends BasePlugin {

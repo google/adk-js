@@ -51,7 +51,7 @@ export function resolveScopeKey(
 ): string {
   if (scope === TrackingScope.INVOCATION) {
     if (!invocationId) {
-      throw new Error('invocation_id must be provided for INVOCATION scope');
+      throw new Error('invocationId must be provided for INVOCATION scope');
     }
     return invocationId;
   } else if (scope === TrackingScope.GLOBAL) {

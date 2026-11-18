@@ -141,7 +141,7 @@ function buildInnerNode(
     }
   }
   throw new Error(
-    `build_node: unsupported node-like value of type ${typeof nodeLike}. ` +
+    `buildNode: unsupported node-like value of type ${typeof nodeLike}. ` +
       'Import the node module that handles it (e.g. via the workflow barrel).',
   );
 }

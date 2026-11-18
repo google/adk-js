@@ -183,7 +183,7 @@ export function isGemini3xFlashLive(modelString: string | undefined): boolean {
 }
 
 /**
- * Returns True when Gemini model-id validation should be bypassed.
+ * Returns `true` when Gemini model-id validation should be bypassed.
  */
 export function isGeminiModelIdCheckDisabled(): boolean {
   return getBooleanEnvVar('ADK_DISABLE_GEMINI_MODEL_ID_CHECK');
