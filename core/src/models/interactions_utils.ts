@@ -688,7 +688,7 @@ export function convertInteractionEventToLlmResponse(
         aggregatedParts.push(part);
         return {
           content: {role: 'model', parts: [part]},
-          partial: false,
+          partial: true,
           turnComplete: false,
           interactionId: interactionId,
         };
@@ -716,13 +716,8 @@ export function convertInteractionEventToLlmResponse(
           activePart.functionCall.args = {};
         }
         delete activePart.partMetadata;
-
-        return {
-          content: {role: 'model', parts: [activePart]},
-          partial: false,
-          turnComplete: false,
-          interactionId: interactionId,
-        };
+        // The final aggregated response carries the call.
+        return null;
       }
       if (activePart.thought) {
         delete activePart.partMetadata;
@@ -908,6 +903,7 @@ export async function* generateContentViaInteractions(
     })) as AsyncIterable<ExtendedInteractionSSEEvent>;
 
     const aggregatedParts: Part[] = [];
+    let finalYielded = false;
     for await (const event of responses) {
       const interactionId = extractStreamInteractionId(event);
       if (interactionId) {
@@ -918,12 +914,22 @@ export async function* generateContentViaInteractions(
         aggregatedParts,
         currentInteractionId,
       );
-      if (llmResponse) {
-        yield llmResponse;
+      if (!llmResponse) {
+        continue;
       }
+      // A completed or requires_action status update and the
+      // interaction.completed event all carry the aggregated parts. Yield
+      // only one final response.
+      if (llmResponse.turnComplete && !llmResponse.errorCode) {
+        if (finalYielded) {
+          continue;
+        }
+        finalYielded = true;
+      }
+      yield llmResponse;
     }
 
-    if (aggregatedParts.length > 0) {
+    if (!finalYielded && aggregatedParts.length > 0) {
       yield {
         content: {role: 'model', parts: aggregatedParts},
         partial: false,
