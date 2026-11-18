@@ -205,3 +205,19 @@ function formatErrorRecursive(err: unknown, seen: Set<unknown>): string {
 export function formatError(err: unknown): string {
   return formatErrorRecursive(err, new Set<unknown>());
 }
+
+/**
+ * Names the runtime type of `value` for an error message: its constructor name
+ * for an object, `typeof` otherwise.
+ */
+export function describeValueType(value: unknown): string {
+  if (value === null) {
+    return 'null';
+  }
+  if (typeof value === 'object') {
+    return (
+      (value as {constructor?: {name?: string}}).constructor?.name ?? 'object'
+    );
+  }
+  return typeof value;
+}

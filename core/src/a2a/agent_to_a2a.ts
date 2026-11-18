@@ -24,6 +24,7 @@ import {Runner, RunnerConfig} from '../runner/runner.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {InMemorySessionService} from '../sessions/in_memory_session_service.js';
 import {runWithRemoteTraceContext} from '../telemetry/api/instrumentation.js';
+import {describeValueType} from '../utils/error_utils.js';
 import {logger} from '../utils/logger.js';
 import {loadOptionalPeer} from '../utils/optional_peer.js';
 import {
@@ -224,32 +225,21 @@ function resolveA2aUserBuilder(
   );
 }
 
-function describeRootType(value: unknown): string {
-  if (typeof value === 'object' && value !== null) {
-    return (
-      (value as {constructor?: {name?: string}}).constructor?.name ?? 'object'
-    );
-  }
-  return typeof value;
-}
-
 /**
  * Converts an ADK agent to an Express application with A2A handlers.
  *
  * @param agent The ADK agent or workflow to convert
  * @param options Configuration options
  * @returns An Express application
+ * @throws TypeError when `agent` is not a `BaseAgent` or `Workflow`.
  */
 export async function toA2a(
   agent: RunnableRoot,
   options: ToA2aOptions = {},
 ): Promise<express.Application> {
-  if (!agent) {
-    throw new Error('Agent cannot be null or undefined.');
-  }
   if (!isRunnableRoot(agent)) {
     throw new TypeError(
-      `toA2a requires a BaseAgent or Workflow, got ${describeRootType(agent)}.`,
+      `toA2a requires a BaseAgent or Workflow, got ${describeValueType(agent)}.`,
     );
   }
 
@@ -262,24 +252,21 @@ export async function toA2a(
   const host = options.host ?? 'localhost';
   const port = options.port ?? 8000;
   const protocol = options.protocol ?? 'http';
-  const normalizedRpcPath =
-    options.rpcPath !== undefined
-      ? options.rpcPath.replace(/^\/+|\/+$/g, '')
-      : undefined;
-  const basePath =
-    normalizedRpcPath !== undefined
-      ? normalizedRpcPath
-        ? `/${normalizedRpcPath}`
-        : ''
-      : options.basePath || '';
+  let basePath: string;
+  let basePathOption: 'rpcPath' | 'basePath';
+  if (options.rpcPath !== undefined) {
+    const normalizedRpcPath = options.rpcPath.replace(/^\/+|\/+$/g, '');
+    basePath = normalizedRpcPath ? `/${normalizedRpcPath}` : '';
+    basePathOption = 'rpcPath';
+  } else {
+    basePath = options.basePath || '';
+    basePathOption = 'basePath';
+  }
   const rpcUrl = `${protocol}://${host}:${port}${basePath}`;
 
-  if (
-    options.agentCard &&
-    (normalizedRpcPath || options.basePath?.replace(/^\/+|\/+$/g, ''))
-  ) {
+  if (options.agentCard && basePath.replace(/^\/+|\/+$/g, '')) {
     logger.warn(
-      `Both agentCard and rpcPath were provided; routes are mounted under "${basePath}" ` +
+      `Both agentCard and ${basePathOption} were provided; routes are mounted under "${basePath}" ` +
         "but the provided agentCard's advertised url is left unchanged, so " +
         'clients reading the card may not reach the served location.',
     );
@@ -312,16 +299,14 @@ export async function toA2a(
   ];
   const agentCard = options.agentCard
     ? await resolveAgentCard(options.agentCard, options.resolveAgentCardOptions)
-    : securitySchemes !== undefined || defaultSkillSecurity !== undefined
-      ? await getA2AAgentCard(agent, transports, {
-          securitySchemes,
-          defaultSkillSecurity,
-        })
-      : await getA2AAgentCard(agent, transports);
+    : await getA2AAgentCard(agent, transports, {
+        securitySchemes,
+        defaultSkillSecurity,
+      });
 
   const defaultRunnerConfig: RunnerConfig = {
     agent,
-    appName: agent.name || 'adk_agent',
+    appName: agent.name,
     sessionService: options.sessionService ?? new InMemorySessionService(),
     memoryService: options.memoryService ?? new InMemoryMemoryService(),
     artifactService: options.artifactService ?? new InMemoryArtifactService(),

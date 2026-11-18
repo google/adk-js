@@ -99,6 +99,12 @@ vi.mock('../../src/a2a/agent_card.js', () => ({
   resolveAgentCard: vi.fn().mockResolvedValue({name: 'resolved_card'}),
 }));
 
+// toA2a forwards these to getA2AAgentCard even when neither was configured.
+const NO_CARD_SECURITY = {
+  securitySchemes: undefined,
+  defaultSkillSecurity: undefined,
+};
+
 describe('toA2a', () => {
   let agent: TestAgent;
 
@@ -120,10 +126,14 @@ describe('toA2a', () => {
     expect(expressMock.json).toHaveBeenCalledWith({limit: '50mb'});
     expect(app.use).toHaveBeenCalledWith('json_middleware');
 
-    expect(getA2AAgentCard).toHaveBeenCalledWith(agent, [
-      {url: 'http://localhost:8000/jsonrpc', transport: 'JSONRPC'},
-      {url: 'http://localhost:8000/rest', transport: 'HTTP+JSON'},
-    ]);
+    expect(getA2AAgentCard).toHaveBeenCalledWith(
+      agent,
+      [
+        {url: 'http://localhost:8000/jsonrpc', transport: 'JSONRPC'},
+        {url: 'http://localhost:8000/rest', transport: 'HTTP+JSON'},
+      ],
+      NO_CARD_SECURITY,
+    );
 
     expect(A2AAgentExecutor).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -176,10 +186,14 @@ describe('toA2a', () => {
     });
 
     expect(express).not.toHaveBeenCalled();
-    expect(getA2AAgentCard).toHaveBeenCalledWith(agent, [
-      {url: 'https://custom-host:9000api/v1/jsonrpc', transport: 'JSONRPC'},
-      {url: 'https://custom-host:9000api/v1/rest', transport: 'HTTP+JSON'},
-    ]);
+    expect(getA2AAgentCard).toHaveBeenCalledWith(
+      agent,
+      [
+        {url: 'https://custom-host:9000api/v1/jsonrpc', transport: 'JSONRPC'},
+        {url: 'https://custom-host:9000api/v1/rest', transport: 'HTTP+JSON'},
+      ],
+      NO_CARD_SECURITY,
+    );
 
     expect(A2AAgentExecutor).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -305,12 +319,21 @@ describe('toA2a', () => {
   });
 
   describe('agent validation and workflow support', () => {
-    it.each([undefined, null])(
-      'throws when agent is %s',
-      async (invalidAgent: unknown) => {
+    it.each([
+      {invalidAgent: undefined, typeName: 'undefined'},
+      {invalidAgent: null, typeName: 'null'},
+    ])(
+      'throws TypeError when agent is $typeName',
+      async ({invalidAgent, typeName}) => {
         await expect(
-          toA2a(invalidAgent as BaseAgent, {allowUnauthenticated: true}),
-        ).rejects.toThrow('Agent cannot be null or undefined.');
+          toA2a(invalidAgent as unknown as BaseAgent, {
+            allowUnauthenticated: true,
+          }),
+        ).rejects.toThrow(
+          new TypeError(
+            `toA2a requires a BaseAgent or Workflow, got ${typeName}.`,
+          ),
+        );
       },
     );
 
@@ -341,10 +364,14 @@ describe('toA2a', () => {
       const app = await toA2a(workflow, {allowUnauthenticated: true});
 
       expect(app).toBe(mockApp);
-      expect(getA2AAgentCard).toHaveBeenCalledWith(workflow, [
-        {url: 'http://localhost:8000/jsonrpc', transport: 'JSONRPC'},
-        {url: 'http://localhost:8000/rest', transport: 'HTTP+JSON'},
-      ]);
+      expect(getA2AAgentCard).toHaveBeenCalledWith(
+        workflow,
+        [
+          {url: 'http://localhost:8000/jsonrpc', transport: 'JSONRPC'},
+          {url: 'http://localhost:8000/rest', transport: 'HTTP+JSON'},
+        ],
+        NO_CARD_SECURITY,
+      );
     });
   });
 
@@ -360,16 +387,20 @@ describe('toA2a', () => {
           allowUnauthenticated: true,
         });
 
-        expect(getA2AAgentCard).toHaveBeenCalledWith(agent, [
-          {
-            url: 'http://localhost:8000/analysis-agent/jsonrpc',
-            transport: 'JSONRPC',
-          },
-          {
-            url: 'http://localhost:8000/analysis-agent/rest',
-            transport: 'HTTP+JSON',
-          },
-        ]);
+        expect(getA2AAgentCard).toHaveBeenCalledWith(
+          agent,
+          [
+            {
+              url: 'http://localhost:8000/analysis-agent/jsonrpc',
+              transport: 'JSONRPC',
+            },
+            {
+              url: 'http://localhost:8000/analysis-agent/rest',
+              transport: 'HTTP+JSON',
+            },
+          ],
+          NO_CARD_SECURITY,
+        );
         expect(customApp.use).toHaveBeenCalledWith(
           '/analysis-agent/.well-known/agent-card.json',
           'agentCardHandler',
@@ -398,10 +429,14 @@ describe('toA2a', () => {
           allowUnauthenticated: true,
         });
 
-        expect(getA2AAgentCard).toHaveBeenCalledWith(agent, [
-          {url: 'http://localhost:8000/jsonrpc', transport: 'JSONRPC'},
-          {url: 'http://localhost:8000/rest', transport: 'HTTP+JSON'},
-        ]);
+        expect(getA2AAgentCard).toHaveBeenCalledWith(
+          agent,
+          [
+            {url: 'http://localhost:8000/jsonrpc', transport: 'JSONRPC'},
+            {url: 'http://localhost:8000/rest', transport: 'HTTP+JSON'},
+          ],
+          NO_CARD_SECURITY,
+        );
         expect(customApp.use).toHaveBeenCalledWith(
           '/.well-known/agent-card.json',
           'agentCardHandler',
@@ -418,13 +453,20 @@ describe('toA2a', () => {
         allowUnauthenticated: true,
       });
 
-      expect(getA2AAgentCard).toHaveBeenCalledWith(agent, [
-        {
-          url: 'http://localhost:8000/team/agent/jsonrpc',
-          transport: 'JSONRPC',
-        },
-        {url: 'http://localhost:8000/team/agent/rest', transport: 'HTTP+JSON'},
-      ]);
+      expect(getA2AAgentCard).toHaveBeenCalledWith(
+        agent,
+        [
+          {
+            url: 'http://localhost:8000/team/agent/jsonrpc',
+            transport: 'JSONRPC',
+          },
+          {
+            url: 'http://localhost:8000/team/agent/rest',
+            transport: 'HTTP+JSON',
+          },
+        ],
+        NO_CARD_SECURITY,
+      );
       expect(customApp.use).toHaveBeenCalledWith(
         '/team/agent/.well-known/agent-card.json',
         'agentCardHandler',
@@ -465,15 +507,17 @@ describe('toA2a', () => {
     ])('builds RPC URLs for $label', async ({options, expectedBase}) => {
       await toA2a(agent, {...options, allowUnauthenticated: true});
 
-      expect(getA2AAgentCard).toHaveBeenCalledWith(agent, [
-        {url: `${expectedBase}/jsonrpc`, transport: 'JSONRPC'},
-        {url: `${expectedBase}/rest`, transport: 'HTTP+JSON'},
-      ]);
+      expect(getA2AAgentCard).toHaveBeenCalledWith(
+        agent,
+        [
+          {url: `${expectedBase}/jsonrpc`, transport: 'JSONRPC'},
+          {url: `${expectedBase}/rest`, transport: 'HTTP+JSON'},
+        ],
+        NO_CARD_SECURITY,
+      );
     });
 
-    it('populates default InMemory services and falls back to adk_agent when agent name is empty', async () => {
-      Object.assign(agent, {name: ''});
-
+    it('populates default InMemory services and uses the agent name as appName', async () => {
       await toA2a(agent, {allowUnauthenticated: true});
 
       const executorConfig = vi.mocked(A2AAgentExecutor).mock.calls[0]?.[0];
@@ -484,7 +528,7 @@ describe('toA2a', () => {
         artifactService?: unknown;
         credentialService?: unknown;
       };
-      expect(runnerConfig?.appName).toBe('adk_agent');
+      expect(runnerConfig?.appName).toBe('test-agent');
       expect(runnerConfig?.sessionService).toBeInstanceOf(
         InMemorySessionService,
       );
@@ -582,6 +626,43 @@ describe('toA2a', () => {
 
         expect(warnSpy).toHaveBeenCalledWith(
           expect.stringContaining('Both agentCard and rpcPath were provided'),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('names basePath in the warning when agentCard and basePath are provided', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        await toA2a(agent, {
+          basePath: '/v1',
+          agentCard: {name: 'provided_card'} as unknown as AgentCard,
+          allowUnauthenticated: true,
+        });
+
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'Both agentCard and basePath were provided; routes are mounted under "/v1"',
+          ),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('does not warn about the mount path when an empty rpcPath overrides basePath', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        await toA2a(agent, {
+          rpcPath: '/',
+          basePath: '/v1',
+          agentCard: {name: 'provided_card'} as unknown as AgentCard,
+          allowUnauthenticated: true,
+        });
+
+        expect(warnSpy).not.toHaveBeenCalledWith(
+          expect.stringContaining('Both agentCard and'),
         );
       } finally {
         warnSpy.mockRestore();
