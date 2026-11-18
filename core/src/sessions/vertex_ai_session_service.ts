@@ -290,7 +290,7 @@ export class VertexAiSessionService extends BaseSessionService {
           name: sessionResourceName,
         })) as VertexAiSession;
       } else {
-        if (config && config.afterTimestamp) {
+        if (config && config.afterTimestamp !== undefined) {
           listConfig.filter = `timestamp>="${new Date(
             config.afterTimestamp,
           ).toISOString()}"`;

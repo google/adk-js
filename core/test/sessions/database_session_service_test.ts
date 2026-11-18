@@ -5,11 +5,14 @@
  */
 
 import {
+  BaseSessionService,
   createEvent,
   createEventActions,
   createSession,
   DatabaseSessionService,
   Event,
+  GetSessionConfig,
+  InMemorySessionService,
   isStaleSessionError,
   StaleSessionError,
   State,
@@ -337,15 +340,115 @@ describe('DatabaseSessionService', () => {
     expect(after?.events[0].id).toBe(e2.id);
     expect(after?.events[1].id).toBe(e3.id);
 
-    // Test afterTimestamp
+    // Test afterTimestamp inclusive boundary
     const after2 = await service.getSession({
       appName: 'test-app',
       userId: 'user1',
       sessionId: 's1',
       config: {afterTimestamp: now},
     });
-    expect(after2?.events.length).toBe(1);
-    expect(after2?.events[0].id).toBe(e3.id);
+    expect(after2?.events.length).toBe(2);
+    expect(after2?.events[0].id).toBe(e2.id);
+    expect(after2?.events[1].id).toBe(e3.id);
+
+    // Test afterTimestamp newer than all events
+    const afterAll = await service.getSession({
+      appName: 'test-app',
+      userId: 'user1',
+      sessionId: 's1',
+      config: {afterTimestamp: now + 1001},
+    });
+    expect(afterAll?.events).toEqual([]);
+
+    // Test numRecentEvents: 0 returns no events without dropping stored events
+    const zeroEvents = await service.getSession({
+      appName: 'test-app',
+      userId: 'user1',
+      sessionId: 's1',
+      config: {numRecentEvents: 0},
+    });
+    expect(zeroEvents?.events).toEqual([]);
+
+    const reloadedAll = await service.getSession({
+      appName: 'test-app',
+      userId: 'user1',
+      sessionId: 's1',
+    });
+    expect(reloadedAll?.events.map((e) => e.id)).toEqual([e1.id, e2.id, e3.id]);
+  });
+
+  it('should respect afterTimestamp of 0 inclusively', async () => {
+    const session = await service.createSession({
+      appName: 'test-app',
+      userId: 'user1',
+      sessionId: 'epoch-zero-session',
+    });
+
+    const beforeEpoch = createEvent({timestamp: -1000});
+    const atEpoch = createEvent();
+    atEpoch.timestamp = 0;
+    const afterEpoch = createEvent({timestamp: 1000});
+
+    await service.appendEvent({session, event: beforeEpoch});
+    await service.appendEvent({session, event: atEpoch});
+    await service.appendEvent({session, event: afterEpoch});
+
+    const loaded = await service.getSession({
+      appName: 'test-app',
+      userId: 'user1',
+      sessionId: 'epoch-zero-session',
+      config: {afterTimestamp: 0},
+    });
+    expect(loaded?.events.map((e) => e.timestamp)).toEqual([0, 1000]);
+  });
+
+  it('should return identical getSession filter results as InMemorySessionService', async () => {
+    const base = 1_700_000_000_000;
+
+    async function collectOffsets(target: BaseSessionService) {
+      const session = await target.createSession({
+        appName: 'app',
+        userId: 'u',
+      });
+      for (const timestamp of [base - 1000, base, base + 1000]) {
+        await target.appendEvent({
+          session,
+          event: createEvent({author: 'user', timestamp}),
+        });
+      }
+      const offsets = async (config?: GetSessionConfig) =>
+        (await target.getSession({
+          appName: 'app',
+          userId: 'u',
+          sessionId: session.id,
+          config,
+        }))!.events.map((e) => e.timestamp - base);
+
+      return {
+        all: await offsets(),
+        afterBoundary: await offsets({afterTimestamp: base}),
+        afterFuture: await offsets({afterTimestamp: base + 2000}),
+        zeroRecent: await offsets({numRecentEvents: 0}),
+        zeroWithAfter: await offsets({
+          numRecentEvents: 0,
+          afterTimestamp: base,
+        }),
+        combined: await offsets({numRecentEvents: 1, afterTimestamp: base}),
+      };
+    }
+
+    const memoryResults = await collectOffsets(new InMemorySessionService());
+    const databaseResults = await collectOffsets(service);
+
+    expect(databaseResults).toEqual(memoryResults);
+    expect(databaseResults).toEqual({
+      all: [-1000, 0, 1000],
+      afterBoundary: [0, 1000],
+      afterFuture: [],
+      zeroRecent: [],
+      zeroWithAfter: [],
+      combined: [1000],
+    });
   });
 
   it('should refresh events on a stale session object in appendEvent when configured with staleSession reload', async () => {

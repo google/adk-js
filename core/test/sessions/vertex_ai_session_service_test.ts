@@ -444,6 +444,23 @@ describe('VertexAiSessionService', () => {
       );
     });
 
+    it('applies afterTimestamp filter when afterTimestamp is 0', async () => {
+      await service.getSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'my-session-id',
+        config: {afterTimestamp: 0},
+      });
+
+      expect(mockClient.events.listInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            filter: 'timestamp>="1970-01-01T00:00:00.000Z"',
+          }),
+        }),
+      );
+    });
+
     it('throws error if session does not belong to user', async () => {
       mockClient.get.mockResolvedValue({
         name: 'reasoningEngines/12345/sessions/my-session-id',
