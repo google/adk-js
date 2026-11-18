@@ -51,6 +51,8 @@ const TYPE_HINTS: Readonly<Record<string, string>> = {
 /**
  * Returns the Python type hint for an OpenAPI schema.
  *
+ * @deprecated Returns Python docstring type hints that are not sent to the
+ *     model in `@google/adk` and will be removed in a future major release.
  * @param schema The schema to describe, if any.
  * @returns A Python type name such as `str`, `List[int]` or `Dict[str, Any]`.
  *     A missing or unrecognised type gives `Any`.
@@ -81,6 +83,8 @@ function getArrayItemTypeHint(
 /**
  * Generates the docstring line documenting one parameter.
  *
+ * @deprecated Returns Python docstring type hints that are not sent to the
+ *     model in `@google/adk` and will be removed in a future major release.
  * @param param The parameter to document.
  * @returns A line of the form `name (type): description`, followed by an
  *     indented property list when the schema is an object with properties.
@@ -99,6 +103,8 @@ export function generateParamDoc(param: ApiParameter): string {
  *
  * Uses the 2xx response with the smallest status code that has content.
  *
+ * @deprecated Returns Python docstring type hints that are not sent to the
+ *     model in `@google/adk` and will be removed in a future major release.
  * @param responses The responses of an OpenAPI operation.
  * @returns A line of the form `Returns (type): description`, or `''` when no
  *     2xx response has content.
@@ -181,8 +187,7 @@ function describeProperties(
 }
 
 /**
- * Builds an {@link ApiParameter}, deriving the fields adk-python derives in
- * `ApiParameter.model_post_init`.
+ * Builds an {@link ApiParameter} with derived default fields.
  *
  * `name` falls back to the reserved-word-safe snake_case form of
  * `originalName`, and `description` falls back to the schema description.

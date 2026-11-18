@@ -261,14 +261,14 @@ describe('GlobalInstructionPlugin', () => {
     );
   });
 
-  it('should prepend global instruction to existing object (non-Iterable) system instruction', async () => {
+  it('should prepend global instruction to existing Part system instruction', async () => {
     const plugin = new GlobalInstructionPlugin('Global instruction.');
-    const existingObj = {text: 'Some object instruction'};
+    const existingPart = {text: 'Some Part instruction'};
     const llmRequest: LlmRequest = {
       contents: [],
       toolsDict: {},
       liveConnectConfig: {},
-      config: {systemInstruction: existingObj as unknown as string},
+      config: {systemInstruction: existingPart},
     };
 
     await plugin.beforeModelCallback({
@@ -278,8 +278,85 @@ describe('GlobalInstructionPlugin', () => {
 
     expect(llmRequest.config?.systemInstruction).toEqual([
       'Global instruction.',
-      existingObj,
+      existingPart,
     ]);
+  });
+
+  it('should prepend global instruction to existing Content system instruction', async () => {
+    const plugin = new GlobalInstructionPlugin('Global instruction.');
+    const llmRequest: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+      config: {
+        systemInstruction: {
+          role: 'system',
+          parts: [{text: 'Existing content instruction.'}],
+        },
+      },
+    };
+
+    await plugin.beforeModelCallback({
+      callbackContext: mockCallbackContext,
+      llmRequest,
+    });
+
+    expect(llmRequest.config?.systemInstruction).toEqual({
+      role: 'system',
+      parts: [
+        {text: 'Global instruction.'},
+        {text: 'Existing content instruction.'},
+      ],
+    });
+  });
+
+  it('should handle Content system instruction with undefined parts', async () => {
+    const plugin = new GlobalInstructionPlugin('Global instruction.');
+    const llmRequest: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+      config: {
+        systemInstruction: {
+          role: 'system',
+          parts: undefined,
+        },
+      },
+    };
+
+    await plugin.beforeModelCallback({
+      callbackContext: mockCallbackContext,
+      llmRequest,
+    });
+
+    expect(llmRequest.config?.systemInstruction).toEqual({
+      role: 'system',
+      parts: [{text: 'Global instruction.'}],
+    });
+  });
+
+  it('should handle Content system instruction with role only and omitted parts', async () => {
+    const plugin = new GlobalInstructionPlugin('Global instruction.');
+    const llmRequest: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+      config: {
+        systemInstruction: {
+          role: 'system',
+        },
+      },
+    };
+
+    await plugin.beforeModelCallback({
+      callbackContext: mockCallbackContext,
+      llmRequest,
+    });
+
+    expect(llmRequest.config?.systemInstruction).toEqual({
+      role: 'system',
+      parts: [{text: 'Global instruction.'}],
+    });
   });
 
   it('should inject system instruction in an end-to-end InMemoryRunner simulation', async () => {

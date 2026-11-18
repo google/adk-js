@@ -46,7 +46,7 @@ export function parseUserAgent(userAgent: string): string {
   return 'Browser';
 }
 
-function _getDefaultLabels(): string[] {
+function getDefaultLabels(): string[] {
   let frameworkLabel = `${ADK_LABEL}/${version}`;
 
   if (!isBrowser() && process.env[AGENT_ENGINE_TELEMETRY_ENV_VARIABLE_NAME]) {
@@ -85,7 +85,7 @@ export function runWithClientLabel<R>(
  * Returns the current list of client labels that can be added to HTTP Headers.
  */
 export function getClientLabels(): string[] {
-  const labels = _getDefaultLabels();
+  const labels = getDefaultLabels();
   const contextLabel = clientLabelLocalStorage.getStore();
   if (contextLabel) {
     labels.push(contextLabel);

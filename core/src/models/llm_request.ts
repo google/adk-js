@@ -9,6 +9,7 @@ import {
   FunctionDeclaration,
   GenerateContentConfig,
   LiveConnectConfig,
+  Part,
   SchemaUnion,
 } from '@google/genai';
 
@@ -54,6 +55,18 @@ export interface LlmRequest {
 }
 
 /**
+ * Distinguishes a `Content` object from a `Part` within `ContentUnion`.
+ * Neither `parts` nor `role` exists on `@google/genai`'s `Part`.
+ */
+export function isContentObject(value: Content | Part): value is Content {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    ('parts' in value || 'role' in value)
+  );
+}
+
+/**
  * Appends instructions to the system instruction.
  * @param instructions The instructions to append.
  */
@@ -65,10 +78,23 @@ export function appendInstructions(
     llmRequest.config = {};
   }
   const newInstructions = instructions.join('\n\n');
-  if (llmRequest.config.systemInstruction) {
-    llmRequest.config.systemInstruction += '\n\n' + newInstructions;
-  } else {
+  const existing = llmRequest.config.systemInstruction;
+  if (!existing) {
     llmRequest.config.systemInstruction = newInstructions;
+  } else if (typeof existing === 'string') {
+    llmRequest.config.systemInstruction = `${existing}\n\n${newInstructions}`;
+  } else if (Array.isArray(existing)) {
+    llmRequest.config.systemInstruction = [
+      ...existing,
+      {text: newInstructions},
+    ];
+  } else if (typeof existing === 'object' && isContentObject(existing)) {
+    llmRequest.config.systemInstruction = {
+      ...existing,
+      parts: [...(existing.parts ?? []), {text: newInstructions}],
+    };
+  } else {
+    llmRequest.config.systemInstruction = [existing, {text: newInstructions}];
   }
 }
 

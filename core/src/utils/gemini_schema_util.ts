@@ -63,6 +63,10 @@ const STRINGIFIED_CONSTRAINT_FIELDS = [
 /** Constraint keywords the genai `Schema` declares as numbers. */
 const NUMERIC_CONSTRAINT_FIELDS = ['maximum', 'minimum'] as const;
 
+const STRINGIFIED_CONSTRAINT_FIELD_SET: ReadonlySet<string> = new Set(
+  STRINGIFIED_CONSTRAINT_FIELDS,
+);
+
 /**
  * Formats whose accompanying `pattern` is redundant: the Zod serializer emits
  * a large generated regex next to the format, and `zodObjectToSchema` has
@@ -417,8 +421,25 @@ function convertSchemaField(field: string, value: unknown): unknown {
       ]),
     );
   }
-  if (field === 'items' && isPlainObject(value)) {
-    return openApiSchemaToGeminiSchema(value);
+  if (field === 'items') {
+    if (value === true) {
+      return {type: Type.OBJECT};
+    }
+    if (isPlainObject(value)) {
+      return openApiSchemaToGeminiSchema(value);
+    }
+    return undefined;
+  }
+  if (field === 'enum' && Array.isArray(value)) {
+    const filtered = value.filter((v) => v != null).map(String);
+    return filtered.length > 0 ? filtered : undefined;
+  }
+  if (
+    STRINGIFIED_CONSTRAINT_FIELD_SET.has(field) &&
+    typeof value === 'number' &&
+    Number.isFinite(value)
+  ) {
+    return String(value);
   }
   return value;
 }
@@ -520,6 +541,8 @@ export function openApiSchemaToGeminiSchema(
   // Every key is checked against GEMINI_SCHEMA_FIELDS before it is written, so
   // the accumulated record holds only fields the Gemini `Schema` declares.
   const converted: Record<string, unknown> = {};
+  let forbidItems = false;
+  let enumHasNull = false;
   for (const [key, value] of Object.entries(source)) {
     const field = toGeminiSchemaField(key);
     if (
@@ -537,7 +560,24 @@ export function openApiSchemaToGeminiSchema(
       }
       continue;
     }
-    converted[field] = convertSchemaField(field, value);
+    if (field === 'items' && value === false) {
+      forbidItems = true;
+      continue;
+    }
+    if (field === 'enum' && Array.isArray(value) && value.includes(null)) {
+      enumHasNull = true;
+    }
+    const convertedValue = convertSchemaField(field, value);
+    if (convertedValue !== undefined) {
+      converted[field] = convertedValue;
+    }
+  }
+  if (forbidItems) {
+    // JSON Schema `items: false` forbids any element, i.e. an empty array.
+    converted['maxItems'] = '0';
+  }
+  if (enumHasNull) {
+    converted['nullable'] = true;
   }
   if (anyOf) {
     converted['anyOf'] = anyOf;

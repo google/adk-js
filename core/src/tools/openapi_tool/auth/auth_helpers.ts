@@ -29,6 +29,8 @@ export const INTERNAL_AUTH_PREFIX = '_auth_prefix_vaf_';
 /**
  * The client settings an application registers with an OpenID Connect
  * provider.
+ *
+ * @deprecated Unused interface; will be removed in a future major release.
  */
 export interface OpenIdConfig {
   /** The client ID the provider issued to the application. */

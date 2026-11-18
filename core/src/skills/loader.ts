@@ -240,7 +240,14 @@ function isDangerousZipEntryName(entryName: string): boolean {
  * bare-segment test alone would accept them.
  */
 function isBareSkillName(name: string): boolean {
-  return name !== '.' && name !== '..' && path.basename(name) === name;
+  return (
+    name.length > 0 &&
+    name !== '.' &&
+    name !== '..' &&
+    !name.includes('/') &&
+    !name.includes('\\') &&
+    path.basename(name) === name
+  );
 }
 
 /**
