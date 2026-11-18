@@ -74,18 +74,6 @@ export interface LangchainPublicToolLike {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Accepts any SDK tool input and config type; unknown breaks untyped destructuring callbacks.
   run?(args: any, configOrContext?: any): unknown | Promise<unknown>;
-
-  /**
-   * Executes the function wrapped by a `DynamicTool` (`func`).
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Accepts any SDK function signature; unknown breaks untyped destructuring callbacks.
-  func?(...args: any[]): unknown;
-
-  /**
-   * Executes the async function wrapped by a `StructuredTool` (`coroutine`).
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Accepts any SDK coroutine signature; unknown breaks untyped destructuring callbacks.
-  coroutine?(...args: any[]): unknown;
 }
 
 /**
@@ -178,8 +166,6 @@ interface InternalLangchainRunnerShape {
   invoke?: RunnerMethod;
   call?: RunnerMethod;
   run?: RunnerMethod;
-  func?: (...args: unknown[]) => unknown;
-  coroutine?: (...args: unknown[]) => unknown;
   _run?: RunnerMethod;
   _call?: RunnerMethod;
 }
@@ -224,8 +210,6 @@ function resolveRawFunction(tool: LangchainToolLike): unknown {
     candidate.invoke,
     candidate.call,
     candidate.run,
-    candidate.func,
-    candidate.coroutine,
     candidate._run,
     candidate._call,
   ].find((fn) => typeof fn === 'function');
@@ -242,18 +226,6 @@ function resolveRunnerFunction(tool: LangchainToolLike): RunnerMethod {
   if (typeof candidate.run === 'function') {
     return candidate.run.bind(tool);
   }
-  const func = candidate.func;
-  if (typeof func === 'function') {
-    // A LangChain `DynamicTool.func` reads its second argument as a run
-    // manager, so the ADK context is not forwarded to it.
-    return (args: Record<string, unknown>) => func.call(tool, args);
-  }
-  const coroutine = candidate.coroutine;
-  if (typeof coroutine === 'function') {
-    // A LangChain `StructuredTool.coroutine` reads its second argument as a run
-    // manager, so the ADK context is not forwarded to it.
-    return (args: Record<string, unknown>) => coroutine.call(tool, args);
-  }
   if (typeof candidate._run === 'function') {
     return candidate._run.bind(tool);
   }
@@ -261,7 +233,7 @@ function resolveRunnerFunction(tool: LangchainToolLike): RunnerMethod {
     return candidate._call.bind(tool);
   }
   throw new TypeError(
-    'LangchainTool requires a tool object with an invoke, call, run, func, coroutine, _run, or _call method.',
+    'LangchainTool requires a tool object with an invoke, call, run, _run, or _call method.',
   );
 }
 
@@ -282,8 +254,6 @@ function isStructuredLangchainTool(tool: LangchainToolLike): boolean {
   return (
     typeof candidate.invoke === 'function' ||
     typeof candidate.call === 'function' ||
-    typeof candidate.func === 'function' ||
-    typeof candidate.coroutine === 'function' ||
     typeof candidate._run === 'function' ||
     typeof candidate._call === 'function' ||
     tool.argsSchema !== undefined ||
