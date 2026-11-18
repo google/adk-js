@@ -312,6 +312,44 @@ describe('VertexAiMemoryBankService', () => {
 
       expect(mockMemories.generateInternal).not.toHaveBeenCalled();
     });
+
+    it('leaves the model thought parts out of the events it sends', async () => {
+      const event = createEvent({
+        author: 'agent',
+        content: {
+          role: 'model',
+          parts: [
+            {text: 'The user may live in Paris.', thought: true},
+            {text: 'Try Lisbon.'},
+          ],
+        },
+        timestamp: Date.now(),
+      });
+      const session = sessionWithEvents([
+        event,
+        createEvent({
+          author: 'agent',
+          content: {
+            role: 'model',
+            parts: [{text: 'Thinking only.', thought: true}],
+          },
+          timestamp: Date.now(),
+        }),
+      ]);
+
+      await service.addSessionToMemory(session);
+
+      expect(mockMemories.generateInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          directContentsSource: {
+            events: [
+              {content: {role: 'model', parts: [{text: 'Try Lisbon.'}]}},
+            ],
+          },
+        }),
+      );
+      expect(event.content?.parts).toHaveLength(2);
+    });
   });
 
   describe('addEventsToMemory', () => {

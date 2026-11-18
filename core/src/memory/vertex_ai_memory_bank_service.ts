@@ -13,7 +13,7 @@ import {
   MemoryMetadataValue,
 } from '@google-cloud/vertexai/build/src/genai/types.js';
 import {Content, createUserContent} from '@google/genai';
-import {Event} from '../events/event.js';
+import {Event, pruneThoughts} from '../events/event.js';
 import {Session} from '../sessions/session.js';
 import {logger} from '../utils/logger.js';
 import {
@@ -262,13 +262,16 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
   }): Promise<void> {
     const directEvents: GenerateMemoriesRequestDirectContentsSourceEvent[] = [];
     for (const event of request.eventsToProcess) {
-      if (shouldFilterOutEvent(event.content)) {
+      // Thoughts are the model's reasoning, not part of the conversation, so
+      // memories are not generated from them.
+      const content = pruneThoughts(event).content;
+      if (shouldFilterOutEvent(content)) {
         continue;
       }
       // Deep-clone into a plain JSON object so nothing non-serializable
       // reaches the request body.
       directEvents.push({
-        content: JSON.parse(JSON.stringify(event.content)),
+        content: JSON.parse(JSON.stringify(content)),
       });
     }
 
