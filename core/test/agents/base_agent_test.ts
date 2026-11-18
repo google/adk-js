@@ -879,8 +879,9 @@ describe('BaseAgent', () => {
         const events = await collectEvents(agent, parentContext);
 
         expect(loadedText).toBe('stored from before callback');
-        expect(events).toHaveLength(1);
-        expect(events[0].content?.parts?.[0]?.text).toBe(
+        expect(events).toHaveLength(2);
+        expect(events[0].actions.artifactDelta).toEqual({'greeting.txt': 0});
+        expect(events[1].content?.parts?.[0]?.text).toBe(
           'Response from test_agent',
         );
       });
@@ -1279,6 +1280,102 @@ describe('BaseAgent', () => {
         expect(events[1].actions.stateDelta).toEqual({
           plugin_after_key: 'val_after',
         });
+      });
+
+      it('emits artifact delta event when plugin beforeAgentCallback records artifactDelta without mutating state', async () => {
+        class ArtifactBeforePlugin extends BasePlugin {
+          constructor() {
+            super('artifact_before_plugin');
+          }
+          override async beforeAgentCallback({
+            callbackContext,
+          }: {
+            agent: BaseAgent;
+            callbackContext: Context;
+          }): Promise<Content | undefined> {
+            await callbackContext.saveArtifact('before.txt', {
+              text: 'before content',
+            });
+            return undefined;
+          }
+        }
+
+        const artifactService = new ScopedArtifactService(
+          new InMemoryArtifactService(),
+          'test-app',
+          'test-user',
+          'test-session',
+        );
+        const agent = new MockAgent({name: 'test_agent'});
+        const parentContext = new InvocationContext({
+          invocationId: 'test_invocation',
+          agent,
+          session: createSession({
+            id: 'test-session',
+            appName: 'test-app',
+            userId: 'test-user',
+          }),
+          artifactService,
+          pluginManager: new PluginManager([new ArtifactBeforePlugin()]),
+        });
+
+        const events = await collectEvents(agent, parentContext);
+
+        expect(events).toHaveLength(2);
+        expect(events[0].author).toBe('test_agent');
+        expect(events[0].content).toBeUndefined();
+        expect(events[0].actions.artifactDelta).toEqual({'before.txt': 0});
+        expect(events[1].content?.parts?.[0]?.text).toBe(
+          'Response from test_agent',
+        );
+      });
+
+      it('emits artifact delta event when plugin afterAgentCallback records artifactDelta without mutating state', async () => {
+        class ArtifactAfterPlugin extends BasePlugin {
+          constructor() {
+            super('artifact_after_plugin');
+          }
+          override async afterAgentCallback({
+            callbackContext,
+          }: {
+            agent: BaseAgent;
+            callbackContext: Context;
+          }): Promise<Content | undefined> {
+            await callbackContext.saveArtifact('after.txt', {
+              text: 'after content',
+            });
+            return undefined;
+          }
+        }
+
+        const artifactService = new ScopedArtifactService(
+          new InMemoryArtifactService(),
+          'test-app',
+          'test-user',
+          'test-session',
+        );
+        const agent = new MockAgent({name: 'test_agent'});
+        const parentContext = new InvocationContext({
+          invocationId: 'test_invocation',
+          agent,
+          session: createSession({
+            id: 'test-session',
+            appName: 'test-app',
+            userId: 'test-user',
+          }),
+          artifactService,
+          pluginManager: new PluginManager([new ArtifactAfterPlugin()]),
+        });
+
+        const events = await collectEvents(agent, parentContext);
+
+        expect(events).toHaveLength(2);
+        expect(events[0].content?.parts?.[0]?.text).toBe(
+          'Response from test_agent',
+        );
+        expect(events[1].author).toBe('test_agent');
+        expect(events[1].content).toBeUndefined();
+        expect(events[1].actions.artifactDelta).toEqual({'after.txt': 0});
       });
 
       it('stops processing when abortSignal is triggered during plugin beforeAgentCallback', async () => {
