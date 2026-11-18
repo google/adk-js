@@ -4,8 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {AgentCard} from '@a2a-js/sdk';
-import {DefaultRequestHandler} from '@a2a-js/sdk/server';
+import {AgentCard, SecurityScheme} from '@a2a-js/sdk';
+import {
+  DefaultRequestHandler,
+  InMemoryTaskStore,
+  PushNotificationStore,
+  TaskStore,
+} from '@a2a-js/sdk/server';
 import {
   agentCardHandler,
   jsonRpcHandler,
@@ -13,15 +18,26 @@ import {
 } from '@a2a-js/sdk/server/express';
 import express from 'express';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
-import {getA2AAgentCard, resolveAgentCard} from '../../src/a2a/agent_card.js';
+import {
+  getA2AAgentCard,
+  resolveAgentCard,
+  SkillSecurity,
+} from '../../src/a2a/agent_card.js';
 import {A2AAgentExecutor} from '../../src/a2a/agent_executor.js';
 import {A2aUserBuilder, toA2a} from '../../src/a2a/agent_to_a2a.js';
 import {BaseAgent} from '../../src/agents/base_agent.js';
 import {InvocationContext} from '../../src/agents/invocation_context.js';
+import {InMemoryArtifactService} from '../../src/artifacts/in_memory_artifact_service.js';
+import {InMemoryCredentialService} from '../../src/auth/credential_service/in_memory_credential_service.js';
 import {Event} from '../../src/events/event.js';
+import {InMemoryMemoryService} from '../../src/memory/in_memory_memory_service.js';
 import {Runner} from '../../src/runner/runner.js';
 import {BaseSessionService} from '../../src/sessions/base_session_service.js';
+import {InMemorySessionService} from '../../src/sessions/in_memory_session_service.js';
 import {logger} from '../../src/utils/logger.js';
+import {START} from '../../src/workflow/base_node.js';
+import {node} from '../../src/workflow/node.js';
+import {Workflow} from '../../src/workflow/workflow.js';
 
 class TestAgent extends BaseAgent {
   constructor() {
@@ -285,6 +301,352 @@ describe('toA2a', () => {
       expect(warnSpy).not.toHaveBeenCalled();
 
       warnSpy.mockRestore();
+    });
+  });
+
+  describe('agent validation and workflow support', () => {
+    it.each([undefined, null])(
+      'throws when agent is %s',
+      async (invalidAgent: unknown) => {
+        await expect(
+          toA2a(invalidAgent as BaseAgent, {allowUnauthenticated: true}),
+        ).rejects.toThrow('Agent cannot be null or undefined.');
+      },
+    );
+
+    it('throws TypeError when agent is not a BaseAgent or Workflow', async () => {
+      await expect(
+        toA2a('not an agent' as unknown as BaseAgent, {
+          allowUnauthenticated: true,
+        }),
+      ).rejects.toThrow(/requires a BaseAgent or Workflow, got string/);
+    });
+
+    it('throws TypeError when agent is a bare FunctionNode', async () => {
+      const fnNode = node(async (input: unknown) => `echo: ${String(input)}`, {
+        name: 'echo_fn',
+      });
+
+      await expect(
+        toA2a(fnNode as unknown as BaseAgent, {allowUnauthenticated: true}),
+      ).rejects.toThrow(/requires a BaseAgent or Workflow, got FunctionNode/);
+    });
+
+    it('accepts a Workflow root', async () => {
+      const workflow = new Workflow({
+        name: 'pipe',
+        edges: [[START, agent]],
+      });
+
+      const app = await toA2a(workflow, {allowUnauthenticated: true});
+
+      expect(app).toBe(mockApp);
+      expect(getA2AAgentCard).toHaveBeenCalledWith(workflow, [
+        {url: 'http://localhost:8000/jsonrpc', transport: 'JSONRPC'},
+        {url: 'http://localhost:8000/rest', transport: 'HTTP+JSON'},
+      ]);
+    });
+  });
+
+  describe('rpcPath normalization, host/port edge cases, and runner services', () => {
+    it.each(['analysis-agent', '/analysis-agent', '/analysis-agent/'])(
+      'normalizes rpcPath %j to /analysis-agent',
+      async (rpcPath) => {
+        const customApp = {use: vi.fn()};
+
+        await toA2a(agent, {
+          rpcPath,
+          app: customApp as unknown as express.Application,
+          allowUnauthenticated: true,
+        });
+
+        expect(getA2AAgentCard).toHaveBeenCalledWith(agent, [
+          {
+            url: 'http://localhost:8000/analysis-agent/jsonrpc',
+            transport: 'JSONRPC',
+          },
+          {
+            url: 'http://localhost:8000/analysis-agent/rest',
+            transport: 'HTTP+JSON',
+          },
+        ]);
+        expect(customApp.use).toHaveBeenCalledWith(
+          '/analysis-agent/.well-known/agent-card.json',
+          'agentCardHandler',
+        );
+        expect(customApp.use).toHaveBeenCalledWith(
+          '/analysis-agent/rest',
+          expect.any(Function),
+          'restHandler',
+        );
+        expect(customApp.use).toHaveBeenCalledWith(
+          '/analysis-agent/jsonrpc',
+          expect.any(Function),
+          'jsonRpcHandler',
+        );
+      },
+    );
+
+    it.each(['/', '//', '///'])(
+      'collapses all-slash rpcPath %j to root mount',
+      async (rpcPath) => {
+        const customApp = {use: vi.fn()};
+
+        await toA2a(agent, {
+          rpcPath,
+          app: customApp as unknown as express.Application,
+          allowUnauthenticated: true,
+        });
+
+        expect(getA2AAgentCard).toHaveBeenCalledWith(agent, [
+          {url: 'http://localhost:8000/jsonrpc', transport: 'JSONRPC'},
+          {url: 'http://localhost:8000/rest', transport: 'HTTP+JSON'},
+        ]);
+        expect(customApp.use).toHaveBeenCalledWith(
+          '/.well-known/agent-card.json',
+          'agentCardHandler',
+        );
+      },
+    );
+
+    it('preserves multi-segment rpcPath in the RPC URL and routes', async () => {
+      const customApp = {use: vi.fn()};
+
+      await toA2a(agent, {
+        rpcPath: '/team/agent',
+        app: customApp as unknown as express.Application,
+        allowUnauthenticated: true,
+      });
+
+      expect(getA2AAgentCard).toHaveBeenCalledWith(agent, [
+        {
+          url: 'http://localhost:8000/team/agent/jsonrpc',
+          transport: 'JSONRPC',
+        },
+        {url: 'http://localhost:8000/team/agent/rest', transport: 'HTTP+JSON'},
+      ]);
+      expect(customApp.use).toHaveBeenCalledWith(
+        '/team/agent/.well-known/agent-card.json',
+        'agentCardHandler',
+      );
+    });
+
+    it.each([
+      {
+        label: 'port 0',
+        options: {port: 0},
+        expectedBase: 'http://localhost:0',
+      },
+      {
+        label: 'negative port',
+        options: {port: -1},
+        expectedBase: 'http://localhost:-1',
+      },
+      {
+        label: 'port 65535',
+        options: {port: 65535},
+        expectedBase: 'http://localhost:65535',
+      },
+      {
+        label: 'empty string host',
+        options: {host: ''},
+        expectedBase: 'http://:8000',
+      },
+      {
+        label: 'hyphenated and dotted host',
+        options: {host: 'test-host.example.com'},
+        expectedBase: 'http://test-host.example.com:8000',
+      },
+      {
+        label: 'IP address host',
+        options: {host: '192.168.1.1'},
+        expectedBase: 'http://192.168.1.1:8000',
+      },
+    ])('builds RPC URLs for $label', async ({options, expectedBase}) => {
+      await toA2a(agent, {...options, allowUnauthenticated: true});
+
+      expect(getA2AAgentCard).toHaveBeenCalledWith(agent, [
+        {url: `${expectedBase}/jsonrpc`, transport: 'JSONRPC'},
+        {url: `${expectedBase}/rest`, transport: 'HTTP+JSON'},
+      ]);
+    });
+
+    it('populates default InMemory services and falls back to adk_agent when agent name is empty', async () => {
+      Object.assign(agent, {name: ''});
+
+      await toA2a(agent, {allowUnauthenticated: true});
+
+      const executorConfig = vi.mocked(A2AAgentExecutor).mock.calls[0]?.[0];
+      const runnerConfig = executorConfig?.runner as {
+        appName?: string;
+        sessionService?: unknown;
+        memoryService?: unknown;
+        artifactService?: unknown;
+        credentialService?: unknown;
+      };
+      expect(runnerConfig?.appName).toBe('adk_agent');
+      expect(runnerConfig?.sessionService).toBeInstanceOf(
+        InMemorySessionService,
+      );
+      expect(runnerConfig?.memoryService).toBeInstanceOf(InMemoryMemoryService);
+      expect(runnerConfig?.artifactService).toBeInstanceOf(
+        InMemoryArtifactService,
+      );
+      expect(runnerConfig?.credentialService).toBeInstanceOf(
+        InMemoryCredentialService,
+      );
+    });
+
+    it('uses a custom taskStore without instantiating InMemoryTaskStore', async () => {
+      const customTaskStore = {
+        load: vi.fn(),
+        save: vi.fn(),
+      } as unknown as TaskStore;
+
+      await toA2a(agent, {
+        taskStore: customTaskStore,
+        allowUnauthenticated: true,
+      });
+
+      expect(InMemoryTaskStore).not.toHaveBeenCalled();
+      expect(DefaultRequestHandler).toHaveBeenCalledWith(
+        expect.anything(),
+        customTaskStore,
+        expect.anything(),
+      );
+    });
+
+    it('uses agentExecutorFactory and pushConfigStore when provided', async () => {
+      const customExecutor = {} as unknown as A2AAgentExecutor;
+      const agentExecutorFactory = vi.fn(() => customExecutor);
+      const customPushStore = {
+        save: vi.fn(),
+        load: vi.fn(),
+        delete: vi.fn(),
+      } as unknown as PushNotificationStore;
+
+      await toA2a(agent, {
+        agentExecutorFactory,
+        pushConfigStore: customPushStore,
+        allowUnauthenticated: true,
+      });
+
+      expect(agentExecutorFactory).toHaveBeenCalledTimes(1);
+      expect(A2AAgentExecutor).not.toHaveBeenCalled();
+      expect(DefaultRequestHandler).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        customExecutor,
+        undefined,
+        customPushStore,
+        undefined,
+      );
+    });
+
+    it('forwards securitySchemes and defaultSkillSecurity to getA2AAgentCard', async () => {
+      const securitySchemes: Record<string, SecurityScheme> = {
+        api: {type: 'apiKey', in: 'header', name: 'X-Api-Key'},
+      };
+      const defaultSkillSecurity: SkillSecurity = [{api: []}];
+
+      await toA2a(agent, {
+        securitySchemes,
+        defaultSkillSecurity,
+        allowUnauthenticated: true,
+      });
+
+      expect(getA2AAgentCard).toHaveBeenCalledWith(
+        agent,
+        [
+          {url: 'http://localhost:8000/jsonrpc', transport: 'JSONRPC'},
+          {url: 'http://localhost:8000/rest', transport: 'HTTP+JSON'},
+        ],
+        {
+          securitySchemes,
+          defaultSkillSecurity,
+        },
+      );
+    });
+
+    it('logs a warning when both agentCard and a non-empty rpcPath are provided', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        await toA2a(agent, {
+          rpcPath: '/analysis-agent',
+          agentCard: {name: 'provided_card'} as unknown as AgentCard,
+          authentication: async () => ({
+            isAuthenticated: true,
+            userName: 'alice',
+          }),
+        });
+
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Both agentCard and rpcPath were provided'),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it.each([
+      {
+        label: 'securitySchemes',
+        securityOptions: {
+          securitySchemes: {
+            api: {
+              type: 'apiKey',
+              in: 'header',
+              name: 'X-Api-Key',
+            } as SecurityScheme,
+          },
+        },
+      },
+      {
+        label: 'defaultSkillSecurity',
+        securityOptions: {
+          defaultSkillSecurity: [{api: []}],
+        },
+      },
+      {
+        label: 'invalid defaultSkillSecurity',
+        securityOptions: {
+          defaultSkillSecurity: {invalid: 'shape'} as unknown as SkillSecurity,
+        },
+      },
+    ])(
+      'logs a warning and ignores $label when agentCard is provided',
+      async ({securityOptions}) => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+        try {
+          await toA2a(agent, {
+            agentCard: {name: 'provided_card'} as unknown as AgentCard,
+            ...securityOptions,
+            authentication: async () => ({
+              isAuthenticated: true,
+              userName: 'alice',
+            }),
+          });
+
+          expect(warnSpy).toHaveBeenCalledWith(
+            expect.stringContaining(
+              'Both agentCard and securitySchemes/defaultSkillSecurity were provided',
+            ),
+          );
+          expect(getA2AAgentCard).not.toHaveBeenCalled();
+        } finally {
+          warnSpy.mockRestore();
+        }
+      },
+    );
+
+    it('propagates errors when resolving or building the agent card fails', async () => {
+      vi.mocked(getA2AAgentCard).mockRejectedValueOnce(
+        new Error('Build failed'),
+      );
+
+      await expect(toA2a(agent, {allowUnauthenticated: true})).rejects.toThrow(
+        'Build failed',
+      );
     });
   });
 });

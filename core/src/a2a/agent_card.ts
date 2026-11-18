@@ -4,18 +4,26 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {AgentCard, AgentInterface, AgentSkill} from '@a2a-js/sdk';
+import {
+  AgentCapabilities,
+  AgentCard,
+  AgentInterface,
+  AgentProvider,
+  AgentSkill,
+  SecurityScheme,
+} from '@a2a-js/sdk';
 import {DefaultAgentCardResolver} from '@a2a-js/sdk/client';
 import * as fs from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
-import {BaseAgent} from '../agents/base_agent.js';
+import {BaseAgent, isBaseAgent} from '../agents/base_agent.js';
 import {isLlmAgent, LlmAgent} from '../agents/llm_agent.js';
 import {isLoopAgent, LoopAgent} from '../agents/loop_agent.js';
 import {isParallelAgent} from '../agents/parallel_agent.js';
 import {isSequentialAgent} from '../agents/sequential_agent.js';
+import {isBaseExampleProvider} from '../examples/base_example_provider.js';
 import {propagateTraceContext} from '../telemetry/api/instrumentation.js';
-import {BaseTool, isBaseTool} from '../tools/base_tool.js';
-import {isBaseToolset} from '../tools/base_toolset.js';
+import {isBaseTool} from '../tools/base_tool.js';
+import {ExampleTool, isExampleTool} from '../tools/example_tool.js';
 import {getErrorMessage} from '../utils/error_utils.js';
 import {fetchWithTimeout} from '../utils/fetch_utils.js';
 import {logger} from '../utils/logger.js';
@@ -25,8 +33,12 @@ import {
   normalizeHost,
   resolveHostAddresses,
 } from '../utils/ssrf_guard.js';
-import {RunnableRoot} from '../workflow/run_node_as_invocation.js';
-import {isWorkflow} from '../workflow/workflow.js';
+import {BaseNode, START} from '../workflow/base_node.js';
+import {
+  isRunnableRoot,
+  RunnableRoot,
+} from '../workflow/run_node_as_invocation.js';
+import {isWorkflow, Workflow} from '../workflow/workflow.js';
 
 /**
  * Options controlling how a fetched agent card's RPC URL(s) are validated
@@ -475,18 +487,194 @@ function isLoopbackHost(hostname: string): boolean {
 }
 
 /**
+ * Skill-level security requirements as defined by the A2A specification.
+ *
+ * Each record maps a security scheme name to an array of required scopes.
+ * The array represents a logical OR of requirement objects.
+ */
+export type SkillSecurity = Array<Record<string, string[]>>;
+
+const SKILL_SECURITY_METADATA_KEY = 'security';
+
+const AGENT_CARD_BUILDER_SIGNATURE_SYMBOL = Symbol.for(
+  'google.adk.agentCardBuilder',
+);
+
+/**
+ * Options for {@link AgentCardBuilder}.
+ */
+export interface AgentCardBuilderOptions {
+  /** The ADK `BaseAgent` or `Workflow` to build an `AgentCard` for. */
+  agent: RunnableRoot;
+  /** The RPC URL advertised on the card (default: `'http://localhost:80/a2a'`). */
+  rpcUrl?: string;
+  /** Optional A2A capabilities advertised on the card (default: `{streaming: true}`). */
+  capabilities?: AgentCapabilities;
+  /** Optional documentation URL (`documentationUrl` on the resulting `AgentCard`). */
+  docUrl?: string;
+  /** Optional service provider metadata. */
+  provider?: AgentProvider;
+  /** Optional version string for the agent (default: `'0.0.1'`). */
+  agentVersion?: string;
+  /** Optional security scheme declarations included on the card. */
+  securitySchemes?: Record<string, SecurityScheme>;
+  /**
+   * Optional default security requirements applied to all generated skills
+   * unless overridden per tool via `BaseTool.customMetadata['security']`.
+   */
+  defaultSkillSecurity?: SkillSecurity;
+  /** Optional list of transport interfaces advertised on the card. */
+  transports?: AgentInterface[];
+}
+
+/**
+ * Optional security configuration forwarded to {@link getA2AAgentCard}.
+ */
+export interface GetA2AAgentCardOptions {
+  /** Optional security scheme declarations included on the card. */
+  securitySchemes?: Record<string, SecurityScheme>;
+  /** Optional default security requirements applied to generated skills. */
+  defaultSkillSecurity?: SkillSecurity;
+}
+
+function describeNodeType(value: unknown): string {
+  if (typeof value === 'object' && value !== null) {
+    return (
+      (value as {constructor?: {name?: string}}).constructor?.name ?? 'object'
+    );
+  }
+  return typeof value;
+}
+
+/**
+ * Builder class for creating A2A `AgentCard` objects from ADK agents and workflows.
+ *
+ * Skill-level security requirements can be set across all generated skills via
+ * {@link AgentCardBuilderOptions.defaultSkillSecurity}, while individual tools
+ * can override requirements via `BaseTool.customMetadata['security']`. Security
+ * schemes and skill security populate card metadata only and are not enforced
+ * at runtime.
+ */
+export class AgentCardBuilder {
+  readonly [AGENT_CARD_BUILDER_SIGNATURE_SYMBOL] = true;
+
+  private readonly agent: RunnableRoot;
+  private readonly rpcUrl: string;
+  private readonly capabilities: AgentCapabilities;
+  private readonly docUrl?: string;
+  private readonly provider?: AgentProvider;
+  private readonly securitySchemes?: Record<string, SecurityScheme>;
+  private readonly defaultSkillSecurity?: SkillSecurity;
+  private readonly agentVersion: string;
+  private readonly transports?: AgentInterface[];
+
+  constructor(options: AgentCardBuilderOptions) {
+    if (!options?.agent) {
+      throw new Error('Agent cannot be null or undefined.');
+    }
+    if (!isRunnableRoot(options.agent)) {
+      throw new TypeError(
+        `AgentCardBuilder requires a BaseAgent or Workflow, got ${describeNodeType(options.agent)}.`,
+      );
+    }
+    if (
+      options.defaultSkillSecurity !== undefined &&
+      !isSkillSecurity(options.defaultSkillSecurity)
+    ) {
+      throw new Error(
+        'defaultSkillSecurity must be an Array<Record<string, string[]>>.',
+      );
+    }
+
+    this.agent = options.agent;
+    this.rpcUrl = options.rpcUrl || 'http://localhost:80/a2a';
+    this.capabilities = options.capabilities ?? {streaming: true};
+    this.docUrl = options.docUrl;
+    this.provider = options.provider;
+    this.securitySchemes = options.securitySchemes;
+    this.defaultSkillSecurity = options.defaultSkillSecurity;
+    this.agentVersion = options.agentVersion || '0.0.1';
+    this.transports = options.transports;
+  }
+
+  /**
+   * Builds and returns the complete A2A `AgentCard`.
+   */
+  async build(): Promise<AgentCard> {
+    try {
+      const primarySkills = await buildPrimarySkills(
+        this.agent,
+        this.defaultSkillSecurity,
+      );
+      const subAgentSkills = await buildSubAgentSkills(
+        this.agent,
+        this.defaultSkillSecurity,
+      );
+      const allSkills = [...primarySkills, ...subAgentSkills];
+
+      validateSkillSecurityReferences(allSkills, this.securitySchemes ?? {});
+
+      const cleanUrl = this.rpcUrl.replace(/\/+$/, '');
+      const card: AgentCard = {
+        name: this.agent.name,
+        description: this.agent.description || 'An ADK Agent',
+        url: this.transports?.[0]?.url ?? cleanUrl,
+        version: this.agentVersion,
+        protocolVersion: '0.3.0',
+        preferredTransport: this.transports?.[0]?.transport ?? 'JSONRPC',
+        capabilities: this.capabilities,
+        skills: allSkills,
+        defaultInputModes: ['text/plain'],
+        defaultOutputModes: ['text/plain'],
+        supportsAuthenticatedExtendedCard: false,
+      };
+      if (this.docUrl !== undefined) {
+        card.documentationUrl = this.docUrl;
+      }
+      if (this.provider !== undefined) {
+        card.provider = this.provider;
+      }
+      if (this.securitySchemes !== undefined) {
+        card.securitySchemes = this.securitySchemes;
+      }
+      if (this.transports !== undefined) {
+        card.additionalInterfaces = this.transports;
+      }
+      return card;
+    } catch (e: unknown) {
+      throw new Error(
+        `Failed to build agent card for ${this.agent.name}: ${getErrorMessage(e)}`,
+        {cause: e},
+      );
+    }
+  }
+}
+
+/**
  * Converts an ADK agent to an A2A AgentCard.
  */
 export async function getA2AAgentCard(
   agent: RunnableRoot,
   transports: AgentInterface[],
+  options?: GetA2AAgentCardOptions,
 ): Promise<AgentCard> {
-  return {
+  if (
+    options?.defaultSkillSecurity !== undefined &&
+    !isSkillSecurity(options.defaultSkillSecurity)
+  ) {
+    throw new Error(
+      'defaultSkillSecurity must be an Array<Record<string, string[]>>.',
+    );
+  }
+  const skills = await buildAgentSkills(agent, options?.defaultSkillSecurity);
+  validateSkillSecurityReferences(skills, options?.securitySchemes ?? {});
+
+  const card: AgentCard = {
     name: agent.name,
     description: agent.description || '',
     protocolVersion: '0.3.0',
     version: '1.0.0',
-    skills: await buildAgentSkills(agent),
+    skills,
     url: transports[0].url,
     preferredTransport: transports[0].transport,
     capabilities: {
@@ -499,6 +687,10 @@ export async function getA2AAgentCard(
     defaultOutputModes: ['text'],
     additionalInterfaces: transports,
   };
+  if (options?.securitySchemes !== undefined) {
+    card.securitySchemes = options.securitySchemes;
+  }
+  return card;
 }
 
 /**
@@ -506,155 +698,390 @@ export async function getA2AAgentCard(
  * This information can be used in AgentCard to help clients understand agent capabilities.
  *
  * @param agent The agent to build skills for.
+ * @param defaultSkillSecurity Optional default security requirements for generated skills.
  * @returns A promise resolving to a list of AgentSkills.
  */
 export async function buildAgentSkills(
   agent: RunnableRoot,
+  defaultSkillSecurity?: SkillSecurity,
 ): Promise<AgentSkill[]> {
+  if (isWorkflow(agent)) {
+    // A workflow advertises itself as one skill in `buildAgentSkills`.
+    return [
+      buildSkillObject({
+        id: agent.name,
+        name: 'workflow',
+        description: agent.description || `Workflow ${agent.name}`,
+        tags: ['workflow'],
+        security: defaultSkillSecurity,
+      }),
+    ];
+  }
   const [primarySkills, subAgentSkills] = await Promise.all([
-    buildPrimarySkills(agent),
-    buildSubAgentSkills(agent),
+    buildPrimarySkills(agent, defaultSkillSecurity),
+    buildSubAgentSkills(agent, defaultSkillSecurity),
   ]);
 
   return [...primarySkills, ...subAgentSkills];
 }
 
-async function buildPrimarySkills(agent: RunnableRoot): Promise<AgentSkill[]> {
-  if (isWorkflow(agent)) {
-    // A workflow advertises itself as one skill. It has no sub-agents to
-    // enumerate, and its internals are a graph rather than a roster.
-    return [
-      {
-        id: agent.name,
-        name: 'workflow',
-        description: agent.description || `Workflow ${agent.name}`,
-        tags: ['workflow'],
-      },
-    ];
+function buildSkillObject(params: {
+  id: string;
+  name: string;
+  description: string;
+  tags: string[];
+  examples?: string[];
+  inputModes?: string[];
+  outputModes?: string[];
+  security?: SkillSecurity;
+}): AgentSkill {
+  const skill: AgentSkill = {
+    id: params.id,
+    name: params.name,
+    description: params.description,
+    tags: params.tags,
+  };
+  if (params.examples !== undefined) {
+    skill.examples = params.examples;
   }
-  if (isLlmAgent(agent)) {
-    return buildLLMAgentSkills(agent);
+  if (params.inputModes !== undefined) {
+    skill.inputModes = params.inputModes;
   }
-
-  return buildNonLLMAgentSkills(agent);
+  if (params.outputModes !== undefined) {
+    skill.outputModes = params.outputModes;
+  }
+  if (params.security !== undefined) {
+    skill.security = params.security;
+  }
+  return skill;
 }
 
-async function buildSubAgentSkills(agent: RunnableRoot): Promise<AgentSkill[]> {
-  // A workflow has nodes, not sub-agents: its shape is described by the single
-  // `workflow` skill rather than one skill per child.
-  const subAgents = isWorkflow(agent) ? [] : agent.subAgents;
+/**
+ * Returns the immediate child nodes of an agent or a workflow.
+ */
+export function iterChildNodes(agent: BaseNode): BaseNode[] {
+  if (isBaseAgent(agent)) {
+    return [...agent.subAgents];
+  }
+  if (isWorkflow(agent) && agent.graph) {
+    return agent.graph.nodes.filter((n) => n.name !== START.name);
+  }
+  return [];
+}
+
+/**
+ * Builds primary skills for any node type.
+ */
+export async function buildPrimarySkills(
+  agent: BaseNode,
+  defaultSkillSecurity?: SkillSecurity,
+): Promise<AgentSkill[]> {
+  if (isLlmAgent(agent)) {
+    return buildLlmAgentSkills(agent, defaultSkillSecurity);
+  }
+  return buildNonLlmAgentSkills(agent, defaultSkillSecurity);
+}
+
+/**
+ * Builds skills for all immediate child nodes (sub-agents or workflow nodes).
+ */
+export async function buildSubAgentSkills(
+  agent: BaseNode,
+  defaultSkillSecurity?: SkillSecurity,
+): Promise<AgentSkill[]> {
   const result: AgentSkill[] = [];
 
-  for (const sub of subAgents) {
-    const skills = await buildPrimarySkills(sub);
-    for (const subSkill of skills) {
-      const skill: AgentSkill = {
-        id: `${sub.name}_${subSkill.id}`,
-        name: `${sub.name}: ${subSkill.name}`,
-        description: subSkill.description,
-        tags: [`sub_agent:${sub.name}`, ...subSkill.tags],
-      };
-      result.push(skill);
+  for (const sub of iterChildNodes(agent)) {
+    try {
+      const skills = await buildPrimarySkills(sub, defaultSkillSecurity);
+      for (const subSkill of skills) {
+        result.push(
+          buildSkillObject({
+            id: `${sub.name}_${subSkill.id}`,
+            name: `${sub.name}: ${subSkill.name}`,
+            description: subSkill.description,
+            examples: subSkill.examples,
+            inputModes: subSkill.inputModes,
+            outputModes: subSkill.outputModes,
+            tags: [`sub_agent:${sub.name}`, ...(subSkill.tags ?? [])],
+            security: subSkill.security,
+          }),
+        );
+      }
+    } catch (e: unknown) {
+      logger.warn(
+        `Failed to build skills for sub-agent ${sub.name}: ${getErrorMessage(e)}`,
+      );
+      continue;
     }
   }
 
   return result;
 }
 
-async function buildLLMAgentSkills(agent: LlmAgent): Promise<AgentSkill[]> {
+/**
+ * Builds skills for an `LlmAgent`.
+ */
+export async function buildLlmAgentSkills(
+  agent: LlmAgent,
+  defaultSkillSecurity?: SkillSecurity,
+): Promise<AgentSkill[]> {
   // The card is a discovery document served without authentication (even when
   // the A2A RPC endpoints require authentication), so the skill description
   // comes from the agent's own public description and never from its
   // instructions.
+  const agentDescription = buildAgentDescription(agent);
+  const agentExamples = await extractExamplesFromAgent(agent);
+  const extractedInputs =
+    agentExamples !== undefined
+      ? extractInputsFromExamples(agentExamples)
+      : undefined;
+
   const skills: AgentSkill[] = [
-    {
+    buildSkillObject({
       id: agent.name,
       name: 'model',
-      description: buildAgentDescription(agent),
+      description: agentDescription,
+      examples: extractedInputs,
+      outputModes: getOutputModes(agent),
       tags: ['llm'],
-    },
+      security: defaultSkillSecurity,
+    }),
   ];
 
   if (agent.tools && agent.tools.length > 0) {
-    for (const toolUnion of agent.tools) {
-      if (isBaseTool(toolUnion)) {
-        skills.push(toolToSkill(agent.name, toolUnion));
-      } else if (isBaseToolset(toolUnion)) {
-        const tools = await toolUnion.getTools();
+    const toolSkills = await buildToolSkills(agent, defaultSkillSecurity);
+    skills.push(...toolSkills);
+  }
 
-        for (const tool of tools) {
-          skills.push(toolToSkill(agent.name, tool));
+  if (agent.planner) {
+    skills.push(buildPlannerSkill(agent, defaultSkillSecurity));
+  }
+
+  if (agent.codeExecutor) {
+    skills.push(buildCodeExecutorSkill(agent, defaultSkillSecurity));
+  }
+
+  return skills;
+}
+
+/**
+ * Builds skills for an `LlmAgent`'s canonical tools, skipping `ExampleTool`.
+ */
+export async function buildToolSkills(
+  agent: LlmAgent,
+  defaultSkillSecurity?: SkillSecurity,
+): Promise<AgentSkill[]> {
+  const toolSkills: AgentSkill[] = [];
+  const canonicalTools = await agent.canonicalTools();
+
+  for (const tool of canonicalTools) {
+    if (isExampleTool(tool)) {
+      continue;
+    }
+
+    const toolName = tool.name || describeNodeType(tool);
+    const toolSecurity = getToolSecurity(tool, defaultSkillSecurity);
+
+    toolSkills.push(
+      buildSkillObject({
+        id: `${agent.name}-${toolName}`,
+        name: toolName,
+        description: tool.description || `Tool: ${toolName}`,
+        tags: ['llm', 'tools'],
+        security: toolSecurity,
+      }),
+    );
+  }
+
+  return toolSkills;
+}
+
+/**
+ * Builds the planner skill for an `LlmAgent`.
+ */
+export function buildPlannerSkill(
+  agent: LlmAgent,
+  defaultSkillSecurity?: SkillSecurity,
+): AgentSkill {
+  return buildSkillObject({
+    id: `${agent.name}-planner`,
+    name: 'planning',
+    description: 'Can think about the tasks to do and make plans',
+    tags: ['llm', 'planning'],
+    security: defaultSkillSecurity,
+  });
+}
+
+/**
+ * Builds the code executor skill for an `LlmAgent`.
+ */
+export function buildCodeExecutorSkill(
+  agent: LlmAgent,
+  defaultSkillSecurity?: SkillSecurity,
+): AgentSkill {
+  return buildSkillObject({
+    id: `${agent.name}-code-executor`,
+    name: 'code-execution',
+    description: 'Can execute code',
+    tags: ['llm', 'code_execution'],
+    security: defaultSkillSecurity,
+  });
+}
+
+/**
+ * Builds skills for non-LLM agents and workflow nodes.
+ */
+export async function buildNonLlmAgentSkills(
+  agent: BaseNode,
+  defaultSkillSecurity?: SkillSecurity,
+): Promise<AgentSkill[]> {
+  const agentDescription = buildAgentDescription(agent);
+  const agentExamples = await extractExamplesFromAgent(agent);
+  const extractedInputs =
+    agentExamples !== undefined
+      ? extractInputsFromExamples(agentExamples)
+      : undefined;
+  const agentType = getAgentTypeTag(agent);
+  const agentName = getAgentSkillName(agent);
+
+  const skills: AgentSkill[] = [
+    buildSkillObject({
+      id: agent.name,
+      name: agentName,
+      description: agentDescription,
+      examples: extractedInputs,
+      outputModes: getOutputModes(agent),
+      tags: [agentType],
+      security: defaultSkillSecurity,
+    }),
+  ];
+
+  if (iterChildNodes(agent).length > 0) {
+    const orchestrationSkill = buildOrchestrationSkill(
+      agent,
+      agentType,
+      defaultSkillSecurity,
+    );
+    if (orchestrationSkill) {
+      skills.push(orchestrationSkill);
+    }
+  }
+
+  return skills;
+}
+
+/**
+ * Builds the orchestration skill for agents or workflows with child nodes.
+ */
+export function buildOrchestrationSkill(
+  agent: BaseNode,
+  agentType: string,
+  defaultSkillSecurity?: SkillSecurity,
+): AgentSkill | undefined {
+  const childNodes = iterChildNodes(agent);
+  if (childNodes.length === 0) {
+    return undefined;
+  }
+
+  const subAgentDescriptions = childNodes.map(
+    (sub) => `${sub.name}: ${sub.description || 'No description'}`,
+  );
+
+  return buildSkillObject({
+    id: `${agent.name}-sub-agents`,
+    name: 'sub-agents',
+    description: `Orchestrates: ${subAgentDescriptions.join('; ')}`,
+    tags: [agentType, 'orchestration'],
+    security: defaultSkillSecurity,
+  });
+}
+
+/**
+ * Returns whether `value` matches `Array<Record<string, string[]>>`.
+ */
+export function isSkillSecurity(value: unknown): value is SkillSecurity {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (req) =>
+        typeof req === 'object' &&
+        req !== null &&
+        !Array.isArray(req) &&
+        Object.entries(req).every(
+          ([scheme, scopes]) =>
+            typeof scheme === 'string' &&
+            Array.isArray(scopes) &&
+            scopes.every((scope) => typeof scope === 'string'),
+        ),
+    )
+  );
+}
+
+/**
+ * Gets security requirements for a tool from `customMetadata['security']`,
+ * falling back to `defaultSkillSecurity`.
+ */
+export function getToolSecurity(
+  tool: unknown,
+  defaultSkillSecurity?: SkillSecurity,
+): SkillSecurity | undefined {
+  if (
+    isBaseTool(tool) &&
+    tool.customMetadata &&
+    SKILL_SECURITY_METADATA_KEY in tool.customMetadata
+  ) {
+    const security = tool.customMetadata[SKILL_SECURITY_METADATA_KEY];
+    if (isSkillSecurity(security)) {
+      return security;
+    }
+    const toolName = tool.name || describeNodeType(tool);
+    logger.warn(
+      `Tool "${toolName}" customMetadata['security'] does not match Array<Record<string, string[]>>; ignoring and falling back to defaultSkillSecurity.`,
+    );
+  }
+  return defaultSkillSecurity;
+}
+
+/**
+ * Validates that skill security references match declared security schemes on
+ * the agent card, logging a warning for any undeclared scheme reference.
+ */
+export function validateSkillSecurityReferences(
+  skills: AgentSkill[],
+  securitySchemes: Record<string, SecurityScheme>,
+): void {
+  const schemeNames = new Set(Object.keys(securitySchemes));
+  for (const skill of skills) {
+    if (!skill.security) {
+      continue;
+    }
+    for (const requirement of skill.security) {
+      for (const refName of Object.keys(requirement)) {
+        if (!schemeNames.has(refName)) {
+          logger.warn(
+            `Skill "${skill.id}" references security scheme "${refName}" which is not declared in securitySchemes. Declared schemes: ${JSON.stringify([...schemeNames].sort())}`,
+          );
         }
       }
     }
   }
-
-  if (agent.codeExecutor) {
-    skills.push({
-      id: `${agent.name}-code-executor`,
-      name: 'code-execution',
-      description: 'Can execute code',
-      tags: ['llm', 'code_execution'],
-    });
-  }
-
-  return skills;
 }
 
-function toolToSkill(prefix: string, tool: BaseTool): AgentSkill {
-  let description = tool.description;
-  if (!description) {
-    description = `Tool: ${tool.name}`;
-  }
-
-  return {
-    id: `${prefix}-${tool.name}`,
-    name: tool.name,
-    description: description,
-    tags: ['llm', 'tools'],
-  };
-}
-
-function buildNonLLMAgentSkills(agent: BaseAgent): AgentSkill[] {
-  const skills: AgentSkill[] = [
-    {
-      id: agent.name,
-      name: getAgentSkillName(agent),
-      description: buildAgentDescription(agent),
-      tags: [getAgentTypeTag(agent)],
-    },
-  ];
-
-  const subAgents = agent.subAgents;
-  if (subAgents.length > 0) {
-    const descriptions = subAgents.map(
-      (sub) => sub.description || 'No description',
-    );
-    skills.push({
-      id: `${agent.name}-sub-agents`,
-      name: 'sub-agents',
-      description: `Orchestrates: ${descriptions.join('; ')}`,
-      tags: [getAgentTypeTag(agent), 'orchestration'],
-    });
-  }
-
-  return skills;
-}
-
-function buildAgentDescription(agent: BaseAgent): string {
+/**
+ * Builds the description for an agent or workflow node.
+ */
+export function buildAgentDescription(agent: BaseNode): string {
   const descriptionParts: string[] = [];
 
   if (agent.description) {
     descriptionParts.push(agent.description);
   }
 
-  if (!isLlmAgent(agent) && agent.subAgents.length > 0) {
-    if (isLoopAgent(agent)) {
-      descriptionParts.push(buildLoopAgentDescription(agent));
-    } else if (isParallelAgent(agent)) {
-      descriptionParts.push(buildParallelAgentDescription(agent));
-    } else if (isSequentialAgent(agent)) {
-      descriptionParts.push(buildSequentialAgentDescription(agent));
+  if (!isLlmAgent(agent)) {
+    const workflowDescription = getWorkflowDescription(agent);
+    if (workflowDescription) {
+      descriptionParts.push(workflowDescription);
     }
   }
 
@@ -665,7 +1092,31 @@ function buildAgentDescription(agent: BaseAgent): string {
   }
 }
 
-function buildSequentialAgentDescription(agent: BaseAgent): string {
+/**
+ * Returns the workflow-specific description for non-LLM agents and workflows.
+ */
+export function getWorkflowDescription(agent: BaseNode): string | undefined {
+  if (iterChildNodes(agent).length === 0) {
+    return undefined;
+  }
+
+  if (isSequentialAgent(agent)) {
+    return buildSequentialAgentDescription(agent);
+  } else if (isParallelAgent(agent)) {
+    return buildParallelAgentDescription(agent);
+  } else if (isLoopAgent(agent)) {
+    return buildLoopAgentDescription(agent);
+  } else if (isWorkflow(agent)) {
+    return buildGraphWorkflowDescription(agent);
+  }
+
+  return undefined;
+}
+
+/**
+ * Builds the description for a sequential workflow agent.
+ */
+export function buildSequentialAgentDescription(agent: BaseAgent): string {
   const subAgents = agent.subAgents;
   const descriptions: string[] = [];
 
@@ -687,7 +1138,10 @@ function buildSequentialAgentDescription(agent: BaseAgent): string {
   return descriptions.join(' ');
 }
 
-function buildParallelAgentDescription(agent: BaseAgent): string {
+/**
+ * Builds the description for a parallel workflow agent.
+ */
+export function buildParallelAgentDescription(agent: BaseAgent): string {
   const subAgents = agent.subAgents;
   const descriptions: string[] = [];
 
@@ -709,7 +1163,10 @@ function buildParallelAgentDescription(agent: BaseAgent): string {
   return `${descriptions.join(' ')} simultaneously.`;
 }
 
-function buildLoopAgentDescription(agent: LoopAgent): string {
+/**
+ * Builds the description for a loop workflow agent.
+ */
+export function buildLoopAgentDescription(agent: LoopAgent): string {
   const maxIterationsVal = agent.maxIterations;
   let maxIterations = 'unlimited';
   if (
@@ -740,7 +1197,24 @@ function buildLoopAgentDescription(agent: LoopAgent): string {
   return `${descriptions.join(' ')} in a loop (max ${maxIterations} iterations).`;
 }
 
-function getDefaultAgentDescription(agent: BaseAgent): string {
+/**
+ * Builds the description for a graph-based `Workflow`.
+ */
+export function buildGraphWorkflowDescription(workflow: Workflow): string {
+  const childNodes = iterChildNodes(workflow);
+  const descriptions = childNodes.map((childNode) => {
+    const nodeDescription = childNode.description
+      ? childNode.description.replace(/\.+$/, '')
+      : `execute the ${childNode.name} node`;
+    return `${childNode.name}: ${nodeDescription}`;
+  });
+  return `This workflow orchestrates the following nodes: ${descriptions.join('; ')}.`;
+}
+
+/**
+ * Returns the default description based on agent type.
+ */
+export function getDefaultAgentDescription(agent: BaseNode): string {
   if (isLoopAgent(agent)) {
     return 'A loop workflow agent';
   } else if (isSequentialAgent(agent)) {
@@ -749,12 +1223,17 @@ function getDefaultAgentDescription(agent: BaseAgent): string {
     return 'A parallel workflow agent';
   } else if (isLlmAgent(agent)) {
     return 'An LLM-based agent';
+  } else if (isWorkflow(agent)) {
+    return 'A graph-based workflow agent';
   } else {
     return 'A custom agent';
   }
 }
 
-function getAgentTypeTag(agent: BaseAgent): string {
+/**
+ * Returns the agent type tag for skill tagging.
+ */
+export function getAgentTypeTag(agent: BaseNode): string {
   if (isLoopAgent(agent)) {
     return 'loop_workflow';
   } else if (isSequentialAgent(agent)) {
@@ -762,13 +1241,18 @@ function getAgentTypeTag(agent: BaseAgent): string {
   } else if (isParallelAgent(agent)) {
     return 'parallel_workflow';
   } else if (isLlmAgent(agent)) {
-    return 'llm_agent';
+    return 'llm';
+  } else if (isWorkflow(agent)) {
+    return 'graph_workflow';
   } else {
     return 'custom_agent';
   }
 }
 
-function getAgentSkillName(agent: BaseAgent): string {
+/**
+ * Returns the skill name based on agent type.
+ */
+export function getAgentSkillName(agent: BaseNode): string {
   if (isLlmAgent(agent)) {
     return 'model';
   }
@@ -778,8 +1262,116 @@ function getAgentSkillName(agent: BaseAgent): string {
   return 'custom';
 }
 
-function isCompositeShellAgent(agent: BaseAgent): boolean {
+function isCompositeShellAgent(agent: BaseNode): boolean {
   return (
     isLoopAgent(agent) || isSequentialAgent(agent) || isParallelAgent(agent)
   );
+}
+
+/**
+ * Extracts only the input strings from converted examples so they can be added
+ * to an `AgentSkill`.
+ */
+export function extractInputsFromExamples(
+  examples?: Array<Record<string, unknown>>,
+): string[] {
+  if (!examples) {
+    return [];
+  }
+
+  const extractedInputs: string[] = [];
+  for (const example of examples) {
+    const exampleInput = example['input'];
+    if (
+      typeof exampleInput !== 'object' ||
+      exampleInput === null ||
+      Array.isArray(exampleInput)
+    ) {
+      continue;
+    }
+
+    const inputRecord = exampleInput as Record<string, unknown>;
+    const parts = inputRecord['parts'];
+    if (Array.isArray(parts)) {
+      const partTexts: string[] = [];
+      for (const part of parts) {
+        if (typeof part !== 'object' || part === null || Array.isArray(part)) {
+          continue;
+        }
+        const text = (part as Record<string, unknown>)['text'];
+        if (typeof text === 'string') {
+          partTexts.push(text);
+        }
+      }
+      if (partTexts.length > 0) {
+        extractedInputs.push(partTexts.join('\n'));
+      }
+    } else {
+      const text = inputRecord['text'];
+      if (typeof text === 'string') {
+        extractedInputs.push(text);
+      }
+    }
+  }
+
+  return extractedInputs;
+}
+
+/**
+ * Extracts examples from an agent's configured `ExampleTool`, if any.
+ */
+export async function extractExamplesFromAgent(
+  agent: BaseNode,
+): Promise<Array<Record<string, unknown>> | undefined> {
+  if (!isLlmAgent(agent)) {
+    return undefined;
+  }
+
+  try {
+    const canonicalTools = await agent.canonicalTools();
+    for (const tool of canonicalTools) {
+      if (isExampleTool(tool)) {
+        const examples = convertExampleToolExamples(tool);
+        if (examples !== undefined) {
+          return examples;
+        }
+      }
+    }
+  } catch (e: unknown) {
+    logger.warn(`Failed to extract examples from tools: ${getErrorMessage(e)}`);
+  }
+
+  // Examples come only from a declared ExampleTool, never mined out of the
+  // instruction, which is not publishable content.
+  return undefined;
+}
+
+/**
+ * Converts static `ExampleTool` examples to `{input, output}` records, skipping
+ * dynamic `BaseExampleProvider` instances.
+ */
+export function convertExampleToolExamples(
+  tool: ExampleTool,
+): Array<Record<string, unknown>> | undefined {
+  if (isBaseExampleProvider(tool.examples) || !Array.isArray(tool.examples)) {
+    logger.debug(
+      'Skipping dynamic ExampleTool provider when building an agent card',
+    );
+    return undefined;
+  }
+
+  return tool.examples.map((example) => ({
+    input: example.input,
+    output: [...example.output],
+  }));
+}
+
+/**
+ * Returns output modes from `LlmAgent.generateContentConfig.responseModalities`.
+ */
+export function getOutputModes(agent: BaseNode): string[] | undefined {
+  if (!isLlmAgent(agent)) {
+    return undefined;
+  }
+  return agent.generateContentConfig?.responseModalities;
 }

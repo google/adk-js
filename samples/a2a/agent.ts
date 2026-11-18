@@ -28,6 +28,7 @@ import {
   A2AAgentExecutor,
   A2AStreamEventData,
   AGENT_CARD_PATH,
+  AgentCardBuilder,
   BaseAgent,
   createEvent,
   Event,
@@ -165,6 +166,15 @@ class A2AShowcaseAgent extends BaseAgent {
     ctx: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
     const worker = new OrderStatusWorkerAgent();
+    const builderCard = await new AgentCardBuilder({
+      agent: worker,
+      rpcUrl: 'http://localhost:8000/a2a/',
+      agentVersion: '1.0.0',
+      defaultSkillSecurity: [{bearer: []}],
+      securitySchemes: {
+        bearer: {type: 'http', scheme: 'Bearer'},
+      },
+    }).build();
     const card = await getA2AAgentCard(worker, [
       {url: 'http://localhost:8000/jsonrpc', transport: 'JSONRPC'},
     ]);
@@ -217,6 +227,7 @@ class A2AShowcaseAgent extends BaseAgent {
 
     const lines = [
       `Agent card path constant: ${AGENT_CARD_PATH}`,
+      `AgentCardBuilder card: ${builderCard.name} v${builderCard.version} @ ${builderCard.url}`,
       `Agent card: ${card.name} (${card.preferredTransport}, skills: ${card.skills.map((s) => s.id).join(', ')})`,
       `A2A stream events published: ${a2aEvents.map((e) => e.kind).join(', ')}`,
       `Reconstructed ADK events: ${reconstructedEvents.length} (calls: ${callNames.join(', ')}; responses: ${responseNames.join(', ')})`,
