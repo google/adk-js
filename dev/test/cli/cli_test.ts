@@ -2528,6 +2528,21 @@ describe('getSessionServiceFromOptions', () => {
     });
   });
 
+  it('prefers GOOGLE_CLOUD_AGENT_ENGINE_LOCATION over GOOGLE_CLOUD_LOCATION for agentengine:// short ID', () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'test-proj');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'global');
+    vi.stubEnv('GOOGLE_CLOUD_AGENT_ENGINE_LOCATION', 'europe-west1');
+    const service = getSessionServiceFromOptions({
+      sessionServiceUri: 'agentengine://123',
+    });
+    expect(service).toBeInstanceOf(VertexAiSessionService);
+    expect(vertexAiSessionServiceOptions).toHaveBeenCalledWith({
+      projectId: 'test-proj',
+      location: 'europe-west1',
+      agentEngineId: '123',
+    });
+  });
+
   it('loads GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION from .env when baseDir is provided', () => {
     vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
     vi.stubEnv('GOOGLE_CLOUD_LOCATION', '');

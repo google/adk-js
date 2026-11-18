@@ -115,7 +115,9 @@ function parseAgentEngineUri(uri: string): AgentEngineResource {
   }
   if (!uriPart.includes('/')) {
     const projectId = process.env['GOOGLE_CLOUD_PROJECT'];
-    const location = process.env['GOOGLE_CLOUD_LOCATION'];
+    const location =
+      process.env['GOOGLE_CLOUD_AGENT_ENGINE_LOCATION'] ||
+      process.env['GOOGLE_CLOUD_LOCATION'];
     if (!projectId || !location) {
       throw new Error('GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION not set.');
     }

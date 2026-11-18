@@ -85,6 +85,7 @@ describe('Registry', () => {
       beforeEach(() => {
         delete process.env.GOOGLE_CLOUD_PROJECT;
         delete process.env.GOOGLE_CLOUD_LOCATION;
+        delete process.env.GOOGLE_CLOUD_AGENT_ENGINE_LOCATION;
         delete process.env.GOOGLE_CLOUD_AGENT_ENGINE_ID;
       });
 
@@ -109,6 +110,20 @@ describe('Registry', () => {
         expect(
           (service as unknown as Record<string, unknown>).agentEngineId,
         ).to.equal('1234567890');
+      });
+
+      it('should prefer GOOGLE_CLOUD_AGENT_ENGINE_LOCATION over GOOGLE_CLOUD_LOCATION', () => {
+        process.env.GOOGLE_CLOUD_PROJECT = 'test-project';
+        process.env.GOOGLE_CLOUD_LOCATION = 'global';
+        process.env.GOOGLE_CLOUD_AGENT_ENGINE_LOCATION = 'europe-west1';
+        process.env.GOOGLE_CLOUD_AGENT_ENGINE_ID = '1234567890';
+
+        const service = getSessionServiceFromUri('vertexai://');
+
+        expect(service).to.be.instanceOf(VertexAiSessionService);
+        expect(
+          (service as unknown as Record<string, unknown>).location,
+        ).to.equal('europe-west1');
       });
     });
   });

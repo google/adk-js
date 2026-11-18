@@ -2057,6 +2057,7 @@ describe('VertexAiSessionService environment defaults', () => {
     vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
     vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'env-project');
     vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'env-location');
+    vi.stubEnv('GOOGLE_CLOUD_AGENT_ENGINE_LOCATION', undefined);
   });
 
   it('builds the client from GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION', () => {
@@ -2065,6 +2066,18 @@ describe('VertexAiSessionService environment defaults', () => {
     expect(clientConstructor).toHaveBeenCalledWith({
       project: 'env-project',
       location: 'env-location',
+    });
+  });
+
+  it('prefers GOOGLE_CLOUD_AGENT_ENGINE_LOCATION over GOOGLE_CLOUD_LOCATION', () => {
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'global');
+    vi.stubEnv('GOOGLE_CLOUD_AGENT_ENGINE_LOCATION', 'europe-west1');
+
+    new VertexAiSessionService({});
+
+    expect(clientConstructor).toHaveBeenCalledWith({
+      project: 'env-project',
+      location: 'europe-west1',
     });
   });
 
