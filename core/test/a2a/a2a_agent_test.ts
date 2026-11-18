@@ -7,12 +7,20 @@
 import {
   AgentCard,
   Message,
+  Part,
+  Role,
+  StreamResponse,
   Task,
   TaskArtifactUpdateEvent,
+  TaskState,
   TaskStatusUpdateEvent,
 } from '@a2a-js/sdk';
 import {ClientFactory} from '@a2a-js/sdk/client';
-import {ExecutionEventBus, RequestContext} from '@a2a-js/sdk/server';
+import {
+  AgentExecutionEvent,
+  ExecutionEventBus,
+  RequestContext,
+} from '@a2a-js/sdk/server';
 import {
   A2AAgentExecutor,
   Event as AdkEvent,
@@ -30,9 +38,95 @@ import {
 } from '@google/adk';
 import {Language, Outcome} from '@google/genai';
 import {beforeEach, describe, expect, it, Mock, vi} from 'vitest';
-import {A2AEvent} from '../../src/a2a/a2a_event.js';
+import {
+  A2AEvent,
+  createMessage,
+  createTextPart,
+  isMessage,
+  isTask,
+  isTaskArtifactUpdateEvent,
+  isTaskStatusUpdateEvent,
+} from '../../src/a2a/a2a_event.js';
 
-vi.mock('@a2a-js/sdk/client', () => {
+/** An A2A data part. */
+function dataPart(value: unknown, metadata: Record<string, unknown>): Part {
+  return {
+    content: {$case: 'data', value},
+    metadata,
+    filename: '',
+    mediaType: '',
+  };
+}
+
+/** An A2A text part with no metadata. */
+function textPart(text: string): Part {
+  return createTextPart(text);
+}
+
+/** Wraps an A2A event into the `StreamResponse` a client streams. */
+function toStreamResponse(event: A2AEvent): StreamResponse {
+  if (isMessage(event)) {
+    return {payload: {$case: 'message', value: event}};
+  }
+  if (isTask(event)) {
+    return {payload: {$case: 'task', value: event}};
+  }
+  if (isTaskArtifactUpdateEvent(event)) {
+    return {payload: {$case: 'artifactUpdate', value: event}};
+  }
+  return {payload: {$case: 'statusUpdate', value: event}};
+}
+
+/** A status update with the given state and optional agent message. */
+function statusUpdate(
+  state: TaskState,
+  message?: Message,
+  ids = {taskId: 'task-1', contextId: 'ctx-1'},
+): TaskStatusUpdateEvent {
+  return {
+    ...ids,
+    status: {state, message, timestamp: undefined},
+    metadata: undefined,
+  };
+}
+
+/** An artifact update with the given text parts. */
+function artifactUpdate(
+  parts: Part[],
+  {
+    artifactId = 'art-1',
+    append = false,
+    lastChunk = false,
+  }: {artifactId?: string; append?: boolean; lastChunk?: boolean} = {},
+): TaskArtifactUpdateEvent {
+  return {
+    taskId: 'task-1',
+    contextId: 'ctx-1',
+    artifact: {
+      artifactId,
+      name: '',
+      description: '',
+      parts,
+      metadata: undefined,
+      extensions: [],
+    },
+    append,
+    lastChunk,
+    metadata: undefined,
+  };
+}
+
+/** An agent message with the given text parts. */
+function agentMessage(messageId: string, texts: string[]): Message {
+  return createMessage({
+    messageId,
+    role: Role.ROLE_AGENT,
+    parts: texts.map(textPart),
+  });
+}
+
+vi.mock('@a2a-js/sdk/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@a2a-js/sdk/client')>();
   const Client = vi.fn().mockImplementation(() => ({
     sendMessageStream: vi.fn(),
     sendMessage: vi.fn(),
@@ -40,7 +134,7 @@ vi.mock('@a2a-js/sdk/client', () => {
   const ClientFactory = vi.fn().mockImplementation(() => ({
     createFromAgentCard: vi.fn(),
   }));
-  return {Client, ClientFactory};
+  return {...actual, Client, ClientFactory};
 });
 
 class MockAgent extends BaseAgent {
@@ -105,7 +199,10 @@ describe('A2A Agent Executor', () => {
     return {
       contextId: 'test-context',
       taskId: 'test-task',
-      userMessage: {role: 'user', parts: [{kind: 'text', text: 'hello'}]},
+      userMessage: createMessage({
+        role: Role.ROLE_USER,
+        parts: [createTextPart('hello')],
+      }),
       ...overrides,
     } as unknown as RequestContext;
   };
@@ -124,8 +221,9 @@ describe('A2A Agent Executor', () => {
 
     const ctx = createRequestContext();
     await executor.execute(ctx, mockEventBus);
+    // The executor publishes `AgentEvent`s: `{kind, data}`.
     return (mockEventBus.publish as Mock).mock.calls.map(
-      (call: unknown[]) => call[0] as A2AEvent,
+      (call: unknown[]) => (call[0] as AgentExecutionEvent).data as A2AEvent,
     );
   };
 
@@ -150,33 +248,34 @@ describe('A2A Agent Executor', () => {
 
     const gotEvents = await runTest(remoteEvents);
 
-    const artifacts = gotEvents.filter(
-      (e: A2AEvent) => e.kind === 'artifact-update',
+    // Every run opens with the task, then the working status update.
+    expect(isTask(gotEvents[0])).toBe(true);
+    expect((gotEvents[0] as Task).status?.state).toBe(
+      TaskState.TASK_STATE_SUBMITTED,
+    );
+    expect(isTaskStatusUpdateEvent(gotEvents[1])).toBe(true);
+
+    const artifacts = gotEvents.filter((e: A2AEvent) =>
+      isTaskArtifactUpdateEvent(e),
     ) as TaskArtifactUpdateEvent[];
 
-    const workingEvent = gotEvents.find(
-      (e: A2AEvent) =>
-        e.kind === 'status-update' && e.status?.state === 'working',
-    ) as TaskStatusUpdateEvent | undefined;
+    const workingEvent = gotEvents
+      .filter(isTaskStatusUpdateEvent)
+      .find((e) => e.status?.state === TaskState.TASK_STATE_WORKING);
 
     expect(workingEvent).toBeDefined();
-    expect(workingEvent!.status.message).toBeUndefined();
+    expect(workingEvent!.status?.message).toBeUndefined();
     expect(artifacts).toHaveLength(3);
-    expect(artifacts[0].artifact.parts).toEqual([
-      {kind: 'text', text: 'hello '},
-    ]);
-    expect(artifacts[0].append).toBe(true);
+    expect(artifacts[0].artifact!.parts).toEqual([textPart('hello ')]);
+    // The first chunk creates the artifact; only later chunks append.
+    expect(artifacts[0].append).toBe(false);
     expect(artifacts[0].lastChunk).toBe(false);
 
-    expect(artifacts[1].artifact.parts).toEqual([
-      {kind: 'text', text: 'world'},
-    ]);
+    expect(artifacts[1].artifact!.parts).toEqual([textPart('world')]);
     expect(artifacts[1].append).toBe(true);
     expect(artifacts[1].lastChunk).toBe(false);
 
-    expect(artifacts[2].artifact.parts).toEqual([
-      {kind: 'text', text: 'hello world'},
-    ]);
+    expect(artifacts[2].artifact!.parts).toEqual([textPart('hello world')]);
     expect(artifacts[2].append).toBe(false);
     expect(artifacts[2].lastChunk).toBe(true);
   });
@@ -192,14 +291,12 @@ describe('A2A Agent Executor', () => {
 
     const gotEvents = await runTest(remoteEvents);
 
-    const artifacts = gotEvents.filter(
-      (e: A2AEvent) => e.kind === 'artifact-update',
+    const artifacts = gotEvents.filter((e: A2AEvent) =>
+      isTaskArtifactUpdateEvent(e),
     ) as TaskArtifactUpdateEvent[];
 
     expect(artifacts).toHaveLength(1);
-    expect(artifacts[0].artifact.parts).toEqual([
-      {kind: 'text', text: 'hello world'},
-    ]);
+    expect(artifacts[0].artifact!.parts).toEqual([textPart('hello world')]);
     expect(artifacts[0].append).toBe(false);
     expect(artifacts[0].lastChunk).toBe(true);
   });
@@ -240,24 +337,22 @@ describe('A2A Agent Executor', () => {
 
     const gotEvents = await runTest(remoteEvents);
 
-    const artifacts = gotEvents.filter(
-      (e: A2AEvent) => e.kind === 'artifact-update',
+    const artifacts = gotEvents.filter((e: A2AEvent) =>
+      isTaskArtifactUpdateEvent(e),
     ) as TaskArtifactUpdateEvent[];
 
     expect(artifacts).toHaveLength(2);
-    expect(artifacts[0].artifact.parts).toEqual([
-      {
-        kind: 'data',
-        data: {language: Language.PYTHON, code: "print('hello')"},
-        metadata: {adk_type: 'executable_code'},
-      },
+    expect(artifacts[0].artifact!.parts).toEqual([
+      dataPart(
+        {language: Language.PYTHON, code: "print('hello')"},
+        {adk_type: 'executable_code'},
+      ),
     ]);
-    expect(artifacts[1].artifact.parts).toEqual([
-      {
-        kind: 'data',
-        data: {outcome: Outcome.OUTCOME_OK, output: 'hello'},
-        metadata: {adk_type: 'code_execution_result'},
-      },
+    expect(artifacts[1].artifact!.parts).toEqual([
+      dataPart(
+        {outcome: Outcome.OUTCOME_OK, output: 'hello'},
+        {adk_type: 'code_execution_result'},
+      ),
     ]);
   });
 
@@ -287,24 +382,22 @@ describe('A2A Agent Executor', () => {
 
     const gotEvents = await runTest(remoteEvents);
 
-    const artifacts = gotEvents.filter(
-      (e: A2AEvent) => e.kind === 'artifact-update',
+    const artifacts = gotEvents.filter((e: A2AEvent) =>
+      isTaskArtifactUpdateEvent(e),
     ) as TaskArtifactUpdateEvent[];
 
     expect(artifacts).toHaveLength(2);
-    expect(artifacts[0].artifact.parts).toEqual([
-      {
-        kind: 'data',
-        data: {name: 'get_weather', args: {city: 'Warsaw'}},
-        metadata: {adk_type: 'function_call'},
-      },
+    expect(artifacts[0].artifact!.parts).toEqual([
+      dataPart(
+        {name: 'get_weather', args: {city: 'Warsaw'}},
+        {adk_type: 'function_call'},
+      ),
     ]);
-    expect(artifacts[1].artifact.parts).toEqual([
-      {
-        kind: 'data',
-        data: {name: 'get_weather', response: {temp: '1C'}},
-        metadata: {adk_type: 'function_response'},
-      },
+    expect(artifacts[1].artifact!.parts).toEqual([
+      dataPart(
+        {name: 'get_weather', response: {temp: '1C'}},
+        {adk_type: 'function_response'},
+      ),
     ]);
   });
 
@@ -337,23 +430,26 @@ describe('A2A Agent Executor', () => {
 
     const gotEvents = await runTest(remoteEvents);
 
-    const artifacts = gotEvents.filter(
-      (e: A2AEvent) => e.kind === 'artifact-update',
+    const artifacts = gotEvents.filter((e: A2AEvent) =>
+      isTaskArtifactUpdateEvent(e),
     ) as TaskArtifactUpdateEvent[];
 
     expect(artifacts).toHaveLength(2);
-    expect(artifacts[0].artifact.parts).toEqual([
+    expect(artifacts[0].artifact!.parts).toEqual([
       {
-        kind: 'file',
-        file: {bytes: 'hello', mimeType: 'text/plain'},
+        // GenAI inline data is base64; an A2A v1.0 part carries the bytes.
+        content: {$case: 'raw', value: Buffer.from('hello', 'base64')},
         metadata: {},
+        filename: '',
+        mediaType: 'text/plain',
       },
     ]);
-    expect(artifacts[1].artifact.parts).toEqual([
+    expect(artifacts[1].artifact!.parts).toEqual([
       {
-        kind: 'file',
-        file: {uri: 'http://text.com/text.txt', mimeType: 'text/plain'},
+        content: {$case: 'url', value: 'http://text.com/text.txt'},
         metadata: {},
+        filename: '',
+        mediaType: 'text/plain',
       },
     ]);
   });
@@ -370,10 +466,9 @@ describe('A2A Agent Executor', () => {
 
     const gotEvents = await runTest(remoteEvents);
 
-    const finalEvent = gotEvents.find(
-      (e: A2AEvent) =>
-        e.kind === 'status-update' && e.status?.state === 'completed',
-    ) as TaskStatusUpdateEvent | undefined;
+    const finalEvent = gotEvents
+      .filter(isTaskStatusUpdateEvent)
+      .find((e) => e.status?.state === TaskState.TASK_STATE_COMPLETED);
 
     expect(finalEvent).toBeDefined();
     expect(finalEvent!.metadata?.adk_escalate).toBe(true);
@@ -391,10 +486,9 @@ describe('A2A Agent Executor', () => {
 
     const gotEvents = await runTest(remoteEvents);
 
-    const finalEvent = gotEvents.find(
-      (e: A2AEvent) =>
-        e.kind === 'status-update' && e.status?.state === 'completed',
-    ) as TaskStatusUpdateEvent | undefined;
+    const finalEvent = gotEvents
+      .filter(isTaskStatusUpdateEvent)
+      .find((e) => e.status?.state === TaskState.TASK_STATE_COMPLETED);
 
     expect(finalEvent).toBeDefined();
     expect(finalEvent!.metadata?.adk_transfer_to_agent).toBe('a-2');
@@ -415,18 +509,16 @@ describe('A2A Agent Executor', () => {
 
     const gotEvents = await runTest(remoteEvents);
 
-    const inputRequiredEvent = gotEvents.find(
-      (e: A2AEvent) =>
-        e.kind === 'status-update' && e.status?.state === 'input-required',
-    ) as TaskStatusUpdateEvent | undefined;
+    const inputRequiredEvent = gotEvents
+      .filter(isTaskStatusUpdateEvent)
+      .find((e) => e.status?.state === TaskState.TASK_STATE_INPUT_REQUIRED);
 
     expect(inputRequiredEvent).toBeDefined();
-    expect(inputRequiredEvent!.status.message?.parts).toEqual([
-      {
-        kind: 'data',
-        data: {name: 'create_ticket', id: 'abc-123'},
-        metadata: {adk_type: 'function_call', adk_is_long_running: true},
-      },
+    expect(inputRequiredEvent!.status?.message?.parts).toEqual([
+      dataPart(
+        {name: 'create_ticket', id: 'abc-123'},
+        {adk_type: 'function_call', adk_is_long_running: true},
+      ),
     ]);
   });
 
@@ -449,8 +541,8 @@ describe('A2A Agent Executor', () => {
 
     const gotEvents = await runTest(remoteEvents);
 
-    const artifacts = gotEvents.filter(
-      (e: A2AEvent) => e.kind === 'artifact-update',
+    const artifacts = gotEvents.filter((e: A2AEvent) =>
+      isTaskArtifactUpdateEvent(e),
     ) as TaskArtifactUpdateEvent[];
 
     expect(artifacts).toHaveLength(1);
@@ -481,12 +573,11 @@ describe('A2A Agent Executor', () => {
 
     const gotEvents = await runTest(remoteEvents);
 
-    const finalEvent = gotEvents.find(
-      (e: A2AEvent) =>
-        e.kind === 'status-update' && e.status?.state === 'completed',
-    ) as TaskStatusUpdateEvent | undefined;
+    const finalEvent = gotEvents
+      .filter(isTaskStatusUpdateEvent)
+      .find((e) => e.status?.state === TaskState.TASK_STATE_COMPLETED);
     expect(finalEvent).toBeDefined();
-    expect(finalEvent!.status.message).toBeUndefined();
+    expect(finalEvent!.status?.message).toBeUndefined();
   });
 
   it('handles message with text parts', async () => {
@@ -503,13 +594,13 @@ describe('A2A Agent Executor', () => {
 
     const gotEvents = await runTest(remoteEvents);
 
-    const artifacts = gotEvents.filter(
-      (e: A2AEvent) => e.kind === 'artifact-update',
+    const artifacts = gotEvents.filter((e: A2AEvent) =>
+      isTaskArtifactUpdateEvent(e),
     ) as TaskArtifactUpdateEvent[];
     expect(artifacts).toHaveLength(1);
-    expect(artifacts[0].artifact.parts).toEqual([
-      {kind: 'text', text: 'hello'},
-      {kind: 'text', text: 'world'},
+    expect(artifacts[0].artifact!.parts).toEqual([
+      textPart('hello'),
+      textPart('world'),
     ]);
   });
 
@@ -524,12 +615,11 @@ describe('A2A Agent Executor', () => {
 
     const gotEvents = await runTest(remoteEvents);
 
-    const finalEvent = gotEvents.find(
-      (e: A2AEvent) =>
-        e.kind === 'status-update' && e.status?.state === 'completed',
-    ) as TaskStatusUpdateEvent | undefined;
+    const finalEvent = gotEvents
+      .filter(isTaskStatusUpdateEvent)
+      .find((e) => e.status?.state === TaskState.TASK_STATE_COMPLETED);
     expect(finalEvent).toBeDefined();
-    expect(finalEvent!.status.message).toBeUndefined();
+    expect(finalEvent!.status?.message).toBeUndefined();
   });
 
   it('handles task with status message', async () => {
@@ -543,13 +633,11 @@ describe('A2A Agent Executor', () => {
 
     const gotEvents = await runTest(remoteEvents);
 
-    const artifacts = gotEvents.filter(
-      (e: A2AEvent) => e.kind === 'artifact-update',
+    const artifacts = gotEvents.filter((e: A2AEvent) =>
+      isTaskArtifactUpdateEvent(e),
     ) as TaskArtifactUpdateEvent[];
     expect(artifacts).toHaveLength(1);
-    expect(artifacts[0].artifact.parts).toEqual([
-      {kind: 'text', text: 'hello'},
-    ]);
+    expect(artifacts[0].artifact!.parts).toEqual([textPart('hello')]);
   });
 
   it('handles task with multipart artifact', async () => {
@@ -566,13 +654,13 @@ describe('A2A Agent Executor', () => {
 
     const gotEvents = await runTest(remoteEvents);
 
-    const artifacts = gotEvents.filter(
-      (e: A2AEvent) => e.kind === 'artifact-update',
+    const artifacts = gotEvents.filter((e: A2AEvent) =>
+      isTaskArtifactUpdateEvent(e),
     ) as TaskArtifactUpdateEvent[];
     expect(artifacts).toHaveLength(1);
-    expect(artifacts[0].artifact.parts).toEqual([
-      {kind: 'text', text: 'hello'},
-      {kind: 'text', text: 'world'},
+    expect(artifacts[0].artifact!.parts).toEqual([
+      textPart('hello'),
+      textPart('world'),
     ]);
   });
 
@@ -592,16 +680,12 @@ describe('A2A Agent Executor', () => {
 
     const gotEvents = await runTest(remoteEvents);
 
-    const artifacts = gotEvents.filter(
-      (e: A2AEvent) => e.kind === 'artifact-update',
+    const artifacts = gotEvents.filter((e: A2AEvent) =>
+      isTaskArtifactUpdateEvent(e),
     ) as TaskArtifactUpdateEvent[];
     expect(artifacts).toHaveLength(2);
-    expect(artifacts[0].artifact.parts).toEqual([
-      {kind: 'text', text: 'hello'},
-    ]);
-    expect(artifacts[1].artifact.parts).toEqual([
-      {kind: 'text', text: 'world'},
-    ]);
+    expect(artifacts[0].artifact!.parts).toEqual([textPart('hello')]);
+    expect(artifacts[1].artifact!.parts).toEqual([textPart('world')]);
   });
 
   it('handles empty non-final status updates ignored', async () => {
@@ -624,17 +708,16 @@ describe('A2A Agent Executor', () => {
     ];
 
     const gotEvents = await runTest(remoteEvents);
-    const artifacts = gotEvents.filter(
-      (e: A2AEvent) => e.kind === 'artifact-update',
+    const artifacts = gotEvents.filter((e: A2AEvent) =>
+      isTaskArtifactUpdateEvent(e),
     ) as TaskArtifactUpdateEvent[];
     expect(artifacts).toHaveLength(0);
 
-    const finalEvent = gotEvents.find(
-      (e: A2AEvent) =>
-        e.kind === 'status-update' && e.status?.state === 'completed',
-    ) as TaskStatusUpdateEvent | undefined;
+    const finalEvent = gotEvents
+      .filter(isTaskStatusUpdateEvent)
+      .find((e) => e.status?.state === TaskState.TASK_STATE_COMPLETED);
     expect(finalEvent).toBeDefined();
-    expect(finalEvent!.status.message).toBeUndefined();
+    expect(finalEvent!.status?.message).toBeUndefined();
   });
 
   it('handles partial and non-partial event aggregation', async () => {
@@ -668,32 +751,34 @@ describe('A2A Agent Executor', () => {
 
     const gotEvents = await runTest(remoteEvents);
 
-    const artifacts = gotEvents.filter(
-      (e: A2AEvent) => e.kind === 'artifact-update',
+    const artifacts = gotEvents.filter((e: A2AEvent) =>
+      isTaskArtifactUpdateEvent(e),
     ) as TaskArtifactUpdateEvent[];
 
-    // According to AgentExecutor, each adkEvent generates an artifact-update
-    // partial=true means append=true, lastChunk=false
+    // According to AgentExecutor, each adkEvent generates an artifact-update:
+    // the first partial chunk of an artifact has append=false (it creates the
+    // artifact), later partial chunks append=true, all lastChunk=false;
     // partial=false means append=false, lastChunk=true
 
     expect(artifacts).toHaveLength(5);
-    expect(artifacts[0].artifact.parts).toEqual([{kind: 'text', text: '1'}]);
-    expect(artifacts[0].append).toBe(true);
+    expect(artifacts[0].artifact!.parts).toEqual([textPart('1')]);
+    expect(artifacts[0].append).toBe(false);
     expect(artifacts[0].lastChunk).toBe(false);
 
-    expect(artifacts[1].artifact.parts).toEqual([{kind: 'text', text: '2'}]);
+    expect(artifacts[1].artifact!.parts).toEqual([textPart('2')]);
     expect(artifacts[1].append).toBe(true);
     expect(artifacts[1].lastChunk).toBe(false);
 
-    expect(artifacts[2].artifact.parts).toEqual([{kind: 'text', text: '3'}]);
+    expect(artifacts[2].artifact!.parts).toEqual([textPart('3')]);
     expect(artifacts[2].append).toBe(false);
     expect(artifacts[2].lastChunk).toBe(true);
 
-    expect(artifacts[3].artifact.parts).toEqual([{kind: 'text', text: '4'}]);
-    expect(artifacts[3].append).toBe(true);
+    expect(artifacts[3].artifact!.parts).toEqual([textPart('4')]);
+    // A new streamed artifact after the final event: its first chunk creates it.
+    expect(artifacts[3].append).toBe(false);
     expect(artifacts[3].lastChunk).toBe(false);
 
-    expect(artifacts[4].artifact.parts).toEqual([{kind: 'text', text: '5'}]);
+    expect(artifacts[4].artifact!.parts).toEqual([textPart('5')]);
     expect(artifacts[4].append).toBe(false);
     expect(artifacts[4].lastChunk).toBe(true);
   });
@@ -745,21 +830,29 @@ describe('A2A Remote Agent', () => {
   };
 
   const runRemoteAgentTest = async (
-    events: (
-      Message | Task | TaskStatusUpdateEvent | TaskArtifactUpdateEvent
-    )[],
+    events: A2AEvent[],
     beforeCallbacks?: BeforeA2ARequestCallback[],
     afterCallbacks?: AfterA2ARequestCallback[],
   ): Promise<AdkEvent[]> => {
     const card: AgentCard = {
       name: 'Remote',
       description: 'test',
-      protocolVersion: '1.0',
+      supportedInterfaces: [
+        {
+          url: 'https://example.com',
+          protocolBinding: 'JSONRPC',
+          protocolVersion: '1.0',
+          tenant: '',
+        },
+      ],
+      provider: undefined,
       defaultInputModes: [],
       defaultOutputModes: [],
-      capabilities: {streaming: true},
+      capabilities: {streaming: true, extensions: []},
+      securitySchemes: {},
+      securityRequirements: [],
+      signatures: [],
       skills: [],
-      url: 'https://example.com',
       version: '1.0',
     };
 
@@ -773,7 +866,7 @@ describe('A2A Remote Agent', () => {
 
     const mockStream = async function* () {
       for (const e of events) {
-        yield e;
+        yield toStreamResponse(e);
       }
     };
     mockClient.sendMessageStream.mockReturnValue(mockStream());
@@ -788,14 +881,7 @@ describe('A2A Remote Agent', () => {
   };
 
   it('empty message', async () => {
-    const remoteEvents = [
-      {
-        kind: 'message' as const,
-        messageId: 'msg-1',
-        role: 'agent' as const,
-        parts: [],
-      },
-    ];
+    const remoteEvents = [agentMessage('msg-1', [])];
     const gotEvents = await runRemoteAgentTest(remoteEvents);
     // In TS, empty parts usually translates to an event with empty parts or undefined content
     expect(gotEvents).toHaveLength(1);
@@ -803,17 +889,7 @@ describe('A2A Remote Agent', () => {
   });
 
   it('message', async () => {
-    const remoteEvents = [
-      {
-        kind: 'message' as const,
-        messageId: 'msg-2',
-        role: 'agent' as const,
-        parts: [
-          {kind: 'text' as const, text: 'hello'},
-          {kind: 'text' as const, text: 'world'},
-        ],
-      },
-    ];
+    const remoteEvents = [agentMessage('msg-2', ['hello', 'world'])];
     const gotEvents = await runRemoteAgentTest(remoteEvents);
     expect(gotEvents).toHaveLength(1);
     expect(gotEvents[0].content?.parts).toEqual([
@@ -823,15 +899,7 @@ describe('A2A Remote Agent', () => {
   });
 
   it('empty task', async () => {
-    const remoteEvents = [
-      {
-        kind: 'status-update' as const,
-        contextId: 'ctx-1',
-        taskId: 'task-1',
-        status: {state: 'completed' as const},
-        final: true,
-      },
-    ];
+    const remoteEvents = [statusUpdate(TaskState.TASK_STATE_COMPLETED)];
     const gotEvents = await runRemoteAgentTest(remoteEvents);
     // Task status without message is usually transparent or returns final structure
     expect(gotEvents).toBeDefined();
@@ -839,21 +907,10 @@ describe('A2A Remote Agent', () => {
 
   it('task with status message', async () => {
     const remoteEvents = [
-      {
-        kind: 'status-update' as const,
-        contextId: 'ctx-1',
-        taskId: 'task-1',
-        status: {
-          state: 'completed' as const,
-          message: {
-            kind: 'message' as const,
-            messageId: 'msg-inner-1',
-            role: 'agent' as const,
-            parts: [{kind: 'text' as const, text: 'hello'}],
-          },
-        },
-        final: true,
-      },
+      statusUpdate(
+        TaskState.TASK_STATE_COMPLETED,
+        agentMessage('msg-inner-1', ['hello']),
+      ),
     ];
     const gotEvents = await runRemoteAgentTest(remoteEvents);
     expect(gotEvents).toHaveLength(1);
@@ -864,18 +921,9 @@ describe('A2A Remote Agent', () => {
 
   it('task with multipart artifact', async () => {
     const remoteEvents = [
-      {
-        kind: 'artifact-update' as const,
-        contextId: 'ctx-1',
-        taskId: 'task-1',
-        artifact: {
-          artifactId: 'art-multipart-1',
-          parts: [
-            {kind: 'text' as const, text: 'hello'},
-            {kind: 'text' as const, text: 'world'},
-          ],
-        },
-      },
+      artifactUpdate([textPart('hello'), textPart('world')], {
+        artifactId: 'art-multipart-1',
+      }),
     ];
     const gotEvents = await runRemoteAgentTest(remoteEvents);
     expect(gotEvents).toHaveLength(1);
@@ -887,36 +935,14 @@ describe('A2A Remote Agent', () => {
 
   it('multiple tasks', async () => {
     const remoteEvents = [
-      {
-        kind: 'status-update' as const,
-        contextId: 'ctx-1',
-        taskId: 'task-1',
-        status: {
-          state: 'working' as const,
-          message: {
-            kind: 'message' as const,
-            messageId: 'msg-working-1',
-            role: 'agent' as const,
-            parts: [{kind: 'text' as const, text: 'hello'}],
-          },
-        },
-        final: false,
-      },
-      {
-        kind: 'status-update' as const,
-        contextId: 'ctx-1',
-        taskId: 'task-1',
-        status: {
-          state: 'completed' as const,
-          message: {
-            kind: 'message' as const,
-            messageId: 'msg-completed-1',
-            role: 'agent' as const,
-            parts: [{kind: 'text' as const, text: 'world'}],
-          },
-        },
-        final: true,
-      },
+      statusUpdate(
+        TaskState.TASK_STATE_WORKING,
+        agentMessage('msg-working-1', ['hello']),
+      ),
+      statusUpdate(
+        TaskState.TASK_STATE_COMPLETED,
+        agentMessage('msg-completed-1', ['world']),
+      ),
     ];
     const gotEvents = await runRemoteAgentTest(remoteEvents);
     expect(gotEvents).toHaveLength(2);
@@ -931,22 +957,11 @@ describe('A2A Remote Agent', () => {
   it('artifact parts translation', async () => {
     const task = {id: 'task-1', contextId: 'ctx-1'};
     const remoteEvents = [
-      {
-        kind: 'artifact-update' as const,
+      artifactUpdate([textPart('hello')]),
+      statusUpdate(TaskState.TASK_STATE_COMPLETED, undefined, {
         taskId: task.id,
         contextId: task.contextId,
-        artifact: {
-          artifactId: 'art-1',
-          parts: [{kind: 'text' as const, text: 'hello'}],
-        },
-      },
-      {
-        kind: 'status-update' as const,
-        taskId: task.id,
-        contextId: task.contextId,
-        status: {state: 'completed' as const},
-        final: true,
-      },
+      }),
     ];
     const gotEvents = await runRemoteAgentTest(remoteEvents);
     expect(gotEvents.length).toBeGreaterThan(0);
@@ -957,39 +972,9 @@ describe('A2A Remote Agent', () => {
 
   it('partial and non-partial event aggregation', async () => {
     const remoteEvents = [
-      {
-        kind: 'artifact-update' as const,
-        contextId: 'ctx-1',
-        taskId: 'task-1',
-        artifact: {
-          artifactId: 'art-1',
-          parts: [{kind: 'text' as const, text: '1'}],
-        },
-        append: true,
-        lastChunk: false,
-      },
-      {
-        kind: 'artifact-update' as const,
-        contextId: 'ctx-1',
-        taskId: 'task-1',
-        artifact: {
-          artifactId: 'art-1',
-          parts: [{kind: 'text' as const, text: '2'}],
-        },
-        append: true,
-        lastChunk: false,
-      },
-      {
-        kind: 'artifact-update' as const,
-        contextId: 'ctx-1',
-        taskId: 'task-1',
-        artifact: {
-          artifactId: 'art-1',
-          parts: [{kind: 'text' as const, text: '3'}],
-        },
-        append: false,
-        lastChunk: true,
-      },
+      artifactUpdate([textPart('1')], {append: true, lastChunk: false}),
+      artifactUpdate([textPart('2')], {append: true, lastChunk: false}),
+      artifactUpdate([textPart('3')], {append: false, lastChunk: true}),
     ];
     const gotEvents = await runRemoteAgentTest(remoteEvents);
 
@@ -1010,23 +995,20 @@ describe('A2A Remote Agent', () => {
 
   it('request callbacks modification', async () => {
     const beforeCallback: BeforeA2ARequestCallback = async (ctx, params) => {
-      params.configuration = {acceptedOutputModes: ['custom']};
+      params.configuration = {
+        acceptedOutputModes: ['custom'],
+        taskPushNotificationConfig: undefined,
+        returnImmediately: false,
+      };
     };
     const afterCallback: AfterA2ARequestCallback = async (ctx, chunk) => {
       // modify chunk if possible or verify called
-      if (chunk.kind === 'message') {
-        chunk.parts = [{kind: 'text' as const, text: 'intercepted'}];
+      if (isMessage(chunk)) {
+        chunk.parts = [textPart('intercepted')];
       }
     };
 
-    const remoteEvents = [
-      {
-        kind: 'message' as const,
-        messageId: 'msg-3',
-        role: 'agent' as const,
-        parts: [{kind: 'text' as const, text: 'original'}],
-      },
-    ];
+    const remoteEvents = [agentMessage('msg-3', ['original'])];
 
     const gotEvents = await runRemoteAgentTest(
       remoteEvents,

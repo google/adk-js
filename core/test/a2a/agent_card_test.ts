@@ -73,6 +73,29 @@ const STUB_CARD = {
   skills: [],
 };
 
+/** The A2A v1.0 shape of {@link STUB_CARD}. */
+const STUB_CARD_V1: AgentCard = {
+  name: 'peer_agent',
+  description: 'A peer agent',
+  version: '1.0.0',
+  supportedInterfaces: [
+    {
+      url: 'http://localhost:8001/a2a/peer_agent/',
+      protocolBinding: 'JSONRPC',
+      protocolVersion: '1.0',
+      tenant: '',
+    },
+  ],
+  provider: undefined,
+  capabilities: {streaming: true, extensions: []},
+  securitySchemes: {},
+  securityRequirements: [],
+  defaultInputModes: ['text'],
+  defaultOutputModes: ['text'],
+  skills: [],
+  signatures: [],
+};
+
 /** Builds the 200 response an agent-card endpoint returns. */
 function cardResponse(): Response {
   return new Response(JSON.stringify(STUB_CARD), {
@@ -111,8 +134,10 @@ class MockToolset extends BaseToolset {
 
 describe('Agent Card', () => {
   const dummyTransport = {
-    transport: 'grpc',
     url: 'grpc://localhost:8080',
+    protocolBinding: 'GRPC',
+    protocolVersion: '1.0',
+    tenant: '',
   };
 
   describe('getA2AAgentCard', () => {
@@ -123,8 +148,14 @@ describe('Agent Card', () => {
 
       expect(card.name).toBe('test_agent');
       expect(card.description).toBe('A custom test agent');
-      expect(card.url).toBe('grpc://localhost:8080');
-      expect(card.protocolVersion).toBe('0.3.0');
+      expect(card.supportedInterfaces).toEqual([dummyTransport]);
+      expect(card).not.toHaveProperty('url');
+      expect(card).not.toHaveProperty('protocolVersion');
+      expect(card.capabilities).toEqual({
+        extensions: [],
+        pushNotifications: false,
+        streaming: true,
+      });
       expect(card.skills).toHaveLength(1);
 
       const skill = card.skills[0];
@@ -388,20 +419,31 @@ describe('Agent Card', () => {
     // of the SDK's resolver -- the vulnerability this suite pins was in how
     // a genuinely-fetched card's contents were (not) checked.
 
-    function baseCard(url: string, extra: Partial<AgentCard> = {}) {
+    function baseCard(url: string, extraUrls: string[] = []): AgentCard {
       return {
         name: 'test-agent',
         description: '',
-        protocolVersion: '0.3.0',
         version: '1.0.0',
-        url,
-        preferredTransport: 'JSONRPC',
-        capabilities: {},
+        supportedInterfaces: [url, ...extraUrls].map((interfaceUrl) => ({
+          url: interfaceUrl,
+          protocolBinding: 'JSONRPC',
+          protocolVersion: '1.0',
+          tenant: '',
+        })),
+        provider: undefined,
+        capabilities: {extensions: []},
+        securitySchemes: {},
+        securityRequirements: [],
         skills: [],
+        signatures: [],
         defaultInputModes: ['text/plain'],
         defaultOutputModes: ['text/plain'],
-        ...extra,
       };
+    }
+
+    /** The URL of the first interface a resolved card declares. */
+    function rpcUrlOf(card: AgentCard): string {
+      return card.supportedInterfaces[0].url;
     }
 
     async function withCardServer<T>(
@@ -448,22 +490,20 @@ describe('Agent Card', () => {
         (port) => baseCard(`http://127.0.0.1:${port}/rpc`),
         async (source) => {
           const card = await resolveAgentCard(source);
-          expect(card.url).toBe(`${source}/rpc`);
+          expect(rpcUrlOf(card)).toBe(`${source}/rpc`);
         },
       );
     });
 
-    it('accepts a same-origin additionalInterfaces entry', async () => {
+    it('accepts a same-origin second interface', async () => {
       await withCardServer(
         (port) =>
-          baseCard(`http://127.0.0.1:${port}/rpc`, {
-            additionalInterfaces: [
-              {transport: 'JSONRPC', url: `http://127.0.0.1:${port}/rpc2`},
-            ],
-          }),
+          baseCard(`http://127.0.0.1:${port}/rpc`, [
+            `http://127.0.0.1:${port}/rpc2`,
+          ]),
         async (source) => {
           const card = await resolveAgentCard(source);
-          expect(card.url).toBe(`${source}/rpc`);
+          expect(rpcUrlOf(card)).toBe(`${source}/rpc`);
         },
       );
     });
@@ -481,16 +521,14 @@ describe('Agent Card', () => {
       );
     });
 
-    it('rejects an off-origin additionalInterfaces entry even when the primary url is same-origin', async () => {
+    it('rejects an off-origin second interface even when the first url is same-origin', async () => {
       // Every url the card offers must be checked, not only the one a
       // particular transport negotiation would pick.
       await withCardServer(
         (port) =>
-          baseCard(`http://127.0.0.1:${port}/rpc`, {
-            additionalInterfaces: [
-              {transport: 'JSONRPC', url: 'https://attacker.example.net/rpc2'},
-            ],
-          }),
+          baseCard(`http://127.0.0.1:${port}/rpc`, [
+            'https://attacker.example.net/rpc2',
+          ]),
         async (source) => {
           await expect(resolveAgentCard(source)).rejects.toThrow(/same origin/);
         },
@@ -501,9 +539,9 @@ describe('Agent Card', () => {
       // A card passed in directly (or read from a local file) did not
       // come off the network here; its target is left to the caller.
       const card = await resolveAgentCard(
-        baseCard('https://anywhere.example.com/rpc') as AgentCard,
+        baseCard('https://anywhere.example.com/rpc'),
       );
-      expect(card.url).toBe('https://anywhere.example.com/rpc');
+      expect(rpcUrlOf(card)).toBe('https://anywhere.example.com/rpc');
     });
 
     it('rejects a same-origin http url on a non-loopback host', async () => {
@@ -558,7 +596,7 @@ describe('Agent Card', () => {
         try {
           const port = (server.address() as AddressInfo).port;
           const card = await resolveAgentCard(`http://localhost:${port}`);
-          expect(card.url).toBe(`http://127.0.0.1:${port}/rpc`);
+          expect(rpcUrlOf(card)).toBe(`http://127.0.0.1:${port}/rpc`);
         } finally {
           server.close();
         }
@@ -581,7 +619,7 @@ describe('Agent Card', () => {
         try {
           const port = (server.address() as AddressInfo).port;
           const card = await resolveAgentCard(`http://127.0.0.1:${port}`);
-          expect(card.url).toBe(`http://0.0.0.0:${port}/rpc`);
+          expect(rpcUrlOf(card)).toBe(`http://0.0.0.0:${port}/rpc`);
         } finally {
           server.close();
         }
@@ -607,7 +645,7 @@ describe('Agent Card', () => {
         try {
           const port = (server.address() as AddressInfo).port;
           const card = await resolveAgentCard(`http://[::1]:${port}`);
-          expect(card.url).toBe(`http://[::]:${port}/rpc`);
+          expect(rpcUrlOf(card)).toBe(`http://[::]:${port}/rpc`);
         } finally {
           server.close();
         }
@@ -640,7 +678,7 @@ describe('Agent Card', () => {
                 allowInsecureRpc: true,
               };
               const card = await resolveAgentCard(source, options);
-              expect(card.url).toBe(`${source}/rpc`);
+              expect(rpcUrlOf(card)).toBe(`${source}/rpc`);
             },
             nonLoopback,
           );
@@ -659,7 +697,7 @@ describe('Agent Card', () => {
                 allowCrossOriginRpc: true,
               };
               const card = await resolveAgentCard(source, options);
-              expect(card.url).toBe('https://api.example.com/rpc');
+              expect(rpcUrlOf(card)).toBe('https://api.example.com/rpc');
             },
           );
         } finally {
@@ -879,11 +917,103 @@ describe('Agent Card', () => {
     });
 
     it('returns an AgentCard object without any I/O', async () => {
-      const card = await resolveAgentCard(STUB_CARD);
+      const card = await resolveAgentCard(STUB_CARD_V1);
 
-      expect(card).toBe(STUB_CARD);
+      expect(card).toBe(STUB_CARD_V1);
       expect(fetchMock).not.toHaveBeenCalled();
       expect(lookupMock).not.toHaveBeenCalled();
+    });
+
+    it('converts an A2A v0.3 card object to the v1.0 shape', async () => {
+      const card = await resolveAgentCard({
+        ...STUB_CARD,
+        preferredTransport: 'JSONRPC',
+        additionalInterfaces: [
+          {transport: 'HTTP+JSON', url: 'http://localhost:8001/rest'},
+        ],
+      } as unknown as AgentCard);
+
+      expect(card.name).toBe('peer_agent');
+      expect(card.supportedInterfaces).toEqual([
+        {
+          url: 'http://localhost:8001/a2a/peer_agent/',
+          protocolBinding: 'JSONRPC',
+          protocolVersion: '0.3.0',
+          tenant: '',
+        },
+        {
+          url: 'http://localhost:8001/rest',
+          protocolBinding: 'HTTP+JSON',
+          protocolVersion: '0.3',
+          tenant: '',
+        },
+      ]);
+      expect(card.capabilities?.streaming).toBe(true);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('converts an A2A v0.3 card that omits capabilities, modes and skills', async () => {
+      const card = await resolveAgentCard({
+        name: 'peer_agent',
+        protocolVersion: '0.3.0',
+        url: 'http://localhost:8001/a2a/peer_agent/',
+      } as unknown as AgentCard);
+
+      expect(card.supportedInterfaces).toEqual([
+        expect.objectContaining({
+          url: 'http://localhost:8001/a2a/peer_agent/',
+          protocolVersion: '0.3.0',
+        }),
+      ]);
+      expect(card.skills).toEqual([]);
+      expect(card.defaultInputModes).toEqual([]);
+    });
+
+    it('converts an A2A v0.3 card file to the v1.0 shape', async () => {
+      const card = await resolveAgentCard(cardPath);
+
+      expect(card.supportedInterfaces).toEqual([
+        expect.objectContaining({
+          url: 'http://localhost:8001/a2a/peer_agent/',
+          protocolBinding: 'JSONRPC',
+          protocolVersion: '0.3.0',
+        }),
+      ]);
+    });
+
+    it('converts a fetched A2A v0.3 card to the v1.0 shape', async () => {
+      resolveTo('127.0.0.1');
+      fetchMock.mockResolvedValue(cardResponse());
+
+      const card = await resolveAgentCard('http://localhost:8001/a2a/agent/');
+
+      expect(card.supportedInterfaces).toEqual([
+        expect.objectContaining({
+          url: 'http://localhost:8001/a2a/peer_agent/',
+          protocolVersion: '0.3.0',
+        }),
+      ]);
+    });
+
+    it('asks for the A2A v1.0 card when fetching', async () => {
+      resolveTo('127.0.0.1');
+      fetchMock.mockResolvedValue(
+        new Response(JSON.stringify(STUB_CARD_V1), {
+          headers: {'content-type': 'application/json'},
+        }),
+      );
+
+      const card = await resolveAgentCard('http://localhost:8001/a2a/agent/');
+
+      expect(card.supportedInterfaces).toEqual(
+        STUB_CARD_V1.supportedInterfaces,
+      );
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.any(URL),
+        expect.objectContaining({
+          headers: expect.objectContaining({'A2A-Version': '1.0'}),
+        }),
+      );
     });
 
     it.each([
@@ -1161,6 +1291,32 @@ describe('Agent Card', () => {
           card: {...STUB_CARD, url: 'mailto:agent@example.com'},
         },
       ])('rejects a direct card object with $name', async ({card}) => {
+        const error = await rejectionOfCard(card as unknown as AgentCard);
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.message).toMatch(/Invalid RPC URL/);
+      });
+
+      const v1CardWithUrl = (url: unknown) => ({
+        ...STUB_CARD_V1,
+        supportedInterfaces: [{...STUB_CARD_V1.supportedInterfaces[0], url}],
+      });
+
+      it.each([
+        {
+          name: 'no interfaces',
+          card: {...STUB_CARD_V1, supportedInterfaces: []},
+        },
+        {name: 'missing url', card: v1CardWithUrl(undefined)},
+        {name: 'empty url', card: v1CardWithUrl('')},
+        {name: 'invalid url', card: v1CardWithUrl('invalid-url')},
+        {
+          name: 'scheme without host',
+          card: v1CardWithUrl('mailto:agent@example.com'),
+        },
+      ])('rejects a direct v1.0 card object with $name', async ({card}) => {
         const error = await rejectionOfCard(card as unknown as AgentCard);
 
         if (!isAgentCardResolutionError(error)) {

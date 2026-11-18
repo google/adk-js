@@ -6,18 +6,19 @@
 
 import {
   AgentCard,
-  Message,
-  MessageSendParams,
+  Role,
+  SendMessageRequest,
   Task,
-  TaskArtifactUpdateEvent,
-  TaskStatusUpdateEvent,
+  TaskState,
 } from '@a2a-js/sdk';
 import {Client} from '@a2a-js/sdk/client';
 import {
+  AgentEvent,
+  AgentExecutor,
   ExecutionEventBus,
+  InMemoryTaskStore,
   RequestContext,
   ServerCallContext,
-  TaskStore,
 } from '@a2a-js/sdk/server';
 import {
   BaseAgent,
@@ -33,13 +34,93 @@ import {
 } from '@google/adk';
 import type {AddressInfo} from 'node:net';
 import {beforeEach, describe, expect, it, Mocked, vi} from 'vitest';
-import {MessageRole} from '../../src/a2a/a2a_event.js';
+import {createMessage, createTextPart} from '../../src/a2a/a2a_event.js';
 import {A2AAgentExecutor} from '../../src/a2a/agent_executor.js';
 import {
   AdkDefaultRequestHandler,
   getA2aRequestMetadata,
 } from '../../src/a2a/request_metadata.js';
 import {PluginManager} from '../../src/plugins/plugin_manager.js';
+
+/** An A2A v1.0 agent card, as far as the request handler reads it. */
+function createAgentCard(streaming = false): AgentCard {
+  return {
+    name: 'test-card',
+    description: 'test-desc',
+    supportedInterfaces: [
+      {
+        url: 'https://example.com/jsonrpc',
+        protocolBinding: 'JSONRPC',
+        protocolVersion: '1.0',
+        tenant: '',
+      },
+    ],
+    provider: undefined,
+    version: '1.0.0',
+    capabilities: {streaming, extensions: []},
+    securitySchemes: {},
+    securityRequirements: [],
+    defaultInputModes: ['text'],
+    defaultOutputModes: ['text'],
+    skills: [],
+    signatures: [],
+  };
+}
+
+/**
+ * An executor that records the request metadata it receives, and completes the
+ * task.
+ */
+function createRecordingExecutor() {
+  const received: Array<Record<string, unknown> | undefined> = [];
+  const executor: AgentExecutor = {
+    execute: async (ctx: RequestContext, eventBus: ExecutionEventBus) => {
+      received.push(getA2aRequestMetadata(ctx));
+      const task: Task = {
+        id: ctx.taskId,
+        contextId: ctx.contextId,
+        status: {
+          state: TaskState.TASK_STATE_SUBMITTED,
+          message: undefined,
+          timestamp: undefined,
+        },
+        artifacts: [],
+        history: [],
+        metadata: undefined,
+      };
+      eventBus.publish(AgentEvent.task(task));
+      eventBus.publish(
+        AgentEvent.statusUpdate({
+          taskId: ctx.taskId,
+          contextId: ctx.contextId,
+          status: {
+            state: TaskState.TASK_STATE_COMPLETED,
+            message: undefined,
+            timestamp: new Date().toISOString(),
+          },
+          metadata: undefined,
+        }),
+      );
+    },
+    cancelTask: async () => {},
+  };
+  return {executor, received};
+}
+
+function createRequest(
+  overrides: Partial<SendMessageRequest> = {},
+): SendMessageRequest {
+  return {
+    tenant: '',
+    message: createMessage({
+      role: Role.ROLE_USER,
+      parts: [createTextPart('hello')],
+    }),
+    configuration: undefined,
+    metadata: undefined,
+    ...overrides,
+  };
+}
 
 class MockAgent extends BaseAgent {
   constructor() {
@@ -67,21 +148,36 @@ describe('A2A Request Metadata Propagation', () => {
   });
 
   describe('getA2aRequestMetadata', () => {
-    it('returns undefined when no metadata is present on RequestContext', () => {
+    it('returns undefined when the request has no metadata', () => {
       const ctx = {
         contextId: 'ctx-1',
         taskId: 'task-1',
-        userMessage: {
-          messageId: 'msg-1',
-          role: MessageRole.USER,
-          parts: [{kind: 'text', text: 'hi'}],
-        },
+        request: createRequest(),
       } as unknown as RequestContext;
 
       expect(getA2aRequestMetadata(ctx)).toBeUndefined();
     });
 
-    it('extracts metadata from ctx.request.metadata (SDK >= 1.0.0 style)', () => {
+    it('returns undefined when the request metadata is null', () => {
+      const ctx = {
+        contextId: 'ctx-1',
+        taskId: 'task-1',
+        request: {...createRequest(), metadata: null},
+      } as unknown as RequestContext;
+
+      expect(getA2aRequestMetadata(ctx)).toBeUndefined();
+    });
+
+    it('returns undefined when the context has no request', () => {
+      const ctx = {
+        contextId: 'ctx-1',
+        taskId: 'task-1',
+      } as unknown as RequestContext;
+
+      expect(getA2aRequestMetadata(ctx)).toBeUndefined();
+    });
+
+    it('extracts metadata from ctx.request.metadata', () => {
       const expectedMetadata = {
         'https://example.com/ext': {key: 'value'},
         traceId: 'trace-123',
@@ -89,14 +185,7 @@ describe('A2A Request Metadata Propagation', () => {
       const ctx = {
         contextId: 'ctx-1',
         taskId: 'task-1',
-        userMessage: {
-          messageId: 'msg-1',
-          role: MessageRole.USER,
-          parts: [{kind: 'text', text: 'hi'}],
-        },
-        request: {
-          metadata: expectedMetadata,
-        },
+        request: createRequest({metadata: expectedMetadata}),
       } as unknown as RequestContext;
 
       expect(getA2aRequestMetadata(ctx)).toEqual(expectedMetadata);
@@ -104,195 +193,141 @@ describe('A2A Request Metadata Propagation', () => {
   });
 
   describe('AdkDefaultRequestHandler', () => {
-    it('tracks metadata in requestMetadataStore during sendMessage and cleans up after settlement', async () => {
-      const agentCard = {
-        name: 'test-card',
-        description: 'test-desc',
-        defaultInputModes: ['text'],
-        defaultOutputModes: ['text'],
-        capabilities: {},
-      } as unknown as AgentCard;
-      const taskStore = {
-        load: vi.fn().mockResolvedValue(undefined),
-        save: vi.fn().mockResolvedValue(undefined),
-        list: vi.fn().mockResolvedValue([]),
-      } as unknown as TaskStore;
+    function keepBusAliveStatesOf(
+      handler: AdkDefaultRequestHandler,
+    ): TaskState[] {
+      return [
+        ...(handler as unknown as {keepBusAliveStates: Set<TaskState>})
+          .keepBusAliveStates,
+      ];
+    }
 
-      let capturedMetadataDuringExecution: Record<string, unknown> | undefined;
-      const agentExecutor = {
-        execute: vi.fn(
-          async (ctx: RequestContext, eventBus: ExecutionEventBus) => {
-            capturedMetadataDuringExecution = getA2aRequestMetadata(ctx);
-            eventBus.publish({
-              kind: 'message',
-              messageId: 'res-msg-1',
-              role: MessageRole.AGENT,
-              parts: [{kind: 'text', text: 'done'}],
-            });
-          },
-        ),
-        cancelTask: vi.fn(),
-      };
+    it('keeps no event bus alive by default', () => {
+      const {executor} = createRecordingExecutor();
 
       const handler = new AdkDefaultRequestHandler(
-        agentCard,
-        taskStore,
-        agentExecutor,
+        createAgentCard(),
+        new InMemoryTaskStore(),
+        executor,
       );
 
-      const expectedMetadata = {'https://test.extension': {auth: 'token-abc'}};
-      const message: Message = {
-        kind: 'message',
-        messageId: 'msg-unique-1',
-        role: MessageRole.USER,
-        parts: [{kind: 'text', text: 'hello'}],
-      };
-      const params: MessageSendParams = {
-        message,
-        metadata: expectedMetadata,
-      };
-
-      const result = await handler.sendMessage(
-        params,
-        undefined as unknown as ServerCallContext,
-      );
-
-      // Verify executor received the metadata during execution
-      expect(capturedMetadataDuringExecution).toEqual(expectedMetadata);
-      // Verify metadata is cleaned up after settlement
-      expect(
-        getA2aRequestMetadata({
-          userMessage: message,
-        } as unknown as RequestContext),
-      ).toBeUndefined();
-      expect(result).toBeDefined();
+      expect(keepBusAliveStatesOf(handler)).toEqual([]);
     });
 
-    it('tracks metadata in requestMetadataStore during sendMessageStream and cleans up', async () => {
-      const agentCard = {
-        name: 'test-card',
-        description: 'test-desc',
-        defaultInputModes: ['text'],
-        defaultOutputModes: ['text'],
-        capabilities: {streaming: true},
-      } as unknown as AgentCard;
-      const taskStore = {
-        load: vi.fn().mockResolvedValue(undefined),
-        save: vi.fn().mockResolvedValue(undefined),
-        list: vi.fn().mockResolvedValue([]),
-      } as unknown as TaskStore;
-
-      let capturedMetadataDuringExecution: Record<string, unknown> | undefined;
-      const agentExecutor = {
-        execute: vi.fn(
-          async (ctx: RequestContext, eventBus: ExecutionEventBus) => {
-            capturedMetadataDuringExecution = getA2aRequestMetadata(ctx);
-            eventBus.publish({
-              kind: 'message',
-              messageId: 'res-1',
-              role: MessageRole.AGENT,
-              parts: [{kind: 'text', text: 'streamed response'}],
-            });
-          },
-        ),
-        cancelTask: vi.fn(),
-      };
+    it('keeps no event bus alive when the options leave keepBusAliveStates unset', () => {
+      const {executor} = createRecordingExecutor();
 
       const handler = new AdkDefaultRequestHandler(
-        agentCard,
-        taskStore,
-        agentExecutor,
+        createAgentCard(),
+        new InMemoryTaskStore(),
+        executor,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {},
       );
 
-      const expectedMetadata = {'https://stream.extension': {mode: 'realtime'}};
-      const message: Message = {
-        kind: 'message',
-        messageId: 'msg-stream-1',
-        role: MessageRole.USER,
-        parts: [{kind: 'text', text: 'hello stream'}],
-      };
-      const params: MessageSendParams = {
-        message,
-        metadata: expectedMetadata,
-      };
+      expect(keepBusAliveStatesOf(handler)).toEqual([]);
+    });
 
-      const events: (
-        Message | Task | TaskStatusUpdateEvent | TaskArtifactUpdateEvent
-      )[] = [];
+    it('keeps the keepBusAliveStates the caller provides', () => {
+      const {executor} = createRecordingExecutor();
+
+      const handler = new AdkDefaultRequestHandler(
+        createAgentCard(),
+        new InMemoryTaskStore(),
+        executor,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {keepBusAliveStates: [TaskState.TASK_STATE_INPUT_REQUIRED]},
+      );
+
+      expect(keepBusAliveStatesOf(handler)).toEqual([
+        TaskState.TASK_STATE_INPUT_REQUIRED,
+      ]);
+    });
+
+    it('passes the request metadata to the executor in sendMessage', async () => {
+      const {executor, received} = createRecordingExecutor();
+      const handler = new AdkDefaultRequestHandler(
+        createAgentCard(),
+        new InMemoryTaskStore(),
+        executor,
+      );
+      const expectedMetadata = {'https://test.extension': {auth: 'token-abc'}};
+
+      const result = await handler.sendMessage(
+        createRequest({metadata: expectedMetadata}),
+        new ServerCallContext(),
+      );
+
+      expect(received).toEqual([expectedMetadata]);
+      expect(result).toMatchObject({
+        status: {state: TaskState.TASK_STATE_COMPLETED},
+      });
+    });
+
+    it('passes the request metadata to the executor in sendMessageStream', async () => {
+      const {executor, received} = createRecordingExecutor();
+      const handler = new AdkDefaultRequestHandler(
+        createAgentCard(true),
+        new InMemoryTaskStore(),
+        executor,
+      );
+      const expectedMetadata = {'https://stream.extension': {mode: 'realtime'}};
+
+      const events = [];
       for await (const event of handler.sendMessageStream(
-        params,
-        undefined as unknown as ServerCallContext,
+        createRequest({metadata: expectedMetadata}),
+        new ServerCallContext(),
       )) {
         events.push(event);
       }
 
-      expect(capturedMetadataDuringExecution).toEqual(expectedMetadata);
-      expect(
-        getA2aRequestMetadata({
-          userMessage: message,
-        } as unknown as RequestContext),
-      ).toBeUndefined();
-      expect(events.length).toBeGreaterThan(0);
+      expect(received).toEqual([expectedMetadata]);
+      expect(events.map((event) => event.payload?.$case)).toEqual([
+        'task',
+        'statusUpdate',
+      ]);
     });
 
-    it('works normally when params.metadata is omitted', async () => {
-      const agentCard = {
-        name: 'test-card',
-        description: 'test-desc',
-        defaultInputModes: ['text'],
-        defaultOutputModes: ['text'],
-        capabilities: {},
-      } as unknown as AgentCard;
-      const taskStore = {
-        load: vi.fn().mockResolvedValue(undefined),
-        save: vi.fn().mockResolvedValue(undefined),
-        list: vi.fn().mockResolvedValue([]),
-      } as unknown as TaskStore;
-
-      let capturedMetadataDuringExecution: Record<string, unknown> | undefined =
-        {initial: true};
-      const agentExecutor = {
-        execute: vi.fn(
-          async (ctx: RequestContext, eventBus: ExecutionEventBus) => {
-            capturedMetadataDuringExecution = getA2aRequestMetadata(ctx);
-            eventBus.publish({
-              kind: 'message',
-              messageId: 'res-msg-2',
-              role: MessageRole.AGENT,
-              parts: [{kind: 'text', text: 'done'}],
-            });
-          },
-        ),
-        cancelTask: vi.fn(),
-      };
-
+    it('works normally when the request metadata is omitted', async () => {
+      const {executor, received} = createRecordingExecutor();
       const handler = new AdkDefaultRequestHandler(
-        agentCard,
-        taskStore,
-        agentExecutor,
+        createAgentCard(),
+        new InMemoryTaskStore(),
+        executor,
       );
 
-      const message: Message = {
-        kind: 'message',
-        messageId: 'msg-no-meta',
-        role: MessageRole.USER,
-        parts: [{kind: 'text', text: 'hello'}],
-      };
-      const params: MessageSendParams = {
-        message,
-      };
+      const result = await handler.sendMessage(
+        createRequest(),
+        new ServerCallContext(),
+      );
+
+      expect(received).toEqual([undefined]);
+      expect(result).toBeDefined();
+    });
+
+    it('does not carry the metadata of one request over to the next', async () => {
+      const {executor, received} = createRecordingExecutor();
+      const handler = new AdkDefaultRequestHandler(
+        createAgentCard(),
+        new InMemoryTaskStore(),
+        executor,
+      );
 
       await handler.sendMessage(
-        params,
-        undefined as unknown as ServerCallContext,
+        createRequest({metadata: {first: true}}),
+        new ServerCallContext(),
       );
+      await handler.sendMessage(createRequest(), new ServerCallContext());
 
-      expect(capturedMetadataDuringExecution).toBeUndefined();
-      expect(
-        getA2aRequestMetadata({
-          userMessage: message,
-        } as unknown as RequestContext),
-      ).toBeUndefined();
+      expect(received).toEqual([{first: true}, undefined]);
     });
   });
 
@@ -416,14 +451,12 @@ describe('A2A Request Metadata Propagation', () => {
       const ctx = {
         contextId: 'test-context',
         taskId: 'test-task',
-        userMessage: {
+        userMessage: createMessage({
           messageId: 'msg-piped',
-          role: MessageRole.USER,
-          parts: [{kind: 'text', text: 'run agent'}],
-        },
-        request: {
-          metadata: expectedMetadata,
-        },
+          role: Role.ROLE_USER,
+          parts: [createTextPart('run agent')],
+        }),
+        request: createRequest({metadata: expectedMetadata}),
       } as unknown as RequestContext;
 
       const mockEventBus = {
@@ -501,10 +534,14 @@ describe('A2A Request Metadata Propagation', () => {
       const mockClient = {
         sendMessageStream: vi.fn(async function* () {
           yield {
-            kind: 'message',
-            messageId: 'res-1',
-            role: MessageRole.AGENT,
-            parts: [{kind: 'text', text: 'response'}],
+            payload: {
+              $case: 'message',
+              value: createMessage({
+                messageId: 'res-1',
+                role: Role.ROLE_AGENT,
+                parts: [createTextPart('response')],
+              }),
+            },
           };
         }),
       } as unknown as Client;
@@ -515,13 +552,10 @@ describe('A2A Request Metadata Propagation', () => {
         name: 'remote-test-agent',
         client: mockClient,
         agentCard: {
+          ...createAgentCard(true),
           name: 'remote-card',
           description: 'remote-desc',
-          url: 'https://example.com',
-          defaultInputModes: ['text'],
-          defaultOutputModes: ['text'],
-          capabilities: {streaming: true},
-        } as unknown as AgentCard,
+        },
       });
 
       const expectedMetadata = {
@@ -564,10 +598,14 @@ describe('A2A Request Metadata Propagation', () => {
       const mockClient = {
         sendMessageStream: vi.fn(async function* () {
           yield {
-            kind: 'message',
-            messageId: 'res-2',
-            role: MessageRole.AGENT,
-            parts: [{kind: 'text', text: 'response'}],
+            payload: {
+              $case: 'message',
+              value: createMessage({
+                messageId: 'res-2',
+                role: Role.ROLE_AGENT,
+                parts: [createTextPart('response')],
+              }),
+            },
           };
         }),
       } as unknown as Client;
@@ -580,13 +618,10 @@ describe('A2A Request Metadata Propagation', () => {
         client: mockClient,
         metadata: explicitMetadata,
         agentCard: {
+          ...createAgentCard(true),
           name: 'remote-card-2',
           description: 'remote-desc-2',
-          url: 'https://example.com',
-          defaultInputModes: ['text'],
-          defaultOutputModes: ['text'],
-          capabilities: {streaming: true},
-        } as unknown as AgentCard,
+        },
       });
 
       const contextMetadata = {'https://trace.dev/span': {id: '12345'}};
@@ -661,12 +696,12 @@ describe('A2A Request Metadata Propagation', () => {
         const payload = {
           jsonrpc: '2.0',
           id: 1,
-          method: 'message/send',
+          method: 'SendMessage',
           params: {
             message: {
               messageId: 'msg-rpc-meta-1',
-              role: 'user',
-              parts: [{kind: 'text', text: 'Hello via JSON-RPC'}],
+              role: 'ROLE_USER',
+              parts: [{text: 'Hello via JSON-RPC'}],
             },
             metadata: {
               'https://a2a.google.com/ext/tracing': {traceId: 'trace-xyz-789'},
@@ -677,7 +712,10 @@ describe('A2A Request Metadata Propagation', () => {
 
         const res = await fetch(`http://127.0.0.1:${port}/jsonrpc`, {
           method: 'POST',
-          headers: {'content-type': 'application/json'},
+          headers: {
+            'content-type': 'application/json',
+            'a2a-version': '1.0',
+          },
           body: JSON.stringify(payload),
         });
 
@@ -712,7 +750,7 @@ describe('A2A Request Metadata Propagation', () => {
           message: {
             messageId: 'msg-rest-meta-1',
             role: 'ROLE_USER',
-            content: [{text: 'Hello via REST'}],
+            parts: [{text: 'Hello via REST'}],
           },
           metadata: {
             'https://a2a.google.com/ext/routing': {
@@ -721,16 +759,16 @@ describe('A2A Request Metadata Propagation', () => {
           },
         };
 
-        const res = await fetch(
-          `http://127.0.0.1:${port}/rest/v1/message:send`,
-          {
-            method: 'POST',
-            headers: {'content-type': 'application/json'},
-            body: JSON.stringify(payload),
+        const res = await fetch(`http://127.0.0.1:${port}/rest/message:send`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'a2a-version': '1.0',
           },
-        );
+          body: JSON.stringify(payload),
+        });
 
-        expect(res.status).toBe(201);
+        expect(res.status).toBe(200);
 
         expect(echoAgent.capturedContext).toBeDefined();
         expect(echoAgent.capturedContext?.a2aMetadata).toEqual({

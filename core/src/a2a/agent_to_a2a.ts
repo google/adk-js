@@ -4,7 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {AGENT_CARD_PATH, AgentCard} from '@a2a-js/sdk';
+import {
+  A2A_PROTOCOL_VERSION,
+  AGENT_CARD_PATH,
+  AgentCard,
+  AgentInterface,
+} from '@a2a-js/sdk';
+import {A2A_LEGACY_PROTOCOL_VERSION} from '@a2a-js/sdk/compat/v0_3';
 import {InMemoryTaskStore} from '@a2a-js/sdk/server';
 import type {UserBuilder} from '@a2a-js/sdk/server/express';
 import type express from 'express';
@@ -184,7 +190,51 @@ function resolveA2aUserBuilder(
 }
 
 /**
+ * Builds the interfaces `toA2a` serves: JSON-RPC and HTTP+JSON, each for
+ * A2A v1.0 first and then for A2A v0.3 on the same URL.
+ *
+ * The v0.3 entries are what lets the compatibility layer of `@a2a-js/sdk`
+ * answer a v0.3 client: it accepts a request only for a protocol version the
+ * card declares, and it builds the v0.3 card from them. A v1.0 client picks the
+ * v1.0 entries.
+ */
+function buildAgentInterfaces(rpcUrl: string): AgentInterface[] {
+  const endpoints = [
+    {url: `${rpcUrl}/jsonrpc`, protocolBinding: 'JSONRPC'},
+    {url: `${rpcUrl}/rest`, protocolBinding: 'HTTP+JSON'},
+  ];
+  return [A2A_PROTOCOL_VERSION, A2A_LEGACY_PROTOCOL_VERSION].flatMap(
+    (protocolVersion) =>
+      endpoints.map(({url, protocolBinding}) => ({
+        url,
+        protocolBinding,
+        protocolVersion,
+        tenant: '',
+      })),
+  );
+}
+
+/**
+ * Reports whether a card declares an A2A v0.3 interface: one whose protocol
+ * version is in [0.3, 1.0), or that names no version, which A2A reads as 0.3.
+ */
+function declaresLegacyInterface(agentCard: AgentCard): boolean {
+  return (agentCard.supportedInterfaces ?? []).some(
+    ({protocolVersion}) => !protocolVersion || /^0\./.test(protocolVersion),
+  );
+}
+
+/**
  * Converts an ADK agent to an Express application with A2A handlers.
+ *
+ * The handlers serve A2A v1.0. When the card declares an A2A v0.3 interface
+ * (the generated card does), they also answer A2A v0.3 clients through the
+ * compatibility layer of `@a2a-js/sdk`: a request without an `A2A-Version`
+ * header, or with `A2A-Version: 0.3`, is served as v0.3, and the agent card
+ * endpoint returns the v1.0 card to a request with `A2A-Version: 1.0` and
+ * otherwise a v0.3 card that also lists the v1.0 interfaces. For a card that
+ * declares only v1.0 interfaces, the compatibility layer stays off and the
+ * card endpoint always returns the v1.0 card.
  *
  * @param agent The ADK agent to convert
  * @param options Configuration options
@@ -207,16 +257,7 @@ export async function toA2a(
   const rpcUrl = `${protocol}://${host}:${port}${basePath}`;
   const agentCard = options.agentCard
     ? await resolveAgentCard(options.agentCard, options.resolveAgentCardOptions)
-    : await getA2AAgentCard(agent, [
-        {
-          url: `${rpcUrl}/jsonrpc`,
-          transport: 'JSONRPC',
-        },
-        {
-          url: `${rpcUrl}/rest`,
-          transport: 'HTTP+JSON',
-        },
-      ]);
+    : await getA2AAgentCard(agent, buildAgentInterfaces(rpcUrl));
 
   const agentExecutor = new A2AAgentExecutor({
     runner: options.runner || {
@@ -237,6 +278,8 @@ export async function toA2a(
     agentExecutor,
   );
 
+  const legacyCompat = {enabled: declaresLegacyInterface(agentCard)};
+
   const app = options.app ?? expressFactory();
   if (!options.app) {
     // Parse JSON bodies only. `application/x-www-form-urlencoded` is a
@@ -249,7 +292,10 @@ export async function toA2a(
 
   app.use(
     `${basePath}/${AGENT_CARD_PATH}`,
-    a2aExpress.agentCardHandler({agentCardProvider: requestHandler}),
+    a2aExpress.agentCardHandler({
+      agentCardProvider: requestHandler,
+      legacyCompat,
+    }),
   );
   app.use(
     `${basePath}/rest`,
@@ -257,6 +303,7 @@ export async function toA2a(
     a2aExpress.restHandler({
       requestHandler,
       userBuilder,
+      legacyCompat,
     }),
   );
   app.use(
@@ -265,6 +312,7 @@ export async function toA2a(
     a2aExpress.jsonRpcHandler({
       requestHandler,
       userBuilder,
+      legacyCompat,
     }),
   );
 

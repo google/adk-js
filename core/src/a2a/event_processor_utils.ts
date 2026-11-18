@@ -18,6 +18,7 @@ import {
   createTaskCompletedEvent,
   createTaskFailedEvent,
   createTaskInputRequiredEvent,
+  createTextPart,
   isAuthRequiredTaskStatusUpdateEvent,
   isInputRequiredTaskStatusUpdateEvent,
 } from './a2a_event.js';
@@ -205,13 +206,9 @@ export function getUnansweredRequestEvent(options: {
     contextId: task?.contextId ?? contextId,
     parts: [
       ...toA2AParts([...pending.values()]),
-      {
-        kind: 'text',
-        text: `No input provided for function call id ${missingId}`,
-        metadata: {
-          validation_error: true,
-        },
-      },
+      createTextPart(`No input provided for function call id ${missingId}`, {
+        validation_error: true,
+      }),
     ],
   });
 }
@@ -237,7 +234,7 @@ function pendingRequestParts(
     task &&
     (isInputRequiredTaskStatusUpdateEvent(task) ||
       isAuthRequiredTaskStatusUpdateEvent(task)) &&
-    task.status.message
+    task.status?.message
   ) {
     for (const part of toGenAIParts(task.status.message.parts)) {
       if (part.functionCall?.id) {

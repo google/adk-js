@@ -6,14 +6,16 @@
 
 import {
   Message,
-  MessageSendParams,
   Part,
+  Role,
+  SendMessageRequest,
   Task,
   TaskArtifactUpdateEvent,
+  TaskState,
   TaskStatusUpdateEvent,
 } from '@a2a-js/sdk';
 import {describe, expect, it} from 'vitest';
-import {A2AEvent} from '../../src/a2a/a2a_event.js';
+import {A2AEvent, createTextPart} from '../../src/a2a/a2a_event.js';
 import {
   buildA2ARequestLog,
   buildA2AResponseLog,
@@ -32,12 +34,62 @@ function fromWire(payload: object) {
 
 function createMessage(overrides: Partial<Message> = {}): Message {
   return {
-    kind: 'message',
     messageId: 'message-1',
-    role: 'user',
+    role: Role.ROLE_USER,
     taskId: 'task-1',
     contextId: 'context-1',
-    parts: [{kind: 'text', text: 'Hello'}],
+    parts: [createTextPart('Hello')],
+    metadata: undefined,
+    extensions: [],
+    referenceTaskIds: [],
+    ...overrides,
+  };
+}
+
+function createDataPart(
+  value: unknown,
+  metadata?: Record<string, unknown>,
+): Part {
+  return {
+    content: {$case: 'data', value},
+    metadata,
+    filename: '',
+    mediaType: '',
+  };
+}
+
+function createFilePart(
+  content: Part['content'],
+  filename = '',
+  mediaType = '',
+): Part {
+  return {content, metadata: undefined, filename, mediaType};
+}
+
+function createRequest(
+  overrides: Partial<SendMessageRequest> = {},
+): SendMessageRequest {
+  return {
+    tenant: '',
+    message: createMessage(),
+    configuration: undefined,
+    metadata: undefined,
+    ...overrides,
+  };
+}
+
+function createTask(overrides: Partial<Task> = {}): Task {
+  return {
+    id: 'task-1',
+    contextId: 'context-1',
+    status: {
+      state: TaskState.TASK_STATE_WORKING,
+      message: undefined,
+      timestamp: undefined,
+    },
+    artifacts: [],
+    history: [],
+    metadata: undefined,
     ...overrides,
   };
 }
@@ -45,36 +97,41 @@ function createMessage(overrides: Partial<Message> = {}): Message {
 describe('log_utils', () => {
   describe('buildMessagePartLog', () => {
     it('prints a short text part in full', () => {
-      expect(buildMessagePartLog({kind: 'text', text: 'Hello, world!'})).toBe(
+      expect(buildMessagePartLog(createTextPart('Hello, world!'))).toBe(
         'TextPart: Hello, world!',
       );
     });
 
     it('prints a text part of exactly 100 characters in full', () => {
-      expect(buildMessagePartLog({kind: 'text', text: 'x'.repeat(100)})).toBe(
+      expect(buildMessagePartLog(createTextPart('x'.repeat(100)))).toBe(
         `TextPart: ${'x'.repeat(100)}`,
       );
     });
 
     it('cuts a long text part at 100 characters', () => {
-      expect(buildMessagePartLog({kind: 'text', text: 'x'.repeat(150)})).toBe(
+      expect(buildMessagePartLog(createTextPart('x'.repeat(150)))).toBe(
         `TextPart: ${'x'.repeat(100)}...`,
       );
     });
 
     it('prints a small data part in full', () => {
       expect(
-        buildMessagePartLog({
-          kind: 'data',
-          data: {key1: 'value1', key2: 42},
-        }),
+        buildMessagePartLog(createDataPart({key1: 'value1', key2: 42})),
       ).toBe('DataPart: {\n  "key1": "value1",\n  "key2": 42\n}');
     });
 
+    it('prints a data part that is not an object', () => {
+      expect(buildMessagePartLog(createDataPart([1, 2, 3]))).toBe(
+        'DataPart: [\n  1,\n  2,\n  3\n]',
+      );
+      expect(buildMessagePartLog(createDataPart('plain'))).toBe(
+        'DataPart: "plain"',
+      );
+    });
+
     it('summarizes large object and array values and keeps small ones', () => {
-      const log = buildMessagePartLog({
-        kind: 'data',
-        data: {
+      const log = buildMessagePartLog(
+        createDataPart({
           smallValue: 'hello',
           smallObject: {a: 1},
           largeObject: Object.fromEntries(
@@ -84,8 +141,8 @@ describe('log_utils', () => {
             ]),
           ),
           largeArray: Array.from({length: 100}, (_, index) => index),
-        },
-      });
+        }),
+      );
 
       expect(log).toContain('"smallValue": "hello"');
       expect(log).toContain('"a": 1');
@@ -97,14 +154,13 @@ describe('log_utils', () => {
     it.each(['args', 'response'])(
       'leaves out the %s of a credential request',
       (field) => {
-        const log = buildMessagePartLog({
-          kind: 'data',
-          data: {
+        const log = buildMessagePartLog(
+          createDataPart({
             id: 'credential-call',
             name: 'adk_request_credential',
             [field]: {accessToken: 'token-1'},
-          },
-        });
+          }),
+        );
 
         expect(log).toContain('"name": "adk_request_credential"');
         expect(log).toContain(`"${field}": "<redacted>"`);
@@ -114,42 +170,42 @@ describe('log_utils', () => {
 
     it('prints the small args of an ordinary function call', () => {
       expect(
-        buildMessagePartLog({
-          kind: 'data',
-          data: {id: 'call-1', name: 'lookup', args: {city: 'Paris'}},
-        }),
+        buildMessagePartLog(
+          createDataPart({id: 'call-1', name: 'lookup', args: {city: 'Paris'}}),
+        ),
       ).toContain('"city": "Paris"');
     });
 
     it('prints a file part without its bytes', () => {
-      const log = buildMessagePartLog({
-        kind: 'file',
-        file: {name: 'report.pdf', mimeType: 'application/pdf', bytes: 'QUJD'},
-      });
+      const log = buildMessagePartLog(
+        createFilePart(
+          {$case: 'raw', value: Buffer.from('ABC')},
+          'report.pdf',
+          'application/pdf',
+        ),
+      );
 
       expect(log).toContain('FilePart: ');
-      expect(log).toContain('"name": "report.pdf"');
-      expect(log).toContain('"mimeType": "application/pdf"');
+      expect(log).toContain('"filename": "report.pdf"');
+      expect(log).toContain('"mediaType": "application/pdf"');
       expect(log).not.toContain('QUJD');
-      expect(log).not.toContain('bytes');
+      expect(log).not.toContain('ABC');
+      expect(log).not.toContain('raw');
     });
 
-    it('prints the uri of a file part', () => {
+    it('prints the url of a file part', () => {
       expect(
-        buildMessagePartLog({
-          kind: 'file',
-          file: {uri: 'gs://bucket/report.pdf'},
-        }),
-      ).toContain('"uri": "gs://bucket/report.pdf"');
+        buildMessagePartLog(
+          createFilePart({$case: 'url', value: 'gs://bucket/report.pdf'}),
+        ),
+      ).toBe('FilePart: {\n  "url": "gs://bucket/report.pdf"\n}');
     });
 
     it('appends the part metadata', () => {
       expect(
-        buildMessagePartLog({
-          kind: 'text',
-          text: 'Hello',
-          metadata: {key: 'value', nested: {id: 1}},
-        }),
+        buildMessagePartLog(
+          createTextPart('Hello', {key: 'value', nested: {id: 1}}),
+        ),
       ).toBe(
         'TextPart: Hello\n' +
           '    Part Metadata: {\n' +
@@ -162,39 +218,44 @@ describe('log_utils', () => {
     });
 
     it('prints no metadata section for empty part metadata', () => {
-      expect(
-        buildMessagePartLog({kind: 'text', text: 'Hello', metadata: {}}),
-      ).toBe('TextPart: Hello');
+      expect(buildMessagePartLog(createTextPart('Hello', {}))).toBe(
+        'TextPart: Hello',
+      );
     });
 
     it('prints a placeholder for part metadata that JSON cannot represent', () => {
       const circular: Record<string, unknown> = {};
       circular['parent'] = circular;
 
+      expect(buildMessagePartLog(createTextPart('Hello', circular))).toBe(
+        'TextPart: Hello\n    Part Metadata: <unserializable>',
+      );
       expect(
-        buildMessagePartLog({kind: 'text', text: 'Hello', metadata: circular}),
-      ).toBe('TextPart: Hello\n    Part Metadata: <unserializable>');
-      expect(
-        buildMessagePartLog({
-          kind: 'text',
-          text: 'Hello',
-          metadata: {count: BigInt(1)},
-        }),
+        buildMessagePartLog(createTextPart('Hello', {count: BigInt(1)})),
       ).toBe('TextPart: Hello\n    Part Metadata: <unserializable>');
     });
 
     it('prints a placeholder for part metadata that serializes to nothing', () => {
       expect(
-        buildMessagePartLog({
-          kind: 'text',
-          text: 'Hello',
-          metadata: {toJSON: () => undefined},
-        }),
+        buildMessagePartLog(createTextPart('Hello', {toJSON: () => undefined})),
       ).toBe('TextPart: Hello\n    Part Metadata: <unserializable>');
     });
 
     it('prints a placeholder for a part of an unknown kind', () => {
-      const part: Part = JSON.parse('{"kind": "video", "video": "QUJD"}');
+      const part: Part = JSON.parse(
+        '{"content": {"$case": "video", "value": "QUJD"}}',
+      );
+
+      expect(buildMessagePartLog(part)).toBe('UnknownPart');
+    });
+
+    it('prints a placeholder for a part without content', () => {
+      const part: Part = {
+        content: undefined,
+        metadata: undefined,
+        filename: '',
+        mediaType: '',
+      };
 
       expect(buildMessagePartLog(part)).toBe('UnknownPart');
     });
@@ -202,31 +263,32 @@ describe('log_utils', () => {
 
   describe('buildA2ARequestLog', () => {
     it('prints the message, its parts, the configuration and the request metadata', () => {
-      const params: MessageSendParams = {
+      const params = createRequest({
         message: createMessage({
-          parts: [
-            {kind: 'text', text: 'Hello'},
-            {kind: 'data', data: {key: 'value'}},
-          ],
+          parts: [createTextPart('Hello'), createDataPart({key: 'value'})],
         }),
         configuration: {
           acceptedOutputModes: ['text'],
-          blocking: true,
+          returnImmediately: false,
           historyLength: 10,
-          pushNotificationConfig: {
+          taskPushNotificationConfig: {
+            tenant: '',
+            id: '',
+            taskId: '',
             url: 'https://example.com/notify',
             token: 'token-1',
+            authentication: undefined,
           },
         },
         metadata: {tenant: 'tenant-1'},
-      };
+      });
 
       expect(buildA2ARequestLog(params)).toBe(`
 A2A Send Message Request:
 ${SEPARATOR}
 Message:
   ID: message-1
-  Role: user
+  Role: ROLE_USER
   Task ID: task-1
   Context ID: context-1
   Message Parts:
@@ -240,9 +302,9 @@ Configuration:
   "acceptedOutputModes": [
     "text"
   ],
-  "blocking": true,
+  "returnImmediately": false,
   "historyLength": 10,
-  "pushNotificationConfig": true
+  "taskPushNotificationConfig": true
 }
 ${SEPARATOR}
 Metadata:
@@ -254,22 +316,31 @@ ${SEPARATOR}
     });
 
     it('never prints the push notification configuration content', () => {
-      const log = buildA2ARequestLog({
-        message: createMessage(),
-        configuration: {
-          pushNotificationConfig: {
-            url: 'https://example.com/notify',
-            token: 'token-1',
+      const log = buildA2ARequestLog(
+        createRequest({
+          configuration: {
+            acceptedOutputModes: [],
+            returnImmediately: false,
+            taskPushNotificationConfig: {
+              tenant: '',
+              id: '',
+              taskId: '',
+              url: 'https://example.com/notify',
+              token: 'token-1',
+              authentication: undefined,
+            },
           },
-        },
-      });
+        }),
+      );
 
       expect(log).not.toContain('token-1');
       expect(log).not.toContain('example.com');
     });
 
     it('prints placeholders for a request with no parts, configuration or metadata', () => {
-      const log = buildA2ARequestLog({message: createMessage({parts: []})});
+      const log = buildA2ARequestLog(
+        createRequest({message: createMessage({parts: []})}),
+      );
 
       expect(log).toContain('  Message Parts:\n  No parts\n');
       expect(log).toContain('Configuration:\nNo configuration\n');
@@ -277,26 +348,48 @@ ${SEPARATOR}
     });
 
     it('prints the message metadata under the message', () => {
-      const log = buildA2ARequestLog({
-        message: createMessage({metadata: {key: 'value'}}),
-      });
+      const log = buildA2ARequestLog(
+        createRequest({message: createMessage({metadata: {key: 'value'}})}),
+      );
 
       expect(log).toContain(
         '  Part 0: TextPart: Hello\n  Metadata:\n  {\n    "key": "value"\n  }\n',
       );
     });
+
+    it('leaves out the ids of a message that has none', () => {
+      const log = buildA2ARequestLog(
+        createRequest({message: createMessage({taskId: '', contextId: ''})}),
+      );
+
+      expect(log).toContain(
+        '  ID: message-1\n  Role: ROLE_USER\n  Message Parts:',
+      );
+      expect(log).not.toContain('Task ID');
+      expect(log).not.toContain('Context ID');
+    });
   });
 
   describe('buildA2AResponseLog', () => {
     it('prints a task with no status message and no history', () => {
-      const task: Task = {
-        kind: 'task',
-        id: 'task-1',
-        contextId: 'context-1',
-        status: {state: 'working', timestamp: '2024-01-01T00:00:00.000Z'},
-        artifacts: [{artifactId: 'artifact-1', parts: []}],
+      const task = createTask({
+        status: {
+          state: TaskState.TASK_STATE_WORKING,
+          message: undefined,
+          timestamp: '2024-01-01T00:00:00.000Z',
+        },
+        artifacts: [
+          {
+            artifactId: 'artifact-1',
+            name: '',
+            description: '',
+            parts: [],
+            metadata: undefined,
+            extensions: [],
+          },
+        ],
         metadata: {key: 'value'},
-      };
+      });
 
       expect(buildA2AResponseLog(task)).toBe(`
 A2A Response:
@@ -305,7 +398,7 @@ Result Type: Task
 ${SEPARATOR}
 Task ID: task-1
 Context ID: context-1
-Status State: working
+Status State: TASK_STATE_WORKING
 Status Timestamp: 2024-01-01T00:00:00.000Z
 History Length: 0
 Artifacts Count: 1
@@ -324,20 +417,19 @@ ${SEPARATOR}
     });
 
     it('leaves out the ids and the timestamp that are absent', () => {
-      const task: Task = {
-        kind: 'task',
-        id: 'task-1',
-        contextId: 'context-1',
+      const task = createTask({
         status: {
-          state: 'working',
-          message: {
-            kind: 'message',
+          state: TaskState.TASK_STATE_WORKING,
+          message: createMessage({
             messageId: 'status-message-1',
-            role: 'agent',
+            role: Role.ROLE_AGENT,
+            taskId: '',
+            contextId: '',
             parts: [],
-          },
+          }),
+          timestamp: undefined,
         },
-      };
+      });
 
       expect(buildA2AResponseLog(task)).toBe(`
 A2A Response:
@@ -346,13 +438,13 @@ Result Type: Task
 ${SEPARATOR}
 Task ID: task-1
 Context ID: context-1
-Status State: working
+Status State: TASK_STATE_WORKING
 History Length: 0
 Artifacts Count: 0
 ${SEPARATOR}
 Status Message:
 ID: status-message-1
-Role: agent
+Role: ROLE_AGENT
 Message Parts:
 No parts
 ${SEPARATOR}
@@ -363,7 +455,7 @@ ${SEPARATOR}
     });
 
     it('prints a placeholder for a response of an unknown kind', () => {
-      const response: A2AEvent = JSON.parse('{"kind": "other", "secret": 1}');
+      const response: A2AEvent = JSON.parse('{"other": "value", "secret": 1}');
 
       expect(buildA2AResponseLog(response)).toBe(`
 A2A Response:
@@ -376,41 +468,40 @@ ${SEPARATOR}
     });
 
     it('prints the status message and the history of a task', () => {
-      const task: Task = {
-        kind: 'task',
-        id: 'task-1',
-        contextId: 'context-1',
+      const task = createTask({
         status: {
-          state: 'input-required',
+          state: TaskState.TASK_STATE_INPUT_REQUIRED,
           message: createMessage({
             messageId: 'status-message-1',
-            role: 'agent',
-            parts: [{kind: 'text', text: 'Which city?'}],
+            role: Role.ROLE_AGENT,
+            parts: [createTextPart('Which city?')],
           }),
+          timestamp: undefined,
         },
         history: [
           createMessage({messageId: 'history-message-1'}),
           createMessage({
             messageId: 'history-message-2',
-            role: 'agent',
+            role: Role.ROLE_AGENT,
             parts: [],
           }),
         ],
-      };
+      });
 
       const log = buildA2AResponseLog(task);
 
+      expect(log).toContain('Status State: TASK_STATE_INPUT_REQUIRED\n');
       expect(log).toContain('History Length: 2');
       expect(log).toContain(
-        'Status Message:\nID: status-message-1\nRole: agent\n',
+        'Status Message:\nID: status-message-1\nRole: ROLE_AGENT\n',
       );
       expect(log).toContain('Part 0: TextPart: Which city?');
       expect(log).toContain(
-        'Message 1:\n  ID: history-message-1\n  Role: user\n',
+        'Message 1:\n  ID: history-message-1\n  Role: ROLE_USER\n',
       );
       expect(log).toContain('  Message Parts:\n  Part 0: TextPart: Hello\n');
       expect(log).toContain(
-        'Message 2:\n  ID: history-message-2\n  Role: agent\n',
+        'Message 2:\n  ID: history-message-2\n  Role: ROLE_AGENT\n',
       );
       expect(log).toContain('  Message Parts:\n  No parts');
     });
@@ -418,8 +509,8 @@ ${SEPARATOR}
     it('prints a message with its parts and metadata', () => {
       const log = buildA2AResponseLog(
         createMessage({
-          role: 'agent',
-          parts: [{kind: 'text', text: 'Response'}],
+          role: Role.ROLE_AGENT,
+          parts: [createTextPart('Response')],
           metadata: {key: 'value'},
         }),
       );
@@ -430,7 +521,7 @@ ${SEPARATOR}
 Result Type: Message
 ${SEPARATOR}
 ID: message-1
-Role: agent
+Role: ROLE_AGENT
 Task ID: task-1
 Context ID: context-1
 Message Parts:
@@ -452,49 +543,56 @@ ${SEPARATOR}
 
     it('prints the ids, state and status message of a status update', () => {
       const event: TaskStatusUpdateEvent = {
-        kind: 'status-update',
         taskId: 'task-1',
         contextId: 'context-1',
-        final: true,
         status: {
-          state: 'auth-required',
+          state: TaskState.TASK_STATE_AUTH_REQUIRED,
           message: createMessage({
-            role: 'agent',
+            role: Role.ROLE_AGENT,
             parts: [
-              {
-                kind: 'data',
-                data: {
-                  id: 'credential-call',
-                  name: 'adk_request_credential',
-                  args: {clientSecret: 'secret-1'},
-                },
-              },
+              createDataPart({
+                id: 'credential-call',
+                name: 'adk_request_credential',
+                args: {clientSecret: 'secret-1'},
+              }),
             ],
           }),
+          timestamp: undefined,
         },
+        metadata: undefined,
       };
 
       const log = buildA2AResponseLog(event);
 
       expect(log).toContain('Result Type: TaskStatusUpdateEvent');
       expect(log).toContain('Task ID: task-1\nContext ID: context-1\n');
-      expect(log).toContain('Status State: auth-required\nFinal: true\n');
+      expect(log).toContain(
+        'Status State: TASK_STATE_AUTH_REQUIRED\n' + SEPARATOR,
+      );
+      expect(log).not.toContain('Final');
       expect(log).toContain('"name": "adk_request_credential"');
       expect(log).not.toContain('secret-1');
     });
 
     it('prints the ids and part count of an artifact update, not its parts', () => {
       const parts: Part[] = [
-        {kind: 'text', text: 'chunk-1'},
-        {kind: 'text', text: 'chunk-2'},
+        createTextPart('chunk-1'),
+        createTextPart('chunk-2'),
       ];
       const event: TaskArtifactUpdateEvent = {
-        kind: 'artifact-update',
         taskId: 'task-1',
         contextId: 'context-1',
-        artifact: {artifactId: 'artifact-1', parts},
+        artifact: {
+          artifactId: 'artifact-1',
+          name: '',
+          description: '',
+          parts,
+          metadata: undefined,
+          extensions: [],
+        },
         append: true,
         lastChunk: false,
+        metadata: undefined,
       };
 
       expect(buildA2AResponseLog(event)).toBe(`
@@ -516,8 +614,7 @@ ${SEPARATOR}
   describe('payloads that do not match their types', () => {
     it('prints a part whose metadata is null without a metadata section', () => {
       const part: Part = fromWire({
-        kind: 'text',
-        text: 'Hello',
+        content: {$case: 'text', value: 'Hello'},
         metadata: null,
       });
 
@@ -527,32 +624,32 @@ ${SEPARATOR}
     it.each([
       {
         name: 'a text part without text',
-        part: {kind: 'text'},
+        part: {content: {$case: 'text'}},
         log: 'TextPart: ',
       },
       {
         name: 'a data part without data',
-        part: {kind: 'data'},
+        part: {content: {$case: 'data'}},
         log: 'DataPart: {}',
       },
       {
-        name: 'a file part without a file',
-        part: {kind: 'file'},
+        name: 'a file part without a url',
+        part: {content: {$case: 'url'}},
         log: 'FilePart: {}',
       },
       {
         name: 'a text part whose text is null',
-        part: {kind: 'text', text: null},
+        part: {content: {$case: 'text', value: null}},
         log: 'TextPart: ',
       },
       {
         name: 'a data part whose data is null',
-        part: {kind: 'data', data: null},
+        part: {content: {$case: 'data', value: null}},
         log: 'DataPart: {}',
       },
       {
-        name: 'a file part whose file is null',
-        part: {kind: 'file', file: null},
+        name: 'a file part whose url is null',
+        part: {content: {$case: 'url', value: null}},
         log: 'FilePart: {}',
       },
     ])('prints $name as empty', ({part, log}) => {
@@ -561,42 +658,37 @@ ${SEPARATOR}
       expect(buildMessagePartLog(wirePart)).toBe(log);
     });
 
-    it('prints a file part whose uri is null without a uri', () => {
+    it('prints a file part whose url is null without a url', () => {
       const part: Part = fromWire({
-        kind: 'file',
-        file: {
-          name: 'report.pdf',
-          mimeType: 'application/pdf',
-          bytes: 'QUJD',
-          uri: null,
-        },
+        content: {$case: 'url', value: null},
+        filename: 'report.pdf',
+        mediaType: 'application/pdf',
       });
 
       expect(buildMessagePartLog(part)).toBe(`FilePart: {
-  "name": "report.pdf",
-  "mimeType": "application/pdf"
+  "filename": "report.pdf",
+  "mediaType": "application/pdf"
 }`);
     });
 
-    it('prints a file part whose uri is undefined without a uri', () => {
-      const part: Part = {
-        kind: 'file',
-        file: {name: 'report.pdf', bytes: 'QUJD', uri: undefined},
-      };
+    it('prints a file part whose url is undefined without a url', () => {
+      const part: Part = createFilePart(
+        {$case: 'url', value: undefined as unknown as string},
+        'report.pdf',
+      );
 
       expect(buildMessagePartLog(part)).toBe(`FilePart: {
-  "name": "report.pdf"
+  "filename": "report.pdf"
 }`);
     });
 
     it('prints the other parts of a response when one part has null text', () => {
       const response: A2AEvent = fromWire({
-        kind: 'message',
         messageId: 'message-1',
-        role: 'agent',
+        role: Role.ROLE_AGENT,
         parts: [
-          {kind: 'text', text: null},
-          {kind: 'text', text: 'Hello'},
+          {content: {$case: 'text', value: null}},
+          {content: {$case: 'text', value: 'Hello'}},
         ],
       });
 
@@ -607,11 +699,10 @@ ${SEPARATOR}
     });
 
     it('prints a request whose metadata is null and whose message has no parts', () => {
-      const params: MessageSendParams = fromWire({
+      const params: SendMessageRequest = fromWire({
         message: {
-          kind: 'message',
           messageId: 'message-1',
-          role: 'user',
+          role: Role.ROLE_USER,
           metadata: null,
         },
         metadata: null,
@@ -626,10 +717,9 @@ ${SEPARATOR}
 
     it('prints a message response whose metadata and part metadata are null', () => {
       const response: A2AEvent = fromWire({
-        kind: 'message',
         messageId: 'message-1',
-        role: 'agent',
-        parts: [{kind: 'text', text: 'Hello', metadata: null}],
+        role: Role.ROLE_AGENT,
+        parts: [{content: {$case: 'text', value: 'Hello'}, metadata: null}],
         metadata: null,
       });
 
@@ -642,26 +732,23 @@ ${SEPARATOR}
 
     it('prints a status update whose status message has no parts', () => {
       const response: A2AEvent = fromWire({
-        kind: 'status-update',
         taskId: 'task-1',
         contextId: 'context-1',
-        final: true,
         status: {
-          state: 'completed',
-          message: {kind: 'message', messageId: 'message-1', role: 'agent'},
+          state: TaskState.TASK_STATE_COMPLETED,
+          message: {messageId: 'message-1', role: Role.ROLE_AGENT},
         },
       });
 
       const log = buildA2AResponseLog(response);
 
-      expect(log).toContain('Status State: completed\n');
+      expect(log).toContain('Status State: TASK_STATE_COMPLETED\n');
       expect(log).toContain('ID: message-1\n');
       expect(log).toContain('Message Parts:\nNo parts\n');
     });
 
     it('prints an artifact update whose artifact has no parts', () => {
       const response: A2AEvent = fromWire({
-        kind: 'artifact-update',
         taskId: 'task-1',
         contextId: 'context-1',
         artifact: {artifactId: 'artifact-1'},
@@ -674,12 +761,18 @@ ${SEPARATOR}
 
     it('prints a task whose metadata is null and whose history entry has no parts', () => {
       const response: A2AEvent = fromWire({
-        kind: 'task',
         id: 'task-1',
         contextId: 'context-1',
-        status: {state: 'working'},
+        status: {state: TaskState.TASK_STATE_WORKING},
         metadata: null,
-        history: [{kind: 'message', messageId: 'message-1', role: 'user'}],
+        history: [
+          {
+            messageId: 'message-1',
+            role: Role.ROLE_USER,
+            taskId: '',
+            contextId: '',
+          },
+        ],
       });
 
       const log = buildA2AResponseLog(response);
@@ -687,22 +780,20 @@ ${SEPARATOR}
       expect(log).toContain('History Length: 1\n');
       expect(log).not.toContain('Task Metadata');
       expect(log).toContain(
-        'Message 1:\n  ID: message-1\n  Role: user\n  Message Parts:\n  No parts\n',
+        'Message 1:\n  ID: message-1\n  Role: ROLE_USER\n  Message Parts:\n  No parts\n',
       );
     });
 
     it('leaves out the ids and the timestamp that are null', () => {
       const response: A2AEvent = fromWire({
-        kind: 'task',
         id: 'task-1',
         contextId: 'context-1',
         status: {
-          state: 'working',
+          state: TaskState.TASK_STATE_WORKING,
           timestamp: null,
           message: {
-            kind: 'message',
             messageId: 'message-1',
-            role: 'agent',
+            role: Role.ROLE_AGENT,
             taskId: null,
             contextId: null,
             parts: [],
@@ -712,16 +803,19 @@ ${SEPARATOR}
 
       const log = buildA2AResponseLog(response);
 
-      expect(log).toContain('Status State: working\nHistory Length: 0\n');
-      expect(log).toContain('ID: message-1\nRole: agent\nMessage Parts:\n');
+      expect(log).toContain(
+        'Status State: TASK_STATE_WORKING\nHistory Length: 0\n',
+      );
+      expect(log).toContain(
+        'ID: message-1\nRole: ROLE_AGENT\nMessage Parts:\n',
+      );
       expect(log).not.toContain('null');
     });
 
     it('prints a placeholder for a response that cannot be formatted', () => {
       const response: A2AEvent = fromWire({
-        kind: 'message',
         messageId: 'message-1',
-        role: 'agent',
+        role: Role.ROLE_AGENT,
         parts: 'not a list',
       });
 
@@ -729,9 +823,24 @@ ${SEPARATOR}
     });
 
     it('prints a placeholder for a request that cannot be formatted', () => {
-      const params: MessageSendParams = fromWire({});
+      const params: SendMessageRequest = fromWire({
+        message: {
+          messageId: 'message-1',
+          role: Role.ROLE_USER,
+          parts: 'not a list',
+        },
+      });
 
       expect(buildA2ARequestLog(params)).toBe('<log unavailable>');
+    });
+
+    it('prints a placeholder for a request without a message', () => {
+      const params: SendMessageRequest = fromWire({});
+
+      const log = buildA2ARequestLog(params);
+
+      expect(log).toContain('Message:\n  No message\n');
+      expect(log).toContain('Configuration:\nNo configuration\n');
     });
   });
 });

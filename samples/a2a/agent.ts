@@ -21,12 +21,16 @@
  *   npm run sample -- samples/a2a/agent.ts
  */
 
-import type {MessageSendParams} from '@a2a-js/sdk';
+import type {SendMessageRequest, StreamResponse} from '@a2a-js/sdk';
 import type {Client} from '@a2a-js/sdk/client';
-import {ExecutionEventBus, RequestContext} from '@a2a-js/sdk/server';
+import {
+  AgentExecutionEvent,
+  ExecutionEventBus,
+  RequestContext,
+  ServerCallContext,
+} from '@a2a-js/sdk/server';
 import {
   A2AAgentExecutor,
-  A2AStreamEventData,
   AGENT_CARD_PATH,
   BaseAgent,
   createEvent,
@@ -111,13 +115,13 @@ class OrderStatusWorkerAgent extends BaseAgent {
  */
 function createInMemoryA2AClient(
   executor: A2AAgentExecutor,
-  recordedA2AEvents: A2AStreamEventData[],
+  recordedA2AEvents: AgentExecutionEvent[],
 ): Client {
   const streamAdapter = {
     async *sendMessageStream(
-      params: MessageSendParams,
-    ): AsyncGenerator<A2AStreamEventData, void, undefined> {
-      const busEvents: A2AStreamEventData[] = [];
+      params: SendMessageRequest,
+    ): AsyncGenerator<StreamResponse, void, undefined> {
+      const busEvents: AgentExecutionEvent[] = [];
       const eventBus: ExecutionEventBus = {
         publish(event) {
           busEvents.push(event);
@@ -138,14 +142,17 @@ function createInMemoryA2AClient(
         finished() {},
       };
       const requestContext = new RequestContext(
-        params.message,
-        params.message.taskId ?? 'task-ord-42',
-        params.message.contextId ?? 'ctx-ord-42',
+        params,
+        params.message?.taskId || 'task-ord-42',
+        params.message?.contextId || 'ctx-ord-42',
+        new ServerCallContext(),
       );
 
       await executor.execute(requestContext, eventBus);
-      for (const item of busEvents) {
-        yield item;
+      // An A2A v1.0 stream wraps each event in a `StreamResponse`, whose
+      // payload cases share the names of the executor's event kinds.
+      for (const {kind, data} of busEvents) {
+        yield {payload: {$case: kind, value: data}} as StreamResponse;
       }
     },
   };
@@ -166,7 +173,12 @@ class A2AShowcaseAgent extends BaseAgent {
   ): AsyncGenerator<Event, void, void> {
     const worker = new OrderStatusWorkerAgent();
     const card = await getA2AAgentCard(worker, [
-      {url: 'http://localhost:8000/jsonrpc', transport: 'JSONRPC'},
+      {
+        url: 'http://localhost:8000/jsonrpc',
+        protocolBinding: 'JSONRPC',
+        protocolVersion: '1.0',
+        tenant: '',
+      },
     ]);
 
     const workerRunner = new InMemoryRunner({
@@ -174,7 +186,7 @@ class A2AShowcaseAgent extends BaseAgent {
       appName: worker.name,
     });
     const executor = new A2AAgentExecutor({runner: workerRunner});
-    const a2aEvents: A2AStreamEventData[] = [];
+    const a2aEvents: AgentExecutionEvent[] = [];
     const client = createInMemoryA2AClient(executor, a2aEvents);
 
     const remoteAgent = new RemoteA2AAgent({
@@ -217,7 +229,7 @@ class A2AShowcaseAgent extends BaseAgent {
 
     const lines = [
       `Agent card path constant: ${AGENT_CARD_PATH}`,
-      `Agent card: ${card.name} (${card.preferredTransport}, skills: ${card.skills.map((s) => s.id).join(', ')})`,
+      `Agent card: ${card.name} (${card.supportedInterfaces[0].protocolBinding} A2A ${card.supportedInterfaces[0].protocolVersion}, skills: ${card.skills.map((s) => s.id).join(', ')})`,
       `A2A stream events published: ${a2aEvents.map((e) => e.kind).join(', ')}`,
       `Reconstructed ADK events: ${reconstructedEvents.length} (calls: ${callNames.join(', ')}; responses: ${responseNames.join(', ')})`,
       `Remote reply: ${finalText}`,

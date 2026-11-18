@@ -5,13 +5,15 @@
  */
 
 import {
-  FilePart,
   Message,
-  MessageSendConfiguration,
-  MessageSendParams,
   Part,
+  roleToJSON,
+  SendMessageConfiguration,
+  SendMessageRequest,
   Task,
   TaskArtifactUpdateEvent,
+  TaskState,
+  taskStateToJSON,
   TaskStatusUpdateEvent,
 } from '@a2a-js/sdk';
 import {REQUEST_CREDENTIAL_FUNCTION_CALL_NAME} from '../agents/framework_function_calls.js';
@@ -56,7 +58,7 @@ export function buildMessagePartLog(part: Part): string {
  *
  * Never throws: a request that cannot be formatted prints a placeholder.
  */
-export function buildA2ARequestLog(params: MessageSendParams): string {
+export function buildA2ARequestLog(params: SendMessageRequest): string {
   return buildGuardedLog(() => buildRequestLog(params));
 }
 
@@ -91,12 +93,12 @@ function buildPartLog(part: Part): string {
   }`;
 }
 
-function buildRequestLog(params: MessageSendParams): string {
+function buildRequestLog(params: SendMessageRequest): string {
   return `
 A2A Send Message Request:
 ${SEPARATOR}
 Message:
-${indentAll(buildMessageLog(params.message), 2)}
+${params.message ? indentAll(buildMessageLog(params.message), 2) : '  No message'}
 ${SEPARATOR}
 Configuration:
 ${buildConfigurationLog(params.configuration)}
@@ -146,14 +148,14 @@ function buildTaskLog(task: Task): string {
   return [
     `Task ID: ${task.id}`,
     `Context ID: ${task.contextId}`,
-    `Status State: ${task.status.state}`,
-    ...buildOptionalLine('Status Timestamp', task.status.timestamp),
+    `Status State: ${buildStateLog(task.status?.state)}`,
+    ...buildOptionalLine('Status Timestamp', task.status?.timestamp),
     `History Length: ${history.length}`,
     `Artifacts Count: ${task.artifacts?.length ?? 0}`,
     ...buildMetadataLines('Task Metadata', task.metadata),
     SEPARATOR,
     'Status Message:',
-    buildStatusMessageLog(task.status.message),
+    buildStatusMessageLog(task.status?.message),
     SEPARATOR,
     'History:',
     history.length === 0
@@ -171,11 +173,10 @@ function buildStatusLog(event: TaskStatusUpdateEvent): string {
   return [
     `Task ID: ${event.taskId}`,
     `Context ID: ${event.contextId}`,
-    `Status State: ${event.status.state}`,
-    `Final: ${event.final}`,
+    `Status State: ${buildStateLog(event.status?.state)}`,
     SEPARATOR,
     'Status Message:',
-    buildStatusMessageLog(event.status.message),
+    buildStatusMessageLog(event.status?.message),
   ].join('\n');
 }
 
@@ -183,8 +184,8 @@ function buildArtifactLog(event: TaskArtifactUpdateEvent): string {
   return [
     `Task ID: ${event.taskId}`,
     `Context ID: ${event.contextId}`,
-    `Artifact ID: ${event.artifact.artifactId}`,
-    `Parts Count: ${event.artifact.parts?.length ?? 0}`,
+    `Artifact ID: ${event.artifact?.artifactId}`,
+    `Parts Count: ${event.artifact?.parts?.length ?? 0}`,
     `Append: ${event.append ?? false}`,
     `Last Chunk: ${event.lastChunk ?? false}`,
   ].join('\n');
@@ -198,9 +199,9 @@ function buildMessageLog(message: Message): string {
   const parts = message.parts ?? [];
   return [
     `ID: ${message.messageId}`,
-    `Role: ${message.role}`,
-    ...buildOptionalLine('Task ID', message.taskId),
-    ...buildOptionalLine('Context ID', message.contextId),
+    `Role: ${roleToJSON(message.role)}`,
+    ...buildOptionalLine('Task ID', message.taskId || undefined),
+    ...buildOptionalLine('Context ID', message.contextId || undefined),
     'Message Parts:',
     ...(parts.length === 0
       ? ['No parts']
@@ -211,8 +212,12 @@ function buildMessageLog(message: Message): string {
   ].join('\n');
 }
 
+function buildStateLog(state: TaskState | undefined): string {
+  return state === undefined ? 'unknown' : taskStateToJSON(state);
+}
+
 function buildConfigurationLog(
-  configuration: MessageSendConfiguration | undefined,
+  configuration: SendMessageConfiguration | undefined,
 ): string {
   if (!configuration) {
     return 'No configuration';
@@ -220,31 +225,38 @@ function buildConfigurationLog(
 
   return toJson({
     acceptedOutputModes: configuration.acceptedOutputModes,
-    blocking: configuration.blocking,
+    returnImmediately: configuration.returnImmediately,
     historyLength: configuration.historyLength,
-    pushNotificationConfig: configuration.pushNotificationConfig !== undefined,
+    taskPushNotificationConfig:
+      configuration.taskPushNotificationConfig !== undefined,
   });
 }
 
 function buildPartContentLog(part: Part): string {
-  switch (part.kind) {
+  const content = part.content;
+  switch (content?.$case) {
     case 'text':
-      return `TextPart: ${truncate(part.text)}`;
+      return `TextPart: ${truncate(content.value)}`;
     case 'data':
-      return `DataPart: ${toJson(summarizeData(part.data ?? {}))}`;
-    case 'file':
-      return `FilePart: ${toJson(summarizeFile(part.file ?? {}))}`;
+      return `DataPart: ${toJson(summarizeData(content.value ?? {}))}`;
+    case 'raw':
+    case 'url':
+      return `FilePart: ${toJson(summarizeFile(part))}`;
     default:
       return 'UnknownPart';
   }
 }
 
-function summarizeData(data: Record<string, unknown>): Record<string, unknown> {
+function summarizeData(data: unknown): unknown {
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    return summarizeValue(data);
+  }
   const isCredentialRequest =
-    data['name'] === REQUEST_CREDENTIAL_FUNCTION_CALL_NAME;
+    (data as Record<string, unknown>)['name'] ===
+    REQUEST_CREDENTIAL_FUNCTION_CALL_NAME;
 
   return Object.fromEntries(
-    Object.entries(data).map(([key, value]) => [
+    Object.entries(data as Record<string, unknown>).map(([key, value]) => [
       key,
       isCredentialRequest && CREDENTIAL_FIELDS.has(key)
         ? REDACTED
@@ -265,14 +277,12 @@ function summarizeValue(value: unknown): unknown {
   return Array.isArray(value) ? '<array>' : '<object>';
 }
 
-function summarizeFile(
-  file: Partial<FilePart['file']>,
-): Record<string, unknown> {
+function summarizeFile(part: Part): Record<string, unknown> {
   return {
-    name: file.name,
-    mimeType: file.mimeType,
-    ...('uri' in file && typeof file.uri === 'string'
-      ? {uri: truncate(file.uri)}
+    filename: part.filename || undefined,
+    mediaType: part.mediaType || undefined,
+    ...(part.content?.$case === 'url' && typeof part.content.value === 'string'
+      ? {url: truncate(part.content.value)}
       : {}),
   };
 }

@@ -5,11 +5,11 @@
  */
 
 import {Content, FinishReason, Part} from '@google/genai';
-import {v4 as uuidv4} from 'uuid';
 import {Context} from '../agents/context.js';
 import {LlmRequest} from '../models/llm_request.js';
 import {LlmResponse} from '../models/llm_response.js';
 import {FunctionTool} from '../tools/function_tool.js';
+import {randomUUID} from '../utils/env_aware_utils.js';
 import {
   REFLECT_AND_RETRY_RESPONSE_TYPE,
   resolveScopeKey,
@@ -325,7 +325,7 @@ Formulate a new plan based on your analysis and try a corrected or different app
    * Generates a unique ID for the model retry tool call.
    */
   protected getModelRetryUuid(): string {
-    return `${ADK_HANDLE_MODEL_ERROR_TOOL_NAME}_${uuidv4()}`;
+    return `${ADK_HANDLE_MODEL_ERROR_TOOL_NAME}_${randomUUID()}`;
   }
 
   /**

@@ -4,13 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {
-  DataPart as A2ADataPart,
-  FilePart as A2AFilePart,
-  Part as A2APart,
-  TextPart as A2ATextPart,
-  Message,
-} from '@a2a-js/sdk';
+import {Part as A2APart, Message, Role} from '@a2a-js/sdk';
 import {
   createModelContent,
   createUserContent,
@@ -22,7 +16,54 @@ import {
   Part as GenAIPart,
   VideoMetadata,
 } from '@google/genai';
+import {createTextPart} from './a2a_event.js';
 import {A2AMetadataKeys} from './metadata_converter_utils.js';
+
+/**
+ * An A2A part of one content type.
+ */
+type A2APartOf<C extends NonNullable<A2APart['content']>['$case']> = A2APart & {
+  content: Extract<NonNullable<A2APart['content']>, {$case: C}>;
+};
+
+/** An A2A text part. */
+type A2ATextPart = A2APartOf<'text'>;
+/** An A2A file part: inline bytes or a URL. */
+type A2AFilePart = A2APartOf<'raw' | 'url'>;
+/** An A2A structured data part. */
+type A2ADataPart = A2APartOf<'data'>;
+
+/**
+ * Decodes base64, the encoding GenAI uses for inline data, into the bytes an
+ * A2A v1.0 part carries.
+ */
+function base64ToBytes(base64: string): Buffer {
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(base64, 'base64');
+  }
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes as Buffer;
+}
+
+/** Encodes the bytes of an A2A v1.0 part as base64 for GenAI inline data. */
+function bytesToBase64(bytes: Uint8Array): string {
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(
+      bytes.buffer,
+      bytes.byteOffset,
+      bytes.byteLength,
+    ).toString('base64');
+  }
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
+}
 
 /**
  * The types of data parts.
@@ -77,15 +118,10 @@ export function toA2APart(
  * @returns An A2A text part, with thought metadata attached if applicable.
  */
 export function toA2ATextPart(part: GenAIPart): A2APart {
-  const a2aPart: A2APart = {kind: 'text', text: part.text || ''};
-
-  if (part.thought) {
-    a2aPart.metadata = {
-      [A2AMetadataKeys.THOUGHT]: true,
-    };
-  }
-
-  return a2aPart;
+  return createTextPart(
+    part.text || '',
+    part.thought ? {[A2AMetadataKeys.THOUGHT]: true} : undefined,
+  );
 }
 
 /**
@@ -103,23 +139,19 @@ export function toA2AFilePart(part: GenAIPart): A2APart {
 
   if (part.fileData) {
     return {
-      kind: 'file',
-      file: {
-        uri: part.fileData.fileUri || '',
-        mimeType: part.fileData.mimeType,
-      },
+      content: {$case: 'url', value: part.fileData.fileUri || ''},
       metadata,
+      filename: '',
+      mediaType: part.fileData.mimeType || '',
     };
   }
 
   if (part.inlineData) {
     return {
-      kind: 'file',
-      file: {
-        bytes: part.inlineData.data || '',
-        mimeType: part.inlineData.mimeType,
-      },
+      content: {$case: 'raw', value: base64ToBytes(part.inlineData.data || '')},
       metadata,
+      filename: '',
+      mediaType: part.inlineData.mimeType || '',
     };
   }
 
@@ -158,9 +190,10 @@ export function toA2ADataPart(
     data = part.codeExecutionResult;
   } else {
     return {
-      kind: 'data',
-      data: {},
+      content: {$case: 'data', value: {}},
       metadata: {},
+      filename: '',
+      mediaType: '',
     };
   }
 
@@ -185,9 +218,10 @@ export function toA2ADataPart(
   }
 
   return {
-    kind: 'data',
-    data: data as unknown as Record<string, unknown>,
+    content: {$case: 'data', value: data},
     metadata,
+    filename: '',
+    mediaType: '',
   };
 }
 
@@ -200,7 +234,7 @@ export function toA2ADataPart(
 export function toGenAIContent(a2aMessage: Message): GenAIContent {
   const parts = toGenAIParts(a2aMessage.parts);
 
-  return a2aMessage.role === 'user'
+  return a2aMessage.role === Role.ROLE_USER
     ? createUserContent(parts)
     : createModelContent(parts);
 }
@@ -220,22 +254,20 @@ export function toGenAIParts(a2aParts: A2APart[]): GenAIPart[] {
  *
  * @param a2aPart - The A2A part to convert.
  * @returns The corresponding GenAI part.
- * @throws {Error} If the A2A part has an unrecognized `kind`.
+ * @throws {Error} If the A2A part has no recognized content.
  */
 export function toGenAIPart(a2aPart: A2APart): GenAIPart {
-  if (a2aPart.kind === 'text') {
-    return toGenAIPartText(a2aPart);
+  switch (a2aPart.content?.$case) {
+    case 'text':
+      return toGenAIPartText(a2aPart as A2ATextPart);
+    case 'raw':
+    case 'url':
+      return toGenAIPartFile(a2aPart as A2AFilePart);
+    case 'data':
+      return toGenAIPartData(a2aPart as A2ADataPart);
+    default:
+      throw new Error(`Unknown part content: ${JSON.stringify(a2aPart)}`);
   }
-
-  if (a2aPart.kind === 'file') {
-    return toGenAIPartFile(a2aPart);
-  }
-
-  if (a2aPart.kind === 'data') {
-    return toGenAIPartData(a2aPart);
-  }
-
-  throw new Error(`Unknown part kind: ${JSON.stringify(a2aPart)}`);
 }
 
 /**
@@ -246,7 +278,7 @@ export function toGenAIPart(a2aPart: A2APart): GenAIPart {
  */
 export function toGenAIPartText(a2aPart: A2ATextPart): GenAIPart {
   return {
-    text: a2aPart.text,
+    text: a2aPart.content.value,
     thought: !!a2aPart.metadata?.[A2AMetadataKeys.THOUGHT],
   };
 }
@@ -254,7 +286,7 @@ export function toGenAIPartText(a2aPart: A2ATextPart): GenAIPart {
 /**
  * Converts an A2A File Part to a GenAI Part.
  *
- * @param a2aPart - The A2A file part containing bytes or a URI.
+ * @param a2aPart - The A2A file part containing raw bytes or a URL.
  * @returns A GenAI part with `inlineData` or `fileData` depending on the
  *   source, with optional video metadata attached.
  * @throws {Error} If the file part contains neither bytes nor a URI.
@@ -267,18 +299,18 @@ export function toGenAIPartFile(a2aPart: A2AFilePart): GenAIPart {
     ] as VideoMetadata;
   }
 
-  if ('bytes' in a2aPart.file) {
+  if (a2aPart.content.$case === 'raw') {
     part.inlineData = {
-      data: a2aPart.file.bytes,
-      mimeType: a2aPart.file.mimeType || '',
+      data: bytesToBase64(a2aPart.content.value),
+      mimeType: a2aPart.mediaType || '',
     };
     return part;
   }
 
-  if ('uri' in a2aPart.file) {
+  if (a2aPart.content.$case === 'url') {
     part.fileData = {
-      fileUri: a2aPart.file.uri,
-      mimeType: a2aPart.file.mimeType || '',
+      fileUri: a2aPart.content.value,
+      mimeType: a2aPart.mediaType || '',
     };
     return part;
   }
@@ -295,12 +327,17 @@ export function toGenAIPartFile(a2aPart: A2AFilePart): GenAIPart {
  *   unrecognized.
  */
 export function toGenAIPartData(a2aPart: A2ADataPart): GenAIPart {
-  if (!a2aPart.data) {
+  const value: unknown = a2aPart.content.value;
+  if (value === undefined || value === null) {
     throw new Error(`No data in part: ${JSON.stringify(a2aPart)}`);
   }
 
-  const data = a2aPart.data as Record<string, unknown>;
   const type = a2aPart.metadata?.[A2AMetadataKeys.DATA_PART_TYPE];
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    // A2A v1.0 data is any JSON value; only an object maps to a GenAI part.
+    return {text: JSON.stringify(value)};
+  }
+  const data = value as Record<string, unknown>;
 
   if (type === DataPartType.FUNCTION_CALL) {
     return {functionCall: data};
@@ -319,6 +356,6 @@ export function toGenAIPartData(a2aPart: A2ADataPart): GenAIPart {
   }
 
   return {
-    text: JSON.stringify(a2aPart.data),
+    text: JSON.stringify(data),
   };
 }

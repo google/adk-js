@@ -6,6 +6,7 @@
 
 import {TaskArtifactUpdateEvent, TaskStatusUpdateEvent} from '@a2a-js/sdk';
 import {
+  AgentEvent,
   AgentExecutor,
   ExecutionEventBus,
   RequestContext,
@@ -21,7 +22,9 @@ import {
   createTask,
   createTaskArtifactUpdateEvent,
   createTaskFailedEvent,
+  createTaskSnapshot,
   createTaskWorkingEvent,
+  TaskState,
 } from './a2a_event.js';
 import {
   getFinalTaskStatusUpdate,
@@ -120,6 +123,12 @@ export class A2AAgentExecutor implements AgentExecutor {
       a2aMetadata,
     });
 
+    let taskPublished = false;
+    const publishTask = (state: TaskState) => {
+      this.publishTask(ctx, eventBus, executorContext, state);
+      taskPublished = true;
+    };
+
     try {
       if (this.config.beforeExecuteCallback) {
         await this.config.beforeExecuteCallback(ctx, a2aMetadata);
@@ -133,6 +142,7 @@ export class A2AAgentExecutor implements AgentExecutor {
         genAIContent: genAIUserMessage,
       });
       if (unansweredRequestEvent) {
+        publishTask(ctx.task?.status?.state ?? TaskState.TASK_STATE_SUBMITTED);
         await this.publishFinalTaskStatus({
           executorContext,
           eventBus,
@@ -145,23 +155,16 @@ export class A2AAgentExecutor implements AgentExecutor {
         return;
       }
 
-      if (!ctx.task) {
-        eventBus.publish(
-          createTask({
-            taskId: ctx.taskId,
-            contextId: ctx.contextId,
-            message: a2aUserMessage,
-            metadata: getA2ASessionMetadata(executorContext),
-          }),
-        );
-      }
+      publishTask(TaskState.TASK_STATE_WORKING);
 
       eventBus.publish(
-        createTaskWorkingEvent({
-          taskId: ctx.taskId,
-          contextId: ctx.contextId,
-          metadata: getA2ASessionMetadata(executorContext),
-        }),
+        AgentEvent.statusUpdate(
+          createTaskWorkingEvent({
+            taskId: ctx.taskId,
+            contextId: ctx.contextId,
+            metadata: getA2ASessionMetadata(executorContext),
+          }),
+        ),
       );
 
       const adkEvents: AdkEvent[] = [];
@@ -194,7 +197,7 @@ export class A2AAgentExecutor implements AgentExecutor {
           a2aEvent,
         );
 
-        eventBus.publish(a2aEvent);
+        eventBus.publish(AgentEvent.artifactUpdate(a2aEvent));
       }
 
       await this.publishFinalTaskStatus({
@@ -205,6 +208,9 @@ export class A2AAgentExecutor implements AgentExecutor {
     } catch (e: unknown) {
       const error = e as Error;
 
+      if (!taskPublished) {
+        publishTask(ctx.task?.status?.state ?? TaskState.TASK_STATE_SUBMITTED);
+      }
       await this.publishFinalTaskStatus({
         executorContext,
         eventBus,
@@ -217,6 +223,40 @@ export class A2AAgentExecutor implements AgentExecutor {
         }),
       });
     }
+  }
+
+  /**
+   * Opens the event stream of the request with a task, as A2A v1.0 requires.
+   *
+   * A new task is published whole, with the user message as its history. A
+   * request that continues an existing task publishes a snapshot that carries
+   * only the task's id, context and `state`; the task store keeps the history
+   * and artifacts of the earlier turns, and the stream sends the stored task.
+   */
+  private publishTask(
+    ctx: RequestContext,
+    eventBus: ExecutionEventBus,
+    executorContext: ExecutorContext,
+    state: TaskState,
+  ): void {
+    const metadata = getA2ASessionMetadata(executorContext);
+    eventBus.publish(
+      AgentEvent.task(
+        ctx.task
+          ? createTaskSnapshot({
+              taskId: ctx.task.id,
+              contextId: ctx.task.contextId,
+              state,
+              metadata,
+            })
+          : createTask({
+              taskId: ctx.taskId,
+              contextId: ctx.contextId,
+              message: ctx.userMessage,
+              metadata,
+            }),
+      ),
+    );
   }
 
   // Task cancellation is not supported in this implementation yet.
@@ -255,8 +295,9 @@ export class A2AAgentExecutor implements AgentExecutor {
       return undefined;
     }
 
-    const artifactId =
-      this.agentPartialArtifactIdsMap[adkEvent.author!] || randomUUID();
+    const existingArtifactId =
+      this.agentPartialArtifactIdsMap[adkEvent.author!];
+    const artifactId = existingArtifactId || randomUUID();
 
     const a2aEvent = createTaskArtifactUpdateEvent({
       taskId: executorContext.requestContext.taskId,
@@ -264,7 +305,11 @@ export class A2AAgentExecutor implements AgentExecutor {
       artifactId,
       parts: a2aParts,
       metadata: getA2AEventMetadata(adkEvent, executorContext),
-      append: adkEvent.partial,
+      // Only a later partial chunk appends: the first chunk creates the
+      // artifact, and the final (non-partial) event replaces the streamed
+      // chunks with the complete content. A2A clients reject append=true for
+      // an artifact they have not seen.
+      append: !!adkEvent.partial && !!existingArtifactId,
       lastChunk: !adkEvent.partial,
     });
 
@@ -297,7 +342,7 @@ export class A2AAgentExecutor implements AgentExecutor {
       logger.error('Error in afterExecuteCallback:', e);
     }
 
-    eventBus.publish(event);
+    eventBus.publish(AgentEvent.statusUpdate(event));
   }
 }
 

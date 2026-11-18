@@ -4,13 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {
-  AgentCapabilities,
-  AgentCard,
-  AgentSkill,
-  TransportProtocol,
-} from '@a2a-js/sdk';
+import {AgentCard, AgentSkill} from '@a2a-js/sdk';
 import {Client, ClientFactory} from '@a2a-js/sdk/client';
+import {A2A_LEGACY_PROTOCOL_VERSION} from '@a2a-js/sdk/compat/v0_3';
 import {GoogleAuth} from 'google-auth-library';
 import {RemoteA2AAgent} from '../../a2a/a2a_remote_agent.js';
 import {ReadonlyContext} from '../../agents/readonly_context.js';
@@ -34,6 +30,7 @@ import {
   ListMcpServersResponse,
   McpServer,
   ProtocolType,
+  TransportProtocol,
 } from './types.js';
 
 export * from './agent_registry_mcp_toolset.js';
@@ -416,6 +413,8 @@ export class AgentRegistry {
     const card = agentInfo.card || {};
     const cardContent = card.content;
     if (card.type === 'A2A_AGENT_CARD' && cardContent) {
+      // The registry can hold an A2A v1.0 card or an A2A v0.3 one;
+      // RemoteA2AAgent accepts both shapes.
       const agentCard: AgentCard = cardContent;
       const name = cleanName(agentCard.name);
 
@@ -450,6 +449,9 @@ export class AgentRegistry {
         description: s.description || '',
         tags: s.tags || [],
         examples: (s.examples as string[]) || [],
+        inputModes: [],
+        outputModes: [],
+        securityRequirements: [],
       }),
     );
 
@@ -457,13 +459,24 @@ export class AgentRegistry {
       name,
       description,
       version,
-      preferredTransport: protocolBinding || 'HTTP+JSON',
-      protocolVersion: protocolVersion || '0.3.0',
-      url,
+      supportedInterfaces: [
+        {
+          url,
+          protocolBinding: protocolBinding || 'HTTP+JSON',
+          // An entry that does not name its version predates A2A v1.0.
+          protocolVersion: protocolVersion || A2A_LEGACY_PROTOCOL_VERSION,
+          tenant: '',
+        },
+      ],
+      provider: undefined,
       skills,
       capabilities: {
         streaming: false,
-      } as AgentCapabilities,
+        extensions: [],
+      },
+      securitySchemes: {},
+      securityRequirements: [],
+      signatures: [],
       // The A2A spec defines the default modes as media types.
       defaultInputModes: ['text/plain'],
       defaultOutputModes: ['text/plain'],

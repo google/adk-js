@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {MessageSendParams} from '@a2a-js/sdk';
+import {SendMessageRequest} from '@a2a-js/sdk';
 import {
   CitationMetadata,
   createModelContent,
@@ -16,10 +16,11 @@ import {InvocationContext, requireAgent} from '../agents/invocation_context.js';
 import {Event as AdkEvent, createEvent} from '../events/event.js';
 import {
   A2AEvent,
+  a2aEventToJson,
   getEventMetadata,
+  isFinalTaskStatusUpdateEvent,
   isTask,
   isTaskArtifactUpdateEvent,
-  isTaskStatusUpdateEvent,
 } from './a2a_event.js';
 import {
   A2A_METADATA_KEY_PREFIX,
@@ -46,7 +47,7 @@ export class A2ARemoteAgentRunProcessor {
   private aggregations = new Map<string, ArtifactAggregation>();
   private aggregationOrder: string[] = [];
 
-  constructor(private readonly request?: MessageSendParams) {}
+  constructor(private readonly request?: SendMessageRequest) {}
 
   /**
    * aggregatePartial stores contents of partial events to emit them with the terminal event.
@@ -62,7 +63,7 @@ export class A2ARemoteAgentRunProcessor {
       return [adkEvent];
     }
 
-    if (isTaskStatusUpdateEvent(a2aEvent) && a2aEvent.final) {
+    if (isFinalTaskStatusUpdateEvent(a2aEvent)) {
       const events: AdkEvent[] = [];
       for (const aid of this.aggregationOrder) {
         const agg = this.aggregations.get(aid);
@@ -85,7 +86,7 @@ export class A2ARemoteAgentRunProcessor {
       return [adkEvent];
     }
 
-    const artifactId = a2aEvent.artifact.artifactId;
+    const artifactId = a2aEvent.artifact?.artifactId ?? '';
 
     if (!a2aEvent.append) {
       this.removeAggregation(artifactId);
@@ -208,10 +209,10 @@ export class A2ARemoteAgentRunProcessor {
   updateCustomMetadata(event: AdkEvent, response?: A2AEvent) {
     const toAdd: Record<string, unknown> = {};
     if (this.request && event.turnComplete) {
-      toAdd['request'] = this.request;
+      toAdd['request'] = SendMessageRequest.toJSON(this.request);
     }
     if (response) {
-      toAdd['response'] = response;
+      toAdd['response'] = a2aEventToJson(response);
 
       if (isTask(response)) {
         if (response.id) toAdd['task_id'] = response.id;

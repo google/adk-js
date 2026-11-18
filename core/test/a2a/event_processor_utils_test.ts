@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {DataPart, Task, TextPart} from '@a2a-js/sdk';
+import {Part, Role, Task, TaskState} from '@a2a-js/sdk';
 import {
   Event as AdkEvent,
   ExecutorContext,
@@ -13,6 +13,11 @@ import {
 } from '@google/adk';
 import {Content as GenAIContent} from '@google/genai';
 import {describe, expect, it, vi} from 'vitest';
+import {
+  createMessage,
+  isFinalTaskStatusUpdateEvent,
+  isTaskStatusUpdateEvent,
+} from '../../src/a2a/a2a_event.js';
 import {
   getFinalTaskStatusUpdate,
   getUnansweredRequestEvent,
@@ -29,6 +34,46 @@ vi.mock('../../src/utils/env_aware_utils.js', async (importOriginal) => {
   };
 });
 
+/** The text of a text part, or undefined for any other part. */
+function textOf(part: Part | undefined): string | undefined {
+  return part?.content?.$case === 'text' ? part.content.value : undefined;
+}
+
+/** The data of a data part, or undefined for any other part. */
+function dataOf(part: Part | undefined): Record<string, unknown> | undefined {
+  return part?.content?.$case === 'data'
+    ? (part.content.value as Record<string, unknown>)
+    : undefined;
+}
+
+/** A task with the given state, and optionally an agent message in its status. */
+function createTestTask({
+  id = 'task1',
+  contextId = 'ctx1',
+  state,
+  parts,
+}: {
+  id?: string;
+  contextId?: string;
+  state: TaskState;
+  parts?: Part[];
+}): Task {
+  return {
+    id,
+    contextId,
+    status: {
+      state,
+      message: parts
+        ? createMessage({role: Role.ROLE_AGENT, parts, messageId: 'msg1'})
+        : undefined,
+      timestamp: undefined,
+    },
+    artifacts: [],
+    history: [],
+    metadata: undefined,
+  };
+}
+
 describe('event_processor_utils', () => {
   describe('getFinalTaskStatusUpdate', () => {
     const mockContext = {
@@ -44,8 +89,8 @@ describe('event_processor_utils', () => {
     it('returns TaskCompletedEvent for empty adkEvents', () => {
       const result = getFinalTaskStatusUpdate([], mockContext);
 
-      expect(result.kind).toBe('status-update');
-      expect(result.status?.state).toBe('completed');
+      expect(isTaskStatusUpdateEvent(result)).toBe(true);
+      expect(result.status?.state).toBe(TaskState.TASK_STATE_COMPLETED);
       expect(result.taskId).toBe('test-task-id');
       expect(result.contextId).toBe('test-context-id');
       expect(result.metadata).toEqual(
@@ -66,10 +111,10 @@ describe('event_processor_utils', () => {
       ];
       const result = getFinalTaskStatusUpdate(events, mockContext);
 
-      expect(result.kind).toBe('status-update');
-      expect(result.status?.state).toBe('failed');
+      expect(isTaskStatusUpdateEvent(result)).toBe(true);
+      expect(result.status?.state).toBe(TaskState.TASK_STATE_FAILED);
       const parts = result.status?.message?.parts;
-      expect((parts?.[0] as TextPart)?.text).toContain('Something went wrong');
+      expect(textOf(parts?.[0])).toContain('Something went wrong');
     });
 
     it('returns TaskFailedEvent if any adkEvent has an errorMessage', () => {
@@ -80,10 +125,10 @@ describe('event_processor_utils', () => {
       ];
       const result = getFinalTaskStatusUpdate(events, mockContext);
 
-      expect(result.kind).toBe('status-update');
-      expect(result.status?.state).toBe('failed');
+      expect(isTaskStatusUpdateEvent(result)).toBe(true);
+      expect(result.status?.state).toBe(TaskState.TASK_STATE_FAILED);
       const parts = result.status?.message?.parts;
-      expect((parts?.[0] as TextPart)?.text).toContain('Just a message');
+      expect(textOf(parts?.[0])).toContain('Just a message');
     });
 
     it('returns TaskFailedEvent falling back to errorCode when errorMessage is undefined', () => {
@@ -95,10 +140,10 @@ describe('event_processor_utils', () => {
       ];
       const result = getFinalTaskStatusUpdate(events, mockContext);
 
-      expect(result.kind).toBe('status-update');
-      expect(result.status?.state).toBe('failed');
+      expect(isTaskStatusUpdateEvent(result)).toBe(true);
+      expect(result.status?.state).toBe(TaskState.TASK_STATE_FAILED);
       const parts = result.status?.message?.parts;
-      expect((parts?.[0] as TextPart)?.text).toBe('ERROR_001');
+      expect(textOf(parts?.[0])).toBe('ERROR_001');
     });
 
     it('merges escalate and transferToAgent from actions and returns TaskCompletedEvent', () => {
@@ -112,8 +157,8 @@ describe('event_processor_utils', () => {
       ];
       const result = getFinalTaskStatusUpdate(events, mockContext);
 
-      expect(result.kind).toBe('status-update');
-      expect(result.status?.state).toBe('completed');
+      expect(isTaskStatusUpdateEvent(result)).toBe(true);
+      expect(result.status?.state).toBe(TaskState.TASK_STATE_COMPLETED);
       expect(result.metadata).toEqual(
         expect.objectContaining({
           adk_session_id: 'test-session',
@@ -136,12 +181,12 @@ describe('event_processor_utils', () => {
       ];
       const result = getFinalTaskStatusUpdate(events, mockContext);
 
-      expect(result.kind).toBe('status-update');
-      expect(result.status?.state).toBe('input-required');
+      expect(isTaskStatusUpdateEvent(result)).toBe(true);
+      expect(result.status?.state).toBe(TaskState.TASK_STATE_INPUT_REQUIRED);
 
       // Converted to A2AParts by toA2AParts
       const parts = result.status?.message?.parts;
-      expect((parts?.[0] as DataPart)?.data?.id).toBe('call_1');
+      expect(dataOf(parts?.[0])?.id).toBe('call_1');
     });
 
     it('returns TaskInputRequiredEvent if there are longRunningToolIds that match functionResponse', () => {
@@ -163,11 +208,11 @@ describe('event_processor_utils', () => {
       ];
       const result = getFinalTaskStatusUpdate(events, mockContext);
 
-      expect(result.kind).toBe('status-update');
-      expect(result.status?.state).toBe('input-required');
+      expect(isTaskStatusUpdateEvent(result)).toBe(true);
+      expect(result.status?.state).toBe(TaskState.TASK_STATE_INPUT_REQUIRED);
 
       const parts = result.status?.message?.parts;
-      expect((parts?.[0] as DataPart)?.data?.id).toBe('call_2');
+      expect(dataOf(parts?.[0])?.id).toBe('call_2');
     });
 
     it('does not duplicate required inputs for the same functionCall id', () => {
@@ -186,11 +231,11 @@ describe('event_processor_utils', () => {
       ];
       const result = getFinalTaskStatusUpdate(events, mockContext);
 
-      expect(result.kind).toBe('status-update');
-      expect(result.status?.state).toBe('input-required');
+      expect(isTaskStatusUpdateEvent(result)).toBe(true);
+      expect(result.status?.state).toBe(TaskState.TASK_STATE_INPUT_REQUIRED);
       const parts = result.status?.message?.parts;
       expect(parts?.length).toBe(1);
-      expect((parts?.[0] as DataPart)?.data?.id).toBe('call_1');
+      expect(dataOf(parts?.[0])?.id).toBe('call_1');
     });
 
     const credentialRequestEvent = (): AdkEvent =>
@@ -224,10 +269,10 @@ describe('event_processor_utils', () => {
         mockContext,
       );
 
-      expect(result.status.state).toBe('auth-required');
-      expect(result.final).toBe(true);
+      expect(result.status?.state).toBe(TaskState.TASK_STATE_AUTH_REQUIRED);
+      expect(isFinalTaskStatusUpdateEvent(result)).toBe(true);
       expect(
-        result.status.message?.parts.map((part) => (part as DataPart).data.id),
+        result.status?.message?.parts.map((part) => dataOf(part)?.id),
       ).toEqual(['credential-call']);
     });
 
@@ -245,8 +290,8 @@ describe('event_processor_utils', () => {
       ({events}) => {
         const result = getFinalTaskStatusUpdate(events(), mockContext);
 
-        expect(result.status.state).toBe('auth-required');
-        expect(result.status.message?.parts).toHaveLength(2);
+        expect(result.status?.state).toBe(TaskState.TASK_STATE_AUTH_REQUIRED);
+        expect(result.status?.message?.parts).toHaveLength(2);
       },
     );
 
@@ -256,7 +301,7 @@ describe('event_processor_utils', () => {
         mockContext,
       );
 
-      expect(result.status.state).toBe('failed');
+      expect(result.status?.state).toBe(TaskState.TASK_STATE_FAILED);
     });
   });
 
@@ -281,54 +326,38 @@ describe('event_processor_utils', () => {
     });
 
     it('returns undefined if task is not input required', () => {
-      const task = {
-        kind: 'task',
-        status: {state: 'working'},
-      } as Task;
+      const task = createTestTask({state: TaskState.TASK_STATE_WORKING});
       expect(check(task, {} as GenAIContent)).toBeUndefined();
     });
 
     it('holds the pause of an auth-required task whose request is unanswered', () => {
-      const task = {
-        id: 'task1',
-        contextId: 'ctx1',
-        kind: 'task',
-        status: {
-          state: 'auth-required',
-          message: {
-            kind: 'message',
-            messageId: 'msg1',
-            role: 'agent',
-            parts: toA2AParts(
-              [
-                {
-                  functionCall: {
-                    id: 'credential-call',
-                    name: 'adk_request_credential',
-                    args: {},
-                  },
-                },
-              ],
-              ['credential-call'],
-            ),
-          },
-        },
-      } as Task;
+      const task = createTestTask({
+        state: TaskState.TASK_STATE_AUTH_REQUIRED,
+        parts: toA2AParts(
+          [
+            {
+              functionCall: {
+                id: 'credential-call',
+                name: 'adk_request_credential',
+                args: {},
+              },
+            },
+          ],
+          ['credential-call'],
+        ),
+      });
 
       const result = check(task, {
         parts: [{text: 'any news?'}],
       } as GenAIContent);
 
-      expect(
-        (result?.status.message?.parts.at(-1) as TextPart | undefined)?.text,
-      ).toBe('No input provided for function call id credential-call');
+      expect(textOf(result?.status?.message?.parts.at(-1))).toBe(
+        'No input provided for function call id credential-call',
+      );
     });
 
     it('returns undefined if task does not have a status message', () => {
-      const task = {
-        kind: 'task',
-        status: {state: 'input-required'},
-      } as Task;
+      const task = createTestTask({state: TaskState.TASK_STATE_INPUT_REQUIRED});
       expect(check(task, {} as GenAIContent)).toBeUndefined();
     });
 
@@ -336,17 +365,12 @@ describe('event_processor_utils', () => {
       const taskParts = toA2AParts([
         {functionCall: {id: 'call_1', name: 'myFunc', args: {}}},
       ]);
-      const task = {
+      const task = createTestTask({
         id: 't1',
         contextId: 'c1',
-        kind: 'task',
-        status: {
-          state: 'input-required',
-          message: {
-            parts: taskParts,
-          },
-        },
-      } as Task;
+        state: TaskState.TASK_STATE_INPUT_REQUIRED,
+        parts: taskParts,
+      });
       const genAIContent = {
         parts: [
           {functionResponse: {id: 'call_1', name: 'myFunc', response: {}}},
@@ -360,31 +384,26 @@ describe('event_processor_utils', () => {
       const taskParts = toA2AParts([
         {functionCall: {id: 'call_1', name: 'myFunc', args: {}}},
       ]);
-      const task = {
+      const task = createTestTask({
         id: 'taskId1',
         contextId: 'contextId1',
-        kind: 'task',
-        status: {
-          state: 'input-required',
-          message: {
-            parts: taskParts,
-          },
-        },
-      } as Task;
+        state: TaskState.TASK_STATE_INPUT_REQUIRED,
+        parts: taskParts,
+      });
       const genAIContent = {
         parts: [{text: 'I can not do that.'}],
       } as GenAIContent;
 
       const result = check(task, genAIContent);
       expect(result).toBeDefined();
-      expect(result!.kind).toBe('status-update');
-      expect(result!.status?.state).toBe('input-required');
+      expect(isTaskStatusUpdateEvent(result)).toBe(true);
+      expect(result!.status?.state).toBe(TaskState.TASK_STATE_INPUT_REQUIRED);
 
       const parts = result!.status?.message?.parts;
       expect(parts).toBeDefined();
       expect(parts!.length).toBe(2);
-      expect((parts![0] as DataPart)?.data?.id).toBe('call_1');
-      expect((parts![1] as TextPart)?.text).toContain(
+      expect(dataOf(parts![0])?.id).toBe('call_1');
+      expect(textOf(parts![1])).toContain(
         'No input provided for function call id call_1',
       );
       expect(parts![1].metadata?.validation_error).toBe(true);
@@ -392,17 +411,12 @@ describe('event_processor_utils', () => {
 
     it('returns undefined if status message has no functionCall parts', () => {
       const taskParts = toA2AParts([{text: 'Please answer'}]);
-      const task = {
+      const task = createTestTask({
         id: 'taskId1',
         contextId: 'contextId1',
-        kind: 'task',
-        status: {
-          state: 'input-required',
-          message: {
-            parts: taskParts,
-          },
-        },
-      } as Task;
+        state: TaskState.TASK_STATE_INPUT_REQUIRED,
+        parts: taskParts,
+      });
       const genAIContent = {
         parts: [{text: 'Sure!'}],
       } as GenAIContent;
@@ -433,10 +447,10 @@ describe('event_processor_utils', () => {
         [pendingCallEvent('gate-1')],
       );
 
-      expect(result?.status?.state).toBe('input-required');
+      expect(result?.status?.state).toBe(TaskState.TASK_STATE_INPUT_REQUIRED);
       const parts = result!.status?.message?.parts;
-      expect((parts![0] as DataPart)?.data?.id).toBe('gate-1');
-      expect((parts![1] as TextPart)?.text).toContain(
+      expect(dataOf(parts![0])?.id).toBe('gate-1');
+      expect(textOf(parts![1])).toContain(
         'No input provided for function call id gate-1',
       );
     });
@@ -535,8 +549,8 @@ describe('event_processor_utils', () => {
         [credentialRequest],
       );
 
-      expect(result?.status?.state).toBe('input-required');
-      expect((result!.status?.message?.parts![1] as TextPart)?.text).toContain(
+      expect(result?.status?.state).toBe(TaskState.TASK_STATE_INPUT_REQUIRED);
+      expect(textOf(result!.status?.message?.parts![1])).toContain(
         'No input provided for function call id adk-credential-call',
       );
     });
