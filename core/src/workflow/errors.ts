@@ -160,6 +160,33 @@ export function isInvocationAbortedError(
   return e instanceof Error && e.name === 'InvocationAbortedError';
 }
 
+const WORKFLOW_DATA_ERROR_SYMBOL = Symbol.for(
+  'google.adk.workflow.workflowDataError',
+);
+
+/**
+ * Raised when data arriving during a workflow run does not fit what accepts it,
+ * such as a missing or invalid node input or a classifier answer that cannot
+ * select a route.
+ */
+export class WorkflowDataError extends Error {
+  readonly [WORKFLOW_DATA_ERROR_SYMBOL] = true;
+
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'WorkflowDataError';
+    Object.setPrototypeOf(this, WorkflowDataError.prototype);
+  }
+}
+
+/** Type guard for {@link WorkflowDataError} (brand- and name-based). */
+export function isWorkflowDataError(e: unknown): e is WorkflowDataError {
+  return (
+    e instanceof Error &&
+    (e.name === 'WorkflowDataError' || WORKFLOW_DATA_ERROR_SYMBOL in e)
+  );
+}
+
 /**
  * Raised when a node's input or output fails its declared schema.
  *
@@ -168,7 +195,7 @@ export function isInvocationAbortedError(
  * effectively unattributed. This wrapper names the node and which side of it
  * failed, and keeps the original error on `cause` for the full detail.
  */
-export class NodeSchemaValidationError extends Error {
+export class NodeSchemaValidationError extends WorkflowDataError {
   readonly nodeName: string;
   /** Which side of the node failed: its `inputSchema` or its `outputSchema`. */
   readonly direction: 'input' | 'output';
