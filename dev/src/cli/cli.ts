@@ -10,6 +10,7 @@ import {
   BaseMemoryService,
   BaseSessionService,
   createGcsEvalManagersFromUri,
+  type DatabaseSessionServiceOptions,
   EvalCase,
   EvalMetric,
   EvalResult,
@@ -26,6 +27,7 @@ import {
   loadDotenvForAgent,
   loadEvalSetFromFile,
   LocalEvalSetResultsManager,
+  LocalEvalSetsManager,
   LogLevel,
   logToTmpFolder,
   parseAndGetEvalsToRun,
@@ -142,6 +144,7 @@ function parseAgentEngineUri(uri: string): AgentEngineResource {
 /** Options that select the session service the CLI commands use. */
 export interface SessionServiceOptions {
   sessionServiceUri?: string;
+  sessionDbOptions?: DatabaseSessionServiceOptions;
   baseDir?: string;
 }
 
@@ -156,15 +159,14 @@ export function getSessionServiceFromOptions(
   baseDir?: string,
 ): BaseSessionService {
   let uri: string | undefined;
+  let sessionDbOptions: DatabaseSessionServiceOptions | undefined;
   let dir = baseDir;
 
   if (typeof optionsOrUri === 'string') {
     uri = optionsOrUri;
   } else if (optionsOrUri) {
-    uri =
-      optionsOrUri.sessionServiceUri ??
-      ((optionsOrUri as Record<string, unknown>)['session_service_uri'] as
-        string | undefined);
+    uri = optionsOrUri.sessionServiceUri;
+    sessionDbOptions = optionsOrUri.sessionDbOptions;
     dir = optionsOrUri.baseDir ?? dir;
   }
 
@@ -178,6 +180,7 @@ export function getSessionServiceFromOptions(
 
   return getSessionServiceFromUri(
     uri || process.env.DATABASE_URL || 'memory://',
+    sessionDbOptions,
   );
 }
 
@@ -221,10 +224,7 @@ export function getMemoryServiceFromOptions(
   if (typeof optionsOrUri === 'string') {
     uri = optionsOrUri;
   } else if (optionsOrUri) {
-    uri =
-      optionsOrUri.memoryServiceUri ??
-      ((optionsOrUri as Record<string, unknown>)['memory_service_uri'] as
-        string | undefined);
+    uri = optionsOrUri.memoryServiceUri;
     dir = optionsOrUri.baseDir ?? dir;
   }
 
@@ -301,13 +301,17 @@ async function getStoredEvalSet({
   return evalSet;
 }
 
+function isExistingFile(filePath: string): boolean {
+  return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+}
+
 /**
  * Loads the eval cases that `adk eval` runs, keyed by eval set ID.
  *
- * Each key of `evalSetToEvals` is an eval set file path. When an
- * `evalSetsManager` is given and the first key is not an existing file, the
- * keys are eval set IDs that the manager reads instead. An empty case list
- * runs every case of the eval set.
+ * All keys of `evalSetToEvals` must be either existing regular files or eval
+ * set IDs (mixing the two throws an error). Existing files take precedence over
+ * eval set IDs with the same name; otherwise `evalSetsManager` reads each ID
+ * from storage. An empty case list runs every case of the eval set.
  */
 async function loadEvalCasesToRun({
   evalSetToEvals,
@@ -319,10 +323,19 @@ async function loadEvalCasesToRun({
   appName: string;
 }): Promise<Record<string, EvalCase[]>> {
   const keys = Object.keys(evalSetToEvals);
-  const readFromStore =
-    evalSetsManager !== undefined &&
-    keys.length > 0 &&
-    !fs.existsSync(getAbsolutePath(keys[0]));
+  if (keys.length === 0) {
+    return {};
+  }
+  const existingFiles = keys.map((key) => isExistingFile(getAbsolutePath(key)));
+  const hasExistingFile = existingFiles.some(Boolean);
+  const hasNonExistingFile = existingFiles.some((isFile) => !isFile);
+  if (hasExistingFile && hasNonExistingFile) {
+    const firstNonFile = keys.find((_, i) => !existingFiles[i]);
+    throw new Error(
+      `Mixing eval set file paths and eval set IDs is not allowed: '${firstNonFile}' is not an existing file.`,
+    );
+  }
+  const readFromStore = evalSetsManager !== undefined && !hasExistingFile;
   const evalSets = await Promise.all(
     keys.map(async (key) =>
       readFromStore
@@ -595,9 +608,15 @@ export function createProgram(): Command {
           serveDebugUI: true,
           allowOrigins: options['allow_origins'],
           allowedHosts: getAllowedHosts(options['allowed_hosts']),
-          sessionService: getSessionServiceFromOptions(options, absAgentsDir),
+          sessionService: getSessionServiceFromOptions(
+            {sessionServiceUri: options['session_service_uri']},
+            absAgentsDir,
+          ),
           artifactService: getArtifactServiceFromOptions(options),
-          memoryService: getMemoryServiceFromOptions(options, absAgentsDir),
+          memoryService: getMemoryServiceFromOptions(
+            {memoryServiceUri: options['memory_service_uri']},
+            absAgentsDir,
+          ),
           ...(await getEvalManagersFromOptions(options)),
           otelToCloud: getBoolean(options['otel_to_cloud']),
           agentFileLoadOptions: getAgentFileOptions(options),
@@ -649,9 +668,15 @@ export function createProgram(): Command {
           serveDebugUI: false,
           allowOrigins: options['allow_origins'],
           allowedHosts: getAllowedHosts(options['allowed_hosts']),
-          sessionService: getSessionServiceFromOptions(options, absAgentsDir),
+          sessionService: getSessionServiceFromOptions(
+            {sessionServiceUri: options['session_service_uri']},
+            absAgentsDir,
+          ),
           artifactService: getArtifactServiceFromOptions(options),
-          memoryService: getMemoryServiceFromOptions(options, absAgentsDir),
+          memoryService: getMemoryServiceFromOptions(
+            {memoryServiceUri: options['memory_service_uri']},
+            absAgentsDir,
+          ),
           ...(await getEvalManagersFromOptions(options)),
           otelToCloud: getBoolean(options['otel_to_cloud']),
           agentFileLoadOptions: getAgentFileOptions(options),
@@ -748,12 +773,12 @@ export function createProgram(): Command {
           saveSession: getBoolean(options['save_session']),
           sessionId: options['session_id'],
           sessionService: getSessionServiceFromOptions(
-            options,
+            {sessionServiceUri: options['session_service_uri']},
             path.dirname(absAgentPath),
           ),
           artifactService: getArtifactServiceFromOptions(options),
           memoryService: getMemoryServiceFromOptions(
-            options,
+            {memoryServiceUri: options['memory_service_uri']},
             path.dirname(absAgentPath),
           ),
           otelToCloud: getBoolean(options['otel_to_cloud']),
@@ -775,9 +800,11 @@ export function createProgram(): Command {
     )
     .argument(
       '[eval_set_file_path_or_id...]',
-      'One or more eval set file paths, each optionally followed by ' +
-        ':eval_1,eval_2. With --eval_storage_uri, the values are eval set ' +
-        'IDs read from the storage, unless the first value is an existing file.',
+      'One or more eval set file paths or eval set IDs (mixing file paths ' +
+        'and IDs is not allowed), each optionally followed by ' +
+        ':eval_1,eval_2. Existing files take precedence over eval set IDs ' +
+        'with the same name; otherwise values are read from local storage ' +
+        'or the --eval_storage_uri bucket.',
     )
     .option(
       '--config-file-path, --config_file_path <string>',
@@ -822,15 +849,18 @@ export function createProgram(): Command {
           const rootAgent = await getRootAgent(absAgentPath);
           const resetFunc = await tryGetResetFunc(absAgentPath);
 
-          const isAgentFile =
-            fs.existsSync(absAgentPath) && fs.statSync(absAgentPath).isFile();
+          const isAgentFile = isExistingFile(absAgentPath);
           const appName = isAgentFile
             ? path.basename(absAgentPath, path.extname(absAgentPath))
             : path.basename(absAgentPath);
+          const agentsDir = path.dirname(absAgentPath);
           const evalManagers = await getEvalManagersFromOptions(options);
+          const evalSetsManager: EvalSetsManager =
+            evalManagers?.evalSetsManager ??
+            new LocalEvalSetsManager(agentsDir);
           const evalCasesByEvalSetId = await loadEvalCasesToRun({
             evalSetToEvals: parseAndGetEvalsToRun(evalSetFilePathsOrIds),
-            evalSetsManager: evalManagers?.evalSetsManager,
+            evalSetsManager,
             appName,
           });
 
@@ -847,26 +877,23 @@ export function createProgram(): Command {
 
           const evalSetResultsManager: EvalSetResultsManager =
             evalManagers?.evalSetResultsManager ??
-            new LocalEvalSetResultsManager(path.dirname(absAgentPath));
-          const evalSetIdToEvalResults: Record<string, EvalResult[]> = {};
+            new LocalEvalSetResultsManager(agentsDir);
+          const evalSetIdToEvalResults = new Map<string, EvalResult[]>();
           for (const evalResult of evalResults) {
             const rawSetId = evalResult.eval_set_id;
             const evalSetId = path
               .basename(rawSetId)
               .replace(/\.evalset\.json$/, '')
               .replace(/\.json$/, '');
-            if (
-              !Object.prototype.hasOwnProperty.call(
-                evalSetIdToEvalResults,
-                evalSetId,
-              )
-            ) {
-              evalSetIdToEvalResults[evalSetId] = [];
+            const existingResults = evalSetIdToEvalResults.get(evalSetId);
+            if (existingResults) {
+              existingResults.push(evalResult);
+            } else {
+              evalSetIdToEvalResults.set(evalSetId, [evalResult]);
             }
-            evalSetIdToEvalResults[evalSetId].push(evalResult);
           }
           await Promise.all(
-            Object.entries(evalSetIdToEvalResults).map(
+            [...evalSetIdToEvalResults.entries()].map(
               async ([evalSetId, evalCaseResults]) =>
                 evalSetResultsManager.saveEvalSetResult({
                   appName,
@@ -879,25 +906,23 @@ export function createProgram(): Command {
           process.stdout.write(
             '*********************************************************************\n',
           );
-          const evalRunSummary: Record<string, [number, number]> = {};
+          const evalRunSummary = new Map<string, [number, number]>();
           for (const evalResult of evalResults) {
             const summaryKey = evalResult.eval_set_id;
-            if (
-              !Object.prototype.hasOwnProperty.call(evalRunSummary, summaryKey)
-            ) {
-              evalRunSummary[summaryKey] = [0, 0];
+            let counts = evalRunSummary.get(summaryKey);
+            if (!counts) {
+              counts = [0, 0];
+              evalRunSummary.set(summaryKey, counts);
             }
             if (evalResult.final_eval_status === EvalStatus.PASSED) {
-              evalRunSummary[summaryKey][0] += 1;
+              counts[0] += 1;
             } else {
-              evalRunSummary[summaryKey][1] += 1;
+              counts[1] += 1;
             }
           }
 
           process.stdout.write('Eval Run Summary\n');
-          for (const [evalSetFile, passFailCount] of Object.entries(
-            evalRunSummary,
-          )) {
+          for (const [evalSetFile, passFailCount] of evalRunSummary.entries()) {
             process.stdout.write(
               `${evalSetFile}:\n  Tests passed: ${passFailCount[0]}\n  Tests failed: ${passFailCount[1]}\n`,
             );
