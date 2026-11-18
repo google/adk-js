@@ -10,6 +10,7 @@ import {
   FunctionTool,
   isBaseToolset,
   isFunctionTool,
+  isToolboxTool,
   isToolboxToolset,
   ReadonlyContext,
   RunAsyncToolRequest,
@@ -331,7 +332,13 @@ describe('ToolboxToolset', () => {
       },
     });
     const [unprefixedTool] = await unprefixedToolset.getTools(readonlyContext);
-    expect(unprefixedTool).toBe(rawInstance);
+    expect(unprefixedTool.name).toBe('private_tool');
+    expect(
+      await unprefixedTool.runAsync({
+        args: {value: 'x'},
+        toolContext: emptyContext,
+      }),
+    ).toBe('secret:x');
 
     const prefixedToolset = new ToolboxToolset({
       toolsetName: 'prefixed',
@@ -450,6 +457,87 @@ describe('ToolboxToolset', () => {
     );
   });
 
+  it('marks every loaded tool for isToolboxTool without changing client tools', async () => {
+    const clientTool = new FunctionTool({
+      name: 'pre_wrapped',
+      description: 'Already wrapped tool',
+      execute: () => 'wrapped_ok',
+    });
+    function rawFunctionTool() {
+      return 'raw_fn_ok';
+    }
+    const client = {
+      loadToolset: async () => [clientTool, rawFunctionTool],
+      loadTool: async (name: string) => ({
+        name,
+        description: 'Single tool',
+        execute: () => 'single_ok',
+      }),
+    };
+
+    for (const prefix of [undefined, 'tbx']) {
+      const tools = await new ToolboxToolset({
+        serverUrl: 'http://127.0.0.1:5000',
+        toolsetName: 'travel',
+        toolNames: ['single_op'],
+        prefix,
+        client,
+      }).getTools(readonlyContext);
+
+      expect(tools).toHaveLength(3);
+      expect(tools.map((tool) => isToolboxTool(tool))).toEqual([
+        true,
+        true,
+        true,
+      ]);
+      expect(tools[0]).not.toBe(clientTool);
+      expect(tools[0].name).toBe(prefix ? 'tbx_pre_wrapped' : 'pre_wrapped');
+      expect(
+        await tools[0].runAsync({args: {}, toolContext: emptyContext}),
+      ).toBe('wrapped_ok');
+    }
+
+    expect(clientTool.name).toBe('pre_wrapped');
+    expect(isToolboxTool(clientTool)).toBe(false);
+    expect(isToolboxTool(null)).toBe(false);
+    expect(isToolboxTool(undefined)).toBe(false);
+    expect(isToolboxTool({})).toBe(false);
+  });
+
+  it('wraps a frozen client BaseTool, keeping its private and accumulated state', async () => {
+    class StatefulTool extends BaseTool {
+      #calls = 0;
+      constructor() {
+        super({name: 'stateful', description: 'Counts its calls.'});
+      }
+      override async runAsync(): Promise<unknown> {
+        this.#calls += 1;
+        return this.#calls;
+      }
+    }
+    const clientTool = Object.freeze(new StatefulTool());
+    const toolset = new ToolboxToolset({
+      serverUrl: 'http://127.0.0.1:5000',
+      toolNames: ['stateful'],
+      client: {
+        loadToolset: async () => [],
+        loadTool: async () => clientTool,
+      },
+    });
+
+    const run = async () => {
+      const [tool] = await toolset.getTools(readonlyContext);
+      expect(tool).not.toBe(clientTool);
+      expect(tool).toBeInstanceOf(StatefulTool);
+      expect(isToolboxTool(tool)).toBe(true);
+      return tool.runAsync({args: {}, toolContext: emptyContext});
+    };
+
+    expect(await run()).toBe(1);
+    expect(await run()).toBe(2);
+    expect(isToolboxTool(clientTool)).toBe(false);
+  });
+
   // reference: test_toolbox_toolset_delegates_typed_lifecycle
   it('delegates loadToolset, loadTool, and close to the underlying ToolboxClient', async () => {
     const toolsetTool = new FunctionTool({
@@ -480,7 +568,7 @@ describe('ToolboxToolset', () => {
     const tools = await toolset.getTools(readonlyContext);
     await toolset.close();
 
-    expect(tools).toEqual([toolsetTool, dummyTool]);
+    expect(tools.map((tool) => tool.name)).toEqual(['lookup', 'search']);
     expect(loadToolset).toHaveBeenCalledWith('travel', {}, {});
     expect(loadTool).toHaveBeenCalledWith('search', {}, {});
     expect(close).toHaveBeenCalledTimes(1);
