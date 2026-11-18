@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content} from '@google/genai';
+import {Content, Part} from '@google/genai';
 
 import {BaseAgent} from '../agents/base_agent.js';
 import {Context} from '../agents/context.js';
@@ -20,7 +20,34 @@ import {LlmResponse} from '../models/llm_response.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {logger} from '../utils/logger.js';
 
+import {
+  classifyToolResultError,
+  isDurableNodeError,
+  markToolErrorRecorded,
+  popToolErrorRecorded,
+  type ToolResultClassifier,
+  validateToolResultClassifier,
+} from './_callback_helpers.js';
 import {BasePlugin} from './base_plugin.js';
+
+/**
+ * Options for configuring {@link LoggingPlugin}.
+ */
+export interface LoggingPluginOptions {
+  /**
+   * The name of the plugin instance.
+   * @defaultValue 'logging_plugin'
+   */
+  readonly name?: string;
+
+  /**
+   * Classifies the results of the application's own tools as a tool error or a
+   * completed call; see {@link ToolResultClassifier}. One that throws or
+   * returns an unusable verdict at runtime is skipped with a warning that
+   * names only the tool, and the built-in rule applies.
+   */
+  readonly toolResultClassifier?: ToolResultClassifier | null;
+}
 
 /**
  * A plugin that logs important information at each callback point.
@@ -33,10 +60,18 @@ import {BasePlugin} from './base_plugin.js';
  * This plugin helps users track the invocation status by logging:
  * - User messages and invocation context
  * - Agent execution flow
- * - LLM requests and responses
+ * - LLM requests and responses, with the finish reason of a final response
  * - Tool calls with arguments and results
- * - Events and final responses
+ * - Events and final responses, with the path, output and failure of the
+ *   workflow node that emitted them
  * - Errors during model and tool execution
+ *
+ * A tool call is logged as a `TOOL ERROR` when the tool throws, and also when
+ * its result reports a failure without throwing: a
+ * {@link ReflectAndRetryToolPlugin} answer, an MCP result with `isError` set,
+ * or a result that `toolResultClassifier` classifies as an error. A thrown
+ * error is logged once, even when a later plugin's answer to it reaches
+ * `afterToolCallback` as the call's result.
  *
  * Example:
  * ```typescript
@@ -50,13 +85,30 @@ import {BasePlugin} from './base_plugin.js';
  * ```
  */
 export class LoggingPlugin extends BasePlugin {
+  private readonly toolResultClassifier: ToolResultClassifier | null;
+
   /**
    * Initialize the logging plugin.
    *
-   * @param name The name of the plugin instance.
+   * @param nameOrOptions The name of the plugin instance, or configuration options.
+   * @param options Configuration options when a custom name is passed first.
    */
-  constructor(name = 'logging_plugin') {
+  constructor(
+    nameOrOptions?: string | LoggingPluginOptions,
+    options?: LoggingPluginOptions,
+  ) {
+    const resolvedOptions =
+      typeof nameOrOptions === 'object' && nameOrOptions !== null
+        ? nameOrOptions
+        : options;
+    const name =
+      typeof nameOrOptions === 'string'
+        ? nameOrOptions
+        : (resolvedOptions?.name ?? 'logging_plugin');
     super(name);
+    const classifier = resolvedOptions?.toolResultClassifier ?? null;
+    validateToolResultClassifier(classifier);
+    this.toolResultClassifier = classifier;
   }
 
   override async onUserMessageCallback({
@@ -120,6 +172,25 @@ export class LoggingPlugin extends BasePlugin {
       this.log(`   Long Running Tools: ${[...event.longRunningToolIds]}`);
     }
 
+    const nodeInfo = event.nodeInfo;
+    if (nodeInfo?.path) {
+      this.log(`   Node Path: ${nodeInfo.path}`);
+      if (event.partial !== true) {
+        if (
+          event.output !== undefined &&
+          event.output !== null &&
+          nodeInfo.messageAsOutput !== true
+        ) {
+          this.log(`   Node Output: ${this.formatValue(event.output)}`);
+        }
+        if (isDurableNodeError(event)) {
+          this.log(
+            `   Node Error: [${event.errorCode}] ${event.errorMessage ?? ''}`.trimEnd(),
+          );
+        }
+      }
+    }
+
     return undefined;
   }
 
@@ -172,10 +243,13 @@ export class LoggingPlugin extends BasePlugin {
     this.log(`   Model: ${llmRequest.model ?? 'default'}`);
     this.log(`   Agent: ${callbackContext.agentName}`);
 
-    if (llmRequest.config && llmRequest.config.systemInstruction) {
-      let sysInstruction = llmRequest.config.systemInstruction as string;
-      if (sysInstruction.length > 200) {
-        sysInstruction = sysInstruction.substring(0, 200) + '...';
+    const systemInstruction = llmRequest.config?.systemInstruction;
+    if (systemInstruction) {
+      const renderedInstruction =
+        this.renderSystemInstruction(systemInstruction);
+      let sysInstruction = renderedInstruction.slice(0, 200);
+      if (renderedInstruction.length > 200) {
+        sysInstruction += '...';
       }
       this.log(`   System Instruction: '${sysInstruction}'`);
     }
@@ -197,8 +271,9 @@ export class LoggingPlugin extends BasePlugin {
   }): Promise<LlmResponse | undefined> {
     this.log('🧠 LLM RESPONSE');
     this.log(`   Agent: ${callbackContext.agentName}`);
+    const isFinal = llmResponse.partial !== true;
 
-    if (llmResponse.errorCode) {
+    if (isFinal && llmResponse.errorCode) {
       this.log(`   ❌ ERROR - Code: ${llmResponse.errorCode}`);
       this.log(`   Error Message: ${llmResponse.errorMessage}`);
     } else {
@@ -209,6 +284,10 @@ export class LoggingPlugin extends BasePlugin {
       if (llmResponse.turnComplete !== undefined) {
         this.log(`   Turn Complete: ${llmResponse.turnComplete}`);
       }
+    }
+
+    if (isFinal && llmResponse.finishReason) {
+      this.log(`   Finish Reason: ${llmResponse.finishReason}`);
     }
 
     if (llmResponse.usageMetadata) {
@@ -239,6 +318,7 @@ export class LoggingPlugin extends BasePlugin {
 
   override async afterToolCallback({
     tool,
+    toolArgs,
     toolContext,
     result,
   }: {
@@ -247,6 +327,26 @@ export class LoggingPlugin extends BasePlugin {
     toolContext: Context;
     result: Record<string, unknown>;
   }): Promise<Record<string, unknown> | undefined> {
+    if (popToolErrorRecorded(this, toolContext)) {
+      return undefined;
+    }
+    const errorMessage = classifyToolResultError({
+      tool,
+      toolArgs,
+      toolContext,
+      result,
+      toolResultClassifier: this.toolResultClassifier,
+    });
+    if (errorMessage !== null) {
+      this.log('🔧 TOOL ERROR');
+      this.log(`   Tool Name: ${tool.name}`);
+      this.log(`   Agent: ${toolContext.agentName}`);
+      this.log(`   Function Call ID: ${toolContext.functionCallId}`);
+      this.log(`   Arguments: ${this.formatArgs(toolArgs)}`);
+      this.log(`   Result: ${this.formatArgs(result)}`);
+      this.log(`   Error: ${errorMessage}`);
+      return undefined;
+    }
     this.log('🔧 TOOL COMPLETED');
     this.log(`   Tool Name: ${tool.name}`);
     this.log(`   Agent: ${toolContext.agentName}`);
@@ -281,18 +381,42 @@ export class LoggingPlugin extends BasePlugin {
     toolContext: Context;
     error: Error;
   }): Promise<Record<string, unknown> | undefined> {
-    this.log('🔧 TOOL ERROR');
-    this.log(`   Tool Name: ${tool.name}`);
-    this.log(`   Agent: ${toolContext.agentName}`);
-    this.log(`   Function Call ID: ${toolContext.functionCallId}`);
-    this.log(`   Arguments: ${this.formatArgs(toolArgs)}`);
-    this.log(`   Error: ${error}`);
+    const lines = [
+      '🔧 TOOL ERROR',
+      `   Tool Name: ${tool.name}`,
+      `   Agent: ${toolContext.agentName}`,
+      `   Function Call ID: ${toolContext.functionCallId}`,
+      `   Arguments: ${this.formatArgs(toolArgs)}`,
+      `   Error: ${error}`,
+    ];
+    markToolErrorRecorded(this, toolContext);
+    for (const line of lines) {
+      this.log(line);
+    }
     return undefined;
   }
 
   private log(message: string): void {
     const formattedMessage = `\u001b[90m[${this.name}] ${message}\u001b[0m`;
     logger.info(formattedMessage);
+  }
+
+  private renderSystemInstruction(systemInstruction: unknown): string {
+    if (typeof systemInstruction === 'string') {
+      return systemInstruction;
+    }
+    if (Array.isArray(systemInstruction)) {
+      return systemInstruction
+        .map((entry) => this.renderSystemInstruction(entry))
+        .join(' | ');
+    }
+    if (typeof systemInstruction === 'object' && systemInstruction !== null) {
+      if ('parts' in systemInstruction) {
+        return this.formatContent(systemInstruction as Content);
+      }
+      return this.formatContent({parts: [systemInstruction as Part]});
+    }
+    return String(systemInstruction);
   }
 
   private formatContent(content?: Content, maxLength = 200): string {
@@ -330,6 +454,17 @@ export class LoggingPlugin extends BasePlugin {
     let formatted = JSON.stringify(args);
     if (formatted.length > maxLength) {
       formatted = formatted.substring(0, maxLength) + '...}';
+    }
+    return formatted;
+  }
+
+  private formatValue(value: unknown, maxLength = 300): string {
+    let formatted =
+      typeof value === 'string'
+        ? `'${value}'`
+        : (JSON.stringify(value) ?? String(value));
+    if (formatted.length > maxLength) {
+      formatted = formatted.slice(0, maxLength) + '...';
     }
     return formatted;
   }

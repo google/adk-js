@@ -94,7 +94,7 @@ Planning for an `LlmAgent` through its `planner` option: the model's built-in th
 
 Runner-wide callbacks: a plugin observes or changes the user message, the run, each agent, each model request, each tool call and each event of a runner.
 
-- [Plugins](plugins/index.md) - `BasePlugin`, `PluginManager`, `PluginCallbackName`, registration through `Runner`, `InMemoryRunner` and `App`, and the order, early exit and error handling of plugin callbacks.
+- [Plugins](plugins/index.md) - `BasePlugin`, `PluginManager`, `PluginCallbackName`, `LoggingPlugin`, `LoggingPluginOptions`, `ToolResultClassifier`, `ToolResultClassification`, `toolResultClassification`, registration through `Runner`, `InMemoryRunner` and `App`, and the order, early exit and error handling of plugin callbacks.
 
 ### Runners
 
