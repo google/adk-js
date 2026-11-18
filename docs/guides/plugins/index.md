@@ -142,6 +142,17 @@ A callback can also change its input in place, for example add text to `llmReque
 | `hasPlugins`                  | `true` when one plugin or more is registered.                                                          |
 | `run...` methods              | One method for each callback, for example `runBeforeToolCallback`. ADK calls them; you usually do not. |
 
+### `LoggingPluginOptions` and `toolResultClassification`
+
+`new LoggingPlugin(nameOrOptions?, options?)` accepts an optional instance name or a `LoggingPluginOptions` object:
+
+| Option                 | Type                           | Default            | Description                                                                                                                               |
+| :--------------------- | :----------------------------- | :----------------- | :---------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                 | `string`                       | `'logging_plugin'` | The name of the plugin instance.                                                                                                          |
+| `toolResultClassifier` | `ToolResultClassifier \| null` | `null`             | Synchronous callback `({tool, toolArgs, toolContext, result}) => ToolResultClassification \| null \| undefined` that classifies tool results. |
+
+Build a verdict with `toolResultClassification({status: 'ERROR' | 'OK', errorMessage?: string | null})`. Returning `'ERROR'` logs the call as `TOOL ERROR`, returning `'OK'` logs it as `TOOL COMPLETED` (overriding the built-in MCP `isError` check), and returning `null` or `undefined` leaves the result to the built-in rules.
+
 ## Advanced applications
 
 ### Registering plugins on an `App`
@@ -217,7 +228,7 @@ countCall('beforeToolCallback');
 
 `@google/adk` exports plugins that are ready to use. Each one extends `BasePlugin`:
 
-- `LoggingPlugin` - Logs the user message, the agent runs, the model requests and responses, the tool calls, and the events.
+- `LoggingPlugin` (`LoggingPluginOptions`, `ToolResultClassifier`, `ToolResultClassification`, `toolResultClassification`) - Logs the user message, the agent runs, the model requests and responses (including `finishReason`), the tool calls and tool result errors, and the events (including workflow `nodeInfo` paths, outputs and node errors).
 - `DebugLoggingPlugin` - Records the same interactions in detail for each invocation. It is in the Node.js entry point only.
 - `GlobalInstructionPlugin` - Adds one instruction to the model requests of every agent.
 - `ReflectAndRetryToolPlugin` and `ReflectAndRetryModelPlugin` - Make the model reflect on a failed tool call or a failed model response and try again, up to a limit.

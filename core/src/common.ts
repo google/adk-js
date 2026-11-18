@@ -294,6 +294,11 @@ export {BasePlanner, isBasePlanner} from './planners/base_planner.js';
 export {BuiltInPlanner, isBuiltInPlanner} from './planners/built_in_planner.js';
 export {PlanReActPlanner} from './planners/plan_re_act_planner.js';
 export {
+  toolResultClassification,
+  type ToolResultClassification,
+  type ToolResultClassifier,
+} from './plugins/_callback_helpers.js';
+export {
   GLOBAL_SCOPE_KEY,
   REFLECT_AND_RETRY_RESPONSE_TYPE,
   ScopedFailureTracker,
@@ -310,6 +315,7 @@ export type {
 } from './plugins/debug_logging_plugin.js';
 export {GlobalInstructionPlugin} from './plugins/global_instruction_plugin.js';
 export {LoggingPlugin} from './plugins/logging_plugin.js';
+export type {LoggingPluginOptions} from './plugins/logging_plugin.js';
 export {PluginManager} from './plugins/plugin_manager.js';
 export type {PluginCallbackName} from './plugins/plugin_manager.js';
 export {
