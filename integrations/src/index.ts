@@ -83,6 +83,16 @@ export type {
   CrewaiToolConfig,
   CrewaiToolLike,
 } from './crewai/crewai_tool.js';
+export {ExaSearchTool} from './exa/exa_search_tool.js';
+export type {
+  ExaCategory,
+  ExaContentsOptions,
+  ExaSearchToolArgs,
+  ExaSearchToolParams,
+  ExaSearchToolResponse,
+  ExaSearchToolResult,
+  ExaSearchType,
+} from './exa/exa_search_tool.js';
 export {LangchainTool, isLangchainTool} from './langchain/langchain_tool.js';
 export type {
   LangchainSchemaLike,
