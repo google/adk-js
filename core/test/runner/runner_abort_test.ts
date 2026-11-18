@@ -394,4 +394,169 @@ describe('Runner abort sealing', () => {
     expect(events.map((e) => e.errorCode)).toEqual(['INVOCATION_ABORTED']);
     expect(events[0].author).toBe('wf');
   });
+
+  it('preserves a completed tool result when abort fires during tool execution', async () => {
+    const controller = new AbortController();
+    let sideEffectCommitted = false;
+
+    const refundTool = new FunctionTool({
+      name: 'issue_refund',
+      description: 'Issues a refund.',
+      execute: async () => {
+        sideEffectCommitted = true;
+        controller.abort();
+        return {status: 'succeeded', refundId: 're_50'};
+      },
+    });
+    const model = new RecordingLlm([
+      {
+        functionCall: {
+          id: 'call_refund_1',
+          name: 'issue_refund',
+          args: {amount: 50},
+        },
+      },
+      'Refund confirmed',
+    ]);
+    const agent = new LlmAgent({
+      name: 'billing_agent',
+      model,
+      tools: [refundTool],
+    });
+    const runner = makeRunner(agent);
+    await runner.sessionService.createSession({
+      appName: APP,
+      userId: USER,
+      sessionId: 's_refund',
+    });
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: USER,
+      sessionId: 's_refund',
+      newMessage: {role: 'user', parts: [{text: 'Refund $50'}]},
+      abortSignal: controller.signal,
+    })) {
+      events.push(event);
+    }
+
+    expect(sideEffectCommitted).toBe(true);
+    const session = (await runner.sessionService.getSession({
+      appName: APP,
+      userId: USER,
+      sessionId: 's_refund',
+    }))!;
+    const frs = session.events.flatMap((e) => getFunctionResponses(e));
+    expect(frs).toEqual([
+      {
+        id: 'call_refund_1',
+        name: 'issue_refund',
+        response: {status: 'succeeded', refundId: 're_50'},
+      },
+    ]);
+    expect(abortEvents(session.events)).toHaveLength(1);
+    expect(abortEvents(session.events)[0].content).toBeUndefined();
+
+    const next = await runTurn(
+      runner,
+      's_refund',
+      'Did the refund go through?',
+    );
+    expect(texts(next.events.map((e) => e.content))).toEqual([
+      'Refund confirmed',
+    ]);
+    const lastRequest = model.requests[model.requests.length - 1];
+    expect(functionResponsesIn(lastRequest)).toEqual([
+      {status: 'succeeded', refundId: 're_50'},
+    ]);
+  });
+
+  it('preserves completed tool results and seals only remaining calls when abort fires mid-batch', async () => {
+    const controller = new AbortController();
+    let secondToolCalled = false;
+
+    const firstTool = new FunctionTool({
+      name: 'first_tool',
+      description: 'Completes and triggers abort.',
+      execute: async () => {
+        controller.abort();
+        return {step: 1, status: 'done'};
+      },
+    });
+    const secondTool = new FunctionTool({
+      name: 'second_tool',
+      description: 'Should not run after abort.',
+      execute: async () => {
+        secondToolCalled = true;
+        return {step: 2, status: 'done'};
+      },
+    });
+
+    class MultiCallLlm extends BaseLlm {
+      turns = 0;
+      constructor() {
+        super({model: 'multi-call-llm'});
+      }
+      async *generateContentAsync(): AsyncGenerator<LlmResponse, void, void> {
+        this.turns++;
+        if (this.turns === 1) {
+          yield {
+            content: {
+              role: 'model',
+              parts: [
+                {functionCall: {id: 'call_1', name: 'first_tool', args: {}}},
+                {functionCall: {id: 'call_2', name: 'second_tool', args: {}}},
+              ],
+            },
+          };
+          return;
+        }
+        yield {content: {role: 'model', parts: [{text: 'Done'}]}};
+      }
+      async connect(): Promise<BaseLlmConnection> {
+        throw new Error('not supported');
+      }
+    }
+
+    const agent = new LlmAgent({
+      name: 'batch_agent',
+      model: new MultiCallLlm(),
+      tools: [firstTool, secondTool],
+    });
+    const runner = makeRunner(agent);
+    await runner.sessionService.createSession({
+      appName: APP,
+      userId: USER,
+      sessionId: 's_batch',
+    });
+
+    for await (const _ of runner.runAsync({
+      userId: USER,
+      sessionId: 's_batch',
+      newMessage: {role: 'user', parts: [{text: 'Run both'}]},
+      abortSignal: controller.signal,
+    })) {
+      // consume stream
+    }
+
+    expect(secondToolCalled).toBe(false);
+    const session = (await runner.sessionService.getSession({
+      appName: APP,
+      userId: USER,
+      sessionId: 's_batch',
+    }))!;
+    const frs = session.events.flatMap((e) => getFunctionResponses(e));
+    expect(frs).toEqual([
+      {
+        id: 'call_1',
+        name: 'first_tool',
+        response: {step: 1, status: 'done'},
+      },
+      {
+        id: 'call_2',
+        name: 'second_tool',
+        response: {error: ABORT_MESSAGE},
+      },
+    ]);
+  });
 });

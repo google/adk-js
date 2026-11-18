@@ -569,6 +569,10 @@ export async function handleFunctionCallList({
   });
 
   for (const functionCall of filteredFunctionCalls) {
+    if (invocationContext.abortSignal?.aborted) {
+      break;
+    }
+
     let toolConfirmation = undefined;
     if (toolConfirmationDict && functionCall.id) {
       toolConfirmation = toolConfirmationDict[functionCall.id];
@@ -641,6 +645,9 @@ export async function handleFunctionCallList({
 
     // Step 3: Otherwise, proceed calling the tool normally.
     if (functionResponse == null) {
+      if (invocationContext.abortSignal?.aborted) {
+        break;
+      }
       // Cover both null and undefined
       try {
         const rawFunctionResponse = isLive
@@ -660,6 +667,9 @@ export async function handleFunctionCallList({
           functionResponse = normalizeCallbackResponse(rawFunctionResponse);
         }
       } catch (e: unknown) {
+        if (invocationContext.abortSignal?.aborted) {
+          break;
+        }
         if (e instanceof Error) {
           const onToolErrorResponse =
             await invocationContext.pluginManager.runOnToolErrorCallback({
