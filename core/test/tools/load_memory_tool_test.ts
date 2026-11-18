@@ -5,12 +5,13 @@
  */
 
 import {Type} from '@google/genai';
-import {describe, expect, it} from 'vitest';
+import {describe, expect, expectTypeOf, it} from 'vitest';
 
 import {
   Context,
   LlmRequest,
   LOAD_MEMORY,
+  LoadMemoryResponse,
   LoadMemoryTool,
   MemoryEntry,
   SearchMemoryResponse,
@@ -40,9 +41,10 @@ describe('LoadMemoryTool', () => {
     const declaration = tool._getDeclaration();
 
     expect(declaration?.name).toEqual('load_memory');
-    expect(declaration?.description).toContain(
+    expect(declaration?.description).toBe(
       'Loads the memory for the current user.',
     );
+    expect(declaration?.description).not.toContain('only uses text part');
     expect(declaration?.parameters).toEqual({
       type: Type.OBJECT,
       properties: {
@@ -102,6 +104,47 @@ describe('LoadMemoryTool', () => {
         },
       ],
     });
+  });
+
+  it('types LoadMemoryResponse with default and text-only content entry shapes', async () => {
+    type TextOnlyEntry = {
+      content: string;
+      author?: string;
+      timestamp?: string;
+    };
+
+    expectTypeOf<LoadMemoryResponse['memories']>().toEqualTypeOf<
+      MemoryEntry[]
+    >();
+    expectTypeOf<LoadMemoryResponse<TextOnlyEntry>['memories']>().toEqualTypeOf<
+      Array<TextOnlyEntry>
+    >();
+
+    const tool = new LoadMemoryTool({textOnlyContent: true});
+    const mockContext = new StubToolContext([
+      {
+        content: {role: 'user', parts: [{text: 'stored message'}]},
+        author: 'user1',
+        timestamp: '2026-11-12T00:00:00Z',
+      },
+    ]) as unknown as Context;
+
+    const result = await tool.runAsync({
+      args: {query: 'stored'},
+      toolContext: mockContext,
+    });
+
+    const expectedResponse: LoadMemoryResponse<TextOnlyEntry> = {
+      memories: [
+        {
+          content: 'stored message',
+          author: 'user1',
+          timestamp: '2026-11-12T00:00:00Z',
+        },
+      ],
+    };
+
+    expect(result).toEqual(expectedResponse);
   });
 
   it('has a global instance LOAD_MEMORY', () => {

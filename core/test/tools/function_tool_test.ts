@@ -1193,6 +1193,251 @@ describe('FunctionTool', () => {
         required: ['requiredStr'],
       });
     });
+
+    it('omits response schema on Gemini API when returnType and response are omitted', () => {
+      const decl = buildFunctionDeclarationUtil(
+        false,
+        'functionNoReturn',
+        'A function with no return schema.',
+        function functionNoReturn() {},
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+        },
+      );
+      expect(decl).toEqual({
+        name: 'functionNoReturn',
+        description: 'A function with no return schema.',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {param: {type: Type.STRING}},
+          required: ['param'],
+        },
+      });
+      expect(decl.response).toBeUndefined();
+    });
+
+    it('sets an unspecified response schema on Vertex AI when returnType and response are omitted', () => {
+      const decl = buildFunctionDeclarationUtil(
+        true,
+        'functionNoReturn',
+        'A function with no return schema.',
+        function functionNoReturn() {},
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+        },
+      );
+      expect(decl).toEqual({
+        name: 'functionNoReturn',
+        description: 'A function with no return schema.',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {param: {type: Type.STRING}},
+          required: ['param'],
+        },
+        response: {type: Type.TYPE_UNSPECIFIED},
+      });
+    });
+
+    it('sets a null response schema on Vertex AI when returnType or response is explicitly null or void', () => {
+      const nullReturnTypeDecl = buildFunctionDeclarationUtil(
+        true,
+        'functionNullReturn',
+        'A function that explicitly returns null.',
+        Object.assign(function functionNullReturn() {}, {returnType: null}),
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+        },
+      );
+      expect(nullReturnTypeDecl.response).toEqual({type: Type.NULL});
+
+      const voidReturnTypeDecl = buildFunctionDeclarationUtil(
+        true,
+        'functionVoidReturn',
+        'A function that explicitly returns void.',
+        function functionVoidReturn() {},
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+          returnType: 'void',
+        },
+      );
+      expect(voidReturnTypeDecl.response).toEqual({type: Type.NULL});
+
+      const nullResponseDecl = buildFunctionDeclarationUtil(
+        true,
+        'functionNullResponse',
+        'A function with response set to null.',
+        function functionNullResponse() {},
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+          response: null,
+        },
+      );
+      expect(nullResponseDecl.response).toEqual({type: Type.NULL});
+    });
+
+    it('gives func.response and func.returnType precedence over beforeParamSchema values', () => {
+      const funcResponseOverNullSchema = buildFunctionDeclarationUtil(
+        true,
+        'funcResponseWins',
+        'Function response overrides schema null response.',
+        Object.assign(function funcResponseWins() {}, {
+          response: {type: Type.STRING},
+        }),
+        {
+          properties: {},
+          response: null,
+        },
+      );
+      expect(funcResponseOverNullSchema.response).toEqual({type: Type.STRING});
+
+      const funcNullResponseOverSchema = buildFunctionDeclarationUtil(
+        true,
+        'funcNullResponseWins',
+        'Function null response overrides schema response.',
+        Object.assign(function funcNullResponseWins() {}, {
+          response: null,
+        }),
+        {
+          properties: {},
+          response: {type: Type.STRING},
+        },
+      );
+      expect(funcNullResponseOverSchema.response).toEqual({type: Type.NULL});
+
+      const funcReturnTypeOverNullSchema = buildFunctionDeclarationUtil(
+        true,
+        'funcReturnTypeWins',
+        'Function returnType overrides schema null returnType.',
+        Object.assign(function funcReturnTypeWins() {}, {
+          returnType: 'string',
+        }),
+        {
+          properties: {},
+          returnType: null,
+        },
+      );
+      expect(funcReturnTypeOverNullSchema.response).toEqual({
+        type: Type.STRING,
+      });
+
+      const funcNullReturnTypeOverSchema = buildFunctionDeclarationUtil(
+        true,
+        'funcNullReturnTypeWins',
+        'Function null returnType overrides schema returnType.',
+        Object.assign(function funcNullReturnTypeWins() {}, {
+          returnType: null,
+        }),
+        {
+          properties: {},
+          returnType: 'string',
+        },
+      );
+      expect(funcNullReturnTypeOverSchema.response).toEqual({type: Type.NULL});
+    });
+
+    it('omits response schema on Gemini API when returnType or response is explicitly null or void', () => {
+      const decl = buildFunctionDeclarationUtil(
+        false,
+        'functionNullReturn',
+        'A function that explicitly returns null.',
+        Object.assign(function functionNullReturn() {}, {returnType: null}),
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+          returnType: 'void',
+          response: null,
+        },
+      );
+      expect(decl.response).toBeUndefined();
+    });
+
+    it('sets string and object response schemas on Vertex AI for string and object return types', () => {
+      const stringDecl = buildFunctionDeclarationUtil(
+        true,
+        'functionStringReturn',
+        'A function that returns a string.',
+        Object.assign(function functionStringReturn() {}, {
+          returnType: 'string',
+        }),
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+        },
+      );
+      expect(stringDecl.response).toEqual({type: Type.STRING});
+
+      const objectDecl = buildFunctionDeclarationUtil(
+        true,
+        'functionObjectReturn',
+        'A function that returns an object.',
+        Object.assign(function functionObjectReturn() {}, {
+          returnType: 'object',
+        }),
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+        },
+      );
+      expect(objectDecl.response).toEqual({type: Type.OBJECT});
+    });
+
+    it('builds a Vertex AI declaration for a parameterless function returning null without parameters', () => {
+      const decl = buildFunctionDeclarationUtil(
+        true,
+        'testFunction',
+        'A test function with no parameters that returns null.',
+        Object.assign(function testFunction() {}, {returnType: null}),
+        {properties: {}},
+      );
+      expect(decl.name).toBe('testFunction');
+      expect(decl.parameters).toBeUndefined();
+      expect(decl.response).toEqual({type: Type.NULL});
+    });
+
+    it('sets an unspecified response schema on Vertex AI for a transfer_to_agent declaration', () => {
+      const decl = buildFunctionDeclarationUtil(
+        true,
+        'transfer_to_agent',
+        'Transfer the question to another agent.',
+        function transferToAgent() {},
+        {
+          properties: {
+            agent_name: {type: 'string'},
+          },
+          required: ['agent_name'],
+        },
+      );
+      expect(decl.name).toBe('transfer_to_agent');
+      expect(decl.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          agent_name: {type: Type.STRING},
+        },
+        required: ['agent_name'],
+      });
+      expect(decl.response).toEqual({type: Type.TYPE_UNSPECIFIED});
+    });
   });
 
   describe('execution and mandatory parameter validation', () => {
@@ -1625,6 +1870,87 @@ describe('FunctionTool', () => {
         toolContext: emptyContext,
       });
       expect(result).toBe('test_value_1,test_value_3');
+    });
+
+    it('preserves undefined and empty object return values in runAsync', async () => {
+      const undefinedTool = new FunctionTool({
+        name: 'function_returning_undefined',
+        description: 'Function returning undefined.',
+        execute: (): undefined => undefined,
+      });
+      const undefinedResult = await undefinedTool.runAsync({
+        args: {},
+        toolContext: emptyContext,
+      });
+      expect(undefinedResult).toBeUndefined();
+
+      const emptyObjectTool = new FunctionTool({
+        name: 'function_returning_empty_object',
+        description: 'Function returning empty object.',
+        execute: (): Record<string, string> => ({}),
+      });
+      const emptyObjectResult = await emptyObjectTool.runAsync({
+        args: {},
+        toolContext: emptyContext,
+      });
+      expect(emptyObjectResult).toEqual({});
+    });
+
+    it('filters out unexpected arguments such as parameters when running a function', async () => {
+      let receivedArgs: Record<string, unknown> | undefined;
+      const tool = new FunctionTool({
+        name: 'sample_func',
+        description: 'Sample function with one expected argument.',
+        parameters: z4.object({
+          expectedArg: z4.string(),
+        }),
+        execute: (args) => {
+          receivedArgs = args;
+          return {receivedArg: args.expectedArg};
+        },
+      });
+
+      const result = await tool.runAsync({
+        args: {expectedArg: 'hello', parameters: 'should_be_filtered'},
+        toolContext: emptyContext,
+      });
+
+      expect(result).toEqual({receivedArg: 'hello'});
+      expect(receivedArgs).toEqual({expectedArg: 'hello'});
+      expect(receivedArgs).not.toHaveProperty('parameters');
+    });
+
+    it('filters out unexpected arguments and passes toolContext when running a function with toolContext', async () => {
+      let receivedArgs: Record<string, unknown> | undefined;
+      const tool = new FunctionTool({
+        name: 'sample_func_with_context',
+        description: 'Sample function receiving toolContext.',
+        parameters: z4.object({
+          expectedArg: z4.string(),
+        }),
+        execute: (args, toolContext) => {
+          receivedArgs = args;
+          return {
+            receivedArg: args.expectedArg,
+            contextPresent: Boolean(toolContext),
+          };
+        },
+      });
+
+      const toolContext = new Context({
+        invocationContext: createTestInvocationContext(),
+      });
+      const result = await tool.runAsync({
+        args: {expectedArg: 'world', parameters: 'should_also_be_filtered'},
+        toolContext,
+      });
+
+      expect(result).toEqual({
+        receivedArg: 'world',
+        contextPresent: true,
+      });
+      expect(receivedArgs).toEqual({expectedArg: 'world'});
+      expect(receivedArgs).not.toHaveProperty('parameters');
     });
   });
 });

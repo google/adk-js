@@ -14,9 +14,10 @@ import {
   Session,
   createEvent,
   createEventActions,
+  createSession,
   isLoopAgent,
 } from '@google/adk';
-import {describe, expect, it} from 'vitest';
+import {describe, expect, it, vi} from 'vitest';
 
 class MockSubAgent extends BaseAgent {
   private eventsToYield: Event[];
@@ -178,6 +179,83 @@ describe('LoopAgent', () => {
 
     expect(yieldedEvents.length).toBe(3);
     expect(yieldedEvents[2].actions?.escalate).toBe(true);
+  });
+
+  it('finishes current sub-agent events after escalation and skips subsequent sub-agents', async () => {
+    const sub1Event = createEvent({
+      author: 'sub1',
+      content: {role: 'model', parts: [{text: 'Hello, async sub1!'}]},
+    });
+    const escalatingEvent = createEvent({
+      author: 'sub2',
+      content: {role: 'model', parts: [{text: 'Hello, async sub2!'}]},
+      actions: createEventActions({escalate: true}),
+    });
+    const postEscalationEvent = createEvent({
+      author: 'sub2',
+      content: {
+        role: 'model',
+        parts: [{text: 'I have done my job after escalation!!'}],
+      },
+    });
+    const ignoredEvent = createEvent({
+      author: 'sub3',
+      content: {role: 'model', parts: [{text: 'Hello, async sub3!'}]},
+    });
+
+    const sub1 = new MockSubAgent({name: 'sub1'}, [sub1Event]);
+    const sub2 = new MockSubAgent({name: 'sub2'}, [
+      escalatingEvent,
+      postEscalationEvent,
+    ]);
+    const sub3 = new MockSubAgent({name: 'sub3'}, [ignoredEvent]);
+    const sub1RunAsyncSpy = vi.spyOn(sub1, 'runAsync');
+    const sub2RunAsyncSpy = vi.spyOn(sub2, 'runAsync');
+    const sub3RunAsyncSpy = vi.spyOn(sub3, 'runAsync');
+
+    const loopAgent = new LoopAgent({
+      name: 'loop',
+      subAgents: [sub1, sub2, sub3],
+    });
+
+    const parentContext = new InvocationContext({
+      invocationId: 'test-invocation',
+      agent: loopAgent,
+      session: createSession({
+        id: 'test-session',
+        appName: 'test-app',
+        userId: 'test-user',
+      }),
+      pluginManager: new PluginManager(),
+    });
+
+    const yieldedEvents: Event[] = [];
+    for await (const event of loopAgent.runAsync(parentContext)) {
+      yieldedEvents.push(event);
+    }
+
+    expect(yieldedEvents).toHaveLength(3);
+    expect(yieldedEvents).toMatchObject([
+      {
+        author: 'sub1',
+        content: {role: 'model', parts: [{text: 'Hello, async sub1!'}]},
+      },
+      {
+        author: 'sub2',
+        content: {role: 'model', parts: [{text: 'Hello, async sub2!'}]},
+        actions: {escalate: true},
+      },
+      {
+        author: 'sub2',
+        content: {
+          role: 'model',
+          parts: [{text: 'I have done my job after escalation!!'}],
+        },
+      },
+    ]);
+    expect(sub1RunAsyncSpy).toHaveBeenCalledTimes(1);
+    expect(sub2RunAsyncSpy).toHaveBeenCalledTimes(1);
+    expect(sub3RunAsyncSpy).not.toHaveBeenCalled();
   });
 
   it('should stop on abort signal', async () => {

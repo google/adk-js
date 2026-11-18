@@ -58,6 +58,9 @@ function validateGcloudExtraArgs(
 }
 
 function prepareGCloudArguments(options: DeployToCloudRunOptions): string[] {
+  if (!options.project) {
+    throw new Error('Project is required to prepare gcloud arguments.');
+  }
   const regionOptions: string[] = options.region
     ? ['--region', options.region]
     : [];
@@ -210,6 +213,7 @@ export async function deployToCloudRun(options: DeployToCloudRunOptions) {
       allowOrigins: options.allowOrigins,
       sessionServiceUri: options.sessionServiceUri,
       artifactServiceUri: options.artifactServiceUri,
+      memoryServiceUri: options.memoryServiceUri,
       otelToCloud: options.otelToCloud,
       a2a: options.a2a,
       agentFileLoadOptions: options.agentFileLoadOptions,
@@ -224,6 +228,7 @@ export async function deployToCloudRun(options: DeployToCloudRunOptions) {
       (e as Error).message,
       '\x1b[0m',
     );
+    process.exitCode = 1;
   } finally {
     console.info('Cleaning up temporary files...');
     await fs.rm(tempFolder, {recursive: true, force: true});

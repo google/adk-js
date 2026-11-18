@@ -85,7 +85,9 @@ The executor reads the model name and throws
 `Gemini code execution tool is not supported for model <name>` unless it finds
 a Gemini version of 2 or later. It parses the version from the text after
 `gemini-`, so `gemini-2.5-flash` works and an alias such as
-`gemini-flash-latest` fails.
+`gemini-flash-latest` fails. A full Vertex AI resource name such as
+`projects/<project>/locations/<location>/publishers/google/models/gemini-2.5-flash`
+also works, because the executor reads the model name after `models/`.
 
 The code runs in Google's environment as part of the model call, not on your
 machine.
@@ -120,8 +122,11 @@ export const localAgent = new LlmAgent({
 
 ### ContainerCodeExecutor
 
-`ContainerCodeExecutor` runs each code string in one long-lived Docker
-container that it starts on first use. It needs a reachable Docker daemon and
+`ContainerCodeExecutor` runs code in a separate Docker container for each
+session. It identifies a session by the app name, user ID and session ID from
+the invocation context. Calls without a session share one default container.
+The executor starts a container on the first call for a session and reuses it
+for later calls in that session. It needs a reachable Docker daemon and
 the `dockerode` package, which is an optional dependency of `@google/adk`.
 Install it with `npm install dockerode`. You must set `image`, a tag to run, or
 `dockerPath`, a directory with a Dockerfile to build. The constructor throws
@@ -131,12 +136,16 @@ when neither is set. After the container starts, the executor checks that
 The container starts with networking off, so the code cannot reach the cloud
 metadata endpoint, internal services or the internet. Set
 `networkEnabled: true` only for code you trust. Each run is killed after
-`timeoutSeconds`, 300 by default, because every run shares one container and a
-runaway loop would slow every later run.
+`timeoutSeconds`, 300 by default. The timeout bounds a run inside the session
+container, so a runaway loop cannot slow later runs in that session. Set
+`maxContainers`, a positive integer, to limit the number of running session
+containers. When a new session would exceed the limit, the executor stops the
+least recently used idle container. It does not stop a container that is
+running code, so the count can exceed the limit until that run ends.
 
 The executor runs a code string only. It does not copy input files into the
 container and it returns no output files. Call `close()` to stop and remove the
-container when your application shuts down.
+containers when your application shuts down.
 
 ````ts
 import {ContainerCodeExecutor, LlmAgent} from '@google/adk';
@@ -334,6 +343,7 @@ The executors add their own constructor options.
 | `ContainerCodeExecutor`          | `baseUrl`                 | The local Docker socket                      | The Docker daemon to use.                 |
 | `ContainerCodeExecutor`          | `networkEnabled`          | `false`                                      | Gives the container network access.       |
 | `ContainerCodeExecutor`          | `timeoutSeconds`          | `300`                                        | Kills a run after this many seconds.      |
+| `ContainerCodeExecutor`          | `maxContainers`           | None, and the count is unbounded             | The most session containers to keep.      |
 | `AgentEngineSandboxCodeExecutor` | `sandboxResourceName`     | None                                         | An existing sandbox to use.               |
 | `AgentEngineSandboxCodeExecutor` | `agentEngineResourceName` | None, and one is created                     | The Agent Engine that owns new sandboxes. |
 | `AgentEngineSandboxCodeExecutor` | `projectId`               | `GOOGLE_CLOUD_PROJECT`                       | The Google Cloud project.                 |
@@ -465,10 +475,6 @@ Code execution in this release has these limits.
   to `LlmAgent` cannot include it. Without it, `BuiltInCodeExecutor` adds no
   tool, and earlier code and results stay as parts in the history. Leave
   `requestProcessors` unset on an agent with a code executor.
-- **The data-file summary fails outside Vertex AI.** The helper that summarizes
-  a CSV calls a `crop` function that none of the executors in `@google/adk`
-  defines, so it fails with a `NameError` and counts as a failed run. adk-python
-  0.1.0 has the same defect: only its Vertex AI executor defines `crop`.
 - **`BuiltInCodeExecutor` rejects model aliases.** It needs a Gemini version
   in the model name, so `gemini-flash-latest` and other `-latest` aliases throw.
   Use a versioned name such as `gemini-2.5-flash`.

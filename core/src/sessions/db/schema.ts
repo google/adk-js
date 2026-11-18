@@ -21,12 +21,14 @@ export const SCHEMA_VERSION_1_JSON = '1';
 export const STORAGE_KEY_COLUMN_LENGTH = 191;
 
 /**
- * Fractional-second digits requested for the stored event timestamp.
+ * Fractional-second digits requested for stored session, state, and event
+ * timestamp columns.
  *
  * MySQL and MariaDB round a `datetime` column to whole seconds unless a
  * precision is given. That collapses events written in the same second onto one
- * value and leaves their order undefined. Other backends are unaffected:
- * PostgreSQL already defaults to six digits and SQLite ignores the precision.
+ * value and rounds session `update_time` up across a second boundary. Other
+ * backends are unaffected: PostgreSQL already defaults to six digits and SQLite
+ * ignores the precision.
  */
 export const EVENT_TIMESTAMP_PRECISION = 6;
 
@@ -104,6 +106,7 @@ export const storageAppStateSchema = new EntitySchema<StorageAppState>({
     state: {type: 'json'},
     updateTime: {
       type: 'datetime',
+      length: EVENT_TIMESTAMP_PRECISION,
       fieldName: 'update_time',
       onCreate: () => new Date(),
       onUpdate: () => new Date(),
@@ -129,6 +132,7 @@ export const storageUserStateSchema = new EntitySchema<StorageUserState>({
     state: {type: 'json'},
     updateTime: {
       type: 'datetime',
+      length: EVENT_TIMESTAMP_PRECISION,
       fieldName: 'update_time',
       onCreate: () => new Date(),
       onUpdate: () => new Date(),
@@ -157,11 +161,13 @@ export const storageSessionSchema = new EntitySchema<StorageSession>({
     state: {type: 'json'},
     createTime: {
       type: 'datetime',
+      length: EVENT_TIMESTAMP_PRECISION,
       fieldName: 'create_time',
       onCreate: () => new Date(),
     },
     updateTime: {
       type: 'datetime',
+      length: EVENT_TIMESTAMP_PRECISION,
       fieldName: 'update_time',
       onCreate: () => new Date(),
     },

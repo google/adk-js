@@ -6,7 +6,9 @@
 
 import {
   BaseAgent,
+  BaseCredentialService,
   BaseSessionService,
+  InMemoryCredentialService,
   InMemorySessionService,
   INTERNAL_METADATA_PREFIX,
   isApp,
@@ -22,9 +24,14 @@ import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 import {runAgent} from '../../src/cli/cli_run.js';
 import {AgentFile} from '../../src/utils/agent_loader.js';
 import {loadFileData, saveToFile} from '../../src/utils/file_utils.js';
+import {setupTelemetry} from '../../src/utils/telemetry_utils.js';
 
 vi.mock('../../src/utils/agent_loader.js', () => ({
   AgentFile: vi.fn(),
+}));
+
+vi.mock('../../src/utils/telemetry_utils.js', () => ({
+  setupTelemetry: vi.fn(),
 }));
 
 // Only the I/O is faked; getAbsolutePath is the real resolver under test.
@@ -54,6 +61,7 @@ vi.mock('@google/adk', async (importOriginal) => {
             yield event;
           }
         }),
+        close: vi.fn().mockResolvedValue(undefined),
       };
     }),
     InMemoryArtifactService: vi.fn(),
@@ -77,6 +85,13 @@ vi.mock('@google/adk', async (importOriginal) => {
     InMemoryMemoryService: vi.fn(),
     isApp: vi.fn().mockReturnValue(false),
   };
+});
+
+// The real `watch` stays in place; a test overrides it once to capture the
+// agent file listener and fire a reload on demand.
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {...actual, watch: vi.fn(actual.watch)};
 });
 
 vi.mock('node:readline', () => ({
@@ -133,6 +148,7 @@ describe('cli_run', () => {
             yield event;
           }
         },
+        close: vi.fn().mockResolvedValue(undefined),
       };
     });
     (InMemorySessionService as unknown as Mock).mockImplementation(
@@ -191,6 +207,7 @@ describe('cli_run', () => {
           }
           yield {author: 'model', content: {parts: [{text: 'recovered'}]}};
         },
+        close: vi.fn().mockResolvedValue(undefined),
       };
     });
     (mockRl.question as Mock)
@@ -297,8 +314,9 @@ describe('cli_run', () => {
   /** Replaces the mocked Runner with one whose runAsync the test can watch. */
   const watchRunner = () => {
     const runAsync = vi.fn(async function* () {});
+    const close = vi.fn().mockResolvedValue(undefined);
     vi.mocked(Runner).mockImplementation(function () {
-      return {runAsync} as unknown as Runner;
+      return {runAsync, close} as unknown as Runner;
     });
     return runAsync;
   };
@@ -457,6 +475,46 @@ describe('cli_run', () => {
     });
 
     expect(AgentFile).toHaveBeenCalledWith(absolute, undefined);
+  });
+
+  describe('cloud telemetry', () => {
+    beforeEach(() => {
+      (setupTelemetry as Mock).mockResolvedValue(undefined);
+    });
+
+    it('sets up cloud telemetry before loading the agent when otelToCloud is true', async () => {
+      await runAgent({agentPath: 'agent.ts', otelToCloud: true});
+
+      expect(setupTelemetry).toHaveBeenCalledTimes(1);
+      expect(setupTelemetry).toHaveBeenCalledWith(true);
+      expect((setupTelemetry as Mock).mock.invocationCallOrder[0]).toBeLessThan(
+        (AgentFile as unknown as Mock).mock.invocationCallOrder[0],
+      );
+    });
+
+    it.each([
+      ['omitted', undefined],
+      ['false', false],
+    ])(
+      'does not set up telemetry when otelToCloud is %s',
+      async (_name, otelToCloud) => {
+        await runAgent({agentPath: 'agent.ts', otelToCloud});
+
+        expect(setupTelemetry).not.toHaveBeenCalled();
+        expect(mockAgentFile.load).toHaveBeenCalled();
+      },
+    );
+
+    it('reports a telemetry setup failure and exits non-zero', async () => {
+      (setupTelemetry as Mock).mockRejectedValueOnce(
+        new Error('no GCP project'),
+      );
+
+      await runAgent({agentPath: 'agent.ts', otelToCloud: true});
+
+      expect(process.exitCode).toBe(1);
+      expect(AgentFile).not.toHaveBeenCalled();
+    });
   });
 
   it('resolves a relative path against the working directory', async () => {
@@ -1061,6 +1119,180 @@ describe('cli_run', () => {
         delete process.env['ADK_CLI_RUN_DOTENV_TEST'];
         fs.rmSync(tempDir, {recursive: true, force: true});
       }
+    });
+
+    it('closes the active runner when interactive execution exits', async () => {
+      const closeSpy = vi.fn().mockResolvedValue(undefined);
+      (Runner as unknown as Mock).mockImplementation(function () {
+        return {
+          runAsync: async function* () {
+            for (const event of runnerState.events) {
+              yield event;
+            }
+          },
+          close: closeSpy,
+        };
+      });
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        sessionService: createMockSessionService(),
+      });
+
+      expect(closeSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('closes the replaced runner when the agent file reloads', async () => {
+      const closeSpies: Mock[] = [];
+      (Runner as unknown as Mock).mockImplementation(function () {
+        const close = vi.fn().mockResolvedValue(undefined);
+        closeSpies.push(close);
+        return {runAsync: async function* () {}, close};
+      });
+      let reloadAgentFile: (() => Promise<void>) | undefined;
+      vi.mocked(fs.watch).mockImplementationOnce(((
+        _path: fs.PathLike,
+        listener: () => Promise<void>,
+      ) => {
+        reloadAgentFile = listener;
+        return {close: vi.fn()} as unknown as fs.FSWatcher;
+      }) as unknown as typeof fs.watch);
+      let closeCallsAfterReload: number[] = [];
+      (mockRl.question as Mock).mockImplementationOnce(
+        (_query: string, cb: (answer: string) => void) => {
+          void reloadAgentFile?.().then(() => {
+            closeCallsAfterReload = closeSpies.map(
+              (spy) => spy.mock.calls.length,
+            );
+            cb('exit');
+          });
+        },
+      );
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        sessionService: createMockSessionService(),
+        reloadAgents: true,
+      });
+
+      expect(closeCallsAfterReload).toEqual([1, 0]);
+      expect(closeSpies).toHaveLength(2);
+      expect(closeSpies[0]).toHaveBeenCalledTimes(1);
+      expect(closeSpies[1]).toHaveBeenCalledTimes(1);
+    });
+
+    it('defers closing the replaced runner when the agent file reloads during an active turn', async () => {
+      const closeSpies: Mock[] = [];
+      let reloadAgentFile: (() => Promise<void>) | undefined;
+      let closeCallsMidTurn: number[] = [];
+
+      (Runner as unknown as Mock).mockImplementation(function () {
+        const close = vi.fn().mockResolvedValue(undefined);
+        closeSpies.push(close);
+        return {
+          runAsync: async function* () {
+            await reloadAgentFile?.();
+            closeCallsMidTurn = closeSpies.map((spy) => spy.mock.calls.length);
+            yield {author: 'model', content: {parts: [{text: 'done'}]}};
+          },
+          close,
+        };
+      });
+
+      vi.mocked(fs.watch).mockImplementationOnce(((
+        _path: fs.PathLike,
+        listener: () => Promise<void>,
+      ) => {
+        reloadAgentFile = listener;
+        return {close: vi.fn()} as unknown as fs.FSWatcher;
+      }) as unknown as typeof fs.watch);
+
+      let closeCallsAfterTurn: number[] = [];
+      (mockRl.question as Mock)
+        .mockImplementationOnce(
+          (_query: string, cb: (answer: string) => void) => cb('hello'),
+        )
+        .mockImplementationOnce(
+          (_query: string, cb: (answer: string) => void) => {
+            closeCallsAfterTurn = closeSpies.map(
+              (spy) => spy.mock.calls.length,
+            );
+            cb('exit');
+          },
+        );
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        sessionService: createMockSessionService(),
+        reloadAgents: true,
+      });
+
+      expect(closeCallsMidTurn).toEqual([0, 0]);
+      expect(closeCallsAfterTurn).toEqual([1, 0]);
+      expect(closeSpies).toHaveLength(2);
+      expect(closeSpies[0]).toHaveBeenCalledTimes(1);
+      expect(closeSpies[1]).toHaveBeenCalledTimes(1);
+    });
+
+    it('passes a default InMemoryCredentialService to Runner in interactive, replay, and reload modes', async () => {
+      await runAgent({
+        agentPath: 'agent.ts',
+        sessionService: createMockSessionService(),
+      });
+
+      const interactiveRunnerArgs = (Runner as unknown as Mock).mock
+        .calls[0][0];
+      expect(interactiveRunnerArgs.credentialService).toBeInstanceOf(
+        InMemoryCredentialService,
+      );
+
+      vi.clearAllMocks();
+      (loadFileData as Mock).mockResolvedValue({state: {}, queries: ['Hello']});
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        inputFile: 'input.json',
+        sessionService: createMockSessionService(),
+      });
+
+      const replayRunnerArgs = (Runner as unknown as Mock).mock.calls[0][0];
+      expect(replayRunnerArgs.credentialService).toBeInstanceOf(
+        InMemoryCredentialService,
+      );
+
+      vi.clearAllMocks();
+      const customCredentialService = {
+        loadCredential: vi.fn(),
+        saveCredential: vi.fn(),
+      } as unknown as BaseCredentialService;
+      let reloadAgentFile: (() => Promise<void>) | undefined;
+      vi.mocked(fs.watch).mockImplementationOnce(((
+        _path: fs.PathLike,
+        listener: () => Promise<void>,
+      ) => {
+        reloadAgentFile = listener;
+        return {close: vi.fn()} as unknown as fs.FSWatcher;
+      }) as unknown as typeof fs.watch);
+      (mockRl.question as Mock).mockImplementationOnce(
+        (_query: string, cb: (answer: string) => void) => {
+          void reloadAgentFile?.().then(() => cb('exit'));
+        },
+      );
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        sessionService: createMockSessionService(),
+        credentialService: customCredentialService,
+        reloadAgents: true,
+      });
+
+      expect((Runner as unknown as Mock).mock.calls).toHaveLength(2);
+      expect(
+        (Runner as unknown as Mock).mock.calls[0][0].credentialService,
+      ).toBe(customCredentialService);
+      expect(
+        (Runner as unknown as Mock).mock.calls[1][0].credentialService,
+      ).toBe(customCredentialService);
     });
   });
 });

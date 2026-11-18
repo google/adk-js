@@ -73,7 +73,7 @@ export const agent = new LlmAgent({
 ## How it works
 
 1. **Default request processor chain**: When `config.requestProcessors` is omitted, `LlmAgent` initializes `this.requestProcessors` in this order:
-   - `BASIC_LLM_REQUEST_PROCESSOR`: Copies `agent.generateContentConfig`, sets `llmRequest.model`, and applies `agent.outputSchema` when tools are not combined with an unsupported model.
+   - `BASIC_LLM_REQUEST_PROCESSOR`: Copies `agent.generateContentConfig`, sets `llmRequest.model`, and applies `agent.outputSchema` when tools are not combined with an unsupported model. When `invocationContext.runConfig` is set, it also copies `responseModalities`, `speechConfig`, `inputAudioTranscription`, `outputAudioTranscription`, `realtimeInputConfig`, `enableAffectiveDialog` and `proactivity` onto `llmRequest.liveConnectConfig`.
    - `AUTH_PREPROCESSOR`: Resumes pending credential requests for `adk_request_credential` from user responses.
    - `IDENTITY_LLM_REQUEST_PROCESSOR`: Appends the agent `name` and `description` to the system instruction.
    - `INSTRUCTIONS_LLM_REQUEST_PROCESSOR`: Resolves `agent.globalInstruction` and `agent.instruction` as a string or `InstructionProvider`, interpolates `{state}` and `{artifact.*}` placeholders on string instructions via `injectSessionState(template, readonlyContext)` (or lets custom `InstructionProvider` functions call `injectSessionState` directly), and appends them to `llmRequest`.

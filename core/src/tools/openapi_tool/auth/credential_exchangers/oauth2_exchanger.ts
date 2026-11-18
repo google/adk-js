@@ -30,7 +30,7 @@ export function checkSchemeCredentialType(
 ): asserts authCredential is AuthCredential {
   if (!authCredential) {
     throw new Error(
-      'auth_credential is empty. Please create AuthCredential using OAuth2Auth.',
+      'authCredential is empty. Please create AuthCredential using OAuth2Auth.',
     );
   }
 
@@ -46,7 +46,7 @@ export function checkSchemeCredentialType(
 
   if (!authCredential.oauth2 && !authCredential.http) {
     throw new Error(
-      'auth_credential is not configured with oauth2. Please create AuthCredential and set OAuth2Auth.',
+      'authCredential is not configured with oauth2. Please create AuthCredential and set OAuth2Auth.',
     );
   }
 }

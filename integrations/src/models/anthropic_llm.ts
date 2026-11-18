@@ -142,13 +142,8 @@ export class AnthropicLlm extends BaseLlm {
         ? functionDeclarations.map(functionDeclarationToToolParam)
         : undefined;
 
-    const hasTools = Object.keys(llmRequest.toolsDict ?? {}).length > 0;
-    const toolChoice: Anthropic.ToolChoiceAuto | undefined = hasTools
-      ? {
-          type: 'auto',
-          disable_parallel_tool_use: true,
-        }
-      : undefined;
+    const toolChoice: Anthropic.ToolChoiceAuto | undefined =
+      tools !== undefined && tools.length > 0 ? {type: 'auto'} : undefined;
     const thinking = buildAnthropicThinkingParam(llmRequest.config);
 
     this.anthropicClientPromise ??= this.createClient().catch(

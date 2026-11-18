@@ -696,4 +696,36 @@ describe('OperationParser', () => {
       expect(parser.getJsonSchema().required).toEqual([]);
     });
   });
+
+  describe('getDescription', () => {
+    it('should return description when both description and summary are present', () => {
+      const op: OpenAPIV3.OperationObject = {
+        operationId: 'getPet',
+        description: 'Detailed description of getPet',
+        summary: 'Short summary of getPet',
+        responses: {},
+      };
+      const parser = new OperationParser(op);
+      expect(parser.getDescription()).toBe('Detailed description of getPet');
+    });
+
+    it('should fall back to summary when description is absent', () => {
+      const op: OpenAPIV3.OperationObject = {
+        operationId: 'getPet',
+        summary: 'Short summary of getPet',
+        responses: {},
+      };
+      const parser = new OperationParser(op);
+      expect(parser.getDescription()).toBe('Short summary of getPet');
+    });
+
+    it('should return an empty string when neither description nor summary is defined', () => {
+      const op: OpenAPIV3.OperationObject = {
+        operationId: 'getPet',
+        responses: {},
+      };
+      const parser = new OperationParser(op);
+      expect(parser.getDescription()).toBe('');
+    });
+  });
 });

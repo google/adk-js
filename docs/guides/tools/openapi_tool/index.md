@@ -109,9 +109,10 @@ every call.
 **1. The document becomes operations.** `OpenApiSpecParser` resolves every
 internal `$ref` to the value it points at, normalizes schema types for Gemini
 function calling, resolves server URL variables, merges path-level parameters
-into each operation, and walks the paths producing one `ParsedOperation` per
-HTTP method. It is synchronous and does no I/O: it never calls the API the
-document describes.
+into each operation (letting operation-level parameters override path-level
+parameters with the same `name` and `in` location), and walks the paths
+producing one `ParsedOperation` per HTTP method. It is synchronous and does no
+I/O: it never calls the API the document describes.
 
 `ParsedOperation` is the hand-off between the stages:
 
@@ -135,6 +136,9 @@ and the properties of an object body one level deeper — and a model needs one
 list. `OperationParser` flattens them. An object body contributes one parameter
 per property, so the model fills in named fields rather than a nested JSON
 blob; an array or primitive body contributes a single parameter named `body`.
+An object body with no properties contributes no parameters, unless
+`unconstrainedObjectBodyAsParameter` is `true`; then it contributes one `body`
+parameter that holds the whole payload.
 Every parameter records `paramLocation`, which is how `RestApiTool` puts the
 value back where the request wants it, and `originalName`, which is what goes
 on the wire.
@@ -182,11 +186,20 @@ a mismatch renames a parameter between the two SDKs.
 
 The declaration the model receives is a Gemini `Schema`, not the raw OpenAPI
 schema, and the two are not the same language. The conversion keeps the fields
-Gemini declares, and drops `title`, `default` and `format` because the backend
-refuses them. A schema whose `type` is outside Gemini's set — `array`,
-`boolean`, `integer`, `null`, `number`, `object`, `string` — has its type
-dropped rather than mapped to a near equivalent, because a schema with no type
-is valid and a schema Gemini rejects fails the whole declaration.
+Gemini declares, drops `title` and `default`, and retains `format` only when it
+is `'int32'` or `'int64'` on an `integer` or `number` schema or `'date-time'` or
+`'enum'` on a `string` schema (dropping unsupported formats such as `'date'`,
+`'email'`, `'uuid'`, `'float'`, and `'double'`, as well as formats on untyped
+or array-typed schemas). A nullable type such as `['string', 'null']` becomes
+the non-null type with `nullable: true`, and keeps a supported `format`.
+
+`oneOf` becomes `anyOf`, because Gemini has no `oneOf`. A `{type: 'null'}`
+branch is removed and sets `nullable: true`. When only one branch remains, it
+is merged into the parent schema. A schema with no `type` and no
+`anyOf`/`oneOf` becomes an `object`, because Gemini rejects an untyped schema.
+A `type` outside Gemini's set — `array`, `boolean`, `integer`, `null`,
+`number`, `object`, `string` — becomes `TYPE_UNSPECIFIED`. The conversion does
+not map it to a near equivalent.
 
 `_getDeclaration()` on a `RestApiTool` returns what the model will see, which
 is the fastest way to confirm a parameter survived parsing under the name you
@@ -197,11 +210,13 @@ const declaration = toolset.getTool('get_pet')?._getDeclaration();
 const parameterNames = Object.keys(declaration?.parameters?.properties ?? {});
 ```
 
-The prose the model reads alongside it is generated in adk-python's format, by
-`OperationParser.getPydocString()` and the helpers in `common/common.ts`. The
-type tokens in that text are Python's — `str`, `int`, `List[str]`,
-`Dict[str, Any]`, `Any` — in a TypeScript SDK, deliberately: identical text
-across the two SDKs is what gives identical model behaviour for the same spec.
+`RestApiTool` sends the operation description and Gemini schema to the model.
+It uses `OperationParser.getDescription()`, which prefers
+`operation.description` over `operation.summary`. The parameters use
+`openApiSchemaToGeminiSchema(OperationParser.getJsonSchema())`.
+`OperationParser.getPydocString()`, `OperationParser.getReturnTypeHint()`, and
+the helpers in `common/common.ts` produce Python-style docstrings and type hints
+for offline inspection and compatibility.
 
 ### What a failed call returns
 
@@ -284,7 +299,12 @@ credential:
 
 1. **No scheme.** `{state: 'done'}`, no credential.
 2. **The store.** A credential cached under this scheme and credential pair is
-   returned as it is. Nothing is exchanged and nothing is written.
+   loaded from `ToolContextCredentialStore`. If it carries `oauth2`,
+   `ToolAuthHandler` checks `OAuth2CredentialRefresher.isRefreshNeeded()` and
+   refreshes expired tokens, using the `clientId` and `clientSecret` of the
+   configured credential when the stored one omits them. It persists the
+   refreshed OAuth2 credential back to the store before converting it into an
+   HTTP bearer credential for the request.
 3. **A credential to work with.** `Context.getAuthResponse` returns what the
    client supplied interactively; with none, the handler falls back to the
    credential the tool was configured with, because `apiKey`, `http` and
@@ -304,7 +324,12 @@ The handler writes to the store only when the credential cost something to
 obtain — it came from an auth response, which is readable once, or the exchanger
 reported `wasExchanged`. A statically configured credential is available on
 every invocation already, so caching it would copy a secret into session state
-for no gain. The cache key is derived from both the scheme and the credential:
+for no gain. An OAuth2 auth response that already holds an access or refresh
+token is stored in its OAuth2 form, so the refresh token and expiry stay
+available to step 2. An auth response that holds only an authorization code is
+not stored, because the exchange has spent that code; the handler stores the
+exchanged HTTP bearer credential instead. The cache key is derived from both
+the scheme and the credential:
 
 ```
 ${scheme.type}_${hash(scheme)}_${credential.authType}_${hash(credential)}_existing_exchanged_credential
@@ -428,7 +453,7 @@ adk-python, where the service-account exchanger raises
 `AuthCredentialMissingError` and `oauth2_exchanger.py` raises `ValueError`
 (`:37`, `:46`, `:52`), and a Python-only error type becomes a plain `Error`
 here. A missing OAuth2 **client secret** is separate again and does raise
-`AuthCredentialMissingError`, from `tool_auth_handler.ts:276` and `:281`, so the
+`AuthCredentialMissingError`, in `ToolAuthHandler.requestCredential`, so the
 retry-catch warning above still holds for that case.
 
 ## Configuration options
@@ -437,18 +462,19 @@ retry-catch warning above still holds for that case.
 
 One options object; nothing is positional.
 
-| Option                  | Type                                                   | Default     | Description                                       |
-| :---------------------- | :----------------------------------------------------- | :---------- | :------------------------------------------------ |
-| `specDict`              | `OpenAPIV3.Document`                                   | `undefined` | The spec as an already-parsed object.             |
-| `specStr`               | `string`                                               | `undefined` | The spec as JSON or YAML text.                    |
-| `specType`              | `'json' \| 'yaml'`                                     | inferred    | The format of `specStr`.                          |
-| `toolFilter`            | `ToolPredicate \| string[]`                            | `[]`        | Which tools `getTools()` exposes.                 |
-| `prefix`                | `string`                                               | `undefined` | Prepended to every tool name.                     |
-| `preservePropertyNames` | `boolean`                                              | `false`     | Keep spec property names instead of snake_casing. |
-| `authScheme`            | `OpenAPIV3.SecuritySchemeObject`                       | `undefined` | Security scheme applied to every tool.            |
-| `authCredential`        | `AuthCredential`                                       | `undefined` | Credential applied to every tool.                 |
-| `credentialKey`         | `string`                                               | `undefined` | Names the auth request the client answers.        |
-| `headerProvider`        | `(context: ReadonlyContext) => Record<string, string>` | `undefined` | Extra headers computed per call.                  |
+| Option                               | Type                                                   | Default     | Description                                                                   |
+| :----------------------------------- | :----------------------------------------------------- | :---------- | :---------------------------------------------------------------------------- |
+| `specDict`                           | `OpenAPIV3.Document`                                   | `undefined` | The spec as an already-parsed object.                                         |
+| `specStr`                            | `string`                                               | `undefined` | The spec as JSON or YAML text.                                                |
+| `specType`                           | `'json' \| 'yaml'`                                     | inferred    | The format of `specStr`.                                                      |
+| `toolFilter`                         | `ToolPredicate \| string[]`                            | `[]`        | Which tools `getTools()` exposes.                                             |
+| `prefix`                             | `string`                                               | `undefined` | Prepended to every tool name.                                                 |
+| `preservePropertyNames`              | `boolean`                                              | `false`     | Keep spec property names instead of snake_casing.                             |
+| `authScheme`                         | `OpenAPIV3.SecuritySchemeObject`                       | `undefined` | Security scheme applied to every tool.                                        |
+| `authCredential`                     | `AuthCredential`                                       | `undefined` | Credential applied to every tool.                                             |
+| `credentialKey`                      | `string`                                               | `undefined` | Names the auth request the client answers.                                    |
+| `headerProvider`                     | `(context: ReadonlyContext) => Record<string, string>` | `undefined` | Extra headers computed per call.                                              |
+| `unconstrainedObjectBodyAsParameter` | `boolean`                                              | `false`     | Deprecated. Emits one `body` parameter for an object body with no properties. |
 
 Supply `specDict` or `specStr`. `specDict` skips parsing and wins when both are
 present; neither throws `Either specDict or specStr must be provided.`
@@ -486,12 +512,13 @@ from session state, a trace id — which a static credential cannot express.
 The first six constructor arguments are the name, description, endpoint,
 operation, auth scheme and auth credential. The seventh is options.
 
-| Option                  | Type                                                   | Default     | Description                                                             |
-| :---------------------- | :----------------------------------------------------- | :---------- | :---------------------------------------------------------------------- |
-| `preservePropertyNames` | `boolean`                                              | `false`     | Offers OpenAPI names to the model unchanged, instead of `snake_case`.   |
-| `headerProvider`        | `(context: ReadonlyContext) => Record<string, string>` | `undefined` | Supplies extra headers per call, from the invocation context.           |
-| `credentialKey`         | `string`                                               | `undefined` | Names the credential this tool asks the client for.                     |
-| `operationParser`       | `OperationParser`                                      | `undefined` | Uses a parser the caller built, instead of parsing the operation again. |
+| Option                               | Type                                                   | Default     | Description                                                                   |
+| :----------------------------------- | :----------------------------------------------------- | :---------- | :---------------------------------------------------------------------------- |
+| `preservePropertyNames`              | `boolean`                                              | `false`     | Offers OpenAPI names to the model unchanged, instead of `snake_case`.         |
+| `headerProvider`                     | `(context: ReadonlyContext) => Record<string, string>` | `undefined` | Supplies extra headers per call, from the invocation context.                 |
+| `credentialKey`                      | `string`                                               | `undefined` | Names the credential this tool asks the client for.                           |
+| `operationParser`                    | `OperationParser`                                      | `undefined` | Uses a parser the caller built, instead of parsing the operation again.       |
+| `unconstrainedObjectBodyAsParameter` | `boolean`                                              | `false`     | Deprecated. Emits one `body` parameter for an object body with no properties. |
 
 `operationParser` exists for a caller that has already parsed the operation.
 `createRestApiTool` sets it when its input carries `parameters`, and
@@ -571,15 +598,16 @@ tool.configureAuthCredential({authType: AuthCredentialTypes.API_KEY, apiKey});
 
 ### Reading one operation on its own
 
-`OperationParser` produces the four artifacts a declaration is built from:
+`OperationParser` produces the artifacts for tool declarations and inspection:
 
 ```ts
 const parser = new OperationParser(operation);
 
 parser.getFunctionName(); // 'find_pets_by_status'
+parser.getDescription(); // 'Find pets by status' (the description the model reads)
 parser.getReturnTypeHint(); // 'List[Dict[str, Any]]'
 parser.getJsonSchema(); // {type: 'object', properties: {status: …}, …}
-parser.getPydocString(); // the docstring the model reads
+parser.getPydocString(); // Python-style docstring for inspection
 ```
 
 It accepts the operation as a typed object, a plain object, or a JSON string, so
@@ -589,11 +617,12 @@ given rather than reprocessing them — the point being that a caller who cached
 parsed operation gets the names it cached, not names generated a second time
 under a possibly different policy.
 
-`createApiParameter`, `generateParamDoc`, `generateReturnDoc` and `getTypeHint`
+`createApiParameter`, `generateParamDoc`, `generateReturnDoc`, and `getTypeHint`
 in `common/common.ts` are the same rendering as free functions, for a caller
-assembling a tool description by hand. `OperationParser` does not call them — it
-derives its own names and uses the operation's `description` verbatim — so they
-changed nothing about the tools `OpenAPIToolset` builds.
+assembling a tool description by hand. `OperationParser.getPydocString()` and
+`OperationParser.getReturnTypeHint()` delegate to them to produce Python-style
+docstrings and type hints. `RestApiTool` uses `OperationParser.getDescription()`
+and `OperationParser.getJsonSchema()` for model declarations.
 
 ### Substituting the exchanger in a test
 
@@ -660,11 +689,12 @@ percent-encoded dot segment exactly like a literal one.
 
 **Credentials.** Basic authentication is not supported: `credentialToParam`
 throws for a credential carrying a username or password rather than encoding
-them. The credential cache lives in session state, which is not a secret store,
-and has no expiry — an expired OAuth2 token is not detected and not refreshed,
-so a tool holding one has to clear it. A `pending` result needs a client that
-can resume; nothing happens until the application reads the parked auth request
-and starts a new run.
+them. The credential cache lives in session state, which is not a secret store;
+cached OAuth2 and OpenID Connect credentials with `expiresAt` and `refreshToken`
+are refreshed automatically via `OAuth2CredentialRefresher`, while non-OAuth2
+credentials have no expiry and must be cleared manually if revoked. A `pending`
+result needs a client that can resume; nothing happens until the application
+reads the parked auth request and starts a new run.
 
 `ServiceAccountCredentialExchanger` ignores `tokenUri`, because
 `google-auth-library` hardcodes `https://oauth2.googleapis.com/token` as both

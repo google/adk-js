@@ -146,7 +146,7 @@ function parseFrontmatterYaml(content: string): {
   const text = content.startsWith(FRONTMATTER_BOM)
     ? content.slice(FRONTMATTER_BOM.length)
     : content;
-  if (!text.startsWith('---')) {
+  if (!/^---[ \t]*(?:\r?\n|$)/.test(text)) {
     throw new InputValidationError(
       'SKILL.md must start with YAML frontmatter (---)',
     );
@@ -164,24 +164,29 @@ function parseFrontmatterYaml(content: string): {
   const frontmatterStr = match[1] ?? '';
   const body = text.slice(match[0].length).trim();
 
-  try {
-    const parsed = yaml.load(frontmatterStr);
-    if (
-      typeof parsed !== 'object' ||
-      parsed === null ||
-      Array.isArray(parsed)
-    ) {
+  const hasYamlContent = frontmatterStr.split(/\r?\n/).some((line) => {
+    const trimmed = line.trim();
+    return trimmed.length > 0 && !trimmed.startsWith('#');
+  });
+
+  let parsed: unknown = null;
+  if (hasYamlContent) {
+    try {
+      parsed = yaml.load(frontmatterStr);
+    } catch (e: unknown) {
       throw new InputValidationError(
-        'SKILL.md frontmatter must be a YAML mapping',
+        `Invalid YAML in frontmatter: ${(e as Error).message}`,
+        {cause: e},
       );
     }
-    return {raw: parsed as Record<string, unknown>, body};
-  } catch (e: unknown) {
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new InputValidationError(
-      `Invalid YAML in frontmatter: ${(e as Error).message}`,
-      {cause: e},
+      'Invalid YAML in frontmatter: SKILL.md frontmatter must be a YAML mapping',
     );
   }
+  return {raw: parsed as Record<string, unknown>, body};
 }
 
 /**
@@ -304,23 +309,17 @@ export async function validateSkillDir(skillDir: string): Promise<string[]> {
     return [(e as Error).message];
   }
 
-  try {
-    const keys = Object.keys(skill.frontmatter);
-    const unknown = keys.filter((k) => !ALLOWED_FRONTMATTER_KEYS.has(k));
-    if (unknown.length > 0) {
-      problems.push(
-        `Unknown frontmatter fields: [${unknown.sort().join(', ')}]`,
-      );
-    }
+  const keys = Object.keys(skill.frontmatter);
+  const unknown = keys.filter((k) => !ALLOWED_FRONTMATTER_KEYS.has(k));
+  if (unknown.length > 0) {
+    problems.push(`Unknown frontmatter fields: [${unknown.sort().join(', ')}]`);
+  }
 
-    const dirName = path.basename(resolvedDir);
-    if (dirName !== skill.frontmatter.name) {
-      problems.push(
-        `Skill name '${skill.frontmatter.name}' does not match directory name '${dirName}'.`,
-      );
-    }
-  } catch (e: unknown) {
-    problems.push((e as Error).message);
+  const dirName = path.basename(resolvedDir);
+  if (dirName !== skill.frontmatter.name) {
+    problems.push(
+      `Skill name '${skill.frontmatter.name}' does not match directory name '${dirName}'.`,
+    );
   }
 
   return problems;
@@ -464,7 +463,7 @@ export function loadSkillFromZipBuffer(zipBuffer: Buffer): Skill {
     }
   }
 
-  let skillMdContent = '';
+  let skillMdContent: string | undefined;
   for (const entry of entries) {
     if (entry.isDirectory) continue;
     if (entry.entryName.toLowerCase() === 'skill.md') {
@@ -473,7 +472,7 @@ export function loadSkillFromZipBuffer(zipBuffer: Buffer): Skill {
     }
   }
 
-  if (!skillMdContent) {
+  if (skillMdContent === undefined) {
     throw new NotFoundError('SKILL.md not found in zipped filesystem.');
   }
 

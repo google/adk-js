@@ -362,11 +362,18 @@ export function convertOperation(
   const parameters: OpenAPIV3.ParameterObject[] = [];
 
   for (const paramName of pathParams) {
+    const paramData =
+      methodData.parameters && Object.hasOwn(methodData.parameters, paramName)
+        ? methodData.parameters[paramName]
+        : undefined;
     parameters.push({
       name: paramName,
       in: 'path',
+      ...(paramData?.description !== undefined
+        ? {description: paramData.description}
+        : {}),
       required: true,
-      schema: {type: 'string'},
+      schema: paramData ? convertParameterSchema(paramData) : {type: 'string'},
     });
   }
 

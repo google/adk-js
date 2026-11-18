@@ -35,9 +35,9 @@ export type ClaudeMessageBlockParam =
   | Anthropic.TextBlockParam
   | Anthropic.ThinkingBlockParam
   | Anthropic.RedactedThinkingBlockParam
-  | Anthropic.ImageBlockParam
   | Anthropic.ToolUseBlockParam
-  | Anthropic.ToolResultBlockParam;
+  | Anthropic.ToolResultBlockParam
+  | Anthropic.ImageBlockParam;
 
 const PART_CONTENT_PAYLOAD_FIELDS = [
   'audioTranscription',
@@ -67,6 +67,36 @@ function isContentFreeSignature(part: Part): boolean {
     return false;
   }
   return !hasPartContentPayload(part);
+}
+
+type ImageMediaType = Anthropic.Base64ImageSource['media_type'];
+
+const SUPPORTED_IMAGE_MEDIA_TYPES: ReadonlySet<string> =
+  new Set<ImageMediaType>([
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'image/webp',
+  ]);
+
+function isImagePart(part: Part): boolean {
+  return Boolean(
+    part.inlineData?.mimeType?.trimStart().toLowerCase().startsWith('image/'),
+  );
+}
+
+function isSupportedImageMediaType(
+  mediaType: string,
+): mediaType is ImageMediaType {
+  return SUPPORTED_IMAGE_MEDIA_TYPES.has(mediaType);
+}
+
+function normalizeImageMediaType(mimeType: string): ImageMediaType {
+  const mediaType = mimeType.split(';', 1)[0].trim().toLowerCase();
+  if (!isSupportedImageMediaType(mediaType)) {
+    throw new Error(`Unsupported Anthropic image MIME type: ${mimeType}`);
+  }
+  return mediaType;
 }
 
 function isEmptyOrWhitespaceTextBlock(block: Anthropic.ContentBlock): boolean {
@@ -127,12 +157,6 @@ function describeUnsupportedPartKind(part: Part): string {
   if (part.fileData) {
     return 'fileData';
   }
-  if (part.executableCode) {
-    return 'executableCode';
-  }
-  if (part.codeExecutionResult) {
-    return 'codeExecutionResult';
-  }
   if (part.videoMetadata) {
     return 'videoMetadata';
   }
@@ -145,9 +169,6 @@ function describeUnsupportedPartKind(part: Part): string {
   if (part.toolResponse) {
     return 'toolResponse';
   }
-  if (part.text === '') {
-    return 'empty text';
-  }
   const keys = Object.keys(part);
   return keys.length > 0 ? keys.join(', ') : 'empty part';
 }
@@ -158,7 +179,8 @@ function formatFunctionResponseContent(
   if (!response) {
     return '';
   }
-  if ('result' in response) {
+  const keys = Object.keys(response);
+  if (keys.length === 1 && 'result' in response) {
     const result = response['result'];
     if (result === null || result === undefined) {
       return '';
@@ -168,10 +190,37 @@ function formatFunctionResponseContent(
     }
     return JSON.stringify(result);
   }
-  if (Object.keys(response).length > 0) {
+  if (keys.length > 0) {
     return JSON.stringify(response);
   }
   return '';
+}
+
+function isErrorFunctionResponse(
+  response: Record<string, unknown> | undefined,
+): boolean {
+  if (!response || typeof response !== 'object') {
+    return false;
+  }
+  return Boolean(
+    response['is_error'] ?? response['isError'] ?? response['error'],
+  );
+}
+
+function extractTextFromPartUnion(part: unknown): string | undefined {
+  if (typeof part === 'string') {
+    return part.length > 0 ? part : undefined;
+  }
+  if (
+    typeof part === 'object' &&
+    part !== null &&
+    'text' in part &&
+    typeof part.text === 'string' &&
+    part.text.length > 0
+  ) {
+    return part.text;
+  }
+  return undefined;
 }
 
 /**
@@ -187,24 +236,33 @@ export function extractSystemInstructionText(
   if (typeof systemInstruction === 'string') {
     return systemInstruction;
   }
-  if (
-    typeof systemInstruction === 'object' &&
-    'parts' in systemInstruction &&
-    Array.isArray(systemInstruction.parts)
-  ) {
+  if (Array.isArray(systemInstruction)) {
     const texts: string[] = [];
-    for (const part of systemInstruction.parts) {
-      if (
-        typeof part === 'object' &&
-        part !== null &&
-        'text' in part &&
-        typeof part.text === 'string' &&
-        part.text.length > 0
-      ) {
-        texts.push(part.text);
+    for (const part of systemInstruction) {
+      const text = extractTextFromPartUnion(part);
+      if (text !== undefined) {
+        texts.push(text);
       }
     }
     return texts.length > 0 ? texts.join('\n') : undefined;
+  }
+  if (typeof systemInstruction === 'object') {
+    if (
+      'parts' in systemInstruction &&
+      Array.isArray(systemInstruction.parts)
+    ) {
+      const texts: string[] = [];
+      for (const part of systemInstruction.parts) {
+        const text = extractTextFromPartUnion(part);
+        if (text !== undefined) {
+          texts.push(text);
+        }
+      }
+      return texts.length > 0 ? texts.join('\n') : undefined;
+    }
+    if ('text' in systemInstruction) {
+      return extractTextFromPartUnion(systemInstruction);
+    }
   }
   return undefined;
 }
@@ -354,6 +412,10 @@ export class ToolUseIdSanitizer {
  * A `thoughtSignature` on a non-thought text, function call or function
  * response part is dropped, because other models (such as Gemini) attach
  * signatures to those parts and Claude cannot verify them.
+ *
+ * An `inlineData` part with a JPEG, PNG, GIF or WebP MIME type becomes a
+ * base64 `image` block. `executableCode` and `codeExecutionResult` parts become
+ * fenced `text` blocks. Other `inlineData` and `fileData` parts throw.
  */
 export function partToMessageBlock(
   part: Part,
@@ -405,7 +467,48 @@ export function partToMessageBlock(
         false,
       ),
       content: formatFunctionResponseContent(part.functionResponse.response),
-      is_error: false,
+      is_error: isErrorFunctionResponse(part.functionResponse.response),
+    };
+  }
+  if (isImagePart(part)) {
+    if (!part.inlineData?.mimeType || !part.inlineData.data) {
+      throw new Error('Anthropic image parts require MIME type and data');
+    }
+    return {
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: normalizeImageMediaType(part.inlineData.mimeType),
+        data: part.inlineData.data,
+      },
+    };
+  }
+  if (part.executableCode) {
+    return {
+      type: 'text',
+      text: 'Code:```python\n' + (part.executableCode.code ?? '') + '\n```',
+    };
+  }
+  if (part.codeExecutionResult) {
+    return {
+      type: 'text',
+      text:
+        'Execution Result:```code_output\n' +
+        (part.codeExecutionResult.output ?? '') +
+        '\n```',
+    };
+  }
+  if (isEmptyTextPart(part)) {
+    return {
+      type: 'text',
+      text: '',
+    };
+  }
+  if (isContentFreeSignature(part)) {
+    logger.warn('Dropping a thought signature from another model.');
+    return {
+      type: 'text',
+      text: '',
     };
   }
   throw new Error(
@@ -415,15 +518,24 @@ export function partToMessageBlock(
 
 /**
  * Converts an ADK `Content` object into an Anthropic `MessageParam`.
+ *
+ * Claude accepts an image on a user turn only, so an image part on an
+ * assistant turn (`role` `'model'` or `'assistant'`) is dropped with a warning.
  */
 export function contentToMessageParam(
   content: Content,
   sanitizer: ToolUseIdSanitizer = new ToolUseIdSanitizer(),
 ): Anthropic.MessageParam {
+  const role = toClaudeRole(content.role);
   const messageBlocks: ClaudeMessageBlockParam[] = [];
   let hadEmptyText = false;
 
   for (const part of content.parts ?? []) {
+    if (role !== ClaudeRole.USER && isImagePart(part)) {
+      logger.warn('Image data is not supported in Claude for assistant turns.');
+      continue;
+    }
+
     if (isContentFreeSignature(part)) {
       logger.warn('Dropping a thought signature from another model.');
       continue;
@@ -438,7 +550,6 @@ export function contentToMessageParam(
     messageBlocks.push(partToMessageBlock(part, sanitizer));
   }
 
-  const role = toClaudeRole(content.role);
   if (messageBlocks.length === 0 && hadEmptyText && role === ClaudeRole.USER) {
     messageBlocks.push({type: 'text', text: '.'});
   }
@@ -505,6 +616,11 @@ function extractThinkingTokenCount(
   return Math.min(thinkingTokens, outputTokens);
 }
 
+const TRUNCATING_STOP_REASONS = new Set<string>([
+  'max_tokens',
+  'model_context_window_exceeded',
+]);
+
 /**
  * Converts an Anthropic `Message` into an {@link LlmResponse}.
  */
@@ -512,11 +628,18 @@ export function messageToGenerateContentResponse(
   message: Anthropic.Message,
 ): LlmResponse {
   const thinkingTokens = extractThinkingTokenCount(message.usage);
+  const isTruncated =
+    typeof message.stop_reason === 'string' &&
+    TRUNCATING_STOP_REASONS.has(message.stop_reason);
   return {
     content: {
       role: 'model',
       parts: message.content
-        .filter((block) => !isEmptyOrWhitespaceTextBlock(block))
+        .filter(
+          (block) =>
+            !isEmptyOrWhitespaceTextBlock(block) &&
+            !(isTruncated && block.type === 'tool_use'),
+        )
         .map(contentBlockToPart),
     },
     finishReason: toGoogleGenaiFinishReason(message.stop_reason),

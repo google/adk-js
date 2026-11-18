@@ -5,7 +5,7 @@
  */
 
 import {CompactedEvent, createEvent} from '@google/adk';
-import {Content} from '@google/genai';
+import {Content, Part} from '@google/genai';
 import {describe, expect, it} from 'vitest';
 import {
   getContents,
@@ -425,6 +425,133 @@ describe('getContents', () => {
     });
 
     expect(() => getContents([e0, e0_5, e1], 'my_agent')).toThrowError(
+      'Last response event should only contain the responses for the function calls in the same function call event.',
+    );
+  });
+
+  it('removes intermediate events when matching one response out of multiple function calls', () => {
+    const callEvent = createEvent({
+      invocationId: 'inv-1',
+      author: 'myAgent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'func-123',
+              name: 'testFunction',
+              args: {param: 'value1'},
+            },
+          },
+          {
+            functionCall: {
+              id: 'func-456',
+              name: 'testFunction2',
+              args: {param: 'value2'},
+            },
+          },
+        ],
+      },
+    });
+    const intermediateEvent = createEvent({
+      invocationId: 'inv-2',
+      author: 'myAgent',
+      content: {
+        role: 'model',
+        parts: [{text: 'Processing...'}],
+      },
+    });
+    const responseEvent = createEvent({
+      invocationId: 'inv-3',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'func-123',
+              name: 'testFunction',
+              response: {result: 'success'},
+            },
+          },
+        ],
+      },
+    });
+
+    const contents = getContents(
+      [callEvent, intermediateEvent, responseEvent],
+      'myAgent',
+    );
+
+    expect(contents).toHaveLength(2);
+    expect(contents[0].parts?.map((p) => p.functionCall?.id)).toEqual([
+      'func-123',
+      'func-456',
+    ]);
+    expect(contents[1].parts?.map((p) => p.functionResponse?.id)).toEqual([
+      'func-123',
+    ]);
+  });
+
+  it('throws subset error when latest response mixes a matching id with an unknown id across multiple calls', () => {
+    const callEvent = createEvent({
+      invocationId: 'inv-1',
+      author: 'myAgent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'func-123',
+              name: 'testFunction',
+              args: {param: 'value1'},
+            },
+          },
+          {
+            functionCall: {
+              id: 'func-456',
+              name: 'testFunction2',
+              args: {param: 'value2'},
+            },
+          },
+        ],
+      },
+    });
+    const intermediateEvent = createEvent({
+      invocationId: 'inv-2',
+      author: 'myAgent',
+      content: {
+        role: 'model',
+        parts: [{text: 'Processing...'}],
+      },
+    });
+    const responseEvent = createEvent({
+      invocationId: 'inv-3',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'func-123',
+              name: 'testFunction',
+              response: {result: 'success'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'func-789',
+              name: 'testFunction3',
+              response: {result: 'other'},
+            },
+          },
+        ],
+      },
+    });
+
+    expect(() =>
+      getContents([callEvent, intermediateEvent, responseEvent], 'myAgent'),
+    ).toThrowError(
       'Last response event should only contain the responses for the function calls in the same function call event.',
     );
   });
@@ -964,6 +1091,36 @@ describe('getContents', () => {
         },
       ]);
     });
+    it.each<{name: string; parts: Part[]}>([
+      {name: 'signature-only', parts: [{thoughtSignature: 'sig123'}]},
+      {name: 'empty', parts: [{}]},
+    ])(
+      'should skip trailing $name foreign events when finding turn start',
+      ({parts}) => {
+        const e0 = createEvent({
+          author: 'other_agent',
+          content: {
+            role: 'model',
+            parts: [{text: 'answer from other agent'}],
+          },
+        });
+        const e1 = createEvent({
+          author: 'other_agent',
+          content: {role: 'model', parts},
+        });
+
+        const contents = getCurrentTurnContents([e0, e1], 'current_agent');
+        expect(contents).toEqual([
+          {
+            role: 'user',
+            parts: [
+              {text: 'For context:'},
+              {text: '[other_agent] said: answer from other agent'},
+            ],
+          },
+        ]);
+      },
+    );
   });
 
   it('should handle media parts in convertForeignEvent', () => {
@@ -1186,6 +1343,173 @@ describe('getContents', () => {
               mimeType: 'image/png',
               data: 'base64data',
             },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it.each<{name: string; parts: Part[]}>([
+    {name: 'signature-only', parts: [{thoughtSignature: 'sig123'}]},
+    {
+      name: 'thought-false signature',
+      parts: [{thought: false, thoughtSignature: 'sig'}],
+    },
+    {name: 'empty', parts: [{}]},
+  ])(
+    'should drop foreign event completely when all parts are $name parts',
+    ({parts}) => {
+      const events = [
+        createEvent({
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'first user turn'}]},
+        }),
+        createEvent({
+          author: 'other_agent',
+          content: {role: 'model', parts},
+        }),
+        createEvent({
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'second user turn'}]},
+        }),
+      ];
+
+      const contents = getContents(events, 'current_agent');
+      expect(contents).toEqual([
+        {role: 'user', parts: [{text: 'first user turn'}]},
+        {role: 'user', parts: [{text: 'second user turn'}]},
+      ]);
+    },
+  );
+
+  it('should not emit empty parts for signature-only parts mixed with visible parts in convertForeignEvent', () => {
+    const event = createEvent({
+      author: 'other_agent',
+      content: {
+        role: 'model',
+        parts: [{text: 'hello'}, {thoughtSignature: 'sig-trailing'}],
+      },
+    });
+
+    const contents = getContents([event], 'current_agent');
+    expect(contents).toEqual([
+      {
+        role: 'user',
+        parts: [{text: 'For context:'}, {text: '[other_agent] said: hello'}],
+      },
+    ]);
+  });
+
+  it('should not leak thought text from a thought-marked functionCall part in convertForeignEvent', () => {
+    const event = createEvent({
+      author: 'other_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            thought: true,
+            text: 'secret reasoning',
+            functionCall: {name: 'calc', args: {value: 42}},
+          },
+        ],
+      },
+    });
+
+    const contents = getContents([event], 'current_agent');
+    expect(contents).toEqual([
+      {
+        role: 'user',
+        parts: [
+          {text: 'For context:'},
+          {
+            text: '[other_agent] called tool `calc` with parameters: {"value":42}',
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('should not leak thought text from a thought-marked functionResponse part in convertForeignEvent', () => {
+    const event = createEvent({
+      author: 'other_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            thought: true,
+            text: 'secret evaluation',
+            functionResponse: {name: 'calc', response: {output: 42}},
+          },
+        ],
+      },
+    });
+
+    const contents = getContents([event], 'current_agent');
+    expect(contents).toEqual([
+      {
+        role: 'user',
+        parts: [
+          {text: 'For context:'},
+          {
+            text: '[other_agent] tool `calc` returned result: {"output":42}',
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('should keep both non-thought text and functionCall from one part in convertForeignEvent', () => {
+    const event = createEvent({
+      author: 'other_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            text: 'Calling calculator',
+            functionCall: {name: 'calc', args: {x: 1}},
+          },
+        ],
+      },
+    });
+
+    const contents = getContents([event], 'current_agent');
+    expect(contents).toEqual([
+      {
+        role: 'user',
+        parts: [
+          {text: 'For context:'},
+          {text: '[other_agent] said: Calling calculator'},
+          {
+            text: '[other_agent] called tool `calc` with parameters: {"x":1}',
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('should keep both non-thought text and functionResponse from one part in convertForeignEvent', () => {
+    const event = createEvent({
+      author: 'other_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            text: 'Calculation complete',
+            functionResponse: {name: 'calc', response: {result: 10}},
+          },
+        ],
+      },
+    });
+
+    const contents = getContents([event], 'current_agent');
+    expect(contents).toEqual([
+      {
+        role: 'user',
+        parts: [
+          {text: 'For context:'},
+          {text: '[other_agent] said: Calculation complete'},
+          {
+            text: '[other_agent] tool `calc` returned result: {"result":10}',
           },
         ],
       },

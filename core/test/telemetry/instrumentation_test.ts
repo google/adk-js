@@ -15,11 +15,14 @@ import {
   type Attributes,
   context,
   metrics,
+  propagation,
+  ROOT_CONTEXT,
   SpanStatusCode,
   trace,
 } from '@opentelemetry/api';
 import {type Logger, logs, SeverityNumber} from '@opentelemetry/api-logs';
 import {AsyncLocalStorageContextManager} from '@opentelemetry/context-async-hooks';
+import {W3CTraceContextPropagator} from '@opentelemetry/core';
 import {
   InMemoryLogRecordExporter,
   LoggerProvider,
@@ -64,6 +67,7 @@ import {
   LlmRequest,
   LlmResponse,
   PluginManager,
+  runWithAgentEngineContext,
   type TelemetryConfig,
   ToolErrorType,
   ToolExecutionError,
@@ -72,8 +76,10 @@ import {
 import {createCompactedEvent} from '../../src/events/compacted_event.js';
 import {ContextCompactionTrigger} from '../../src/plugins/base_plugin.js';
 import {
+  type FetchFunction,
   instrumentMcpFetch,
   type McpFetch,
+  propagateTraceContext,
   recordAgentInvocation,
   recordCompaction,
   recordInference,
@@ -84,8 +90,13 @@ import {
   recordSkillActivity,
   recordToolExecution,
   recordWorkflowInvocation,
+  runWithRemoteTraceContext,
   type ToolExecutionScope,
 } from '../../src/telemetry/api/instrumentation.js';
+import {
+  getToolResponseErrorType,
+  resolveErrorType,
+} from '../../src/telemetry/api/internal/common/error.js';
 import {logger} from '../../src/utils/logger.js';
 import {version} from '../../src/version.js';
 
@@ -941,6 +952,16 @@ describe('recordToolExecution', () => {
       error: new TypeError('sensitive details'),
       errorType: 'TypeError',
     },
+    {
+      name: 'an error with whitespace errorType falling back to class name',
+      error: Object.assign(new TypeError('bad'), {errorType: '   '}),
+      errorType: 'TypeError',
+    },
+    {
+      name: 'an error with NaN errorType falling back to class name',
+      error: Object.assign(new TypeError('bad'), {errorType: NaN}),
+      errorType: 'TypeError',
+    },
   ])('records a thrown error: $name', async ({error, errorType}) => {
     await expect(
       recordToolExecution(
@@ -977,6 +998,92 @@ describe('recordToolExecution', () => {
       expect(span.attributes['error.type']).toBe(value);
       expect(span.status).toEqual({code: SpanStatusCode.ERROR, message: value});
       expect(span.events).toEqual([]);
+    },
+  );
+
+  it.each([
+    {field: 'errorCode', value: 404, expected: '404'},
+    {field: 'error_code', value: 500, expected: '500'},
+    {field: 'errorType', value: 400, expected: '400'},
+    {field: 'error_type', value: 503, expected: '503'},
+    {field: 'errorCode', value: 0, expected: '0'},
+  ])(
+    'records numeric $field in a tool response as a string error type',
+    async ({field, value, expected}) => {
+      const response = {error: 'sensitive details', [field]: value};
+
+      expect(getToolResponseErrorType(response)).toBe(expected);
+
+      const span = await runTool(response);
+
+      expect(span.attributes['error.type']).toBe(expected);
+      expect(span.status).toEqual({
+        code: SpanStatusCode.ERROR,
+        message: expected,
+      });
+      expect(span.events).toEqual([]);
+    },
+  );
+
+  it.each([
+    {response: {error: 'details', errorType: ''}},
+    {response: {error: 'details', error_type: '   '}},
+    {response: {error: 'details', errorCode: ''}},
+    {response: {error: 'details', error_code: '   '}},
+    {response: {error: null, errorType: ''}},
+    {response: {error: '', errorType: '   '}},
+  ])(
+    'ignores empty or whitespace error types in a tool response ($#)',
+    async ({response}) => {
+      expect(getToolResponseErrorType(response)).toBeUndefined();
+
+      const span = await runTool(response);
+
+      expect(span.attributes['error.type']).toBeUndefined();
+      expect(span.status.code).toBe(SpanStatusCode.UNSET);
+      expect(span.events).toEqual([]);
+    },
+  );
+
+  it('falls through to a later error field when an earlier field is empty', async () => {
+    const response = {
+      error: 'details',
+      errorType: '',
+      errorCode: 429,
+    };
+
+    expect(getToolResponseErrorType(response)).toBe('429');
+
+    const span = await runTool(response);
+
+    expect(span.attributes['error.type']).toBe('429');
+    expect(span.status).toEqual({
+      code: SpanStatusCode.ERROR,
+      message: '429',
+    });
+    expect(span.events).toEqual([]);
+  });
+
+  it.each([
+    {
+      description: 'whitespace errorType',
+      error: Object.assign(new TypeError('bad'), {errorType: '   '}),
+      expected: 'TypeError',
+    },
+    {
+      description: 'empty errorType',
+      error: Object.assign(new TypeError('bad'), {errorType: ''}),
+      expected: 'TypeError',
+    },
+    {
+      description: 'NaN errorType',
+      error: Object.assign(new TypeError('bad'), {errorType: NaN}),
+      expected: 'TypeError',
+    },
+  ])(
+    'ignores invalid errorType and falls back to constructor name ($description)',
+    ({error, expected}) => {
+      expect(resolveErrorType(error)).toBe(expected);
     },
   );
 });
@@ -1167,6 +1274,207 @@ describe('invocation, agent and workflow spans', () => {
     const span = onlySpan('invoke_workflow other_workflow');
     expect(span.status.code).toBe(SpanStatusCode.ERROR);
     expect(span.attributes).not.toHaveProperty('gen_ai.workflow.nested');
+  });
+});
+
+describe('runWithAgentEngineContext', () => {
+  const agent = new LlmAgent({name: 'root_agent', description: 'Root.'});
+  const AGENT_ENGINE_TRACE_ID = '0af7651916cd43dd8448eb211c80319c';
+  const AGENT_ENGINE_SPAN_ID = 'b7ad6b7169203331';
+  const AGENT_ENGINE_TRACEPARENT = `00-${AGENT_ENGINE_TRACE_ID}-${AGENT_ENGINE_SPAN_ID}-01`;
+  const SUPPORT_ID = '00-11111111111111111111111111111111-2222222222222222-01';
+  const ROOT_SPAN = 'invoke_workflow root_agent';
+
+  function runInvocation(): Promise<void[]> {
+    return drain(
+      recordInvocation(
+        {entrypoint: agent, sessionId: SESSION_ID},
+        async function* () {
+          yield* [];
+        },
+      ),
+    );
+  }
+
+  it('parents the root span on the Agent Engine span and records supportID', async () => {
+    await runWithAgentEngineContext(
+      {
+        'google-agent-engine-traceparent': AGENT_ENGINE_TRACEPARENT,
+        'traceparent': SUPPORT_ID,
+      },
+      runInvocation,
+    );
+
+    const span = onlySpan(ROOT_SPAN);
+    expect(span.spanContext().traceId).toBe(AGENT_ENGINE_TRACE_ID);
+    expect(span.parentSpanContext?.spanId).toBe(AGENT_ENGINE_SPAN_ID);
+    expect(span.parentSpanContext?.isRemote).toBe(true);
+    expect(span.attributes['supportID']).toBe(SUPPORT_ID);
+  });
+
+  it('reads header names case-insensitively and takes the first array value', async () => {
+    await runWithAgentEngineContext(
+      {
+        'Google-Agent-Engine-Traceparent': [
+          AGENT_ENGINE_TRACEPARENT,
+          `00-${'3'.repeat(32)}-${'4'.repeat(16)}-01`,
+        ],
+        'TraceParent': [SUPPORT_ID, 'second'],
+      },
+      runInvocation,
+    );
+
+    const span = onlySpan(ROOT_SPAN);
+    expect(span.parentSpanContext?.spanId).toBe(AGENT_ENGINE_SPAN_ID);
+    expect(span.attributes['supportID']).toBe(SUPPORT_ID);
+  });
+
+  it.each([
+    {
+      kind: 'an all-zero trace id',
+      value: `00-${'0'.repeat(32)}-${AGENT_ENGINE_SPAN_ID}-01`,
+    },
+    {
+      kind: 'an all-zero span id',
+      value: `00-${AGENT_ENGINE_TRACE_ID}-${'0'.repeat(16)}-01`,
+    },
+    {
+      kind: 'version ff',
+      value: `ff-${AGENT_ENGINE_TRACE_ID}-${AGENT_ENGINE_SPAN_ID}-01`,
+    },
+    {kind: 'uppercase hex', value: AGENT_ENGINE_TRACEPARENT.toUpperCase()},
+    {
+      kind: 'non-hex characters',
+      value: `00-${'g'.repeat(32)}-${AGENT_ENGINE_SPAN_ID}-01`,
+    },
+    {
+      kind: 'an extra field on version 00',
+      value: `${AGENT_ENGINE_TRACEPARENT}-extra`,
+    },
+    {kind: 'missing fields', value: `00-${AGENT_ENGINE_TRACE_ID}`},
+    {kind: 'free text', value: 'not a traceparent'},
+  ])('ignores a header with $kind', async ({value}) => {
+    await runWithAgentEngineContext(
+      {
+        'google-agent-engine-traceparent': value,
+        'traceparent': SUPPORT_ID,
+      },
+      runInvocation,
+    );
+
+    const span = onlySpan(ROOT_SPAN);
+    expect(span.parentSpanContext).toBeUndefined();
+    expect(span.spanContext().traceId).not.toBe(AGENT_ENGINE_TRACE_ID);
+    expect(span.attributes['supportID']).toBe(SUPPORT_ID);
+  });
+
+  it('accepts extra fields on a later version', async () => {
+    await runWithAgentEngineContext(
+      {
+        'google-agent-engine-traceparent': `01-${AGENT_ENGINE_TRACE_ID}-${AGENT_ENGINE_SPAN_ID}-01-extra`,
+      },
+      runInvocation,
+    );
+
+    const span = onlySpan(ROOT_SPAN);
+    expect(span.parentSpanContext?.spanId).toBe(AGENT_ENGINE_SPAN_ID);
+    expect(span.attributes).not.toHaveProperty('supportID');
+  });
+
+  it('does not record a traceparent longer than 256 characters', async () => {
+    await runWithAgentEngineContext(
+      {
+        'google-agent-engine-traceparent': AGENT_ENGINE_TRACEPARENT,
+        'traceparent': 'a'.repeat(257),
+      },
+      runInvocation,
+    );
+
+    expect(onlySpan(ROOT_SPAN).attributes).not.toHaveProperty('supportID');
+  });
+
+  it('changes nothing without the headers', async () => {
+    await runWithAgentEngineContext({}, runInvocation);
+
+    const span = onlySpan(ROOT_SPAN);
+    expect(span.parentSpanContext).toBeUndefined();
+    expect(span.attributes).toEqual({
+      'gen_ai.operation.name': 'invoke_workflow',
+      'gen_ai.conversation.id': SESSION_ID,
+      'gen_ai.workflow.name': 'root_agent',
+    });
+  });
+
+  it('records supportID only on the root span of nested invocations', async () => {
+    const child = new LlmAgent({name: 'child_agent'});
+    await runWithAgentEngineContext(
+      {
+        'google-agent-engine-traceparent': AGENT_ENGINE_TRACEPARENT,
+        'traceparent': SUPPORT_ID,
+      },
+      () =>
+        drain(
+          recordInvocation(
+            {entrypoint: agent, sessionId: SESSION_ID},
+            async function* () {
+              yield* recordInvocation(
+                {entrypoint: child, sessionId: SESSION_ID},
+                async function* () {
+                  yield* [];
+                },
+              );
+            },
+          ),
+        ),
+    );
+
+    const root = onlySpan(ROOT_SPAN);
+    const nested = onlySpan('invoke_workflow child_agent');
+    expect(root.attributes['supportID']).toBe(SUPPORT_ID);
+    expect(nested.attributes).not.toHaveProperty('supportID');
+    expect(nested.parentSpanContext?.spanId).toBe(root.spanContext().spanId);
+    expect(nested.spanContext().traceId).toBe(AGENT_ENGINE_TRACE_ID);
+  });
+
+  it('keeps an active local span as the parent and records no supportID', async () => {
+    const tracer = trace.getTracer('test');
+    await tracer.startActiveSpan('application', async (appSpan) => {
+      await runWithAgentEngineContext(
+        {
+          'google-agent-engine-traceparent': AGENT_ENGINE_TRACEPARENT,
+          'traceparent': SUPPORT_ID,
+        },
+        runInvocation,
+      );
+      appSpan.end();
+    });
+
+    const app = onlySpan('application');
+    const span = onlySpan(ROOT_SPAN);
+    expect(span.parentSpanContext?.spanId).toBe(app.spanContext().spanId);
+    expect(span.spanContext().traceId).not.toBe(AGENT_ENGINE_TRACE_ID);
+    expect(span.attributes).not.toHaveProperty('supportID');
+  });
+
+  it('records no supportID when a local span starts inside the context', async () => {
+    const tracer = trace.getTracer('test');
+    await runWithAgentEngineContext(
+      {
+        'google-agent-engine-traceparent': AGENT_ENGINE_TRACEPARENT,
+        'traceparent': SUPPORT_ID,
+      },
+      () =>
+        tracer.startActiveSpan('application', async (appSpan) => {
+          await runInvocation();
+          appSpan.end();
+        }),
+    );
+
+    const app = onlySpan('application');
+    const span = onlySpan(ROOT_SPAN);
+    expect(app.parentSpanContext?.spanId).toBe(AGENT_ENGINE_SPAN_ID);
+    expect(span.parentSpanContext?.spanId).toBe(app.spanContext().spanId);
+    expect(span.attributes).not.toHaveProperty('supportID');
   });
 });
 
@@ -2860,6 +3168,233 @@ describe('instrumentMcpFetch', () => {
       expect(record.attributes).toMatchObject({
         'http.request.header.x-trace': ['a'],
       });
+    });
+  });
+});
+
+describe('trace context propagation', () => {
+  const PEER_URL = 'https://peer.example.com/rpc';
+  const REMOTE_TRACE_ID = '0af7651916cd43dd8448eb211c80319c';
+  const REMOTE_SPAN_ID = 'b7ad6b7169203331';
+  const REMOTE_TRACEPARENT = `00-${REMOTE_TRACE_ID}-${REMOTE_SPAN_ID}-01`;
+  const ROOT_SPAN = 'invoke_workflow root_agent';
+  const agent = new LlmAgent({name: 'root_agent', description: 'Root.'});
+  const failingPropagator = {
+    inject(): void {
+      throw new Error('inject failed');
+    },
+    extract(): never {
+      throw new Error('extract failed');
+    },
+    fields: (): string[] => [],
+  };
+
+  beforeAll(() => {
+    propagation.setGlobalPropagator(new W3CTraceContextPropagator());
+  });
+
+  afterAll(() => {
+    propagation.disable();
+  });
+
+  /** Runs `fn` with the given propagator registered in place of W3C. */
+  async function withPropagator(
+    propagator: typeof failingPropagator,
+    fn: () => Promise<unknown>,
+  ): Promise<void> {
+    propagation.disable();
+    propagation.setGlobalPropagator(propagator);
+    try {
+      await fn();
+    } finally {
+      propagation.disable();
+      propagation.setGlobalPropagator(new W3CTraceContextPropagator());
+    }
+  }
+
+  function createSpyFetch() {
+    return vi.fn<FetchFunction>(async () => new Response('ok'));
+  }
+
+  function sentHeaders(send: ReturnType<typeof createSpyFetch>): Headers {
+    expect(send).toHaveBeenCalledTimes(1);
+    return new Headers(send.mock.calls[0][1]?.headers);
+  }
+
+  /** Sends one request through `fetch` inside an active `caller` span. */
+  async function sendInSpan(
+    fetch: FetchFunction,
+    input: Parameters<FetchFunction>[0],
+    init?: Parameters<FetchFunction>[1],
+  ): Promise<string> {
+    return trace.getTracer('test').startActiveSpan('caller', async (span) => {
+      await fetch(input, init);
+      span.end();
+      const {traceId, spanId} = span.spanContext();
+      return `00-${traceId}-${spanId}-01`;
+    });
+  }
+
+  function runInvocation(): Promise<void[]> {
+    return drain(
+      recordInvocation(
+        {entrypoint: agent, sessionId: SESSION_ID},
+        async function* () {
+          yield* [];
+        },
+      ),
+    );
+  }
+
+  describe('propagateTraceContext', () => {
+    it('sends the active span as traceparent', async () => {
+      const send = createSpyFetch();
+
+      const expected = await sendInSpan(propagateTraceContext(send), PEER_URL, {
+        method: 'POST',
+      });
+
+      expect(sentHeaders(send).get('traceparent')).toBe(expected);
+      expect(send.mock.calls[0][0]).toBe(PEER_URL);
+      expect(send.mock.calls[0][1]?.method).toBe('POST');
+    });
+
+    it('keeps a traceparent the caller sets, whatever its case', async () => {
+      const send = createSpyFetch();
+
+      await sendInSpan(propagateTraceContext(send), PEER_URL, {
+        headers: {TraceParent: REMOTE_TRACEPARENT},
+      });
+
+      expect(sentHeaders(send).get('traceparent')).toBe(REMOTE_TRACEPARENT);
+    });
+
+    it('keeps the headers of a Request input', async () => {
+      const send = createSpyFetch();
+      const request = new Request(PEER_URL, {headers: {'x-api-key': 'key-1'}});
+
+      const expected = await sendInSpan(propagateTraceContext(send), request);
+
+      const headers = sentHeaders(send);
+      expect(send.mock.calls[0][0]).toBe(request);
+      expect(headers.get('x-api-key')).toBe('key-1');
+      expect(headers.get('traceparent')).toBe(expected);
+    });
+
+    it.each([
+      {kind: 'an array', headers: [['x-api-key', 'key-1']]},
+      {kind: 'a plain object', headers: {'x-api-key': 'key-1'}},
+      {kind: 'a Headers object', headers: new Headers({'x-api-key': 'key-1'})},
+    ] satisfies Array<{
+      kind: string;
+      headers: ConstructorParameters<typeof Headers>[0];
+    }>)('merges init headers given as $kind', async ({headers}) => {
+      const send = createSpyFetch();
+
+      const expected = await sendInSpan(propagateTraceContext(send), PEER_URL, {
+        headers,
+      });
+
+      const sent = sentHeaders(send);
+      expect(sent.get('x-api-key')).toBe('key-1');
+      expect(sent.get('traceparent')).toBe(expected);
+    });
+
+    it('passes the arguments through unchanged with no active trace', async () => {
+      const send = createSpyFetch();
+      const init = {method: 'POST', headers: {'x-api-key': 'key-1'}};
+
+      await context.with(ROOT_CONTEXT, () =>
+        propagateTraceContext(send)(PEER_URL, init),
+      );
+
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send.mock.calls[0][0]).toBe(PEER_URL);
+      expect(send.mock.calls[0][1]).toBe(init);
+    });
+
+    it('logs a propagator error and sends the request unchanged', async () => {
+      const send = createSpyFetch();
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const init = {method: 'POST'};
+
+      await withPropagator(failingPropagator, () =>
+        sendInSpan(propagateTraceContext(send), PEER_URL, init),
+      );
+
+      expect(send.mock.calls[0][1]).toBe(init);
+      expect(warn).toHaveBeenCalledTimes(1);
+      warn.mockRestore();
+    });
+  });
+
+  describe('runWithRemoteTraceContext', () => {
+    it.each([
+      {kind: 'a lowercase name', headers: {traceparent: REMOTE_TRACEPARENT}},
+      {kind: 'an uppercase name', headers: {TRACEPARENT: REMOTE_TRACEPARENT}},
+      {
+        kind: 'an array value',
+        headers: {traceparent: [REMOTE_TRACEPARENT, 'second']},
+      },
+    ])(
+      'parents the root span on a valid traceparent with $kind',
+      async ({headers}) => {
+        await runWithRemoteTraceContext(headers, runInvocation);
+
+        const span = onlySpan(ROOT_SPAN);
+        expect(span.spanContext().traceId).toBe(REMOTE_TRACE_ID);
+        expect(span.parentSpanContext?.spanId).toBe(REMOTE_SPAN_ID);
+        expect(span.parentSpanContext?.isRemote).toBe(true);
+        expect(span.attributes).not.toHaveProperty('supportID');
+      },
+    );
+
+    it.each([
+      {kind: 'free text', value: 'garbage'},
+      {
+        kind: 'an all-zero trace id',
+        value: `00-${'0'.repeat(32)}-${REMOTE_SPAN_ID}-01`,
+      },
+      {kind: 'version ff', value: `ff-${REMOTE_TRACE_ID}-${REMOTE_SPAN_ID}-01`},
+    ])('starts a new trace for a traceparent with $kind', async ({value}) => {
+      await runWithRemoteTraceContext({traceparent: value}, runInvocation);
+
+      const span = onlySpan(ROOT_SPAN);
+      expect(span.parentSpanContext).toBeUndefined();
+      expect(span.spanContext().traceId).not.toBe(REMOTE_TRACE_ID);
+      expect(span.attributes).not.toHaveProperty('supportID');
+    });
+
+    it('keeps an active local span as the parent', async () => {
+      await trace
+        .getTracer('test')
+        .startActiveSpan('application', async (appSpan) => {
+          await runWithRemoteTraceContext(
+            {traceparent: REMOTE_TRACEPARENT},
+            runInvocation,
+          );
+          appSpan.end();
+        });
+
+      const app = onlySpan('application');
+      const span = onlySpan(ROOT_SPAN);
+      expect(span.parentSpanContext?.spanId).toBe(app.spanContext().spanId);
+      expect(span.spanContext().traceId).toBe(app.spanContext().traceId);
+      expect(span.spanContext().traceId).not.toBe(REMOTE_TRACE_ID);
+    });
+
+    it('logs a propagator error and runs the handler once in the active context', async () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const handler = vi.fn(runInvocation);
+
+      await withPropagator(failingPropagator, () =>
+        runWithRemoteTraceContext({traceparent: REMOTE_TRACEPARENT}, handler),
+      );
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(onlySpan(ROOT_SPAN).parentSpanContext).toBeUndefined();
+      warn.mockRestore();
     });
   });
 });

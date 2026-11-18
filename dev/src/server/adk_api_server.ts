@@ -6,28 +6,41 @@
 
 import {
   AddSessionToEvalSetRequest,
+  type AgentRuntimeRequestHooks,
   App,
   BaseArtifactService,
+  BaseCredentialService,
   BaseMemoryService,
   BaseSessionService,
   bearerTokenUserBuilder,
-  convertSessionToEvalFormat,
+  closeRunners,
+  convertSessionToEvalInvocations,
   createEmptyState,
   EVAL_SESSION_ID_PREFIX,
-  EvalEntry,
+  EvalCase,
+  EvalCaseResult,
   EvalMetric,
+  EvalSetResultsManager,
+  EvalSetsManager,
   Event,
   getFunctionCalls,
   getFunctionResponses,
   InMemoryArtifactService,
+  InMemoryCredentialService,
   InMemoryMemoryService,
   InMemorySessionService,
+  InputValidationError,
   isApp,
   LiveRequest,
   LiveRequestQueue,
   loadDotenvForAgent,
+  LocalEvalSetResultsManager,
+  LocalEvalSetsManager,
   Logger,
   LogLevel,
+  markRestored,
+  normalizeEvalCase,
+  NotFoundError,
   publicEvent,
   publicSession,
   RunConfig,
@@ -36,9 +49,11 @@ import {
   runEvals,
   RunnableRoot,
   Runner,
+  runWithAgentEngineContext,
   StreamingMode,
   toA2a,
   tryGetResetFunc,
+  validatePathSegment,
 } from '@google/adk';
 import {Content} from '@google/genai';
 import {trace, TracerProvider} from '@opentelemetry/api';
@@ -64,6 +79,7 @@ import {
   setupTelemetry,
 } from '../utils/telemetry_utils.js';
 import {getAgentGraphAsDot, getWorkflowHighlights} from './agent_graph.js';
+import {createAgentRuntimeMiddleware} from './agent_runtime_middleware.js';
 import {
   collectSubWorkflows,
   GraphTarget,
@@ -79,6 +95,7 @@ import {
   createOriginCheckMiddleware,
   parseAllowedOrigins,
 } from './origin_check.js';
+import {parseCreateSessionBody} from './session_event_utils.js';
 import {renderStructureGraphAsDot} from './structure_graph.js';
 
 /**
@@ -95,6 +112,17 @@ interface ServerOptions {
   sessionService?: BaseSessionService;
   memoryService?: BaseMemoryService;
   artifactService?: BaseArtifactService;
+  credentialService?: BaseCredentialService;
+  /**
+   * Store for eval sets. Defaults to a {@link LocalEvalSetsManager} on the
+   * agents directory.
+   */
+  evalSetsManager?: EvalSetsManager;
+  /**
+   * Store for eval set results. Defaults to a
+   * {@link LocalEvalSetResultsManager} on the agents directory.
+   */
+  evalSetResultsManager?: EvalSetResultsManager;
   agentLoader?: AgentLoader;
   agentFileLoadOptions?: AgentFileOptions;
   serveDebugUI?: boolean;
@@ -129,6 +157,48 @@ interface ServerOptions {
   registerProcessors?: (tracerProvider: TracerProvider) => void;
 }
 
+/**
+ * Returns a readable message for a thrown value. Reads a string `message`
+ * property when present, so plain error objects do not print as
+ * "[object Object]".
+ */
+function getErrorMessage(e: unknown): string {
+  if (
+    typeof e === 'object' &&
+    e !== null &&
+    'message' in e &&
+    typeof e.message === 'string'
+  ) {
+    return e.message;
+  }
+  if (typeof e === 'string') {
+    return e;
+  }
+  try {
+    return JSON.stringify(e) ?? String(e);
+  } catch {
+    return String(e);
+  }
+}
+
+/**
+ * The largest request body the server reads, in bytes. It applies to
+ * `express.json` and to the raw body that `/api/reasoning_engine` reads itself.
+ */
+const MAX_RAW_REQUEST_BODY_BYTES = 50 * 1024 * 1024;
+
+function getBrowserDir(): string {
+  const primary = path.join(__dirname, '../../browser');
+  if (fs.existsSync(primary)) {
+    return primary;
+  }
+  const fallback = path.join(__dirname, '../../dist/browser');
+  if (fs.existsSync(fallback)) {
+    return fallback;
+  }
+  return primary;
+}
+
 export class AdkApiServer {
   private readonly host: string;
   private readonly port: number;
@@ -150,6 +220,7 @@ export class AdkApiServer {
   readonly app: express.Application;
   private readonly agentsDir?: string;
   private readonly agentLoader: AgentLoader;
+  private readonly ownsAgentLoader: boolean;
   /**
    * Caches below are keyed by request path parameters (`appName`, `eventId`,
    * `sessionId`), so each is created with `Object.create(null)`. On an
@@ -159,9 +230,15 @@ export class AdkApiServer {
    * aliases `Object.prototype` on write.
    */
   private readonly runnerCache: Record<string, Runner> = Object.create(null);
+  private readonly retiredRunners = new Set<Runner>();
+  private readonly activeRunCounts = new Map<Runner, number>();
+  private readonly closingRetiredRunners = new Set<Promise<void>>();
   private readonly sessionService: BaseSessionService;
   private readonly memoryService: BaseMemoryService;
   private readonly artifactService: BaseArtifactService;
+  private readonly credentialService: BaseCredentialService;
+  private readonly evalSetsManager: EvalSetsManager;
+  private readonly evalSetResultsManager: EvalSetResultsManager;
   private readonly serveDebugUI: boolean;
   private readonly allowedOrigins: string[];
   private readonly allowedHosts?: string[];
@@ -178,6 +255,7 @@ export class AdkApiServer {
   private readonly logger: Logger;
   private readonly a2a: boolean;
   private readonly a2aAuthToken?: string;
+  private requestHooks?: AgentRuntimeRequestHooks;
 
   constructor(options: ServerOptions) {
     this.host = options.host ?? 'localhost';
@@ -188,6 +266,20 @@ export class AdkApiServer {
     this.memoryService = options.memoryService ?? new InMemoryMemoryService();
     this.artifactService =
       options.artifactService ?? new InMemoryArtifactService();
+    this.credentialService =
+      options.credentialService ?? new InMemoryCredentialService();
+    const configuredAgentsDir = options.agentsDir ?? process.cwd();
+    const evalBaseDir =
+      fs.existsSync(configuredAgentsDir) &&
+      fs.statSync(configuredAgentsDir).isFile()
+        ? path.dirname(path.resolve(configuredAgentsDir))
+        : path.resolve(configuredAgentsDir);
+    this.evalSetsManager =
+      options.evalSetsManager ?? new LocalEvalSetsManager(evalBaseDir);
+    this.evalSetResultsManager =
+      options.evalSetResultsManager ??
+      new LocalEvalSetResultsManager(evalBaseDir);
+    this.ownsAgentLoader = options.agentLoader === undefined;
     this.agentLoader =
       options.agentLoader ??
       new AgentLoader(
@@ -234,18 +326,25 @@ export class AdkApiServer {
     this.app = express();
   }
 
-  private async setupTelemetry(): Promise<void> {
+  private async setupTelemetry(): Promise<
+    AgentRuntimeRequestHooks | undefined
+  > {
     const internalExporters = [
       new SimpleSpanProcessor(new ApiServerSpanExporter(this.traceDict)),
       new SimpleSpanProcessor(this.memoryExporter),
     ];
 
-    await setupTelemetry(this.otelToCloud, internalExporters);
+    const requestHooks = await setupTelemetry(
+      this.otelToCloud,
+      internalExporters,
+    );
 
     if (this.registerProcessors) {
       const tracerProvider = trace.getTracerProvider();
       this.registerProcessors(tracerProvider);
     }
+
+    return requestHooks;
   }
 
   private async initA2A() {
@@ -283,7 +382,20 @@ export class AdkApiServer {
 
   private async init() {
     const app = this.app;
-    await this.setupTelemetry();
+    const requestHooks = await this.setupTelemetry();
+    this.requestHooks = requestHooks;
+
+    // On Agent Runtime the CPU is throttled once a request ends, so telemetry
+    // is exported from the request path. Registered first, so every route,
+    // including /health, A2A and rejected requests, is covered.
+    if (requestHooks) {
+      app.use(
+        createAgentRuntimeMiddleware({
+          hooks: requestHooks,
+          logger: this.logger,
+        }),
+      );
+    }
 
     // Registered before any route (including /health, /, /version) so the
     // DNS-rebinding guard applies to every endpoint, not just the ones
@@ -333,11 +445,11 @@ export class AdkApiServer {
 
     if (this.serveDebugUI) {
       app.get('/', (req: Request, res: Response) => {
-        res.redirect('/dev-ui');
+        res.redirect('/dev-ui/');
       });
       app.use(
         '/dev-ui',
-        express.static(path.join(__dirname, '../../browser'), {
+        express.static(getBrowserDir(), {
           setHeaders: (res: Response, path: string) => {
             if (path.endsWith('.js')) {
               res.setHeader('Content-Type', 'text/javascript');
@@ -360,9 +472,15 @@ export class AdkApiServer {
 
     app.use(
       express.json({
-        limit: '50mb',
+        limit: MAX_RAW_REQUEST_BODY_BYTES,
       }),
     );
+
+    // Continues the Agent Engine request trace, when the request carries one,
+    // for every route registered after this point, including A2A.
+    app.use((req: Request, res: Response, next: express.NextFunction) => {
+      runWithAgentEngineContext(req.headers, next);
+    });
 
     app.use((req: Request, res: Response, next: express.NextFunction) => {
       this.logger.info(`${req.method} ${req.originalUrl}`);
@@ -684,8 +802,13 @@ export class AdkApiServer {
         try {
           const appName = req.params['appName'];
           const userId = req.params['userId'];
-          const sessionId = req.params['sessionId'];
-          const state = req.body['state'] || {};
+          // Session services trim the ID they store, so the existence check
+          // must use the trimmed ID too.
+          const sessionId = req.params['sessionId'].trim();
+          if (!sessionId) {
+            throw new InputValidationError('Session ID cannot be empty.');
+          }
+          const {state, events} = parseCreateSessionBody(req.body);
 
           const existingSession = await this.sessionService.getSession({
             appName,
@@ -707,8 +830,19 @@ export class AdkApiServer {
             sessionId,
           });
 
+          for (const event of events) {
+            await this.sessionService.appendEvent({
+              session: createdSession,
+              event: markRestored(event),
+            });
+          }
+
           res.json(publicSession(createdSession));
         } catch (e: unknown) {
+          if (e instanceof InputValidationError) {
+            res.status(400).json({error: e.message});
+            return;
+          }
           const error = `Failed to create session: ${e}`;
 
           res.status(500).json({error});
@@ -723,16 +857,42 @@ export class AdkApiServer {
         try {
           const appName = req.params['appName'];
           const userId = req.params['userId'];
-          const state = req.body['state'] || {};
+          const {state, sessionId, events} = parseCreateSessionBody(req.body);
+
+          if (sessionId) {
+            const existingSession = await this.sessionService.getSession({
+              appName,
+              userId,
+              sessionId,
+            });
+            if (existingSession) {
+              res
+                .status(400)
+                .json({error: `Session already exists: ${sessionId}`});
+              return;
+            }
+          }
 
           const createdSession = await this.sessionService.createSession({
             appName,
             userId,
             state,
+            ...(sessionId ? {sessionId} : {}),
           });
+
+          for (const event of events) {
+            await this.sessionService.appendEvent({
+              session: createdSession,
+              event: markRestored(event),
+            });
+          }
 
           res.json(publicSession(createdSession));
         } catch (e: unknown) {
+          if (e instanceof InputValidationError) {
+            res.status(400).json({error: e.message});
+            return;
+          }
           const error = `Failed to create session: ${e}`;
 
           res.status(500).json({error});
@@ -930,73 +1090,78 @@ export class AdkApiServer {
     );
 
     // --------------------- Eval Sets related endpoints -----------------------
-    const EVAL_SET_FILE_EXTENSION = '.evalset.json';
-    const VALID_EVAL_ID_PATTERN = /^[a-zA-Z0-9_]+$/;
-    const getEvalSetFilePath = (appName: string, evalSetId: string): string => {
-      return path.join(
-        this.agentsDir ?? process.cwd(),
-        appName,
-        `${evalSetId}${EVAL_SET_FILE_EXTENSION}`,
-      );
+    const getEvalBaseDir = (): string => {
+      const configured = this.agentsDir ?? process.cwd();
+      return fs.existsSync(configured) && fs.statSync(configured).isFile()
+        ? path.dirname(path.resolve(configured))
+        : path.resolve(configured);
     };
-
+    // These checks are lexical. They keep request-supplied names from leaving
+    // the eval base directory, but they do not follow symlinks.
+    const resolveAppEvalDir = (appName: string): string => {
+      validatePathSegment(appName, 'appName');
+      const baseDir = getEvalBaseDir();
+      const appDir = path.resolve(baseDir, appName);
+      const rel = path.relative(baseDir, appDir);
+      if (
+        !rel ||
+        rel.startsWith('..') ||
+        path.isAbsolute(rel) ||
+        path.dirname(appDir) !== baseDir
+      ) {
+        throw new InputValidationError(`Invalid appName '${appName}'.`);
+      }
+      return appDir;
+    };
     app.post(
-      '/apps/:appName/eval_sets/:evalSetId',
-      (req: Request, res: Response) => {
+      [
+        '/apps/:appName/eval_sets/:evalSetId',
+        '/dev/apps/:appName/eval_sets/:evalSetId',
+      ],
+      async (req: Request, res: Response) => {
         try {
           const appName = req.params['appName'];
           const evalSetId = req.params['evalSetId'];
-          if (!VALID_EVAL_ID_PATTERN.test(evalSetId)) {
-            return res.status(400).json({
-              error: `Invalid eval set ID. Eval set ID should have the \`${VALID_EVAL_ID_PATTERN}\` format`,
-            });
-          }
-
-          const newEvalSetPath = getEvalSetFilePath(appName, evalSetId);
-          if (fs.existsSync(newEvalSetPath)) {
-            return res.status(400).json({
-              error: `Eval set ${evalSetId} already exists.`,
-            });
-          }
-
-          fs.mkdirSync(path.dirname(newEvalSetPath), {recursive: true});
-          fs.writeFileSync(newEvalSetPath, '[]', 'utf-8');
+          await this.evalSetsManager.createEvalSet(appName, evalSetId);
           return res.status(200).json({});
         } catch (e: unknown) {
-          const error = `Failed to create eval set: ${e}`;
+          if (e instanceof InputValidationError) {
+            return res.status(400).json({error: e.message});
+          }
+          const error = `Failed to create eval set: ${getErrorMessage(e)}`;
           this.logger.error(error);
           return res.status(500).json({error});
         }
       },
     );
 
-    app.get('/apps/:appName/eval_sets', (req: Request, res: Response) => {
-      try {
-        const appName = req.params['appName'];
-        const evalSetFolderPath = path.join(
-          this.agentsDir ?? process.cwd(),
-          appName,
-        );
-        if (!fs.existsSync(evalSetFolderPath)) {
-          return res.json([]);
-        }
-
-        const evalSets: string[] = [];
-        for (const file of fs.readdirSync(evalSetFolderPath)) {
-          if (file.endsWith(EVAL_SET_FILE_EXTENSION)) {
-            evalSets.push(path.basename(file, EVAL_SET_FILE_EXTENSION));
+    app.get(
+      ['/apps/:appName/eval_sets', '/dev/apps/:appName/eval_sets'],
+      async (req: Request, res: Response) => {
+        try {
+          const appName = req.params['appName'];
+          return res.json(await this.evalSetsManager.listEvalSets(appName));
+        } catch (e: unknown) {
+          if (e instanceof InputValidationError) {
+            return res.status(400).json({error: e.message});
           }
+          if (e instanceof NotFoundError) {
+            // A missing storage location means the app has no eval sets yet.
+            this.logger.warn(`Listing eval sets: ${e.message}`);
+            return res.json([]);
+          }
+          const error = `Failed to list eval sets: ${getErrorMessage(e)}`;
+          this.logger.error(error);
+          return res.status(500).json({error});
         }
-        return res.json(evalSets.sort());
-      } catch (e: unknown) {
-        const error = `Failed to list eval sets: ${e}`;
-        this.logger.error(error);
-        return res.status(500).json({error});
-      }
-    });
+      },
+    );
 
     app.post(
-      '/apps/:appName/eval_sets/:evalSetId/add_session',
+      [
+        '/apps/:appName/eval_sets/:evalSetId/add_session',
+        '/dev/apps/:appName/eval_sets/:evalSetId/add_session',
+      ],
       async (req: Request, res: Response) => {
         try {
           const appName = req.params['appName'];
@@ -1008,24 +1173,18 @@ export class AdkApiServer {
           );
           const userId = String(body['userId'] ?? body['user_id'] ?? '');
 
-          if (!VALID_EVAL_ID_PATTERN.test(evalId)) {
-            return res.status(400).json({
-              error: `Invalid eval ID. Eval ID should have the \`${VALID_EVAL_ID_PATTERN}\` format`,
-            });
-          }
-
-          const evalSetFilePath = getEvalSetFilePath(appName, evalSetId);
-          if (!fs.existsSync(evalSetFilePath)) {
+          // `addEvalCase` validates the eval ID format below.
+          const existingEvalSet = await this.evalSetsManager.getEvalSet(
+            appName,
+            evalSetId,
+          );
+          if (!existingEvalSet) {
             return res.status(400).json({
               error: `Eval set ${evalSetId} not found.`,
             });
           }
 
-          const evalSetData = JSON.parse(
-            fs.readFileSync(evalSetFilePath, 'utf-8'),
-          ) as EvalEntry[];
-
-          if (evalSetData.some((x) => x.name === evalId)) {
+          if (existingEvalSet.evalCases.some((x) => x.evalId === evalId)) {
             return res.status(400).json({
               error: `Eval id ${evalId} already exists in ${evalSetId} eval set.`,
             });
@@ -1042,7 +1201,7 @@ export class AdkApiServer {
               .json({error: `Session not found: ${sessionId}`});
           }
 
-          const testData = convertSessionToEvalFormat(session);
+          const invocations = convertSessionToEvalInvocations(session);
           const agentFile = await this.agentLoader.getAgentFile(appName);
           await using _bundleLease = agentFile.retain();
           const loaded = await agentFile.load();
@@ -1053,92 +1212,206 @@ export class AdkApiServer {
               ? createEmptyState(rootAgent, session.state)
               : {...session.state};
 
-          evalSetData.push({
-            name: evalId,
-            data: testData,
-            initial_session: {
+          const newEvalCase: EvalCase = {
+            evalId,
+            conversation: invocations,
+            sessionInput: {
+              appName,
+              userId,
               state: initialSessionState,
-              app_name: appName,
-              user_id: userId,
             },
-          });
+            creationTimestamp: Date.now() / 1000,
+          };
 
-          fs.writeFileSync(
-            evalSetFilePath,
-            JSON.stringify(evalSetData, null, 2),
-            'utf-8',
+          await this.evalSetsManager.addEvalCase(
+            appName,
+            evalSetId,
+            newEvalCase,
           );
           return res.status(200).json({});
         } catch (e: unknown) {
-          const error = `Failed to add session to eval set: ${e}`;
-          this.logger.error(error);
-          return res.status(500).json({error});
-        }
-      },
-    );
-
-    app.get(
-      '/apps/:appName/eval_sets/:evalSetId/evals',
-      (req: Request, res: Response) => {
-        try {
-          const appName = req.params['appName'];
-          const evalSetId = req.params['evalSetId'];
-          const evalSetFilePath = getEvalSetFilePath(appName, evalSetId);
-          if (!fs.existsSync(evalSetFilePath)) {
-            return res.status(400).json({
-              error: `Eval set ${evalSetId} not found.`,
-            });
+          if (e instanceof InputValidationError || e instanceof NotFoundError) {
+            return res.status(400).json({error: e.message});
           }
-
-          const evalSetData = JSON.parse(
-            fs.readFileSync(evalSetFilePath, 'utf-8'),
-          ) as EvalEntry[];
-          return res.json(evalSetData.map((x) => x.name).sort());
-        } catch (e: unknown) {
-          const error = `Failed to list evals: ${e}`;
+          const error = `Failed to add session to eval set: ${getErrorMessage(e)}`;
           this.logger.error(error);
           return res.status(500).json({error});
         }
       },
     );
 
-    // TODO: Implement eval set related endpoints.
     app.get(
-      '/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
-      (req: Request, res: Response) => {
-        return res.status(501).json({error: 'Not implemented'});
-      },
-    );
-
-    app.put(
-      '/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
-      (req: Request, res: Response) => {
-        return res.status(501).json({error: 'Not implemented'});
-      },
-    );
-
-    app.delete(
-      '/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
-      (req: Request, res: Response) => {
-        return res.status(501).json({error: 'Not implemented'});
-      },
-    );
-
-    app.post(
-      '/apps/:appName/eval_sets/:evalSetId/run_eval',
+      [
+        '/apps/:appName/eval_sets/:evalSetId/evals',
+        '/dev/apps/:appName/eval_sets/:evalSetId/evals',
+      ],
       async (req: Request, res: Response) => {
         try {
           const appName = req.params['appName'];
           const evalSetId = req.params['evalSetId'];
-          const evalSetFilePath = getEvalSetFilePath(appName, evalSetId);
-          if (!fs.existsSync(evalSetFilePath)) {
+          const evalSetData = await this.evalSetsManager.getEvalSet(
+            appName,
+            evalSetId,
+          );
+          if (!evalSetData) {
             return res.status(400).json({
               error: `Eval set ${evalSetId} not found.`,
             });
           }
 
-          if (this.agentsDir) {
-            loadDotenvForAgent(appName, this.agentsDir);
+          return res.json(evalSetData.evalCases.map((x) => x.evalId).sort());
+        } catch (e: unknown) {
+          if (e instanceof InputValidationError) {
+            return res.status(400).json({error: e.message});
+          }
+          const error = `Failed to list evals: ${getErrorMessage(e)}`;
+          this.logger.error(error);
+          return res.status(500).json({error});
+        }
+      },
+    );
+
+    app.get(
+      [
+        '/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
+        '/dev/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
+      ],
+      async (req: Request, res: Response) => {
+        try {
+          const appName = req.params['appName'];
+          const evalSetId = req.params['evalSetId'];
+          const evalCaseId = req.params['evalCaseId'];
+          const evalCaseToFind = await this.evalSetsManager.getEvalCase(
+            appName,
+            evalSetId,
+            evalCaseId,
+          );
+          if (evalCaseToFind) {
+            return res.status(200).json(evalCaseToFind);
+          }
+          return res.status(404).json({
+            error: `Eval set \`${evalSetId}\` or Eval \`${evalCaseId}\` not found.`,
+          });
+        } catch (e: unknown) {
+          if (e instanceof NotFoundError || e instanceof InputValidationError) {
+            return res.status(404).json({error: e.message});
+          }
+          const error = `Failed to get eval case: ${getErrorMessage(e)}`;
+          this.logger.error(error);
+          return res.status(500).json({error});
+        }
+      },
+    );
+
+    app.put(
+      [
+        '/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
+        '/dev/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
+      ],
+      async (req: Request, res: Response) => {
+        try {
+          const appName = req.params['appName'];
+          const evalSetId = req.params['evalSetId'];
+          const evalCaseId = req.params['evalCaseId'];
+          const rawBody: unknown = req.body ?? {};
+          if (
+            typeof rawBody !== 'object' ||
+            rawBody === null ||
+            Array.isArray(rawBody)
+          ) {
+            return res.status(400).json({
+              error: 'Invalid EvalCase: expected a JSON object.',
+            });
+          }
+          const body = rawBody as Record<string, unknown>;
+          const rawBodyEvalId = body['evalId'] ?? body['eval_id'];
+          if (
+            rawBodyEvalId !== undefined &&
+            typeof rawBodyEvalId !== 'string'
+          ) {
+            return res.status(400).json({
+              error: 'Invalid EvalCase: evalId must be a string.',
+            });
+          }
+          if (
+            rawBodyEvalId !== undefined &&
+            rawBodyEvalId.length > 0 &&
+            rawBodyEvalId !== evalCaseId
+          ) {
+            return res.status(400).json({
+              error:
+                'Eval id in EvalCase should match the eval id in the API route.',
+            });
+          }
+
+          const updatedEvalCase = normalizeEvalCase({
+            ...body,
+            evalId: evalCaseId,
+          });
+          await this.evalSetsManager.updateEvalCase(
+            appName,
+            evalSetId,
+            updatedEvalCase,
+          );
+          return res.status(200).json({});
+        } catch (e: unknown) {
+          if (e instanceof NotFoundError) {
+            return res.status(404).json({error: e.message});
+          }
+          if (e instanceof InputValidationError) {
+            return res.status(400).json({error: e.message});
+          }
+          const error = `Failed to update eval case: ${getErrorMessage(e)}`;
+          this.logger.error(error);
+          return res.status(500).json({error});
+        }
+      },
+    );
+
+    app.delete(
+      [
+        '/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
+        '/dev/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
+      ],
+      async (req: Request, res: Response) => {
+        try {
+          const appName = req.params['appName'];
+          const evalSetId = req.params['evalSetId'];
+          const evalCaseId = req.params['evalCaseId'];
+          await this.evalSetsManager.deleteEvalCase(
+            appName,
+            evalSetId,
+            evalCaseId,
+          );
+          return res.status(200).json({});
+        } catch (e: unknown) {
+          if (e instanceof NotFoundError || e instanceof InputValidationError) {
+            return res.status(404).json({error: e.message});
+          }
+          const error = `Failed to delete eval case: ${getErrorMessage(e)}`;
+          this.logger.error(error);
+          return res.status(500).json({error});
+        }
+      },
+    );
+
+    app.post(
+      [
+        '/apps/:appName/eval_sets/:evalSetId/run_eval',
+        '/dev/apps/:appName/eval_sets/:evalSetId/run_eval',
+      ],
+      async (req: Request, res: Response) => {
+        try {
+          const appName = req.params['appName'];
+          const evalSetId = req.params['evalSetId'];
+          const evalSet = await this.evalSetsManager.getEvalSet(
+            appName,
+            evalSetId,
+          );
+          if (!evalSet) {
+            return res.status(400).json({
+              error: `Eval set ${evalSetId} not found.`,
+            });
           }
 
           const body = (req.body ?? {}) as Record<string, unknown>;
@@ -1151,16 +1424,13 @@ export class AdkApiServer {
             ? ((body['evalMetrics'] ?? body['eval_metrics']) as EvalMetric[])
             : [];
 
-          const evalSetData = JSON.parse(
-            fs.readFileSync(evalSetFilePath, 'utf-8'),
-          ) as EvalEntry[];
-
           const evalCases =
             evalIds.length > 0
-              ? evalSetData.filter((e) => evalIds.includes(e.name))
-              : evalSetData;
+              ? evalSet.evalCases.filter((e) => evalIds.includes(e.evalId))
+              : evalSet.evalCases;
 
           const agentFile = await this.agentLoader.getAgentFile(appName);
+          this.loadAgentDotenv(appName);
           await using _bundleLease = agentFile.retain();
           const loaded = await agentFile.load();
           const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
@@ -1171,10 +1441,16 @@ export class AdkApiServer {
           }
 
           const resetFunc = this.agentsDir
-            ? await tryGetResetFunc(path.join(this.agentsDir, appName))
+            ? await tryGetResetFunc(
+                fs.existsSync(this.agentsDir) &&
+                  fs.statSync(this.agentsDir).isFile()
+                  ? this.agentsDir
+                  : resolveAppEvalDir(appName),
+              )
             : undefined;
 
           const runEvalResults: RunEvalResult[] = [];
+          const evalCaseResults: EvalCaseResult[] = [];
           for await (const evalResult of runEvals(
             {[evalSetId]: evalCases},
             rootAgent,
@@ -1184,24 +1460,43 @@ export class AdkApiServer {
             this.sessionService,
             this.artifactService,
           )) {
+            const sessionDetails =
+              evalResult.session_details &&
+              publicSession(evalResult.session_details);
             runEvalResults.push({
-              ...evalResult,
-              evalSetFile: evalResult.eval_set_file,
+              ...(evalResult.eval_set_file !== undefined
+                ? {evalSetFile: evalResult.eval_set_file}
+                : {}),
               evalSetId,
               evalId: evalResult.eval_id,
               finalEvalStatus: evalResult.final_eval_status,
-              evalMetricResults: evalResult.eval_metric_results,
+              ...(evalResult.eval_metric_results !== undefined
+                ? {evalMetricResults: evalResult.eval_metric_results}
+                : {}),
               overallEvalMetricResults: evalResult.overall_eval_metric_results,
               evalMetricResultPerInvocation:
                 evalResult.eval_metric_result_per_invocation,
-              userId: evalResult.user_id,
+              ...(evalResult.user_id !== undefined
+                ? {userId: evalResult.user_id}
+                : {}),
               sessionId: evalResult.session_id,
+              ...(sessionDetails !== undefined ? {sessionDetails} : {}),
             });
+            evalCaseResults.push(evalResult);
           }
+
+          await this.evalSetResultsManager.saveEvalSetResult({
+            appName,
+            evalSetId,
+            evalCaseResults,
+          });
 
           return res.json(runEvalResults);
         } catch (e: unknown) {
-          const error = `Failed to run eval: ${e}`;
+          if (e instanceof InputValidationError) {
+            return res.status(400).json({error: e.message});
+          }
+          const error = `Failed to run eval: ${getErrorMessage(e)}`;
           this.logger.error(error);
           return res.status(500).json({error});
         }
@@ -1209,17 +1504,50 @@ export class AdkApiServer {
     );
 
     // ----------------------- Eval Results related endpoints ------------------
-    // TODO: Implement eval results related endpoints.
     app.get(
-      '/apps/:appName/eval_results/:evalResultId',
-      (req: Request, res: Response) => {
-        return res.status(501).json({error: 'Not implemented'});
+      [
+        '/apps/:appName/eval_results/:evalResultId',
+        '/dev/apps/:appName/eval_results/:evalResultId',
+      ],
+      async (req: Request, res: Response) => {
+        try {
+          const appName = req.params['appName'];
+          const evalResultId = req.params['evalResultId'];
+          const evalSetResult =
+            await this.evalSetResultsManager.getEvalSetResult(
+              appName,
+              evalResultId,
+            );
+          return res.json(evalSetResult);
+        } catch (e: unknown) {
+          if (e instanceof NotFoundError || e instanceof InputValidationError) {
+            return res.status(404).json({error: e.message});
+          }
+          const error = `Failed to get eval result: ${getErrorMessage(e)}`;
+          this.logger.error(error);
+          return res.status(500).json({error});
+        }
       },
     );
 
-    app.get('/apps/:appName/eval_results', (req: Request, res: Response) => {
-      return res.status(501).json({error: 'Not implemented'});
-    });
+    app.get(
+      ['/apps/:appName/eval_results', '/dev/apps/:appName/eval_results'],
+      async (req: Request, res: Response) => {
+        try {
+          const appName = req.params['appName'];
+          return res.json(
+            await this.evalSetResultsManager.listEvalSetResults(appName),
+          );
+        } catch (e: unknown) {
+          if (e instanceof InputValidationError) {
+            return res.status(404).json({error: e.message});
+          }
+          const error = `Failed to list eval results: ${getErrorMessage(e)}`;
+          this.logger.error(error);
+          return res.status(500).json({error});
+        }
+      },
+    );
 
     app.get('/apps/:appName/eval_metrics', (req: Request, res: Response) => {
       return res.status(501).json({error: 'Not implemented'});
@@ -1234,7 +1562,12 @@ export class AdkApiServer {
         newMessage,
         stateDelta,
         customMetadata,
-      } = req.body;
+      } = req.body ?? {};
+      const appNameError = getAppNameError(appName);
+      if (appNameError) {
+        res.status(400).json({error: appNameError});
+        return;
+      }
       const session = await this.sessionService.getSession({
         appName,
         userId,
@@ -1282,75 +1615,453 @@ export class AdkApiServer {
       }
     });
 
-    app.post('/api/reasoning_engine', async (req: Request, res: Response) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const executeQuery = async (body: any) => {
-        const input = body.input || {};
-        const appName = input.appName || body.appName;
-        const userId = input.userId || body.userId || 'default-user';
-        const sessionId =
-          input.sessionId || body.sessionId || 'default-session';
-        const newMessage = input.newMessage || body.newMessage;
-        const stateDelta = input.stateDelta || body.stateDelta;
-        const customMetadata = input.customMetadata || body.customMetadata;
-        if (!appName) {
-          res.status(400).json({error: 'appName is required in input'});
-          return;
-        }
-        const events: Event[] = [];
-        try {
-          await this.sessionService.getOrCreateSession({
-            appName,
-            userId,
-            sessionId,
-            state: {},
-          });
-          const abortController = new AbortController();
-          req.on('close', () => {
-            abortController.abort();
-          });
-          for await (const e of this.executeAgentRun({
-            appName,
-            userId,
-            sessionId,
-            newMessage,
-            stateDelta,
-            customMetadata,
-            abortSignal: abortController.signal,
-          })) {
-            events.push(e);
-          }
-          res.json({output: events});
-        } catch (e: unknown) {
-          const error = `Failed to run agent via Reasoning Engine API: ${e}`;
-          res.status(500).json({error, output: events});
-          this.logger.error(error);
-        }
-      };
+    // Agent Engine callers send the remote method in `class_method`, use
+    // snake_case field names, and omit `appName` when the server hosts a single
+    // app. The reasoning engine routes accept both spellings of every field.
+    const isJsonRecord = (value: unknown): value is Record<string, unknown> =>
+      typeof value === 'object' && value !== null && !Array.isArray(value);
 
+    const readReasoningEngineBody = (
+      req: Request,
+      res: Response,
+    ): Promise<Record<string, unknown> | undefined> => {
       const isParsed =
         req.body && (Object.keys(req.body).length > 0 || !req.readable);
       if (isParsed) {
-        await executeQuery(req.body);
-      } else {
-        let rawBody = '';
-        req.on('data', (chunk) => {
-          rawBody += chunk;
+        return Promise.resolve(isJsonRecord(req.body) ? req.body : {});
+      }
+      return new Promise((resolve) => {
+        // Some clients send a Content-Type that `express.json` does not
+        // match, so read the body here with the same size limit.
+        const chunks: Buffer[] = [];
+        let rawBodyBytes = 0;
+        let rejected = false;
+        req.on('data', (chunk: Buffer | string) => {
+          if (rejected) {
+            return;
+          }
+          const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+          rawBodyBytes += buf.length;
+          if (rawBodyBytes > MAX_RAW_REQUEST_BODY_BYTES) {
+            rejected = true;
+            chunks.length = 0;
+            res.status(413).json({error: 'Request body is too large.'});
+            resolve(undefined);
+            return;
+          }
+          chunks.push(buf);
         });
-        req.on('end', async () => {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          let body: any = {};
+        req.on('error', () => {
+          if (rejected) {
+            return;
+          }
+          rejected = true;
+          chunks.length = 0;
+          this.logger.error('Failed to read raw request body');
+          if (!res.headersSent) {
+            res.status(400).json({error: 'Request body is not valid JSON.'});
+          }
+          resolve(undefined);
+        });
+        req.on('end', () => {
+          if (rejected) {
+            return;
+          }
+          const rawBody = Buffer.concat(chunks).toString('utf-8');
+          let body: unknown = {};
           if (rawBody) {
             try {
               body = JSON.parse(rawBody);
-            } catch (e) {
-              this.logger.error(`Failed to parse raw body as JSON: ${e}`);
+            } catch {
+              this.logger.error('Failed to parse raw body as JSON');
+              res.status(400).json({error: 'Request body is not valid JSON.'});
+              resolve(undefined);
+              return;
+            }
+            if (
+              typeof body !== 'object' ||
+              body === null ||
+              Array.isArray(body)
+            ) {
+              this.logger.error('Failed to parse raw body as JSON');
+              res.status(400).json({error: 'Request body is not valid JSON.'});
+              resolve(undefined);
+              return;
             }
           }
-          await executeQuery(body);
+          resolve(isJsonRecord(body) ? body : {});
         });
+      });
+    };
+
+    /** Returns the first value of `keys` found across `sources`, in order. */
+    const pickField = (
+      sources: ReadonlyArray<Record<string, unknown>>,
+      keys: readonly string[],
+    ): unknown => {
+      for (const source of sources) {
+        for (const key of keys) {
+          const value = source[key];
+          if (value !== undefined && value !== null) {
+            return value;
+          }
+        }
+      }
+      return undefined;
+    };
+
+    const pickString = (
+      sources: ReadonlyArray<Record<string, unknown>>,
+      keys: readonly string[],
+    ): string | undefined => {
+      const value = pickField(sources, keys);
+      return typeof value === 'string' && value.length > 0 ? value : undefined;
+    };
+
+    /** Converts snake_case keys to camelCase, leaving `a2aMetadata` as is. */
+    const snakeToCamelKeys = (value: unknown): unknown => {
+      if (Array.isArray(value)) {
+        return value.map(snakeToCamelKeys);
+      }
+      if (!isJsonRecord(value)) {
+        return value;
+      }
+      return Object.fromEntries(
+        Object.entries(value).map(([key, nested]) => {
+          const camelKey = key.replace(/_([a-z])/g, (_match, letter: string) =>
+            letter.toUpperCase(),
+          );
+          return [
+            camelKey,
+            camelKey === 'a2aMetadata' ? nested : snakeToCamelKeys(nested),
+          ];
+        }),
+      );
+    };
+
+    /**
+     * `RunConfig` fields that only the operator or the transport may set. An
+     * HTTP caller must not turn off a tool-confirmation safeguard, claim a
+     * remote origin for its message, or change telemetry capture.
+     */
+    const operatorOnlyRunConfigKeys: readonly string[] = [
+      'allowRemoteToolConfirmation',
+      'plainTextToolConfirmation',
+      'remoteDelivered',
+      'telemetry',
+    ];
+
+    /**
+     * Converts a caller-supplied run config to camelCase and removes the
+     * fields an HTTP caller may not set. It also removes a `maxLlmCalls` that
+     * is not a positive number, because that value removes the call limit.
+     */
+    const toCallerRunConfig = (
+      raw: Record<string, unknown>,
+    ): Record<string, unknown> => {
+      const converted = snakeToCamelKeys(raw) as Record<string, unknown>;
+      const filtered = Object.fromEntries(
+        Object.entries(converted).filter(
+          ([key]) => !operatorOnlyRunConfigKeys.includes(key),
+        ),
+      );
+      const maxLlmCalls = filtered['maxLlmCalls'];
+      if (
+        maxLlmCalls !== undefined &&
+        !(typeof maxLlmCalls === 'number' && maxLlmCalls > 0)
+      ) {
+        delete filtered['maxLlmCalls'];
+      }
+      return filtered;
+    };
+
+    /** Turns a string message into user `Content`, and defaults the role. */
+    const toReasoningEngineContent = (raw: unknown): Content | undefined => {
+      if (typeof raw === 'string') {
+        return {role: 'user', parts: [{text: raw}]};
+      }
+      if (!isJsonRecord(raw)) {
+        return undefined;
+      }
+      // The request body is untrusted JSON; the runner reads only the
+      // `Content` fields it knows.
+      const content = raw as Content;
+      return content.parts && !content.role
+        ? {...content, role: 'user'}
+        : content;
+    };
+
+    const reasoningEngineQueryMethods: ReadonlyArray<string | undefined> = [
+      undefined,
+      'query',
+      'async_query',
+      'stream_query',
+      'async_stream_query',
+    ];
+
+    type ReasoningEngineRequest =
+      | {status: number; error: string}
+      | {
+          status?: undefined;
+          classMethod?: string;
+          appName: string;
+          userId: string;
+          sessionId?: string;
+          newMessage?: Content;
+          stateDelta?: Record<string, unknown>;
+          customMetadata?: Record<string, unknown>;
+          runConfig?: RunConfig;
+          state?: Record<string, unknown>;
+        };
+
+    const resolveReasoningEngineRequest = async (
+      body: Record<string, unknown>,
+    ): Promise<ReasoningEngineRequest> => {
+      const input = isJsonRecord(body['input']) ? body['input'] : {};
+      const sources = [input, body];
+
+      const rawClassMethod = pickField([body], ['class_method', 'classMethod']);
+      if (rawClassMethod !== undefined && typeof rawClassMethod !== 'string') {
+        return {
+          status: 400,
+          error: `Unsupported class_method: ${JSON.stringify(rawClassMethod)}`,
+        };
+      }
+      const classMethod = rawClassMethod;
+
+      let appName = pickString(sources, ['appName', 'app_name']);
+      if (appName === undefined) {
+        const usesAgentEngineProtocol =
+          classMethod !== undefined ||
+          pickField(sources, ['message']) !== undefined;
+        const apps = usesAgentEngineProtocol
+          ? await this.agentLoader.listAgents()
+          : [];
+        if (apps.length !== 1) {
+          return {status: 400, error: 'appName is required in input'};
+        }
+        appName = apps[0];
+      }
+
+      const stateDelta = pickField(sources, ['state_delta', 'stateDelta']);
+      const customMetadata = pickField(sources, [
+        'custom_metadata',
+        'customMetadata',
+      ]);
+      const rawRunConfig = pickField(sources, ['run_config', 'runConfig']);
+      const state = pickField([input], ['state']);
+
+      return {
+        classMethod,
+        appName,
+        userId: pickString(sources, ['user_id', 'userId']) ?? 'default-user',
+        sessionId: pickString(sources, ['session_id', 'sessionId']),
+        newMessage: toReasoningEngineContent(
+          pickField(sources, ['newMessage', 'new_message', 'message']),
+        ),
+        stateDelta: isJsonRecord(stateDelta) ? stateDelta : undefined,
+        customMetadata: isJsonRecord(customMetadata)
+          ? customMetadata
+          : undefined,
+        // The runner reads only the `RunConfig` fields it knows.
+        runConfig: isJsonRecord(rawRunConfig)
+          ? (toCallerRunConfig(rawRunConfig) as RunConfig)
+          : undefined,
+        state: isJsonRecord(state) ? state : undefined,
+      };
+    };
+
+    app.post('/api/reasoning_engine', async (req: Request, res: Response) => {
+      const body = await readReasoningEngineBody(req, res);
+      if (body === undefined) {
+        return;
+      }
+      const events: Event[] = [];
+      try {
+        const request = await resolveReasoningEngineRequest(body);
+        if (request.status !== undefined) {
+          res.status(request.status).json({error: request.error});
+          return;
+        }
+        const {classMethod, appName, userId, sessionId} = request;
+
+        switch (classMethod) {
+          case 'create_session':
+          case 'async_create_session': {
+            const created = await this.sessionService.createSession({
+              appName,
+              userId,
+              state: request.state ?? {},
+              ...(sessionId ? {sessionId} : {}),
+            });
+            res.json({output: publicSession(created)});
+            return;
+          }
+          case 'get_session':
+          case 'async_get_session': {
+            if (!sessionId) {
+              res.status(400).json({error: 'session_id is required'});
+              return;
+            }
+            const session = await this.sessionService.getSession({
+              appName,
+              userId,
+              sessionId,
+            });
+            if (!session) {
+              res.status(404).json({error: `Session not found: ${sessionId}`});
+              return;
+            }
+            res.json({output: publicSession(session)});
+            return;
+          }
+          case 'list_sessions':
+          case 'async_list_sessions': {
+            const listed = await this.sessionService.listSessions({
+              appName,
+              userId,
+            });
+            res.json({
+              output: {
+                ...listed,
+                sessions: listed.sessions
+                  .filter((s) => !s.id.startsWith(EVAL_SESSION_ID_PREFIX))
+                  .map((s) => publicSession(s)),
+              },
+            });
+            return;
+          }
+          case 'delete_session':
+          case 'async_delete_session': {
+            if (!sessionId) {
+              res.status(400).json({error: 'session_id is required'});
+              return;
+            }
+            await this.sessionService.deleteSession({
+              appName,
+              userId,
+              sessionId,
+            });
+            res.json({output: null});
+            return;
+          }
+          default:
+            break;
+        }
+
+        if (!reasoningEngineQueryMethods.includes(classMethod)) {
+          res
+            .status(400)
+            .json({error: `Unsupported class_method: ${classMethod}`});
+          return;
+        }
+
+        const effectiveSessionId = sessionId ?? 'default-session';
+        await this.sessionService.getOrCreateSession({
+          appName,
+          userId,
+          sessionId: effectiveSessionId,
+          state: {},
+        });
+        const abortController = new AbortController();
+        req.on('close', () => {
+          abortController.abort();
+        });
+        for await (const e of this.executeAgentRun({
+          appName,
+          userId,
+          sessionId: effectiveSessionId,
+          // `Runner.runAsync` accepts a run with no new message, which this
+          // route has always allowed.
+          newMessage: request.newMessage as Content,
+          stateDelta: request.stateDelta,
+          customMetadata: request.customMetadata,
+          runConfig: request.runConfig,
+          abortSignal: abortController.signal,
+        })) {
+          events.push(e);
+        }
+        res.json({output: events});
+      } catch (e: unknown) {
+        const error = `Failed to run agent via Reasoning Engine API: ${e}`;
+        res.status(500).json({error, output: events});
+        this.logger.error(error);
       }
     });
+
+    app.post(
+      '/api/stream_reasoning_engine',
+      async (req: Request, res: Response) => {
+        const body = await readReasoningEngineBody(req, res);
+        if (body === undefined) {
+          return;
+        }
+        let streaming = false;
+        try {
+          const request = await resolveReasoningEngineRequest(body);
+          if (request.status !== undefined) {
+            res.status(request.status).json({error: request.error});
+            return;
+          }
+          const {classMethod, appName, userId, sessionId} = request;
+          if (!reasoningEngineQueryMethods.includes(classMethod)) {
+            res
+              .status(400)
+              .json({error: `Unsupported class_method: ${classMethod}`});
+            return;
+          }
+
+          const session = await this.sessionService.getOrCreateSession({
+            appName,
+            userId,
+            sessionId: sessionId ?? 'default-session',
+            state: {},
+          });
+          const abortController = new AbortController();
+          // `req` can emit 'close' as soon as its body is read, so only an
+          // early close of the response aborts the run.
+          res.on('close', () => {
+            if (!res.writableEnded) {
+              abortController.abort();
+            }
+          });
+
+          // Headers go out with the first event, so a failure before it still
+          // gets a clean error status.
+          const startStream = () => {
+            if (!streaming) {
+              streaming = true;
+              res.setHeader('Content-Type', 'application/json');
+              res.setHeader('Cache-Control', 'no-cache');
+            }
+          };
+          for await (const event of this.executeAgentRun({
+            appName,
+            userId,
+            sessionId: session.id,
+            // `Runner.runAsync` accepts a run with no new message.
+            newMessage: request.newMessage as Content,
+            stateDelta: request.stateDelta,
+            customMetadata: request.customMetadata,
+            runConfig: request.runConfig,
+            abortSignal: abortController.signal,
+          })) {
+            startStream();
+            res.write(`${JSON.stringify(event)}\n`);
+          }
+          startStream();
+          res.end();
+        } catch (e: unknown) {
+          const error = `Failed to run agent via Reasoning Engine API: ${e}`;
+          this.logger.error(error);
+          if (!streaming) {
+            res.status(500).json({error});
+          } else if (!res.writableEnded) {
+            res.end(`${JSON.stringify({error})}\n`);
+          }
+        }
+      },
+    );
 
     app.post('/run_sse', async (req: Request, res: Response) => {
       const {
@@ -1361,7 +2072,12 @@ export class AdkApiServer {
         streaming,
         stateDelta,
         customMetadata,
-      } = req.body;
+      } = req.body ?? {};
+      const appNameError = getAppNameError(appName);
+      if (appNameError) {
+        res.status(400).json({error: appNameError});
+        return;
+      }
 
       const session = await this.sessionService.getSession({
         appName,
@@ -1460,7 +2176,9 @@ export class AdkApiServer {
       this.server.on(
         'upgrade',
         (req: http.IncomingMessage, socket: Duplex, head: Buffer) => {
-          void this.handleWebSocketUpgrade(req, socket, head);
+          void runWithAgentEngineContext(req.headers, () =>
+            this.handleWebSocketUpgrade(req, socket, head),
+          );
         },
       );
 
@@ -1482,12 +2200,39 @@ export class AdkApiServer {
     socket: Duplex,
     head: Buffer,
   ): Promise<void> {
+    const requestHooks = this.requestHooks;
+    let endRequestPromise: Promise<void> | undefined;
+    const endRequest = (): Promise<void> => {
+      if (!requestHooks) {
+        return Promise.resolve();
+      }
+      endRequestPromise ??= (async () => {
+        try {
+          await requestHooks.onRequestEnd();
+        } catch (error: unknown) {
+          this.logger.warn('Telemetry request-end hook failed.', error);
+        }
+      })();
+      return endRequestPromise;
+    };
+    if (requestHooks) {
+      try {
+        requestHooks.onRequestStart();
+      } catch (error: unknown) {
+        this.logger.warn('Telemetry request-start hook failed.', error);
+      }
+      socket.once('close', () => {
+        void endRequest();
+      });
+    }
+
     const reqUrl = new URL(
       req.url ?? '/',
       `http://${req.headers.host ?? 'localhost'}`,
     );
     if (reqUrl.pathname !== '/run_live') {
       socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+      await endRequest();
       socket.destroy();
       return;
     }
@@ -1495,6 +2240,7 @@ export class AdkApiServer {
     const wsKey = req.headers['sec-websocket-key'];
     if (typeof wsKey !== 'string' || !wsKey) {
       socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+      await endRequest();
       socket.destroy();
       return;
     }
@@ -1543,7 +2289,8 @@ export class AdkApiServer {
       reasonBuf.copy(payload, 2);
       const header = Buffer.from([0x88, payload.length]);
       socket.write(Buffer.concat([header, payload]));
-      socket.end();
+      // Destroy the socket only once the close frame has been flushed.
+      socket.end(() => socket.destroy());
     };
 
     const appName =
@@ -1560,21 +2307,25 @@ export class AdkApiServer {
       '';
     const modalitiesParam = reqUrl.searchParams.getAll('modalities');
 
+    if (getAppNameError(appName)) {
+      // The close frame has a one-byte length, so never echo appName here.
+      sendWsClose(1008, 'Invalid appName');
+      return;
+    }
+
     const session = await this.sessionService.getSession({
       appName,
       userId,
       sessionId,
     });
     if (!session) {
+      await endRequest();
       sendWsClose(1002, 'Session not found');
       return;
     }
 
-    if (this.agentsDir) {
-      loadDotenvForAgent(appName, this.agentsDir);
-    }
-
     const liveRequestQueue = new LiveRequestQueue();
+    let clientRequestedClose = false;
     let buffer = head.length > 0 ? Buffer.from(head) : Buffer.alloc(0);
 
     const parseIncomingFrames = () => {
@@ -1622,7 +2373,10 @@ export class AdkApiServer {
 
         if (opcode === 0x08) {
           liveRequestQueue.close();
-          sendWsClose(1000);
+          // The close frame is answered in the `finally` block below, after
+          // the request-end hook finishes, so telemetry is flushed while the
+          // connection still holds the CPU.
+          clientRequestedClose = true;
           return;
         } else if (opcode === 0x09) {
           if (!socket.destroyed && socket.writable) {
@@ -1658,7 +2412,10 @@ export class AdkApiServer {
     }
 
     try {
+      // Resolve the app through the loader first, so an unknown app name
+      // never reaches the `.env` lookup.
       const agentFile = await this.agentLoader.getAgentFile(appName);
+      this.loadAgentDotenv(appName);
       await using _bundleLease = agentFile.retain();
       const loaded = await agentFile.load();
       const runner = await this.getRunner(loaded, appName);
@@ -1671,32 +2428,55 @@ export class AdkApiServer {
             }
           : {};
 
-      for await (const event of runner.runLive({
-        userId: session.userId,
-        sessionId: session.id,
-        liveRequestQueue,
-        runConfig,
-      })) {
-        sendWsText(JSON.stringify(publicEvent(event)));
+      this.beginRunnerRun(runner);
+      try {
+        for await (const event of runner.runLive({
+          userId: session.userId,
+          sessionId: session.id,
+          liveRequestQueue,
+          runConfig,
+        })) {
+          sendWsText(JSON.stringify(publicEvent(event)));
+        }
+      } finally {
+        await this.endRunnerRun(runner);
       }
     } catch (e: unknown) {
       this.logger.error(`Error in run_live WebSocket: ${e}`);
+      await endRequest();
       sendWsClose(1011, String((e as Error)?.message ?? e).slice(0, 120));
     } finally {
       liveRequestQueue.close();
-      if (!socket.destroyed) {
+      await endRequest();
+      if (clientRequestedClose) {
+        sendWsClose(1000);
+      }
+      if (!socket.destroyed && !socket.writableEnded) {
         socket.destroy();
       }
     }
   }
 
-  stop(): Promise<void> {
+  async stop(): Promise<void> {
+    const runners = [
+      ...Object.values(this.runnerCache),
+      ...this.retiredRunners,
+    ];
+    for (const key of Object.keys(this.runnerCache)) {
+      delete this.runnerCache[key];
+    }
+    this.retiredRunners.clear();
+    await Promise.all([closeRunners(runners), ...this.closingRetiredRunners]);
+    if (this.ownsAgentLoader) {
+      await this.agentLoader.disposeAll();
+    }
+
     const server = this.server;
     // A failed `start()` (EADDRINUSE) and an already-closed server both leave
     // `this.server` assigned, and `close()` on either rejects with
     // ERR_SERVER_NOT_RUNNING. Neither has a listener left, so both are stopped.
     if (!server?.listening) {
-      return Promise.resolve();
+      return;
     }
 
     return new Promise((resolve, reject) => {
@@ -1738,16 +2518,69 @@ export class AdkApiServer {
     return isApp(loaded) ? loaded.rootAgent : loaded;
   }
 
+  /**
+   * Loads the `.env` file of a registered app into `process.env`. Call it only
+   * after `agentLoader.getAgentFile(appName)` succeeds.
+   */
+  private loadAgentDotenv(appName: string): void {
+    validatePathSegment(appName, 'appName');
+    if (!this.agentsDir) {
+      return;
+    }
+    if (fs.existsSync(this.agentsDir) && fs.statSync(this.agentsDir).isFile()) {
+      loadDotenvForAgent(
+        path.basename(this.agentsDir),
+        path.dirname(this.agentsDir),
+      );
+      return;
+    }
+    loadDotenvForAgent(appName, this.agentsDir);
+  }
+
+  private beginRunnerRun(runner: Runner): void {
+    this.activeRunCounts.set(
+      runner,
+      (this.activeRunCounts.get(runner) ?? 0) + 1,
+    );
+  }
+
+  private async endRunnerRun(runner: Runner): Promise<void> {
+    const remaining = (this.activeRunCounts.get(runner) ?? 0) - 1;
+    if (remaining > 0) {
+      this.activeRunCounts.set(runner, remaining);
+      return;
+    }
+
+    this.activeRunCounts.delete(runner);
+    if (!this.a2a && this.retiredRunners.delete(runner)) {
+      await this.closeRetiredRunner(runner);
+    }
+  }
+
+  private async retireRunner(runner: Runner): Promise<void> {
+    if (!this.a2a && (this.activeRunCounts.get(runner) ?? 0) === 0) {
+      await this.closeRetiredRunner(runner);
+      return;
+    }
+    this.retiredRunners.add(runner);
+  }
+
+  private async closeRetiredRunner(runner: Runner): Promise<void> {
+    const closePromise = closeRunners([runner]).finally(() => {
+      this.closingRetiredRunners.delete(closePromise);
+    });
+    this.closingRetiredRunners.add(closePromise);
+    await closePromise;
+  }
+
   private async getRunner(
     agentOrApp: RunnableRoot | App,
     appName: string,
   ): Promise<Runner> {
     const isAppInstance = isApp(agentOrApp);
     const agent = isAppInstance ? agentOrApp.rootAgent : agentOrApp;
-    if (
-      !(appName in this.runnerCache) ||
-      this.runnerCache[appName].agent !== agent
-    ) {
+    const previousRunner = this.runnerCache[appName];
+    if (!previousRunner || previousRunner.agent !== agent) {
       this.runnerCache[appName] = new Runner({
         app: isAppInstance ? agentOrApp : undefined,
         appName,
@@ -1755,7 +2588,11 @@ export class AdkApiServer {
         memoryService: this.memoryService,
         sessionService: this.sessionService,
         artifactService: this.artifactService,
+        credentialService: this.credentialService,
       });
+      if (previousRunner) {
+        await this.retireRunner(previousRunner);
+      }
     }
 
     return this.runnerCache[appName];
@@ -1771,27 +2608,47 @@ export class AdkApiServer {
     runConfig?: RunConfig;
     abortSignal: AbortSignal;
   }): AsyncGenerator<Event> {
-    if (this.agentsDir) {
-      loadDotenvForAgent(options.appName, this.agentsDir);
-    }
-
+    validatePathSegment(options.appName, 'appName');
+    // Resolve the agent first, so an unknown appName never loads a .env file.
     const agentFile = await this.agentLoader.getAgentFile(options.appName);
+    this.loadAgentDotenv(options.appName);
     await using _bundleLease = agentFile.retain();
     const loaded = await agentFile.load();
     const runner = await this.getRunner(loaded, options.appName);
 
-    // Every run endpoint streams through here, so events leave without
-    // ADK-internal customMetadata.
-    for await (const event of runner.runAsync({
-      userId: options.userId,
-      sessionId: options.sessionId,
-      newMessage: options.newMessage,
-      runConfig: options.runConfig,
-      stateDelta: options.stateDelta,
-      customMetadata: options.customMetadata,
-      abortSignal: options.abortSignal,
-    })) {
-      yield publicEvent(event);
+    this.beginRunnerRun(runner);
+    try {
+      // Every run endpoint streams through here, so events leave without
+      // ADK-internal customMetadata.
+      for await (const event of runner.runAsync({
+        userId: options.userId,
+        sessionId: options.sessionId,
+        newMessage: options.newMessage,
+        runConfig: options.runConfig,
+        stateDelta: options.stateDelta,
+        customMetadata: options.customMetadata,
+        abortSignal: options.abortSignal,
+      })) {
+        yield publicEvent(event);
+      }
+    } finally {
+      await this.endRunnerRun(runner);
     }
+  }
+}
+
+/**
+ * Returns the validation message for an invalid request `appName`, or
+ * `undefined` when `appName` is a safe single path segment.
+ */
+function getAppNameError(appName: string): string | undefined {
+  try {
+    validatePathSegment(appName, 'appName');
+    return undefined;
+  } catch (e: unknown) {
+    if (e instanceof InputValidationError) {
+      return e.message;
+    }
+    throw e;
   }
 }

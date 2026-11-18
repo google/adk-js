@@ -21,7 +21,10 @@ import {
   isTaskArtifactUpdateEvent,
   isTaskStatusUpdateEvent,
 } from './a2a_event.js';
-import {A2AMetadataKeys} from './metadata_converter_utils.js';
+import {
+  A2A_METADATA_KEY_PREFIX,
+  A2AMetadataKeys,
+} from './metadata_converter_utils.js';
 
 /**
  * Aggregated state for a specific artifact.
@@ -212,10 +215,11 @@ export class A2ARemoteAgentRunProcessor {
 
       if (isTask(response)) {
         if (response.id) toAdd['task_id'] = response.id;
-        if (response.contextId) toAdd['context_id'] = response.contextId;
       } else if (response.taskId) {
         toAdd['task_id'] = response.taskId;
-        if (response.contextId) toAdd['context_id'] = response.contextId;
+      }
+      if (response.contextId) {
+        toAdd['context_id'] = response.contextId;
       }
     }
     if (Object.keys(toAdd).length === 0) {
@@ -227,7 +231,7 @@ export class A2ARemoteAgentRunProcessor {
     for (const [k, v] of Object.entries(toAdd)) {
       if (v === undefined || v === null) continue;
       // Use prefixed keys to avoid collisions
-      event.customMetadata[`a2a:${k}`] = v;
+      event.customMetadata[`${A2A_METADATA_KEY_PREFIX}${k}`] = v;
     }
   }
 }

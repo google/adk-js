@@ -42,6 +42,9 @@ const EXECUTE_CONNECTION_INTEGRATION = 'ExecuteConnection';
 /** The action that runs a custom query rather than a connector action. */
 const EXECUTE_CUSTOM_QUERY_ACTION = 'ExecuteCustomQuery';
 
+/** Lets every connector request schema carry an end-user credential. */
+const REQUEST_SCHEMA_OPTIONS = Object.freeze({includeDynamicAuthConfig: true});
+
 /** Options for {@link IntegrationClient}. */
 export interface IntegrationClientOptions {
   /** The Google Cloud project ID. */
@@ -108,7 +111,6 @@ export class IntegrationClient {
    */
   async getOpenApiSpecForIntegration(): Promise<JsonObject> {
     const url = `https://${this.location}-integrations.googleapis.com/v1/projects/${this.project}/locations/${this.location}:generateOpenApiSpec`;
-    const triggerId = this.triggers ?? null;
     const invalidRequestMessage = `Invalid request. Please check the provided values of project(${this.project}), location(${this.location}), integration(${this.integration}).`;
     const body = await sendCloudRequest({
       url,
@@ -117,7 +119,7 @@ export class IntegrationClient {
         apiTriggerResources: [
           {
             integrationResource: this.integration,
-            triggerId,
+            triggerId: this.triggers,
           },
         ],
         fileFormat: 'JSON',
@@ -198,8 +200,10 @@ export class IntegrationClient {
               toolName,
               toolInstructions,
             });
-            schemas[`create_${entity}_Request`] =
-              createOperationRequest(entity);
+            schemas[`create_${entity}_Request`] = createOperationRequest(
+              entity,
+              REQUEST_SCHEMA_OPTIONS,
+            );
             break;
           case 'update':
             connectorSpec.paths[path] = updateOperation({
@@ -207,8 +211,10 @@ export class IntegrationClient {
               toolName,
               toolInstructions,
             });
-            schemas[`update_${entity}_Request`] =
-              updateOperationRequest(entity);
+            schemas[`update_${entity}_Request`] = updateOperationRequest(
+              entity,
+              REQUEST_SCHEMA_OPTIONS,
+            );
             break;
           case 'delete':
             connectorSpec.paths[path] = deleteOperation({
@@ -216,7 +222,9 @@ export class IntegrationClient {
               toolName,
               toolInstructions,
             });
-            schemas[`delete_${entity}_Request`] = deleteOperationRequest();
+            schemas[`delete_${entity}_Request`] = deleteOperationRequest(
+              REQUEST_SCHEMA_OPTIONS,
+            );
             break;
           case 'list':
             connectorSpec.paths[path] = listOperation({
@@ -225,7 +233,9 @@ export class IntegrationClient {
               toolName,
               toolInstructions,
             });
-            schemas[`list_${entity}_Request`] = listOperationRequest();
+            schemas[`list_${entity}_Request`] = listOperationRequest(
+              REQUEST_SCHEMA_OPTIONS,
+            );
             break;
           case 'get':
             connectorSpec.paths[path] = getOperation({
@@ -234,7 +244,9 @@ export class IntegrationClient {
               toolName,
               toolInstructions,
             });
-            schemas[`get_${entity}_Request`] = getOperationRequest();
+            schemas[`get_${entity}_Request`] = getOperationRequest(
+              REQUEST_SCHEMA_OPTIONS,
+            );
             break;
           default:
             throw new Error(
@@ -250,11 +262,15 @@ export class IntegrationClient {
       const actionDisplayName = displayName.replace(/ /g, '');
       let operation = 'EXECUTE_ACTION';
       if (action === EXECUTE_CUSTOM_QUERY_ACTION) {
-        schemas[`${actionDisplayName}_Request`] = executeCustomQueryRequest();
+        schemas[`${actionDisplayName}_Request`] = executeCustomQueryRequest(
+          REQUEST_SCHEMA_OPTIONS,
+        );
         operation = 'EXECUTE_QUERY';
       } else {
-        schemas[`${actionDisplayName}_Request`] =
-          actionRequest(actionDisplayName);
+        schemas[`${actionDisplayName}_Request`] = actionRequest(
+          actionDisplayName,
+          REQUEST_SCHEMA_OPTIONS,
+        );
         schemas[`connectorInputPayload_${actionDisplayName}`] =
           connectorPayload(inputSchema);
       }

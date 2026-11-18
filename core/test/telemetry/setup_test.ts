@@ -5,9 +5,25 @@
  */
 
 import {OTelHooks, maybeSetOtelProviders} from '@google/adk';
-import {metrics} from '@opentelemetry/api';
-import {logs} from '@opentelemetry/api-logs';
-import {MetricReader} from '@opentelemetry/sdk-metrics';
+import {
+  type Meter,
+  MeterProvider as IMeterProvider,
+  ProxyTracerProvider,
+  TracerProvider,
+  createNoopMeter,
+  metrics,
+  trace,
+} from '@opentelemetry/api';
+import {LoggerProvider as ILoggerProvider, logs} from '@opentelemetry/api-logs';
+import {OTLPLogExporter} from '@opentelemetry/exporter-logs-otlp-http';
+import {OTLPMetricExporter} from '@opentelemetry/exporter-metrics-otlp-http';
+import {OTLPTraceExporter} from '@opentelemetry/exporter-trace-otlp-http';
+import {LoggerProvider} from '@opentelemetry/sdk-logs';
+import {
+  MeterProvider,
+  MetricReader,
+  PeriodicExportingMetricReader,
+} from '@opentelemetry/sdk-metrics';
 import {NodeTracerProvider} from '@opentelemetry/sdk-trace-node';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
@@ -192,5 +208,185 @@ describe('maybeSetOtelProviders', () => {
         }),
       }),
     );
+  });
+
+  class RegisteredTracerProvider implements TracerProvider {
+    getTracer = vi.fn();
+  }
+
+  class RegisteredMeterProvider implements IMeterProvider {
+    getMeter = vi.fn();
+  }
+
+  class RegisteredLoggerProvider implements ILoggerProvider {
+    getLogger = vi.fn();
+  }
+
+  describe('registered global provider skipping', () => {
+    afterEach(() => {
+      vi.mocked(trace.getTracerProvider).mockReset();
+      vi.mocked(metrics.getMeterProvider).mockReset();
+      vi.mocked(logs.getLoggerProvider).mockReset();
+      vi.mocked(ProxyTracerProvider).mockReset();
+      vi.mocked(createNoopMeter).mockReset();
+    });
+
+    it('skips creating and registering trace provider and exporter when global tracer provider is already registered', async () => {
+      vi.stubEnv('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://localhost:4318');
+      vi.mocked(trace.getTracerProvider).mockReturnValue(
+        new RegisteredTracerProvider(),
+      );
+
+      await maybeSetOtelProviders();
+
+      expect(NodeTracerProvider).not.toHaveBeenCalled();
+      expect(NodeTracerProvider.prototype.register).not.toHaveBeenCalled();
+      expect(OTLPTraceExporter).not.toHaveBeenCalled();
+
+      expect(MeterProvider).toHaveBeenCalledTimes(1);
+      expect(metrics.setGlobalMeterProvider).toHaveBeenCalledTimes(1);
+      expect(OTLPMetricExporter).toHaveBeenCalledTimes(1);
+      expect(PeriodicExportingMetricReader).toHaveBeenCalledTimes(1);
+
+      expect(LoggerProvider).toHaveBeenCalledTimes(1);
+      expect(logs.setGlobalLoggerProvider).toHaveBeenCalledTimes(1);
+      expect(OTLPLogExporter).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips creating and registering meter provider and exporter when global meter provider is already registered', async () => {
+      vi.stubEnv('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://localhost:4318');
+      vi.mocked(metrics.getMeterProvider).mockReturnValue(
+        new RegisteredMeterProvider(),
+      );
+
+      await maybeSetOtelProviders();
+
+      expect(MeterProvider).not.toHaveBeenCalled();
+      expect(metrics.setGlobalMeterProvider).not.toHaveBeenCalled();
+      expect(OTLPMetricExporter).not.toHaveBeenCalled();
+      expect(PeriodicExportingMetricReader).not.toHaveBeenCalled();
+
+      expect(NodeTracerProvider).toHaveBeenCalledTimes(1);
+      expect(NodeTracerProvider.prototype.register).toHaveBeenCalledTimes(1);
+      expect(OTLPTraceExporter).toHaveBeenCalledTimes(1);
+
+      expect(LoggerProvider).toHaveBeenCalledTimes(1);
+      expect(logs.setGlobalLoggerProvider).toHaveBeenCalledTimes(1);
+      expect(OTLPLogExporter).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips creating and registering logger provider and exporter when global logger provider is already registered', async () => {
+      vi.stubEnv('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://localhost:4318');
+      vi.mocked(logs.getLoggerProvider).mockReturnValue(
+        new RegisteredLoggerProvider(),
+      );
+
+      await maybeSetOtelProviders();
+
+      expect(LoggerProvider).not.toHaveBeenCalled();
+      expect(logs.setGlobalLoggerProvider).not.toHaveBeenCalled();
+      expect(OTLPLogExporter).not.toHaveBeenCalled();
+
+      expect(NodeTracerProvider).toHaveBeenCalledTimes(1);
+      expect(NodeTracerProvider.prototype.register).toHaveBeenCalledTimes(1);
+      expect(OTLPTraceExporter).toHaveBeenCalledTimes(1);
+
+      expect(MeterProvider).toHaveBeenCalledTimes(1);
+      expect(metrics.setGlobalMeterProvider).toHaveBeenCalledTimes(1);
+      expect(OTLPMetricExporter).toHaveBeenCalledTimes(1);
+      expect(PeriodicExportingMetricReader).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips all exporter and provider creation when all three global providers are already registered', async () => {
+      vi.stubEnv('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://localhost:4318');
+      vi.mocked(trace.getTracerProvider).mockReturnValue(
+        new RegisteredTracerProvider(),
+      );
+      vi.mocked(metrics.getMeterProvider).mockReturnValue(
+        new RegisteredMeterProvider(),
+      );
+      vi.mocked(logs.getLoggerProvider).mockReturnValue(
+        new RegisteredLoggerProvider(),
+      );
+
+      await maybeSetOtelProviders();
+
+      expect(NodeTracerProvider).not.toHaveBeenCalled();
+      expect(NodeTracerProvider.prototype.register).not.toHaveBeenCalled();
+      expect(OTLPTraceExporter).not.toHaveBeenCalled();
+
+      expect(MeterProvider).not.toHaveBeenCalled();
+      expect(metrics.setGlobalMeterProvider).not.toHaveBeenCalled();
+      expect(OTLPMetricExporter).not.toHaveBeenCalled();
+      expect(PeriodicExportingMetricReader).not.toHaveBeenCalled();
+
+      expect(LoggerProvider).not.toHaveBeenCalled();
+      expect(logs.setGlobalLoggerProvider).not.toHaveBeenCalled();
+      expect(OTLPLogExporter).not.toHaveBeenCalled();
+    });
+
+    it('detects registered tracer provider via ProxyTracerProvider delegate', async () => {
+      vi.stubEnv('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://localhost:4318');
+      const proxyWithDelegate = {
+        getDelegate: () => new RegisteredTracerProvider(),
+        getTracer: vi.fn(),
+        constructor: {name: 'ProxyTracerProvider'},
+      };
+      vi.mocked(trace.getTracerProvider).mockReturnValue(
+        proxyWithDelegate as unknown as TracerProvider,
+      );
+
+      await maybeSetOtelProviders();
+
+      expect(NodeTracerProvider).not.toHaveBeenCalled();
+      expect(NodeTracerProvider.prototype.register).not.toHaveBeenCalled();
+      expect(OTLPTraceExporter).not.toHaveBeenCalled();
+    });
+
+    it('registers providers when default providers have minified constructor names', async () => {
+      vi.stubEnv('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://localhost:4318');
+
+      const noopDelegate = {
+        constructor: {},
+      };
+      Object.defineProperty(noopDelegate.constructor, 'name', {value: 'a'});
+      const mockProxy = {
+        getDelegate: () => noopDelegate,
+      };
+      vi.mocked(ProxyTracerProvider).mockImplementation(function () {
+        return mockProxy as unknown as ProxyTracerProvider;
+      });
+      vi.mocked(trace.getTracerProvider).mockReturnValue(
+        mockProxy as unknown as TracerProvider,
+      );
+
+      const noopMeter = {};
+      vi.mocked(createNoopMeter).mockReturnValue(noopMeter as unknown as Meter);
+      vi.mocked(metrics.getMeterProvider).mockReturnValue({
+        getMeter: () => noopMeter,
+        constructor: {name: 'b'},
+      } as unknown as IMeterProvider);
+
+      vi.mocked(logs.getLoggerProvider).mockReturnValue({
+        _getDelegate: () => ({}),
+        _delegate: undefined,
+        constructor: {name: 'c'},
+      } as unknown as ILoggerProvider);
+
+      await maybeSetOtelProviders();
+
+      expect(NodeTracerProvider).toHaveBeenCalledTimes(1);
+      expect(NodeTracerProvider.prototype.register).toHaveBeenCalledTimes(1);
+      expect(OTLPTraceExporter).toHaveBeenCalledTimes(1);
+
+      expect(MeterProvider).toHaveBeenCalledTimes(1);
+      expect(metrics.setGlobalMeterProvider).toHaveBeenCalledTimes(1);
+      expect(OTLPMetricExporter).toHaveBeenCalledTimes(1);
+      expect(PeriodicExportingMetricReader).toHaveBeenCalledTimes(1);
+
+      expect(LoggerProvider).toHaveBeenCalledTimes(1);
+      expect(logs.setGlobalLoggerProvider).toHaveBeenCalledTimes(1);
+      expect(OTLPLogExporter).toHaveBeenCalledTimes(1);
+    });
   });
 });

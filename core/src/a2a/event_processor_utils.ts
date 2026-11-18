@@ -6,6 +6,7 @@
 
 import {Task, TaskStatusUpdateEvent} from '@a2a-js/sdk';
 import {Content as GenAIContent, Part as GenAIPart} from '@google/genai';
+import {REQUEST_CREDENTIAL_FUNCTION_CALL_NAME} from '../agents/framework_function_calls.js';
 import {
   getPendingUserInputRequests,
   getUserInputRequests,
@@ -13,9 +14,11 @@ import {
 import {Event as AdkEvent} from '../events/event.js';
 import {createEventActions} from '../events/event_actions.js';
 import {
+  createTaskAuthRequiredEvent,
   createTaskCompletedEvent,
   createTaskFailedEvent,
   createTaskInputRequiredEvent,
+  isAuthRequiredTaskStatusUpdateEvent,
   isInputRequiredTaskStatusUpdateEvent,
 } from './a2a_event.js';
 import {ExecutorContext} from './executor_context.js';
@@ -29,8 +32,9 @@ import {toA2AParts, toGenAIParts} from './part_converter_utils.js';
 /**
  * Processes a list of ADK events and determines the final task status update event.
  * If any of the ADK events contain an error, a TaskFailedEvent is returned immediately.
- * If there are no errors, it checks for any input required events. If found, it returns a TaskInputRequiredEvent.
- * If there are no input required events, it returns a TaskCompletedEvent.
+ * If there are no errors, it checks for pending long-running function calls. If one of them is a credential
+ * request, it returns a TaskAuthRequiredEvent; if there are others, it returns a TaskInputRequiredEvent.
+ * If there are no pending calls, it returns a TaskCompletedEvent.
  *
  * @param adkEvents - The list of ADK events to process.
  * @param context - The executor context containing relevant information for processing the events.
@@ -63,12 +67,12 @@ export function getFinalTaskStatusUpdate(
     }
   }
 
-  const inputRequiredEvent = scanForInputRequiredEvents(adkEvents, context);
-  if (inputRequiredEvent) {
+  const pausedEvent = scanForPausedTaskEvent(adkEvents, context);
+  if (pausedEvent) {
     return {
-      ...inputRequiredEvent,
+      ...pausedEvent,
       metadata: {
-        ...inputRequiredEvent.metadata,
+        ...pausedEvent.metadata,
         ...getA2AEventMetadataFromActions(finalEventActions),
       },
     };
@@ -84,12 +88,12 @@ export function getFinalTaskStatusUpdate(
   });
 }
 
-function scanForInputRequiredEvents(
+function scanForPausedTaskEvent(
   adkEvents: AdkEvent[],
   context: ExecutorContext,
 ): TaskStatusUpdateEvent | undefined {
-  const inputRequiredParts: GenAIPart[] = [];
-  const inputRequiredFunctionCallIds = new Set<string>();
+  const pendingParts: GenAIPart[] = [];
+  const pendingFunctionCallIds = new Set<string>();
 
   for (const adkEvent of adkEvents) {
     if (!adkEvent.content?.parts?.length) {
@@ -100,40 +104,46 @@ function scanForInputRequiredEvents(
       const longRunningFunctionCallId = getLongRunnningFunctionCallId(
         genAIPart,
         adkEvent.longRunningToolIds,
-        inputRequiredParts,
+        pendingParts,
       );
       if (!longRunningFunctionCallId) {
         continue;
       }
 
-      const isAlreadyAdded = inputRequiredFunctionCallIds.has(
+      const isAlreadyAdded = pendingFunctionCallIds.has(
         longRunningFunctionCallId,
       );
       if (isAlreadyAdded) {
         continue;
       }
 
-      inputRequiredParts.push(genAIPart);
-      inputRequiredFunctionCallIds.add(longRunningFunctionCallId);
+      pendingParts.push(genAIPart);
+      pendingFunctionCallIds.add(longRunningFunctionCallId);
     }
   }
 
-  if (inputRequiredParts.length > 0) {
-    return createTaskInputRequiredEvent({
-      taskId: context.requestContext.taskId,
-      contextId: context.requestContext.contextId,
-      parts: toA2AParts(inputRequiredParts, [...inputRequiredFunctionCallIds]),
-      metadata: getA2ASessionMetadata(context),
-    });
+  if (pendingParts.length === 0) {
+    return undefined;
   }
 
-  return undefined;
+  const createPausedEvent = pendingParts.some(
+    (part) => part.functionCall?.name === REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+  )
+    ? createTaskAuthRequiredEvent
+    : createTaskInputRequiredEvent;
+
+  return createPausedEvent({
+    taskId: context.requestContext.taskId,
+    contextId: context.requestContext.contextId,
+    parts: toA2AParts(pendingParts, [...pendingFunctionCallIds]),
+    metadata: getA2ASessionMetadata(context),
+  });
 }
 
 function getLongRunnningFunctionCallId(
   genAIPart: GenAIPart,
   longRunningToolIds: string[] = [],
-  inputRequiredParts: GenAIPart[] = [],
+  pendingParts: GenAIPart[] = [],
 ): string | undefined {
   const functionCallId = genAIPart.functionCall?.id;
   const functionResponseId = genAIPart.functionResponse?.id;
@@ -149,7 +159,7 @@ function getLongRunnningFunctionCallId(
     return functionResponseId;
   }
 
-  for (const part of inputRequiredParts) {
+  for (const part of pendingParts) {
     if (part.functionCall?.id === functionResponseId) {
       return functionResponseId;
     }
@@ -225,7 +235,8 @@ function pendingRequestParts(
 
   if (
     task &&
-    isInputRequiredTaskStatusUpdateEvent(task) &&
+    (isInputRequiredTaskStatusUpdateEvent(task) ||
+      isAuthRequiredTaskStatusUpdateEvent(task)) &&
     task.status.message
   ) {
     for (const part of toGenAIParts(task.status.message.parts)) {

@@ -16,6 +16,7 @@ import {
   contentToMessageParam,
   createAnthropicClient,
   createDirectAnthropicClient,
+  extractSystemInstructionText,
   functionDeclarationToToolParam,
   messageToGenerateContentResponse,
   partToMessageBlock,
@@ -116,7 +117,7 @@ function createSampleAnthropicMessage(
 
 describe('Claude conversion helpers', () => {
   describe('buildAnthropicThinkingParam', () => {
-    it('test_build_anthropic_thinking_param_with_config', () => {
+    it('enables thinking with budget_tokens when a positive thinkingBudget is configured', () => {
       expect(
         buildAnthropicThinkingParam({
           thinkingConfig: {thinkingBudget: 5000},
@@ -127,7 +128,7 @@ describe('Claude conversion helpers', () => {
       });
     });
 
-    it('test_build_anthropic_thinking_param_zero_budget_disabled', () => {
+    it('returns disabled thinking when thinkingBudget is zero', () => {
       expect(
         buildAnthropicThinkingParam({
           thinkingConfig: {thinkingBudget: 0},
@@ -137,7 +138,7 @@ describe('Claude conversion helpers', () => {
       });
     });
 
-    it('test_build_anthropic_thinking_param_none_budget_raises', () => {
+    it('throws when thinkingConfig is provided without a thinkingBudget', () => {
       expect(() =>
         buildAnthropicThinkingParam({
           thinkingConfig: {},
@@ -145,7 +146,7 @@ describe('Claude conversion helpers', () => {
       ).toThrow('thinkingBudget must be set explicitly');
     });
 
-    it('test_build_anthropic_thinking_param_automatic_budget_uses_adaptive', () => {
+    it('uses adaptive thinking with summarized display when thinkingBudget is -1', () => {
       expect(
         buildAnthropicThinkingParam({
           thinkingConfig: {thinkingBudget: -1},
@@ -156,7 +157,7 @@ describe('Claude conversion helpers', () => {
       });
     });
 
-    it('test_build_anthropic_thinking_param_other_negative_uses_adaptive', () => {
+    it('uses adaptive thinking with summarized display for any negative thinkingBudget', () => {
       expect(
         buildAnthropicThinkingParam({
           thinkingConfig: {thinkingBudget: -5},
@@ -167,7 +168,7 @@ describe('Claude conversion helpers', () => {
       });
     });
 
-    it('test_build_anthropic_thinking_param_manual_budget_omits_display', () => {
+    it('omits display when a manual positive thinkingBudget is configured', () => {
       const result = buildAnthropicThinkingParam({
         thinkingConfig: {thinkingBudget: 2048},
       });
@@ -175,11 +176,63 @@ describe('Claude conversion helpers', () => {
       expect('display' in (result ?? {})).toBe(false);
     });
 
-    it('test_build_anthropic_thinking_param_no_config', () => {
+    it('returns undefined when config or thinkingConfig is omitted', () => {
       expect(buildAnthropicThinkingParam(undefined)).toBeUndefined();
       expect(
         buildAnthropicThinkingParam({systemInstruction: 'test'}),
       ).toBeUndefined();
+    });
+  });
+
+  describe('extractSystemInstructionText', () => {
+    it('extracts systemInstruction when passed as a string, Content, Part, or PartUnion[]', () => {
+      expect(
+        extractSystemInstructionText({
+          contents: [],
+          config: {systemInstruction: 'Be helpful.'},
+          liveConnectConfig: {},
+          toolsDict: {},
+        }),
+      ).toBe('Be helpful.');
+
+      expect(
+        extractSystemInstructionText({
+          contents: [],
+          config: {
+            systemInstruction: {
+              role: 'system',
+              parts: [{text: 'Line 1'}, {text: 'Line 2'}],
+            },
+          },
+          liveConnectConfig: {},
+          toolsDict: {},
+        }),
+      ).toBe('Line 1\nLine 2');
+
+      expect(
+        extractSystemInstructionText({
+          contents: [],
+          config: {
+            systemInstruction: {text: 'Single part instruction'},
+          },
+          liveConnectConfig: {},
+          toolsDict: {},
+        }),
+      ).toBe('Single part instruction');
+
+      expect(
+        extractSystemInstructionText({
+          contents: [],
+          config: {
+            systemInstruction: [
+              'First array entry',
+              {text: 'Second array entry'},
+            ],
+          },
+          liveConnectConfig: {},
+          toolsDict: {},
+        }),
+      ).toBe('First array entry\nSecond array entry');
     });
   });
 
@@ -245,7 +298,7 @@ describe('Claude conversion helpers', () => {
       [null, FinishReason.FINISH_REASON_UNSPECIFIED],
       [undefined, FinishReason.FINISH_REASON_UNSPECIFIED],
     ])(
-      'test_to_google_genai_finish_reason (%s)',
+      'maps stop reason %s to the expected FinishReason',
       (stopReason, expectedFinishReason) => {
         expect(toGoogleGenaiFinishReason(stopReason)).toBe(
           expectedFinishReason,
@@ -491,7 +544,7 @@ describe('Claude conversion helpers', () => {
       }
     });
 
-    it('test_part_to_message_block_function_call_none_id', () => {
+    it('sanitizes an undefined functionCall id to toolu_fallback_0', () => {
       const result = partToMessageBlock({
         functionCall: {
           id: undefined,
@@ -507,7 +560,7 @@ describe('Claude conversion helpers', () => {
       });
     });
 
-    it('test_part_to_message_block_function_call_empty_id', () => {
+    it('sanitizes an empty functionCall id to toolu_fallback_0', () => {
       const result = partToMessageBlock({
         functionCall: {
           id: '',
@@ -523,7 +576,7 @@ describe('Claude conversion helpers', () => {
       });
     });
 
-    it('test_part_to_message_block_function_call_invalid_chars_id', () => {
+    it('sanitizes a functionCall id with invalid characters to toolu_fallback_0', () => {
       const result = partToMessageBlock({
         functionCall: {
           id: 'invalid id with spaces!',
@@ -539,7 +592,7 @@ describe('Claude conversion helpers', () => {
       });
     });
 
-    it('test_part_to_message_block_function_response_none_id', () => {
+    it('sanitizes an undefined functionResponse id to toolu_fallback_0', () => {
       const result = partToMessageBlock({
         functionResponse: {
           id: undefined,
@@ -555,7 +608,7 @@ describe('Claude conversion helpers', () => {
       });
     });
 
-    it('test_part_to_message_block_function_response_empty_id', () => {
+    it('sanitizes an empty functionResponse id to toolu_fallback_0', () => {
       const result = partToMessageBlock({
         functionResponse: {
           id: '',
@@ -662,6 +715,47 @@ describe('Claude conversion helpers', () => {
       });
     });
 
+    it('serializes the whole response object when sibling keys exist alongside result', () => {
+      expect(
+        partToMessageBlock({
+          functionResponse: {
+            id: 'toolu_err_sibling',
+            name: 'run_query',
+            response: {result: null, error: 'failed'},
+          },
+        }),
+      ).toEqual({
+        type: 'tool_result',
+        tool_use_id: 'toolu_err_sibling',
+        content: '{"result":null,"error":"failed"}',
+        is_error: true,
+      });
+    });
+
+    it.each<[Record<string, unknown>, boolean]>([
+      [{result: 'ok'}, false],
+      [{result: 'ok', is_error: false}, false],
+      [{result: 'failed', is_error: true}, true],
+      [{result: 'failed', isError: true}, true],
+      [{error: 'Permission denied'}, true],
+    ])(
+      'sets is_error on tool_result blocks from response %j to %s',
+      (responsePayload, expectedIsError) => {
+        const block = partToMessageBlock({
+          functionResponse: {
+            id: 'toolu_err_check',
+            name: 'check_tool',
+            response: responsePayload,
+          },
+        });
+        expect(block).toMatchObject({
+          type: 'tool_result',
+          tool_use_id: 'toolu_err_check',
+          is_error: expectedIsError,
+        });
+      },
+    );
+
     it('returns an empty string when functionResponse.response is empty or undefined', () => {
       expect(
         partToMessageBlock({
@@ -743,7 +837,7 @@ describe('Claude conversion helpers', () => {
       });
     });
 
-    it('test_part_to_message_block_thinking_roundtrip', () => {
+    it('converts a thought part with text and thoughtSignature into a ThinkingBlockParam', () => {
       expect(
         partToMessageBlock({
           text: 'My reasoning steps.',
@@ -757,7 +851,7 @@ describe('Claude conversion helpers', () => {
       });
     });
 
-    it('test_part_to_message_block_redacted_thinking_roundtrip', () => {
+    it('converts a thought part with thoughtSignature and no text into a RedactedThinkingBlockParam', () => {
       expect(
         partToMessageBlock({
           thought: true,
@@ -769,10 +863,26 @@ describe('Claude conversion helpers', () => {
       });
     });
 
-    it('throws for a part that carries only a thoughtSignature', () => {
-      expect(() => partToMessageBlock({thoughtSignature: 'sig'})).toThrow(
-        'Part kind "thoughtSignature" is not supported by Claude.',
-      );
+    it('returns an empty text block and warns for a part that carries only a thoughtSignature', () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        expect(partToMessageBlock({thoughtSignature: 'sig'})).toEqual({
+          type: 'text',
+          text: '',
+        });
+        expect(warnSpy).toHaveBeenCalledWith(
+          'Dropping a thought signature from another model.',
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('returns an empty text block when called directly with an empty text part', () => {
+      expect(partToMessageBlock({text: ''})).toEqual({
+        type: 'text',
+        text: '',
+      });
     });
 
     it('throws a descriptive error for unsupported part kinds', () => {
@@ -782,7 +892,7 @@ describe('Claude conversion helpers', () => {
 
       expect(() =>
         partToMessageBlock({
-          inlineData: {mimeType: 'image/png', data: 'aGVsbG8='},
+          inlineData: {mimeType: 'audio/wav', data: 'aGVsbG8='},
         }),
       ).toThrow('Part kind "inlineData" is not supported by Claude.');
 
@@ -795,29 +905,172 @@ describe('Claude conversion helpers', () => {
         }),
       ).toThrow('Part kind "fileData" is not supported by Claude.');
 
-      expect(() =>
-        partToMessageBlock({
-          executableCode: {code: 'print(1)', language: undefined},
-        }),
-      ).toThrow('Part kind "executableCode" is not supported by Claude.');
-
-      expect(() =>
-        partToMessageBlock({
-          codeExecutionResult: {output: '1', outcome: undefined},
-        }),
-      ).toThrow('Part kind "codeExecutionResult" is not supported by Claude.');
-
-      expect(() => partToMessageBlock({text: ''})).toThrow(
-        'Part kind "empty text" is not supported by Claude.',
-      );
-
       expect(() => partToMessageBlock({})).toThrow(
         'Part kind "empty part" is not supported by Claude.',
       );
     });
+
+    it('converts an inline image part into a base64 image block', () => {
+      expect(
+        partToMessageBlock({
+          inlineData: {mimeType: 'image/png', data: 'aGVsbG8='},
+        }),
+      ).toEqual({
+        type: 'image',
+        source: {type: 'base64', media_type: 'image/png', data: 'aGVsbG8='},
+      });
+    });
+
+    it.each([
+      {mimeType: 'image/PNG', mediaType: 'image/png'},
+      {mimeType: 'IMAGE/PNG', mediaType: 'image/png'},
+      {mimeType: ' image/png ', mediaType: 'image/png'},
+      {mimeType: 'image/jpeg ; charset=binary', mediaType: 'image/jpeg'},
+      {mimeType: 'image/gif', mediaType: 'image/gif'},
+      {mimeType: 'image/webp', mediaType: 'image/webp'},
+    ])(
+      'normalizes the image MIME type "$mimeType"',
+      ({mimeType, mediaType}) => {
+        expect(
+          partToMessageBlock({inlineData: {mimeType, data: 'aGVsbG8='}}),
+        ).toEqual({
+          type: 'image',
+          source: {type: 'base64', media_type: mediaType, data: 'aGVsbG8='},
+        });
+      },
+    );
+
+    it('throws for an image MIME type that Claude does not accept', () => {
+      expect(() =>
+        partToMessageBlock({
+          inlineData: {mimeType: 'image/bmp', data: 'aGVsbG8='},
+        }),
+      ).toThrow('Unsupported Anthropic image MIME type: image/bmp');
+    });
+
+    it('throws for an image part without data', () => {
+      expect(() =>
+        partToMessageBlock({inlineData: {mimeType: 'image/png'}}),
+      ).toThrow('Anthropic image parts require MIME type and data');
+    });
+
+    it('converts an executableCode part into a fenced python text block', () => {
+      expect(partToMessageBlock({executableCode: {code: 'print(1)'}})).toEqual({
+        type: 'text',
+        text: 'Code:```python\nprint(1)\n```',
+      });
+    });
+
+    it('converts an executableCode part without code into an empty fenced block', () => {
+      expect(partToMessageBlock({executableCode: {}})).toEqual({
+        type: 'text',
+        text: 'Code:```python\n\n```',
+      });
+    });
+
+    it('converts a codeExecutionResult part into a fenced code_output text block', () => {
+      expect(partToMessageBlock({codeExecutionResult: {output: '1'}})).toEqual({
+        type: 'text',
+        text: 'Execution Result:```code_output\n1\n```',
+      });
+    });
+
+    it('converts a codeExecutionResult part without output into an empty fenced block', () => {
+      expect(partToMessageBlock({codeExecutionResult: {}})).toEqual({
+        type: 'text',
+        text: 'Execution Result:```code_output\n\n```',
+      });
+    });
   });
 
   describe('contentToMessageParam', () => {
+    it('keeps an image part on a user turn', () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        expect(
+          contentToMessageParam({
+            role: 'user',
+            parts: [
+              {text: 'What is in this image?'},
+              {inlineData: {mimeType: 'image/png', data: 'aGVsbG8='}},
+            ],
+          }),
+        ).toEqual({
+          role: 'user',
+          content: [
+            {type: 'text', text: 'What is in this image?'},
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: 'image/png',
+                data: 'aGVsbG8=',
+              },
+            },
+          ],
+        });
+        expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('keeps an image part when role is omitted', () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        expect(
+          contentToMessageParam({
+            parts: [
+              {text: 'What is in this image?'},
+              {inlineData: {mimeType: 'image/png', data: 'aGVsbG8='}},
+            ],
+          }),
+        ).toEqual({
+          role: 'user',
+          content: [
+            {type: 'text', text: 'What is in this image?'},
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: 'image/png',
+                data: 'aGVsbG8=',
+              },
+            },
+          ],
+        });
+        expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it.each(['model', 'assistant'])(
+      'drops an image part on a %s turn and logs a warning',
+      (role) => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+        try {
+          expect(
+            contentToMessageParam({
+              role,
+              parts: [
+                {text: 'Here is the chart.'},
+                {inlineData: {mimeType: 'image/png', data: 'aGVsbG8='}},
+              ],
+            }),
+          ).toEqual({
+            role: 'assistant',
+            content: [{type: 'text', text: 'Here is the chart.'}],
+          });
+          expect(warnSpy).toHaveBeenCalledWith(
+            'Image data is not supported in Claude for assistant turns.',
+          );
+        } finally {
+          warnSpy.mockRestore();
+        }
+      },
+    );
+
     it('converts a Content object with multiple parts into a MessageParam', () => {
       expect(
         contentToMessageParam({
@@ -854,7 +1107,7 @@ describe('Claude conversion helpers', () => {
       });
     });
 
-    it('test_content_to_message_param_drops_content_free_signature', () => {
+    it('drops content-free thoughtSignature parts with a warning', () => {
       const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
       try {
         const message = contentToMessageParam({
@@ -879,7 +1132,7 @@ describe('Claude conversion helpers', () => {
       }
     });
 
-    it('test_content_to_message_param_keeps_signature_on_real_content', () => {
+    it('preserves real content parts that carry thoughtSignature and drops content-free signatures', () => {
       const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
       try {
         const message = contentToMessageParam({
@@ -909,7 +1162,7 @@ describe('Claude conversion helpers', () => {
       }
     });
 
-    it('test_content_to_message_param_skips_empty_text_part', () => {
+    it('skips empty text parts and logs at debug level', () => {
       const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
       try {
         const result = contentToMessageParam({
@@ -929,7 +1182,7 @@ describe('Claude conversion helpers', () => {
       }
     });
 
-    it('test_content_to_message_param_skips_empty_text_part_with_metadata', () => {
+    it('skips empty text parts that only carry partMetadata', () => {
       const result = contentToMessageParam({
         role: 'user',
         parts: [{text: 'run it'}, {text: '', partMetadata: {key: 'value'}}],
@@ -941,7 +1194,7 @@ describe('Claude conversion helpers', () => {
       });
     });
 
-    it('test_content_to_message_param_keeps_non_text_payload_with_empty_text', () => {
+    it('keeps non-text payload parts even when text is an empty string', () => {
       const result = contentToMessageParam({
         role: 'model',
         parts: [
@@ -958,7 +1211,7 @@ describe('Claude conversion helpers', () => {
       });
     });
 
-    it('test_content_to_message_param_lone_empty_text_emits_placeholder_block', () => {
+    it('emits a placeholder text block when a user turn has only an empty text part', () => {
       const result = contentToMessageParam({
         role: 'user',
         parts: [{text: ''}],
@@ -970,7 +1223,7 @@ describe('Claude conversion helpers', () => {
       });
     });
 
-    it('test_content_to_message_param_model_empty_text_emits_no_placeholder', () => {
+    it('emits no placeholder block when a model turn has only an empty text part', () => {
       const result = contentToMessageParam({
         role: 'model',
         parts: [{text: ''}],
@@ -1065,7 +1318,7 @@ describe('Claude conversion helpers', () => {
   });
 
   describe('contentBlockToPart', () => {
-    it('test_content_block_to_part_thinking_block', () => {
+    it('converts a thinking ContentBlock to a thought Part with thoughtSignature', () => {
       expect(
         contentBlockToPart({
           type: 'thinking',
@@ -1092,7 +1345,7 @@ describe('Claude conversion helpers', () => {
       });
     });
 
-    it('test_content_block_to_part_redacted_thinking', () => {
+    it('converts a redacted_thinking ContentBlock to a thought Part without text', () => {
       const part = contentBlockToPart({
         type: 'redacted_thinking',
         data: 'redacted_data',
@@ -1207,7 +1460,7 @@ describe('Claude conversion helpers', () => {
       });
     });
 
-    it('test_message_to_generate_content_response_with_thinking', () => {
+    it('converts thinking, redacted_thinking, and text blocks in an Anthropic Message', () => {
       const message = createSampleAnthropicMessage({
         id: 'msg_test_thinking',
         content: [
@@ -1296,13 +1549,40 @@ describe('Claude conversion helpers', () => {
       ]);
     });
 
+    it('filters out truncated tool_use blocks when stop_reason is max_tokens or model_context_window_exceeded', () => {
+      for (const stopReason of [
+        'max_tokens',
+        'model_context_window_exceeded',
+      ] as const) {
+        const message = createSampleAnthropicMessage({
+          stop_reason: stopReason,
+          content: [
+            {type: 'text', text: 'Partial explanation', citations: null},
+            {
+              type: 'tool_use',
+              id: 'toolu_truncated',
+              name: 'write_file',
+              input: {path: '/tmp/incomplete'},
+              caller: {type: 'direct'},
+            },
+          ],
+        });
+
+        const response = messageToGenerateContentResponse(message);
+        expect(response.finishReason).toBe(FinishReason.MAX_TOKENS);
+        expect(response.content?.parts).toEqual([
+          {text: 'Partial explanation'},
+        ]);
+      }
+    });
+
     it.each<[number, number | null, number, number | undefined]>([
       [100, 60, 40, 60],
       [20, 0, 20, 0],
       [20, null, 20, undefined],
       [20, 50, 0, 20],
     ])(
-      'test_message_to_generate_content_response_splits_thinking_tokens (output=%d, thinking=%s)',
+      'splits output_tokens (%d) and thinking_tokens (%s) across candidatesTokenCount and thoughtsTokenCount',
       (outputTokens, thinkingTokens, expectedCandidates, expectedThoughts) => {
         const message = createSampleAnthropicMessage({
           usage: {
@@ -1332,7 +1612,7 @@ describe('Claude conversion helpers', () => {
       },
     );
 
-    it('test_message_to_generate_content_response_thinking_tokens_not_double_counted', () => {
+    it('does not double-count thinking tokens between candidatesTokenCount and thoughtsTokenCount', () => {
       const message = createSampleAnthropicMessage({
         usage: {
           input_tokens: 10,
@@ -1370,7 +1650,7 @@ describe('Claude conversion helpers', () => {
       ['refusal', FinishReason.SAFETY],
       [null, FinishReason.FINISH_REASON_UNSPECIFIED],
     ])(
-      'test_message_to_generate_content_response_maps_finish_reason (%s)',
+      'maps stop reason %s on the converted LlmResponse',
       (stopReason, expectedFinishReason) => {
         const message = createSampleAnthropicMessage({stop_reason: stopReason});
         const response = messageToGenerateContentResponse(message);

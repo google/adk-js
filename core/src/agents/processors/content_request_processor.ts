@@ -7,6 +7,7 @@
 import {getActiveEvents} from '../../context/compaction_utils.js';
 import {Event} from '../../events/event.js';
 import {BaseLlm, isBaseLlm} from '../../models/base_llm.js';
+import {isGemini} from '../../models/google_llm.js';
 import {LlmRequest} from '../../models/llm_request.js';
 import {BaseAgent} from '../base_agent.js';
 import {InvocationContext} from '../invocation_context.js';
@@ -17,38 +18,55 @@ import {
   getCurrentTurnContents,
 } from './content_processor_utils.js';
 
+const ANTHROPIC_LLM_SYMBOL = Symbol.for('google.adk.anthropicLlm');
 const CLAUDE_MODEL_SYMBOL = Symbol.for('google.adk.claudeModel');
-const CLAUDE_MODEL_NAME_PATTERN = /^claude-/i;
+const CLAUDE_MODEL_NAME_PATTERN = /(?:^|\/)claude-/i;
 
-function isClaudeModelInstance(model: BaseLlm): boolean {
+function isClaudeModelName(model: string): boolean {
+  return CLAUDE_MODEL_NAME_PATTERN.test(model);
+}
+
+function hasAnthropicModelSymbol(model: BaseLlm): boolean {
   return (
     (CLAUDE_MODEL_SYMBOL in model && model[CLAUDE_MODEL_SYMBOL] === true) ||
-    CLAUDE_MODEL_NAME_PATTERN.test(model.model)
+    (ANTHROPIC_LLM_SYMBOL in model && model[ANTHROPIC_LLM_SYMBOL] === true)
   );
+}
+
+function resolveConfiguredModel(agent: LlmAgent): BaseLlm | string | undefined {
+  let current: BaseAgent | undefined = agent;
+  while (current) {
+    if (isLlmAgent(current)) {
+      if (isBaseLlm(current.model)) {
+        return current.model;
+      }
+      if (typeof current.model === 'string' && current.model.length > 0) {
+        return current.model;
+      }
+    }
+    current = current.parentAgent;
+  }
+  return undefined;
 }
 
 function shouldPreserveFunctionCallIds(
   agent: LlmAgent,
   llmRequest: LlmRequest,
 ): boolean {
-  if (llmRequest.model && CLAUDE_MODEL_NAME_PATTERN.test(llmRequest.model)) {
-    return true;
-  }
-
-  let current: BaseAgent | undefined = agent;
-  while (current) {
-    if (isLlmAgent(current)) {
-      if (isBaseLlm(current.model)) {
-        return isClaudeModelInstance(current.model);
-      }
-      if (typeof current.model === 'string' && current.model.length > 0) {
-        return CLAUDE_MODEL_NAME_PATTERN.test(current.model);
-      }
+  const configuredModel = resolveConfiguredModel(agent);
+  if (isBaseLlm(configuredModel)) {
+    if (isGemini(configuredModel) && configuredModel.useInteractionsApi) {
+      return true;
     }
-    current = current.parentAgent;
+    if (hasAnthropicModelSymbol(configuredModel)) {
+      return true;
+    }
   }
 
-  return false;
+  const effectiveModelName =
+    llmRequest.model ||
+    (isBaseLlm(configuredModel) ? configuredModel.model : configuredModel);
+  return Boolean(effectiveModelName && isClaudeModelName(effectiveModelName));
 }
 
 /**

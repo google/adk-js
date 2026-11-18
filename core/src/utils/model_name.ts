@@ -9,6 +9,8 @@ import {getBooleanEnvVar} from './env_aware_utils.js';
 const MODEL_NAME_PATTERN =
   '^projects/[^/]+/locations/[^/]+/publishers/[^/]+/models/(.+)$';
 
+const GEMINI_1_NAME_PATTERN = /^gemini-1\.\d/;
+
 /**
  * Extract the actual model name from either simple or path-based format.
  *
@@ -32,10 +34,12 @@ export function extractModelName(modelString: string): string {
  * @param modelString Either a simple model name or path - based model name
  * @return true if it's a Gemini model, false otherwise.
  */
-export function isGeminiModel(modelString: string): boolean {
-  const modelName = extractModelName(modelString);
+export function isGeminiModel(modelString: string | undefined): boolean {
+  if (!modelString) {
+    return false;
+  }
 
-  return modelName.startsWith('gemini-');
+  return extractModelName(modelString).startsWith('gemini-');
 }
 
 interface ParsedVersion {
@@ -82,15 +86,20 @@ export function getGeminiMajorVersion(
 }
 
 /**
- * Check if the model is a Gemini 1.x model using regex patterns.
+ * Check if the model is a Gemini 1.x model.
+ *
+ * Only a `gemini-1.<digit>` version matches, so `gemini-10.0-pro` and
+ * `gemini-1-pro` are not Gemini 1.x models.
  *
  * @param modelString Either a simple model name or path - based model name
  * @return true if it's a Gemini 1.x model, false otherwise.
  */
-export function isGemini1Model(modelString: string): boolean {
-  const modelName = extractModelName(modelString);
+export function isGemini1Model(modelString: string | undefined): boolean {
+  if (!modelString) {
+    return false;
+  }
 
-  return modelName.startsWith('gemini-1');
+  return GEMINI_1_NAME_PATTERN.test(extractModelName(modelString));
 }
 
 /**
@@ -99,7 +108,7 @@ export function isGemini1Model(modelString: string): boolean {
  * @param modelString Either a simple model name or path - based model name
  * @return true if it's a Gemini 2.x model, false otherwise.
  */
-export function isGemini2OrAbove(modelString: string): boolean {
+export function isGemini2OrAbove(modelString: string | undefined): boolean {
   if (!modelString) {
     return false;
   }

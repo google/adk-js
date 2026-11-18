@@ -74,7 +74,7 @@ Left unset, the sample runs on the corpus written into the file.
 | [`apihub_tool`](apihub_tool/README.md)                                   | An API Hub spec as a set of tools, from a local stand-in or a real API Hub resource          | ✅  |                                            |
 | [`mcp_tool`](mcp_tool/README.md)                                         | `MCPToolset` over stdio or SSE, `LoadMcpResourceTool`, and `genaiSchemaToJsonSchema`         | ✅  | `@modelcontextprotocol/sdk`                |
 | [`computer_use`](computer_use/README.md)                                 | `ComputerUseToolset` over an in-memory `BaseComputer` that needs no browser                  | ✅  |                                            |
-| `agent.ts`                                                               | `FunctionTool`, `AgentTool`, `CrewaiTool`, `LangchainTool`, `ToolboxToolset`, `EXIT_LOOP`    | —   | `npx tsx samples/tools/agent.ts`           |
+| `agent.ts`                                                               | `FunctionTool`, `AuthenticatedFunctionTool`, `BaseAuthenticatedTool`, `AgentTool`, `CrewaiTool`, `LangchainTool`, `ToolboxToolset`, `EXIT_LOOP` | —   | `npx tsx samples/tools/agent.ts`           |
 
 ## Worth knowing
 
@@ -121,7 +121,7 @@ Left unset, the sample runs on the corpus written into the file.
 
 ## See also
 
-- [Tools](../../docs/guides/tools/index.md) - `BaseTool`, `FunctionTool`, `LongRunningFunctionTool`, `AgentTool`, `ToolContext`, `CrewaiTool`, `LangchainTool`, and `ToolboxToolset`.
+- [Tools](../../docs/guides/tools/index.md) - `BaseTool`, `BaseAuthenticatedTool`, `FunctionTool`, `AuthenticatedFunctionTool`, `LongRunningFunctionTool`, `AgentTool`, `ToolContext`, `CrewaiTool`, `LangchainTool`, and `ToolboxToolset`.
 - [BaseRetrievalTool](../../docs/guides/tools/retrieval/base_retrieval_tool/index.md) - The abstract base, and how client-side retrieval differs from `VertexRagRetrievalTool`.
 - [LlamaIndexRetrieval](../../docs/guides/tools/retrieval/llama_index_retrieval/index.md) - Answers from any object with a `retrieve` method.
 - [FilesRetrieval](../../docs/guides/tools/retrieval/files_retrieval/index.md) - Builds the retriever from a directory of documents.

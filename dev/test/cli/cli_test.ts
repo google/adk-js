@@ -4,14 +4,33 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {LogLevel, logToTmpFolder, setupAdkLogger} from '@google/adk';
+import {
+  InMemoryMemoryService,
+  InMemorySessionService,
+  LocalEvalSetResultsManager,
+  LogLevel,
+  logToTmpFolder,
+  setupAdkLogger,
+  VertexAiMemoryBankService,
+  VertexAiRagMemoryService,
+  VertexAiSessionService,
+} from '@google/adk';
 import {Command, CommanderError} from 'commander';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
-import {createProgram} from '../../src/cli/cli.js';
+import {
+  adkServicesOptions,
+  createProgram,
+  getMemoryServiceFromOptions,
+  getSessionServiceFromOptions,
+} from '../../src/cli/cli.js';
 import {createAgent} from '../../src/cli/cli_create.js';
 import {runAgent} from '../../src/cli/cli_run.js';
 import {deployToAgentEngine} from '../../src/cli/deploy/cli_deploy_agent_engine.js';
 import {deployToCloudRun} from '../../src/cli/deploy/cli_deploy_cloud_run.js';
+import {runIntegrationTests} from '../../src/integration/run_integration_tests.js';
 import {AdkApiServer} from '../../src/server/adk_api_server.js';
 import {version} from '../../src/version.js';
 
@@ -37,18 +56,64 @@ vi.mock('../../src/cli/deploy/cli_deploy_cloud_run', () => ({
   deployToCloudRun: vi.fn(),
 }));
 
+vi.mock('../../src/integration/run_integration_tests', () => ({
+  runIntegrationTests: vi.fn(),
+}));
+
 vi.mock('../../src/cli/cli_run', () => ({
   runAgent: vi.fn(),
+}));
+
+vi.mock('../../src/integration/run_integration_tests', () => ({
+  runIntegrationTests: vi.fn(),
 }));
 
 vi.mock('../../src/version', () => ({
   version: '1.0.0-test',
 }));
 
+const {
+  vertexAiSessionServiceOptions,
+  vertexAiMemoryBankServiceOptions,
+  createGcsEvalManagersFromUriMock,
+} = vi.hoisted(() => ({
+  vertexAiSessionServiceOptions: vi.fn(),
+  vertexAiMemoryBankServiceOptions: vi.fn(),
+  createGcsEvalManagersFromUriMock: vi.fn(),
+}));
+
 vi.mock('@google/adk', async (importOriginal) => {
-  const actual = await importOriginal();
+  const actual = await importOriginal<typeof import('@google/adk')>();
+
+  // Subclasses keep `instanceof` checks working and record the options each
+  // service is constructed with.
+  class RecordingVertexAiSessionService extends actual.VertexAiSessionService {
+    constructor(
+      options: ConstructorParameters<typeof actual.VertexAiSessionService>[0],
+    ) {
+      super(options);
+      vertexAiSessionServiceOptions(options);
+    }
+  }
+
+  class RecordingVertexAiMemoryBankService
+    extends actual.VertexAiMemoryBankService
+  {
+    constructor(
+      options: ConstructorParameters<
+        typeof actual.VertexAiMemoryBankService
+      >[0],
+    ) {
+      super(options);
+      vertexAiMemoryBankServiceOptions(options);
+    }
+  }
+
   return {
-    ...(actual as object),
+    ...actual,
+    VertexAiSessionService: RecordingVertexAiSessionService,
+    VertexAiMemoryBankService: RecordingVertexAiMemoryBankService,
+    createGcsEvalManagersFromUri: createGcsEvalManagersFromUriMock,
     setupAdkLogger: vi.fn(),
     logToTmpFolder: vi.fn(),
   };
@@ -71,15 +136,19 @@ function isCleanCommanderExit(error: unknown): boolean {
 
 describe('CLI Entrypoint', () => {
   let program: ReturnType<typeof createProgram>;
+  let originalExitCode: typeof process.exitCode;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    originalExitCode = process.exitCode;
     program = createProgram();
     program.exitOverride();
   });
 
   afterEach(() => {
+    process.exitCode = originalExitCode;
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   const parse = async (args: string[]) => {
@@ -183,11 +252,50 @@ describe('CLI Entrypoint', () => {
       });
     });
 
+    it('reads --otel_to_cloud false as false', async () => {
+      await parse(['web', '--otel_to_cloud', 'false']);
+
+      const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+      expect(args.otelToCloud).toBe(false);
+    });
+
     it('should handle artifact service uri', async () => {
       await parse(['web', '--artifact_service_uri', 'gs://my-bucket']);
 
       const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
       expect(args.artifactService).toBeDefined();
+    });
+
+    it('should handle memory service uri in web command', async () => {
+      await parse(['web', '--memory_service_uri', 'memory://']);
+
+      const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+      expect(args.memoryService).toBeInstanceOf(InMemoryMemoryService);
+    });
+
+    it('should handle rag memory service uri in web command', async () => {
+      vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'test-project');
+      vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'us-central1');
+      await parse(['web', '--memory_service_uri', 'rag://test-corpus']);
+
+      const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+      expect(args.memoryService).toBeInstanceOf(VertexAiRagMemoryService);
+    });
+
+    it('passes a VertexAiSessionService for an agentengine:// --session_service_uri', async () => {
+      await parse([
+        'web',
+        '--session_service_uri',
+        'agentengine://projects/test-proj/locations/us-central1/reasoningEngines/123',
+      ]);
+
+      const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+      expect(args.sessionService).toBeInstanceOf(VertexAiSessionService);
+      expect(vertexAiSessionServiceOptions).toHaveBeenCalledWith({
+        projectId: 'test-proj',
+        location: 'us-central1',
+        agentEngineId: '123',
+      });
     });
 
     it('should start AdkApiServer with a2a: true when --a2a is set', async () => {
@@ -209,6 +317,19 @@ describe('CLI Entrypoint', () => {
 
       const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
       expect(args.a2aAuthToken).toBe('tok');
+    });
+
+    it.each([
+      {args: ['web'], expected: false},
+      {args: ['web', '--reload_agents'], expected: true},
+      {args: ['web', '--reload-agents'], expected: true},
+      {args: ['web', '--reload_agents=false'], expected: false},
+    ])('passes reloadAgents: $expected for $args', async ({args, expected}) => {
+      await parse(args);
+
+      const serverOptions = (AdkApiServer as unknown as Mock).mock
+        .calls[0]?.[0];
+      expect(serverOptions.reloadAgents).toBe(expected);
     });
   });
 
@@ -242,6 +363,26 @@ describe('CLI Entrypoint', () => {
 
       const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
       expect(args.a2aAuthToken).toBe('tok');
+    });
+
+    it('should handle memory service uri in api_server command', async () => {
+      await parse(['api_server', '--memory_service_uri', 'memory://']);
+
+      const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+      expect(args.memoryService).toBeInstanceOf(InMemoryMemoryService);
+    });
+
+    it.each([
+      {args: ['api_server'], expected: false},
+      {args: ['api_server', '--reload_agents'], expected: true},
+      {args: ['api_server', '--reload-agents'], expected: true},
+      {args: ['api_server', '--reload_agents=false'], expected: false},
+    ])('passes reloadAgents: $expected for $args', async ({args, expected}) => {
+      await parse(args);
+
+      const serverOptions = (AdkApiServer as unknown as Mock).mock
+        .calls[0]?.[0];
+      expect(serverOptions.reloadAgents).toBe(expected);
     });
   });
 
@@ -301,6 +442,27 @@ describe('CLI Entrypoint', () => {
       process.exitCode = originalExitCode;
     });
 
+    it('exits non-zero without running the agent when the log file cannot be created', async () => {
+      (logToTmpFolder as Mock).mockImplementationOnce(() => {
+        throw new Error('EACCES: permission denied');
+      });
+      const originalExitCode = process.exitCode;
+
+      await parse(['run', 'agent.ts']);
+
+      expect(process.exitCode).toBe(1);
+      expect(runAgent).not.toHaveBeenCalled();
+      process.exitCode = originalExitCode;
+    });
+
+    it('reads --otel_to_cloud=false as false', async () => {
+      await parse(['run', 'agent.ts', '--otel_to_cloud=false']);
+
+      expect(runAgent).toHaveBeenCalledWith(
+        expect.objectContaining({otelToCloud: false}),
+      );
+    });
+
     it('should call runAgent with required args', async () => {
       await parse(['run', 'agent.ts']);
 
@@ -349,6 +511,27 @@ describe('CLI Entrypoint', () => {
           otelToCloud: true,
         }),
       );
+    });
+
+    it('should pass memoryService to runAgent when --memory_service_uri is set', async () => {
+      await parse(['run', 'agent.ts', '--memory_service_uri', 'memory://']);
+
+      const runCall = (runAgent as unknown as Mock).mock.calls[0][0];
+      expect(runCall.memoryService).toBeInstanceOf(InMemoryMemoryService);
+    });
+
+    it('should pass VertexAiRagMemoryService to runAgent when --memory_service_uri is rag://', async () => {
+      vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'test-project');
+      vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'us-central1');
+      await parse([
+        'run',
+        'agent.ts',
+        '--memory_service_uri',
+        'rag://test-corpus',
+      ]);
+
+      const runCall = (runAgent as unknown as Mock).mock.calls[0][0];
+      expect(runCall.memoryService).toBeInstanceOf(VertexAiRagMemoryService);
     });
   });
 
@@ -460,6 +643,19 @@ describe('CLI Entrypoint', () => {
       // A recognised flag must not also be passed through as an unknown one,
       // which gcloud would reject.
       expect(args.extraGcloudArgs).toEqual([]);
+    });
+
+    it('should pass memoryServiceUri to deployToCloudRun when --memory_service_uri is set', async () => {
+      await parse([
+        'deploy',
+        'cloud_run',
+        './my-agent-path',
+        '--memory_service_uri=rag://my-corpus',
+      ]);
+
+      expect((deployToCloudRun as Mock).mock.calls[0][0]).toMatchObject({
+        memoryServiceUri: 'rag://my-corpus',
+      });
     });
   });
 
@@ -613,6 +809,58 @@ describe('CLI Entrypoint', () => {
         (deployToAgentEngine as Mock).mock.calls[0][0].otelToCloud,
       ).toBeUndefined();
     });
+
+    it('should pass memoryServiceUri to deployToAgentEngine when --memory_service_uri is set', async () => {
+      await parse([
+        'deploy',
+        'agent_engine',
+        './my-agent-path',
+        '--memory_service_uri=rag://my-corpus',
+      ]);
+
+      expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
+        memoryServiceUri: 'rag://my-corpus',
+      });
+    });
+  });
+
+  describe('deploy failures', () => {
+    it.each([
+      ['deploy cloud_run', ['deploy', 'cloud_run'], () => deployToCloudRun],
+      [
+        'deploy agent_engine',
+        ['deploy', 'agent_engine'],
+        () => deployToAgentEngine,
+      ],
+    ])(
+      '%s exits non-zero when the deployment fails',
+      async (_name, args, target) => {
+        (target() as Mock).mockRejectedValueOnce(new Error('gcloud failed'));
+        const originalExitCode = process.exitCode;
+
+        await parse(args);
+
+        expect(process.exitCode).toBe(1);
+        process.exitCode = originalExitCode;
+      },
+    );
+  });
+
+  describe('command: integration conformance', () => {
+    it('waits for the integration tests to finish', async () => {
+      let finished = false;
+      (runIntegrationTests as Mock).mockImplementationOnce(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        finished = true;
+      });
+
+      await parse(['integration', 'conformance', '--force']);
+
+      expect(runIntegrationTests).toHaveBeenCalledWith(
+        expect.objectContaining({forceRunAll: true}),
+      );
+      expect(finished).toBe(true);
+    });
   });
 
   describe('command: deploy reasoning_engine', () => {
@@ -699,6 +947,1064 @@ describe('CLI Entrypoint', () => {
         }),
       );
     });
+
+    it('runs the eval command, prints a summary, and saves the eval set result', async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adk-cli-eval-'));
+      const agentDir = path.join(tempDir, 'my_eval_app');
+      fs.mkdirSync(agentDir, {recursive: true});
+
+      const agentFile = path.join(agentDir, 'agent.js');
+      fs.writeFileSync(
+        agentFile,
+        [
+          `import {BaseAgent, createEvent} from '@google/adk';`,
+          `class EvalAgent extends BaseAgent {`,
+          `  constructor() { super({name: 'my_eval_agent'}); }`,
+          `  async *runAsyncImpl(ctx) {`,
+          `    const text = ctx.userContent?.parts?.[0]?.text ?? '';`,
+          `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'Echo: ' + text}]}});`,
+          `  }`,
+          `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+          `}`,
+          `export const rootAgent = new EvalAgent();`,
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const evalSetFile = path.join(tempDir, 'sample_set.evalset.json');
+      fs.writeFileSync(
+        evalSetFile,
+        JSON.stringify([
+          {
+            name: 'pass_case',
+            data: [
+              {
+                query: 'ping',
+                expected_tool_use: [],
+                expected_intermediate_agent_responses: [],
+                reference: 'Echo: ping',
+              },
+            ],
+            initial_session: {
+              app_name: 'my_eval_app',
+              user_id: 'user_1',
+              state: {},
+            },
+          },
+          {
+            name: 'fail_case',
+            data: [
+              {
+                query: 'ping',
+                expected_tool_use: [{tool_name: 'missing', tool_input: {}}],
+                expected_intermediate_agent_responses: [],
+                reference: 'totally different response',
+              },
+            ],
+          },
+        ]),
+        'utf-8',
+      );
+
+      const stdoutChunks: string[] = [];
+      const stdoutSpy = vi
+        .spyOn(process.stdout, 'write')
+        .mockImplementation((chunk: string | Uint8Array) => {
+          stdoutChunks.push(String(chunk));
+          return true;
+        });
+
+      try {
+        await parse(['eval', agentDir, evalSetFile]);
+
+        const output = stdoutChunks.join('');
+        expect(output).toContain('Eval Run Summary');
+        expect(output).toContain('Tests passed: 1');
+        expect(output).toContain('Tests failed: 1');
+
+        const manager = new LocalEvalSetResultsManager(tempDir);
+        const resultIds = manager.listEvalSetResults('my_eval_app');
+        expect(resultIds).toHaveLength(1);
+
+        const storedResult = manager.getEvalSetResult(
+          'my_eval_app',
+          resultIds[0],
+        );
+        expect(storedResult.evalSetId).toBe('sample_set');
+        expect(storedResult.evalCaseResults).toHaveLength(2);
+        expect(storedResult.evalCaseResults[0].sessionDetails).toBeDefined();
+      } finally {
+        stdoutSpy.mockRestore();
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
+    });
+
+    it('stubs tool calls with mock_tool_output from a legacy eval set file', async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-cli-eval-mock-'),
+      );
+      const agentDir = path.join(tempDir, 'mock_eval_app');
+      fs.mkdirSync(agentDir, {recursive: true});
+
+      // The agent reports what the tool callback returns. Only a stubbed call
+      // returns the mock output, so the case passes only when the stub works.
+      fs.writeFileSync(
+        path.join(agentDir, 'agent.js'),
+        [
+          `import {BaseAgent, LlmAgent, createEvent} from '@google/adk';`,
+          `const toolAgent = new LlmAgent({name: 'tool_agent', model: 'gemini-2.5-flash'});`,
+          `class MockCheckingAgent extends BaseAgent {`,
+          `  constructor() { super({name: 'mock_checking_agent', subAgents: [toolAgent]}); }`,
+          `  async *runAsyncImpl(ctx) {`,
+          `    const cb = toolAgent.beforeToolCallback;`,
+          `    const output = typeof cb === 'function' ? await cb({tool: {name: 'lookup_item'}, args: {id: 42}, context: {}}) : undefined;`,
+          `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{functionCall: {name: 'lookup_item', args: {id: 42}}}]}});`,
+          `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'Result: ' + JSON.stringify(output)}]}});`,
+          `  }`,
+          `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+          `}`,
+          `export const rootAgent = new MockCheckingAgent();`,
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const evalSetFile = path.join(tempDir, 'mock_set.evalset.json');
+      fs.writeFileSync(
+        evalSetFile,
+        JSON.stringify([
+          {
+            name: 'mocked_case',
+            data: [
+              {
+                query: 'check item',
+                expected_tool_use: [
+                  {
+                    tool_name: 'lookup_item',
+                    tool_input: {id: 42},
+                    mock_tool_output: 'mocked_value_42',
+                  },
+                ],
+                expected_intermediate_agent_responses: [],
+                reference: 'Result: {"result":"mocked_value_42"}',
+              },
+            ],
+          },
+        ]),
+        'utf-8',
+      );
+
+      const stdoutChunks: string[] = [];
+      const stdoutSpy = vi
+        .spyOn(process.stdout, 'write')
+        .mockImplementation((chunk: string | Uint8Array) => {
+          stdoutChunks.push(String(chunk));
+          return true;
+        });
+
+      try {
+        await parse(['eval', agentDir, evalSetFile]);
+
+        const output = stdoutChunks.join('');
+        expect(output).toContain('Tests passed: 1');
+        expect(output).toContain('Tests failed: 0');
+      } finally {
+        stdoutSpy.mockRestore();
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
+    });
+
+    it('runs the eval command against a structured EvalSet file with case filtering', async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-cli-eval-structured-'),
+      );
+      const agentDir = path.join(tempDir, 'my_eval_app');
+      fs.mkdirSync(agentDir, {recursive: true});
+
+      const agentFile = path.join(agentDir, 'agent.js');
+      fs.writeFileSync(
+        agentFile,
+        [
+          `import {BaseAgent, createEvent} from '@google/adk';`,
+          `class EvalAgent extends BaseAgent {`,
+          `  constructor() { super({name: 'my_eval_agent'}); }`,
+          `  async *runAsyncImpl(ctx) {`,
+          `    const text = ctx.userContent?.parts?.[0]?.text ?? '';`,
+          `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'Echo: ' + text}]}});`,
+          `  }`,
+          `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+          `}`,
+          `export const rootAgent = new EvalAgent();`,
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const evalSetFile = path.join(tempDir, 'structured_set.evalset.json');
+      fs.writeFileSync(
+        evalSetFile,
+        JSON.stringify({
+          evalSetId: 'structured_set',
+          name: 'structured_set',
+          evalCases: [
+            {
+              evalId: 'selected_case',
+              conversation: [
+                {
+                  invocationId: 'inv-1',
+                  userContent: {role: 'user', parts: [{text: 'ping'}]},
+                  finalResponse: {
+                    role: 'model',
+                    parts: [{text: 'Echo: ping'}],
+                  },
+                },
+              ],
+              sessionInput: {
+                appName: 'my_eval_app',
+                userId: 'user_1',
+                state: {},
+              },
+            },
+            {
+              evalId: 'skipped_case',
+              conversation: [
+                {
+                  invocationId: 'inv-2',
+                  userContent: {role: 'user', parts: [{text: 'other'}]},
+                  finalResponse: {
+                    role: 'model',
+                    parts: [{text: 'wrong'}],
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+        'utf-8',
+      );
+
+      const stdoutChunks: string[] = [];
+      const stdoutSpy = vi
+        .spyOn(process.stdout, 'write')
+        .mockImplementation((chunk: string | Uint8Array) => {
+          stdoutChunks.push(String(chunk));
+          return true;
+        });
+
+      try {
+        await parse(['eval', agentDir, `${evalSetFile}:selected_case`]);
+
+        const output = stdoutChunks.join('');
+        expect(output).toContain('Eval Run Summary');
+        expect(output).toContain('Tests passed: 1');
+        expect(output).toContain('Tests failed: 0');
+
+        const manager = new LocalEvalSetResultsManager(tempDir);
+        const resultIds = manager.listEvalSetResults('my_eval_app');
+        expect(resultIds).toHaveLength(1);
+
+        const storedResult = manager.getEvalSetResult(
+          'my_eval_app',
+          resultIds[0],
+        );
+        expect(storedResult.evalSetId).toBe('structured_set');
+        expect(storedResult.evalCaseResults).toHaveLength(1);
+        expect(storedResult.evalCaseResults[0].evalId).toBe('selected_case');
+      } finally {
+        stdoutSpy.mockRestore();
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
+    });
+  });
+
+  describe('option: --eval_storage_uri', () => {
+    const evalSetsManager = {
+      getEvalSet: vi.fn(),
+      createEvalSet: vi.fn(),
+      listEvalSets: vi.fn(),
+      getEvalCase: vi.fn(),
+      addEvalCase: vi.fn(),
+      updateEvalCase: vi.fn(),
+      deleteEvalCase: vi.fn(),
+    };
+    const evalSetResultsManager = {
+      saveEvalSetResult: vi.fn(),
+      getEvalSetResult: vi.fn(),
+      listEvalSetResults: vi.fn(),
+    };
+
+    beforeEach(() => {
+      process.exitCode = undefined;
+      createGcsEvalManagersFromUriMock.mockResolvedValue({
+        evalSetsManager,
+        evalSetResultsManager,
+      });
+    });
+
+    it.each([['web'], ['api_server']])(
+      '%s passes the GCS eval managers to AdkApiServer',
+      async (command) => {
+        await parse([command, '--eval_storage_uri', 'gs://eval-bucket']);
+
+        expect(createGcsEvalManagersFromUriMock).toHaveBeenCalledWith(
+          'gs://eval-bucket',
+        );
+        const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+        expect(args.evalSetsManager).toBe(evalSetsManager);
+        expect(args.evalSetResultsManager).toBe(evalSetResultsManager);
+      },
+    );
+
+    it('passes no eval managers to AdkApiServer when the option is absent', async () => {
+      await parse(['web']);
+
+      expect(createGcsEvalManagersFromUriMock).not.toHaveBeenCalled();
+      const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+      expect(args.evalSetsManager).toBeUndefined();
+      expect(args.evalSetResultsManager).toBeUndefined();
+    });
+
+    describe('command: eval', () => {
+      let tempDir: string;
+      let agentDir: string;
+
+      it('documents that positional values are eval set IDs with storage', () => {
+        const evalCommand = program.commands.find((c) => c.name() === 'eval');
+        const evalSetArgument = evalCommand?.registeredArguments[1];
+
+        expect(evalSetArgument?.name()).toBe('eval_set_file_path_or_id');
+        expect(evalSetArgument?.description).toContain('--eval_storage_uri');
+        expect(evalSetArgument?.description).toContain('eval set IDs');
+      });
+
+      beforeEach(() => {
+        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adk-cli-gcs-eval-'));
+        agentDir = path.join(tempDir, 'my_eval_app');
+        fs.mkdirSync(agentDir, {recursive: true});
+        fs.writeFileSync(
+          path.join(agentDir, 'agent.js'),
+          [
+            `import {BaseAgent, createEvent} from '@google/adk';`,
+            `class EvalAgent extends BaseAgent {`,
+            `  constructor() { super({name: 'my_eval_agent'}); }`,
+            `  async *runAsyncImpl(ctx) {`,
+            `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'pong'}]}});`,
+            `  }`,
+            `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+            `}`,
+            `export const rootAgent = new EvalAgent();`,
+          ].join('\n'),
+          'utf-8',
+        );
+        vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      });
+
+      afterEach(() => {
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      });
+
+      it('reads eval sets by ID and saves results through the GCS managers', async () => {
+        evalSetsManager.getEvalSet.mockResolvedValue({
+          evalSetId: 'remote_set',
+          evalCases: [
+            {
+              evalId: 'case_1',
+              conversation: [
+                {
+                  invocationId: 'inv-1',
+                  userContent: {role: 'user', parts: [{text: 'ping'}]},
+                  finalResponse: {role: 'model', parts: [{text: 'pong'}]},
+                  creationTimestamp: 1,
+                },
+              ],
+            },
+            {evalId: 'case_2', conversation: []},
+          ],
+        });
+
+        await parse([
+          'eval',
+          agentDir,
+          'remote_set:case_1',
+          '--eval_storage_uri',
+          'gs://eval-bucket',
+        ]);
+
+        expect(process.exitCode).toBeUndefined();
+        expect(evalSetsManager.getEvalSet).toHaveBeenCalledWith(
+          'my_eval_app',
+          'remote_set',
+        );
+        expect(evalSetResultsManager.saveEvalSetResult).toHaveBeenCalledTimes(
+          1,
+        );
+        const saved = evalSetResultsManager.saveEvalSetResult.mock.calls[0][0];
+        expect(saved).toMatchObject({
+          appName: 'my_eval_app',
+          evalSetId: 'remote_set',
+        });
+        expect(
+          saved.evalCaseResults.map((r: {eval_id: string}) => r.eval_id),
+        ).toEqual(['case_1']);
+        expect(fs.existsSync(path.join(agentDir, '.adk'))).toBe(false);
+      });
+
+      it('loads an existing local eval set file and saves results through the GCS results manager', async () => {
+        const evalSetPath = path.join(tempDir, 'local_set.evalset.json');
+        fs.writeFileSync(
+          evalSetPath,
+          JSON.stringify({
+            evalSetId: 'local_set',
+            evalCases: [
+              {
+                evalId: 'case_1',
+                conversation: [
+                  {
+                    invocationId: 'inv-1',
+                    userContent: {role: 'user', parts: [{text: 'ping'}]},
+                    finalResponse: {role: 'model', parts: [{text: 'pong'}]},
+                    creationTimestamp: 1,
+                  },
+                ],
+              },
+              {evalId: 'case_2', conversation: []},
+            ],
+          }),
+          'utf-8',
+        );
+
+        await parse([
+          'eval',
+          agentDir,
+          `${evalSetPath}:case_1`,
+          '--eval_storage_uri',
+          'gs://eval-bucket',
+        ]);
+
+        expect(process.exitCode).toBeUndefined();
+        expect(evalSetsManager.getEvalSet).not.toHaveBeenCalled();
+        expect(evalSetResultsManager.saveEvalSetResult).toHaveBeenCalledTimes(
+          1,
+        );
+        const saved = evalSetResultsManager.saveEvalSetResult.mock.calls[0][0];
+        expect(saved).toMatchObject({
+          appName: 'my_eval_app',
+          evalSetId: 'local_set',
+        });
+        expect(
+          saved.evalCaseResults.map((r: {eval_id: string}) => r.eval_id),
+        ).toEqual(['case_1']);
+        expect(fs.existsSync(path.join(agentDir, '.adk'))).toBe(false);
+      });
+
+      it('fails when the eval storage has no eval set with the ID', async () => {
+        evalSetsManager.getEvalSet.mockResolvedValue(undefined);
+
+        await parse([
+          'eval',
+          agentDir,
+          'missing_set',
+          '--eval_storage_uri',
+          'gs://eval-bucket',
+        ]);
+
+        expect(process.exitCode).toBe(1);
+        expect(evalSetResultsManager.saveEvalSetResult).not.toHaveBeenCalled();
+      });
+
+      it('fails when the eval managers cannot be created', async () => {
+        createGcsEvalManagersFromUriMock.mockRejectedValueOnce(
+          new Error('Unsupported eval storage URI scheme'),
+        );
+
+        await parse([
+          'eval',
+          agentDir,
+          'remote_set',
+          '--eval_storage_uri',
+          's3://eval-bucket',
+        ]);
+
+        expect(process.exitCode).toBe(1);
+        expect(evalSetsManager.getEvalSet).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  describe('option: --memory_service_uri agentengine://', () => {
+    beforeEach(() => {
+      process.exitCode = undefined;
+    });
+
+    it('web builds a VertexAiMemoryBankService from the environment', async () => {
+      vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'env-project');
+      vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'us-central1');
+
+      await parse(['web', '--memory_service_uri', 'agentengine://123']);
+
+      const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+      expect(args.memoryService).toBeInstanceOf(VertexAiMemoryBankService);
+      expect(vertexAiMemoryBankServiceOptions).toHaveBeenCalledWith({
+        projectId: 'env-project',
+        location: 'us-central1',
+        agentEngineId: '123',
+      });
+    });
+
+    it('run exits non-zero for an empty agent engine ID', async () => {
+      await parse([
+        'run',
+        'agent.ts',
+        '--memory_service_uri',
+        'agentengine://',
+      ]);
+
+      expect(process.exitCode).toBe(1);
+      expect(runAgent).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('--otel_to_cloud parsing', () => {
+    it.each([
+      ['run', ['run', 'agent.ts'], () => runAgent],
+      ['web', ['web'], () => AdkApiServer],
+      ['api_server', ['api_server'], () => AdkApiServer],
+    ])(
+      'passes otelToCloud: false for %s with =false',
+      async (_name, args, target) => {
+        await parse([...args, '--otel_to_cloud=false']);
+
+        const call = (target() as unknown as Mock).mock.calls[0][0];
+        expect(call.otelToCloud).toBe(false);
+      },
+    );
+
+    it.each([
+      ['run', ['run', 'agent.ts'], () => runAgent],
+      ['web', ['web'], () => AdkApiServer],
+      ['api_server', ['api_server'], () => AdkApiServer],
+    ])(
+      'passes otelToCloud: true for %s with =true',
+      async (_name, args, target) => {
+        await parse([...args, '--otel_to_cloud=true']);
+
+        const call = (target() as unknown as Mock).mock.calls[0][0];
+        expect(call.otelToCloud).toBe(true);
+      },
+    );
+  });
+
+  describe('failure exit codes', () => {
+    beforeEach(() => {
+      process.exitCode = undefined;
+    });
+
+    it('run reports a log setup failure and does not run the agent', async () => {
+      (logToTmpFolder as Mock).mockImplementationOnce(() => {
+        throw new Error('EACCES');
+      });
+
+      await expect(parse(['run', 'agent.ts'])).resolves.toBeUndefined();
+
+      expect(process.exitCode).toBe(1);
+      expect(runAgent).not.toHaveBeenCalled();
+    });
+
+    it('create sets exitCode 1 when createAgent fails', async () => {
+      (createAgent as Mock).mockRejectedValueOnce(new Error('create failed'));
+
+      await parse(['create', 'my-agent', '--yes']);
+
+      expect(process.exitCode).toBe(1);
+    });
+
+    it('deploy cloud_run sets exitCode 1 when the deployment fails', async () => {
+      (deployToCloudRun as Mock).mockRejectedValueOnce(
+        new Error('deploy failed'),
+      );
+
+      await parse(['deploy', 'cloud_run']);
+
+      expect(process.exitCode).toBe(1);
+    });
+
+    it.each([['agent_engine'], ['reasoning_engine']])(
+      'deploy %s sets exitCode 1 when the deployment fails',
+      async (command) => {
+        (deployToAgentEngine as Mock).mockRejectedValueOnce(
+          new Error('deploy failed'),
+        );
+
+        await parse(['deploy', command]);
+
+        expect(process.exitCode).toBe(1);
+      },
+    );
+  });
+
+  describe('command: integration conformance', () => {
+    beforeEach(() => {
+      process.exitCode = undefined;
+    });
+
+    it('awaits runIntegrationTests with the parsed options', async () => {
+      await parse([
+        'integration',
+        'conformance',
+        '--agents_dir',
+        'agents',
+        '--tests_dir',
+        'tests',
+      ]);
+
+      expect(runIntegrationTests).toHaveBeenCalledWith({
+        agentsDir: 'agents',
+        testsDir: 'tests',
+        forceRunAll: false,
+      });
+      expect(process.exitCode).toBeUndefined();
+    });
+
+    it('sets exitCode 1 when runIntegrationTests rejects', async () => {
+      (runIntegrationTests as Mock).mockRejectedValueOnce(
+        new Error('conformance failed'),
+      );
+
+      await expect(
+        parse(['integration', 'conformance']),
+      ).resolves.toBeUndefined();
+
+      expect(process.exitCode).toBe(1);
+    });
+  });
+
+  describe('--bundle help text', () => {
+    it('does not claim that bundling minifies', () => {
+      const runCommand = program.commands.find((c) => c.name() === 'run');
+      const bundleOption = runCommand?.options.find(
+        (o) => o.long === '--bundle',
+      );
+
+      expect(bundleOption).toBeDefined();
+      expect(bundleOption?.description).not.toContain(
+        'Bundling also minifies the result.',
+      );
+      expect(runCommand?.helpInformation()).not.toContain('minifies');
+    });
+  });
+
+  describe('kebab-case option flags and command aliases', () => {
+    describe('command: web with kebab-case flags', () => {
+      it('parses --log-level, --allow-origins, --session-service-uri, --a2a-auth-token, and --otel-to-cloud', async () => {
+        await parse([
+          'web',
+          '--log-level',
+          'debug',
+          '--allow-origins',
+          'http://example.com',
+          '--session-service-uri',
+          'memory://',
+          '--memory-service-uri',
+          'memory://',
+          '--a2a-auth-token',
+          'tok-web',
+          '--otel-to-cloud',
+        ]);
+
+        expect(setupAdkLogger).toHaveBeenCalledWith(LogLevel.DEBUG);
+        const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+        expect(args).toMatchObject({
+          allowOrigins: 'http://example.com',
+          a2aAuthToken: 'tok-web',
+          otelToCloud: true,
+        });
+        expect(args.sessionService).toBeDefined();
+        expect(args.memoryService).toBeInstanceOf(InMemoryMemoryService);
+      });
+
+      it('parses kebab-case flags using =value format', async () => {
+        await parse([
+          'web',
+          '--log-level=warn',
+          '--allow-origins=http://custom.origin',
+          '--session-service-uri=memory://',
+          '--a2a-auth-token=tok-web-eq',
+          '--otel-to-cloud=false',
+        ]);
+
+        expect(setupAdkLogger).toHaveBeenCalledWith(LogLevel.WARN);
+        const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+        expect(args).toMatchObject({
+          allowOrigins: 'http://custom.origin',
+          a2aAuthToken: 'tok-web-eq',
+          otelToCloud: false,
+        });
+      });
+    });
+
+    describe('command: api-server alias and flags', () => {
+      it('starts AdkApiServer using api-server alias and parses kebab-case flags', async () => {
+        await parse([
+          'api-server',
+          '--log-level=debug',
+          '--allow-origins=http://example.com',
+          '--session-service-uri=memory://',
+          '--a2a-auth-token=tok-api',
+        ]);
+
+        expect(setupAdkLogger).toHaveBeenCalledWith(LogLevel.DEBUG);
+        const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+        expect(args).toMatchObject({
+          serveDebugUI: false,
+          allowOrigins: 'http://example.com',
+          a2aAuthToken: 'tok-api',
+        });
+        expect(args.sessionService).toBeDefined();
+      });
+
+      it('parses kebab-case flags with space on api_server command', async () => {
+        await parse([
+          'api_server',
+          '--log-level',
+          'debug',
+          '--allow-origins',
+          'http://example.org',
+          '--a2a-auth-token',
+          'tok-api-2',
+        ]);
+
+        expect(setupAdkLogger).toHaveBeenCalledWith(LogLevel.DEBUG);
+        const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+        expect(args).toMatchObject({
+          serveDebugUI: false,
+          allowOrigins: 'http://example.org',
+          a2aAuthToken: 'tok-api-2',
+        });
+      });
+    });
+
+    describe('command: create with --api-key', () => {
+      it('passes --api-key in both space and equals forms', async () => {
+        await parse([
+          'create',
+          'my-agent-1',
+          '--api-key',
+          'secret-key-1',
+          '--yes',
+        ]);
+        expect(createAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            agentName: 'my-agent-1',
+            apiKey: 'secret-key-1',
+          }),
+        );
+
+        await parse([
+          'create',
+          'my-agent-2',
+          '--api-key=secret-key-2',
+          '--yes',
+        ]);
+        expect(createAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            agentName: 'my-agent-2',
+            apiKey: 'secret-key-2',
+          }),
+        );
+      });
+    });
+
+    describe('command: run with kebab-case flags', () => {
+      it('passes --save-session and --session-id with space separated values', async () => {
+        await parse([
+          'run',
+          'agent.ts',
+          '--save-session',
+          '--session-id',
+          'sess-space',
+          '--log-level',
+          'debug',
+          '--otel-to-cloud',
+        ]);
+
+        expect(logToTmpFolder).toHaveBeenCalledWith({level: LogLevel.DEBUG});
+        expect(runAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            saveSession: true,
+            sessionId: 'sess-space',
+            otelToCloud: true,
+          }),
+        );
+      });
+
+      it('passes --save-session and --session-id with equals separated values', async () => {
+        await parse([
+          'run',
+          'agent.ts',
+          '--save-session=true',
+          '--session-id=sess-eq',
+          '--log-level=warn',
+          '--otel-to-cloud=false',
+        ]);
+
+        expect(logToTmpFolder).toHaveBeenCalledWith({level: LogLevel.WARN});
+        expect(runAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            saveSession: true,
+            sessionId: 'sess-eq',
+            otelToCloud: false,
+          }),
+        );
+      });
+    });
+
+    describe('command: eval with kebab-case flags', () => {
+      it('parses --config-file-path and --print-detailed-results', async () => {
+        const tempDir = fs.mkdtempSync(
+          path.join(os.tmpdir(), 'adk-cli-eval-kebab-'),
+        );
+        const agentDir = path.join(tempDir, 'my_eval_app');
+        fs.mkdirSync(agentDir, {recursive: true});
+
+        const agentFile = path.join(agentDir, 'agent.js');
+        fs.writeFileSync(
+          agentFile,
+          [
+            `import {BaseAgent, createEvent} from '@google/adk';`,
+            `class EvalAgent extends BaseAgent {`,
+            `  constructor() { super({name: 'my_eval_agent'}); }`,
+            `  async *runAsyncImpl(ctx) {`,
+            `    const text = ctx.userContent?.parts?.[0]?.text ?? '';`,
+            `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'Echo: ' + text}]}});`,
+            `  }`,
+            `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+            `}`,
+            `export const rootAgent = new EvalAgent();`,
+          ].join('\n'),
+          'utf-8',
+        );
+
+        const evalSetFile = path.join(tempDir, 'kebab_set.evalset.json');
+        fs.writeFileSync(
+          evalSetFile,
+          JSON.stringify([
+            {
+              name: 'pass_case',
+              data: [
+                {
+                  query: 'ping',
+                  expected_tool_use: [],
+                  expected_intermediate_agent_responses: [],
+                  reference: 'Echo: ping',
+                },
+              ],
+              initial_session: {
+                app_name: 'my_eval_app',
+                user_id: 'user_1',
+                state: {},
+              },
+            },
+          ]),
+          'utf-8',
+        );
+
+        const configFile = path.join(tempDir, 'config.json');
+        fs.writeFileSync(
+          configFile,
+          JSON.stringify({criteria: {response_match_score: 0.5}}),
+          'utf-8',
+        );
+
+        const stdoutChunks: string[] = [];
+        const stdoutSpy = vi
+          .spyOn(process.stdout, 'write')
+          .mockImplementation((chunk: string | Uint8Array) => {
+            stdoutChunks.push(String(chunk));
+            return true;
+          });
+
+        try {
+          await parse([
+            'eval',
+            agentDir,
+            evalSetFile,
+            '--config-file-path',
+            configFile,
+            '--print-detailed-results',
+          ]);
+
+          const output = stdoutChunks.join('');
+          expect(output).toContain('Eval Run Summary');
+          expect(output).toContain('Tests passed: 1');
+
+          await parse([
+            'eval',
+            agentDir,
+            evalSetFile,
+            `--config-file-path=${configFile}`,
+            '--print-detailed-results=true',
+          ]);
+        } finally {
+          stdoutSpy.mockRestore();
+          fs.rmSync(tempDir, {recursive: true, force: true});
+        }
+      });
+    });
+
+    describe('command: deploy cloud_run and cloud-run alias with kebab-case flags', () => {
+      it('supports cloud-run subcommand alias and kebab-case options', async () => {
+        await parse([
+          'deploy',
+          'cloud-run',
+          './my-agent-path',
+          '--service-name=custom-svc',
+          '--app-name=custom-app',
+          '--temp-folder=/tmp/custom-temp',
+          '--with-cloud-trace',
+          '--adk-version=2.0.0',
+          '--with-ui',
+        ]);
+
+        expect(deployToCloudRun).toHaveBeenCalledWith(
+          expect.objectContaining({
+            serviceName: 'custom-svc',
+            appName: 'custom-app',
+            tempFolder: '/tmp/custom-temp',
+            otelToCloud: true,
+            adkVersion: '2.0.0',
+            withUi: true,
+          }),
+        );
+      });
+
+      it('filters recognized kebab-case flags at index >= 5 out of extraGcloudArgs', async () => {
+        await parse([
+          'deploy',
+          'cloud-run',
+          './my-agent-path',
+          '--project=my-proj',
+          '--region=us-west1',
+          '--service-name=my-svc',
+          '--app-name=my-app',
+          '--a2a-auth-token=tok',
+          '--with-cloud-trace',
+          '--extra-flag=passthrough',
+        ]);
+
+        const args = (deployToCloudRun as Mock).mock.calls[0][0];
+        expect(args).toMatchObject({
+          serviceName: 'my-svc',
+          appName: 'my-app',
+          a2aAuthToken: 'tok',
+          otelToCloud: true,
+          extraGcloudArgs: ['--extra-flag=passthrough'],
+        });
+        expect(args.extraGcloudArgs).not.toContain('--service-name=my-svc');
+        expect(args.extraGcloudArgs).not.toContain('--app-name=my-app');
+        expect(args.extraGcloudArgs).not.toContain('--a2a-auth-token=tok');
+        expect(args.extraGcloudArgs).not.toContain('--with-cloud-trace');
+      });
+    });
+
+    describe('command: deploy agent-engine and reasoning-engine aliases with kebab-case flags', () => {
+      it('supports agent-engine alias and kebab-case options in =format', async () => {
+        await parse([
+          'deploy',
+          'agent-engine',
+          './my-agent-path',
+          '--project=my-proj',
+          '--region=us-west1',
+          '--display-name=engine-disp',
+          '--staging-bucket=my-bucket',
+          '--temp-folder=/tmp/engine-temp',
+          '--agent-engine-id=engine-456',
+          '--min-instances=2',
+          '--max-instances=8',
+          '--with-ui',
+          '--adk-version=1.2.3',
+          '--otel-to-cloud=true',
+        ]);
+
+        expect(deployToAgentEngine).toHaveBeenCalledWith(
+          expect.objectContaining({
+            displayName: 'engine-disp',
+            stagingBucket: 'my-bucket',
+            tempFolder: '/tmp/engine-temp',
+            agentEngineId: 'engine-456',
+            minInstances: 2,
+            maxInstances: 8,
+            withUi: true,
+            adkVersion: '1.2.3',
+            otelToCloud: true,
+          }),
+        );
+      });
+
+      it('supports reasoning-engine alias and kebab-case options in space format', async () => {
+        await parse([
+          'deploy',
+          'reasoning-engine',
+          './my-agent-path',
+          '--display-name',
+          'reasoning-disp',
+          '--staging-bucket',
+          'reasoning-bucket',
+          '--temp-folder',
+          '/tmp/reasoning-temp',
+          '--agent-engine-id',
+          'reasoning-789',
+          '--min-instances',
+          '3',
+          '--max-instances',
+          '6',
+          '--otel-to-cloud',
+        ]);
+
+        expect(deployToAgentEngine).toHaveBeenCalledWith(
+          expect.objectContaining({
+            displayName: 'reasoning-disp',
+            stagingBucket: 'reasoning-bucket',
+            tempFolder: '/tmp/reasoning-temp',
+            agentEngineId: 'reasoning-789',
+            minInstances: 3,
+            maxInstances: 6,
+            otelToCloud: true,
+          }),
+        );
+      });
+    });
+
+    describe('command: integration conformance with kebab-case flags', () => {
+      it('passes --agents-dir and --tests-dir in both space and equals formats', async () => {
+        await parse([
+          'integration',
+          'conformance',
+          '--agents-dir',
+          '/path/to/agents',
+          '--tests-dir',
+          '/path/to/tests',
+        ]);
+
+        expect(runIntegrationTests).toHaveBeenCalledWith(
+          expect.objectContaining({
+            agentsDir: '/path/to/agents',
+            testsDir: '/path/to/tests',
+          }),
+        );
+
+        await parse([
+          'integration',
+          'conformance',
+          '--agents-dir=/path/to/agents2',
+          '--tests-dir=/path/to/tests2',
+        ]);
+
+        expect(runIntegrationTests).toHaveBeenCalledWith(
+          expect.objectContaining({
+            agentsDir: '/path/to/agents2',
+            testsDir: '/path/to/tests2',
+          }),
+        );
+      });
+    });
   });
 });
 
@@ -779,5 +2085,281 @@ describe('usage errors', () => {
 
     expect(stderr).toContain('unknown option');
     expect(stderr).toContain('Usage: ADK CLI run');
+  });
+});
+
+describe('adkServicesOptions', () => {
+  it('attaches session, artifact, and memory service options to a command', () => {
+    const cmd = new Command('test');
+    adkServicesOptions(cmd);
+
+    const optionFlags = cmd.options.map((opt) => opt.flags);
+    expect(optionFlags).toContain(
+      '--session-service-uri, --session_service_uri <string>',
+    );
+    expect(optionFlags).toContain(
+      '--artifact-service-uri, --artifact_service_uri <string>',
+    );
+    expect(optionFlags).toContain(
+      '--memory-service-uri, --memory_service_uri <string>',
+    );
+  });
+});
+
+describe('getMemoryServiceFromOptions', () => {
+  beforeEach(() => {
+    vertexAiMemoryBankServiceOptions.mockClear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('returns InMemoryMemoryService when URI is empty or memory://', () => {
+    expect(getMemoryServiceFromOptions({})).toBeInstanceOf(
+      InMemoryMemoryService,
+    );
+    expect(
+      getMemoryServiceFromOptions({memoryServiceUri: 'memory://'}),
+    ).toBeInstanceOf(InMemoryMemoryService);
+  });
+
+  it('returns VertexAiRagMemoryService when URI starts with rag:// and bare corpus', () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'test-proj');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'us-central1');
+    const service = getMemoryServiceFromOptions({
+      memoryServiceUri: 'rag://test-corpus',
+    });
+    expect(service).toBeInstanceOf(VertexAiRagMemoryService);
+  });
+
+  it('returns VertexAiRagMemoryService when URI starts with rag:// and full resource name', () => {
+    const service = getMemoryServiceFromOptions({
+      memoryServiceUri:
+        'rag://projects/test-proj/locations/us-central1/ragCorpora/test-corpus',
+    });
+    expect(service).toBeInstanceOf(VertexAiRagMemoryService);
+  });
+
+  it('rejects empty or whitespace-only rag:// URIs', () => {
+    expect(() =>
+      getMemoryServiceFromOptions({
+        memoryServiceUri: 'rag://',
+      }),
+    ).toThrow('Rag corpus can not be empty.');
+  });
+
+  it('rejects malformed multi-segment rag:// URIs', () => {
+    expect(() =>
+      getMemoryServiceFromOptions({
+        memoryServiceUri: 'rag://projects/test-proj/invalid',
+      }),
+    ).toThrow(/Malformed RAG corpus resource name/);
+  });
+
+  it('returns VertexAiMemoryBankService when URI is agentengine:// with short ID', () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'test-proj');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'us-central1');
+    const service = getMemoryServiceFromOptions({
+      memoryServiceUri: 'agentengine://123',
+    });
+    expect(service).toBeInstanceOf(VertexAiMemoryBankService);
+    expect(vertexAiMemoryBankServiceOptions).toHaveBeenCalledWith({
+      projectId: 'test-proj',
+      location: 'us-central1',
+      agentEngineId: '123',
+    });
+  });
+
+  it('throws error when agentengine:// short ID has no GOOGLE_CLOUD_PROJECT in environment', () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', '');
+    expect(() =>
+      getMemoryServiceFromOptions({
+        memoryServiceUri: 'agentengine://123',
+      }),
+    ).toThrow('GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION not set.');
+  });
+
+  it('loads GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION from .env when baseDir is provided', () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', '');
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adk-cli-dotenv-'));
+    const childDir = path.join(tempDir, 'nested', 'sub');
+    fs.mkdirSync(childDir, {recursive: true});
+    fs.writeFileSync(
+      path.join(tempDir, '.env'),
+      'GOOGLE_CLOUD_PROJECT=dotenv-proj\nGOOGLE_CLOUD_LOCATION=us-west1\n',
+      'utf-8',
+    );
+    const originalCwd = process.cwd();
+    try {
+      process.chdir(childDir);
+      const service = getMemoryServiceFromOptions('agentengine://123', '.');
+      expect(service).toBeInstanceOf(VertexAiMemoryBankService);
+      expect(process.env['GOOGLE_CLOUD_PROJECT']).toBe('dotenv-proj');
+      expect(process.env['GOOGLE_CLOUD_LOCATION']).toBe('us-west1');
+    } finally {
+      process.chdir(originalCwd);
+      fs.rmSync(tempDir, {recursive: true, force: true});
+    }
+  });
+
+  it('returns VertexAiMemoryBankService when URI is agentengine:// with full resource name', () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', '');
+    const service = getMemoryServiceFromOptions({
+      memoryServiceUri:
+        'agentengine://projects/test-proj/locations/us-central1/reasoningEngines/123',
+    });
+    expect(service).toBeInstanceOf(VertexAiMemoryBankService);
+    expect(vertexAiMemoryBankServiceOptions).toHaveBeenCalledWith({
+      projectId: 'test-proj',
+      location: 'us-central1',
+      agentEngineId: '123',
+    });
+  });
+
+  it('rejects empty or whitespace-only agentengine:// URIs', () => {
+    expect(() =>
+      getMemoryServiceFromOptions({
+        memoryServiceUri: 'agentengine://',
+      }),
+    ).toThrow('Agent engine resource name or resource id cannot be empty.');
+  });
+
+  it('rejects malformed agentengine:// URIs', () => {
+    expect(() =>
+      getMemoryServiceFromOptions({
+        memoryServiceUri: 'agentengine://projects/test-proj/invalid',
+      }),
+    ).toThrow(/Agent engine resource name is mal-formatted/);
+  });
+
+  it('throws error for unsupported memory service URI and redacts credentials', () => {
+    expect(() =>
+      getMemoryServiceFromOptions({
+        memoryServiceUri: 'unsupported://user:secret@host/db',
+      }),
+    ).toThrow('Unsupported memory service URI: unsupported://user:***@host/db');
+
+    expect(() =>
+      getMemoryServiceFromOptions({
+        memoryServiceUri: 'unsupported://host/db?access_token=secret_tok',
+      }),
+    ).toThrow(
+      'Unsupported memory service URI: unsupported://host/db?access_token=***',
+    );
+  });
+});
+
+describe('getSessionServiceFromOptions', () => {
+  beforeEach(() => {
+    vertexAiSessionServiceOptions.mockClear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('returns InMemorySessionService when URI is empty or memory://', () => {
+    vi.stubEnv('DATABASE_URL', '');
+    expect(getSessionServiceFromOptions({})).toBeInstanceOf(
+      InMemorySessionService,
+    );
+    expect(
+      getSessionServiceFromOptions({sessionServiceUri: 'memory://'}),
+    ).toBeInstanceOf(InMemorySessionService);
+  });
+
+  it('returns VertexAiSessionService when URI is agentengine:// with short ID', () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'test-proj');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'us-central1');
+    const service = getSessionServiceFromOptions({
+      sessionServiceUri: 'agentengine://123',
+    });
+    expect(service).toBeInstanceOf(VertexAiSessionService);
+    expect(vertexAiSessionServiceOptions).toHaveBeenCalledWith({
+      projectId: 'test-proj',
+      location: 'us-central1',
+      agentEngineId: '123',
+    });
+  });
+
+  it('loads GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION from .env when baseDir is provided', () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', '');
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'adk-cli-session-dotenv-'),
+    );
+    const childDir = path.join(tempDir, 'nested', 'sub');
+    fs.mkdirSync(childDir, {recursive: true});
+    fs.writeFileSync(
+      path.join(tempDir, '.env'),
+      'GOOGLE_CLOUD_PROJECT=dotenv-proj\nGOOGLE_CLOUD_LOCATION=us-west1\n',
+      'utf-8',
+    );
+    const originalCwd = process.cwd();
+    try {
+      process.chdir(childDir);
+      const service = getSessionServiceFromOptions('agentengine://123', '.');
+      expect(service).toBeInstanceOf(VertexAiSessionService);
+      expect(vertexAiSessionServiceOptions).toHaveBeenCalledWith({
+        projectId: 'dotenv-proj',
+        location: 'us-west1',
+        agentEngineId: '123',
+      });
+      expect(process.env['GOOGLE_CLOUD_PROJECT']).toBe('dotenv-proj');
+      expect(process.env['GOOGLE_CLOUD_LOCATION']).toBe('us-west1');
+    } finally {
+      process.chdir(originalCwd);
+      fs.rmSync(tempDir, {recursive: true, force: true});
+    }
+  });
+
+  it('returns VertexAiSessionService when URI is agentengine:// with full resource name', () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', '');
+    const service = getSessionServiceFromOptions({
+      sessionServiceUri:
+        'agentengine://projects/test-proj/locations/us-central1/reasoningEngines/123',
+    });
+    expect(service).toBeInstanceOf(VertexAiSessionService);
+    expect(vertexAiSessionServiceOptions).toHaveBeenCalledWith({
+      projectId: 'test-proj',
+      location: 'us-central1',
+      agentEngineId: '123',
+    });
+  });
+
+  it('rejects empty or whitespace-only agentengine:// URIs', () => {
+    expect(() =>
+      getSessionServiceFromOptions({
+        sessionServiceUri: 'agentengine://',
+      }),
+    ).toThrow('Agent engine resource name or resource id cannot be empty.');
+    expect(() =>
+      getSessionServiceFromOptions({
+        sessionServiceUri: 'agentengine://   ',
+      }),
+    ).toThrow('Agent engine resource name or resource id cannot be empty.');
+  });
+
+  it('rejects malformed agentengine:// URIs', () => {
+    expect(() =>
+      getSessionServiceFromOptions({
+        sessionServiceUri: 'agentengine://projects/test-proj/invalid',
+      }),
+    ).toThrow(/Agent engine resource name is mal-formatted/);
+  });
+
+  it('throws error when agentengine:// short ID has no GOOGLE_CLOUD_PROJECT in environment', () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', '');
+    expect(() =>
+      getSessionServiceFromOptions({
+        sessionServiceUri: 'agentengine://123',
+      }),
+    ).toThrow('GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION not set.');
   });
 });

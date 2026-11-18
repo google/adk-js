@@ -90,6 +90,25 @@ describe('part_converter_utils', () => {
       expect(toA2AFilePart(genAiPart)).toEqual(expected);
     });
 
+    it('converts inlineData part with videoMetadata', () => {
+      const genAiPart: GenAIPart = {
+        inlineData: {mimeType: 'video/mp4', data: 'base64video'},
+        videoMetadata: {
+          fps: 30,
+        },
+      };
+      const expected: A2APart = {
+        kind: 'file',
+        file: {bytes: 'base64video', mimeType: 'video/mp4'},
+        metadata: {
+          'adk_video_metadata': {
+            fps: 30,
+          },
+        },
+      };
+      expect(toA2AFilePart(genAiPart)).toEqual(expected);
+    });
+
     it('throws on invalid file part', () => {
       expect(() => toA2AFilePart({text: 'not file'})).toThrow(
         'Not a file part',
@@ -136,6 +155,26 @@ describe('part_converter_utils', () => {
         metadata: {'adk_type': 'function_call', 'adk_is_long_running': true},
       };
       expect(toA2ADataPart(genAiPart, ['function_call_id'])).toEqual(expected);
+    });
+
+    it('does not mark functionCall as long-running when ID does not match', () => {
+      const genAiPart: GenAIPart = {
+        functionCall: {
+          id: 'tool-456',
+          name: 'getWeather',
+          args: {location: 'London'},
+        },
+      };
+      const expected: A2APart = {
+        kind: 'data',
+        data: {
+          id: 'tool-456',
+          name: 'getWeather',
+          args: {location: 'London'},
+        },
+        metadata: {'adk_type': 'function_call'},
+      };
+      expect(toA2ADataPart(genAiPart, ['tool-123'])).toEqual(expected);
     });
 
     it('converts functionResponse', () => {
@@ -229,6 +268,11 @@ describe('part_converter_utils', () => {
       expect(toA2APart(genAiPart)).toEqual({kind: 'text', text: 'hello'});
     });
 
+    it('preserves empty text part as text rather than falling through to data', () => {
+      const genAiPart: GenAIPart = {text: ''};
+      expect(toA2APart(genAiPart)).toEqual({kind: 'text', text: ''});
+    });
+
     it('delegates fileData part', () => {
       const genAiPart: GenAIPart = {
         fileData: {mimeType: 'image/jpeg', fileUri: 'gs://foo'},
@@ -301,6 +345,12 @@ describe('part_converter_utils', () => {
       expect(toGenAIPartText(a2aPart)).toEqual(expected);
     });
 
+    it('converts empty text part', () => {
+      const a2aPart: A2ATextPart = {kind: 'text', text: ''};
+      const expected: GenAIPart = {text: '', thought: false};
+      expect(toGenAIPart(a2aPart)).toEqual(expected);
+    });
+
     it('converts thought text part', () => {
       const a2aPart: A2ATextPart = {
         kind: 'text',
@@ -351,6 +401,25 @@ describe('part_converter_utils', () => {
         videoMetadata: {
           startOffset: '0s',
           endOffset: '10s',
+        },
+      };
+      expect(toGenAIPartFile(a2aPart)).toEqual(expected);
+    });
+
+    it('converts from file with bytes and videoMetadata', () => {
+      const a2aPart: A2AFilePart = {
+        kind: 'file',
+        file: {bytes: 'base64video', mimeType: 'video/mp4'},
+        metadata: {
+          'adk_video_metadata': {
+            fps: 30,
+          },
+        },
+      };
+      const expected: GenAIPart = {
+        inlineData: {data: 'base64video', mimeType: 'video/mp4'},
+        videoMetadata: {
+          fps: 30,
         },
       };
       expect(toGenAIPartFile(a2aPart)).toEqual(expected);
@@ -439,6 +508,48 @@ describe('part_converter_utils', () => {
         text: '{"customData":123}',
       };
       expect(toGenAIPartData(a2aPart)).toEqual(expected);
+    });
+
+    it('serializes data part to JSON text when metadata has no adk_type', () => {
+      const data = {key: 'value', number: 123};
+      const a2aPart: A2ADataPart = {
+        kind: 'data',
+        data,
+        metadata: {other: 'metadata'},
+      };
+      expect(toGenAIPartData(a2aPart)).toEqual({
+        text: JSON.stringify(data),
+      });
+    });
+
+    it('serializes data part to JSON text when metadata is empty', () => {
+      const data = {key: 'value'};
+      const a2aPart: A2ADataPart = {
+        kind: 'data',
+        data,
+        metadata: {},
+      };
+      expect(toGenAIPartData(a2aPart)).toEqual({
+        text: JSON.stringify(data),
+      });
+    });
+
+    it('serializes data part with nested arrays, booleans, null, and unicode to JSON text', () => {
+      const complexData = {
+        nested: {
+          array: [1, 2, {inner: 'value'}],
+          boolean: true,
+          nullValue: null,
+        },
+        unicode: 'Hello 世界 🌍',
+      };
+      const a2aPart: A2ADataPart = {
+        kind: 'data',
+        data: complexData,
+      };
+      expect(toGenAIPartData(a2aPart)).toEqual({
+        text: JSON.stringify(complexData),
+      });
     });
   });
 
@@ -534,6 +645,19 @@ describe('part_converter_utils', () => {
           'adk_video_metadata': {
             startOffset: '0s',
             endOffset: '10s',
+          },
+        },
+      };
+      expect(toA2APart(toGenAIPart(a2aPart))).toEqual(a2aPart);
+    });
+
+    it('toA2APart(toGenAIPart(part)) equals part for file base64 with videoMetadata', () => {
+      const a2aPart: A2APart = {
+        kind: 'file',
+        file: {bytes: 'base64video', mimeType: 'video/mp4'},
+        metadata: {
+          'adk_video_metadata': {
+            fps: 30,
           },
         },
       };

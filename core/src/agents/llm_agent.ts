@@ -1688,7 +1688,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
 
         if (invocationContext.runConfig?.supportCfc && isEvent(llmResponse)) {
           modelResponseEvent.id = createNewEventId();
-          modelResponseEvent.timestamp = new Date().getTime();
+          modelResponseEvent.timestamp = Date.now();
           yield llmResponse;
           continue;
         }
@@ -1711,7 +1711,6 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
           // responses differ.
           if (!event.partial) {
             modelResponseEvent.id = createNewEventId();
-            modelResponseEvent.timestamp = new Date().getTime();
           }
           yield event;
         }
@@ -1777,6 +1776,9 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       return;
     }
 
+    // Stamp at build time so each streamed chunk gets its own timestamp and
+    // timestamp order matches append order.
+    modelResponseEvent.timestamp = Date.now();
     // Merge llm response with model response event.
     const mergedEvent = createEvent({
       ...modelResponseEvent,
@@ -2102,6 +2104,10 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         callbackContext,
         llmResponse,
       });
+    if (invocationContext.abortSignal?.aborted) {
+      return undefined;
+    }
+
     if (afterModelCallbackResponse) {
       return afterModelCallbackResponse;
     }

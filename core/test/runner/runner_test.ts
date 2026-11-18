@@ -15,6 +15,7 @@ import {
   determineAgentForResumption,
   Event,
   InMemoryArtifactService,
+  InMemoryCredentialService,
   InMemoryRunner,
   InMemorySessionService,
   INTERNAL_METADATA_PREFIX,
@@ -400,7 +401,7 @@ describe('Runner.determineAgentForResumption', () => {
     expect(events[0].author).toBe('root_agent');
   });
 
-  it('should skip function response resumption routing when resumabilityConfig.isResumable is false or undefined', async () => {
+  it('routes a user function response to the agent that made the call when resumability is disabled', async () => {
     const nonResumableRunner = new Runner({
       appName: TEST_APP_ID,
       agent: rootAgent,
@@ -450,8 +451,106 @@ describe('Runner.determineAgentForResumption', () => {
       events.push(event);
     }
 
-    expect(events[0].author).toBe('root_agent');
+    expect(events[0].author).toBe('sub_agent2');
   });
+
+  it('does not route an agent-authored function response back to its caller when resumability is disabled', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_agent_authored_response',
+    });
+    const callEvent = createEvent({
+      invocationId: 'inv1',
+      author: 'non_transferable',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'func_321', name: 'test_func', args: {}}}],
+      },
+    });
+    const responseEvent = createEvent({
+      invocationId: 'inv1',
+      author: 'non_transferable',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {id: 'func_321', name: 'test_func', response: {}},
+          },
+        ],
+      },
+    });
+    await sessionService.appendEvent({session, event: callEvent});
+    await sessionService.appendEvent({session, event: responseEvent});
+
+    expect(
+      determineAgentForResumption(
+        session,
+        rootAgent,
+        createResumabilityConfig({isResumable: false}),
+      ),
+    ).toBe(rootAgent);
+    expect(
+      determineAgentForResumption(
+        session,
+        rootAgent,
+        createResumabilityConfig({isResumable: true}),
+      ),
+    ).toBe(nonTransferableAgent);
+  });
+
+  it.each([true, false])(
+    'does not resume an aborted call when the user answers it later (isResumable: %s)',
+    async (isResumable) => {
+      const session = await sessionService.createSession({
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: `session_late_answer_${isResumable}`,
+      });
+      const callEvent = createEvent({
+        invocationId: 'inv1',
+        author: 'non_transferable',
+        content: {
+          role: 'model',
+          parts: [
+            {functionCall: {id: 'func_654', name: 'test_func', args: {}}},
+          ],
+        },
+      });
+      const abortEvents = buildAbortEvents({
+        events: [callEvent],
+        invocationId: 'inv1',
+        rootAgentName: 'root_agent',
+      });
+      const lateAnswer = createEvent({
+        invocationId: 'inv2',
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'func_654',
+                name: 'test_func',
+                response: {result: 'late'},
+              },
+            },
+          ],
+        },
+      });
+      for (const event of [callEvent, ...abortEvents, lateAnswer]) {
+        await sessionService.appendEvent({session, event});
+      }
+
+      expect(
+        determineAgentForResumption(
+          session,
+          rootAgent,
+          createResumabilityConfig({isResumable}),
+        ),
+      ).toBe(rootAgent);
+    },
+  );
 
   it('should route to sub-agent when resuming from an LRO function response across session boundaries', async () => {
     const lroCall: FunctionCall = {
@@ -1476,6 +1575,58 @@ describe('Runner customMetadata support', () => {
     expect(userEvent.author).toBe('user');
     expect(userEvent.content?.role).toBe('user');
   });
+
+  it('persists stateDelta on the appended user event and updates session state when provided', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_with_state_delta',
+    });
+
+    const stateDelta = {theme: 'dark', count: 3};
+    for await (const _ of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'Apply state delta'}]},
+      stateDelta,
+    })) {
+      // iterate
+    }
+
+    const updatedWithDelta = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_with_state_delta',
+    });
+    expect(updatedWithDelta).toBeDefined();
+    expect(updatedWithDelta!.events[0].author).toBe('user');
+    expect(updatedWithDelta!.events[0].actions.stateDelta).toEqual(stateDelta);
+    expect(updatedWithDelta!.state).toEqual(stateDelta);
+
+    const sessionWithoutDelta = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_without_state_delta',
+    });
+
+    for await (const _ of runner.runAsync({
+      userId: sessionWithoutDelta.userId,
+      sessionId: sessionWithoutDelta.id,
+      newMessage: {role: 'user', parts: [{text: 'No state delta'}]},
+    })) {
+      // iterate
+    }
+
+    const updatedWithoutDelta = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_without_state_delta',
+    });
+    expect(updatedWithoutDelta).toBeDefined();
+    expect(updatedWithoutDelta!.events[0].author).toBe('user');
+    expect(updatedWithoutDelta!.events[0].actions.stateDelta).toEqual({});
+    expect(updatedWithoutDelta!.state).toEqual({});
+  });
 });
 
 describe('Runner artifactService handling', () => {
@@ -2432,6 +2583,68 @@ describe('Runner.close', () => {
     expect(warnSpy).toHaveBeenCalledTimes(2);
     expect(warnSpy).toHaveBeenCalledWith(
       'Toolset MockCleanupToolset cleanup timed out',
+    );
+  });
+});
+
+describe('Runner credentialService', () => {
+  it('keeps the credential service passed to the constructor', () => {
+    const credentialService = new InMemoryCredentialService();
+    const sessionService = new InMemorySessionService();
+    const agent = new MockLlmAgent('agent_credential_service');
+
+    const withService = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      credentialService,
+    });
+    const withoutService = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+    });
+
+    expect(withService.credentialService).toBe(credentialService);
+    expect(withoutService.credentialService).toBeUndefined();
+  });
+
+  it('passes the credential service into the invocation context', async () => {
+    const credentialService = new InMemoryCredentialService();
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: new MockLlmAgent('agent_credential_service'),
+      sessionService: new InMemorySessionService(),
+      credentialService,
+    });
+
+    let capturedInvocationContext: InvocationContext | undefined;
+    const plugin = new (class extends BasePlugin {
+      constructor() {
+        super('capture_context_plugin');
+      }
+      override async onUserMessageCallback({
+        invocationContext,
+      }: {
+        invocationContext: InvocationContext;
+        userMessage: Content;
+      }) {
+        capturedInvocationContext = invocationContext;
+        return undefined;
+      }
+    })();
+    runner.pluginManager.registerPlugin(plugin);
+
+    for await (const _ of runner.runEphemeral({
+      userId: TEST_USER_ID,
+      newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+    })) {
+      // iterate
+    }
+
+    expect(capturedInvocationContext).toBeDefined();
+    expect(capturedInvocationContext?.credentialService).toBe(
+      credentialService,
     );
   });
 });

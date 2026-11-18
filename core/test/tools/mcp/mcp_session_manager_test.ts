@@ -88,7 +88,67 @@ describe('MCPSessionManager', () => {
       command: 'test-command',
       args: ['arg1', 'arg2'],
     });
-    expect(client.connect).toHaveBeenCalled();
+    // No timeout is set, so the MCP SDK applies its own default.
+    expect(client.connect).toHaveBeenCalledWith(expect.anything(), {});
+  });
+
+  it('passes a custom stdio timeout in milliseconds when connecting', async () => {
+    const manager = new MCPSessionManager({
+      type: 'StdioConnectionParams',
+      serverParams: {
+        command: 'test-command',
+      },
+      timeout: 12,
+    });
+
+    const client = await manager.createSession();
+
+    expect(client.connect).toHaveBeenCalledWith(expect.anything(), {
+      timeout: 12000,
+    });
+  });
+
+  it('builds request options with a timeout only for stdio with a configured timeout', () => {
+    const controller = new AbortController();
+    const stdioDefault = new MCPSessionManager({
+      type: 'StdioConnectionParams',
+      serverParams: {command: 'test-command'},
+    });
+    expect(stdioDefault.getRequestOptions()).toEqual({});
+    expect(stdioDefault.getRequestOptions()).not.toHaveProperty('timeout');
+    expect(stdioDefault.getRequestOptions(controller.signal)).toEqual({
+      signal: controller.signal,
+    });
+
+    const stdioCustom = new MCPSessionManager({
+      type: 'StdioConnectionParams',
+      serverParams: {command: 'test-command'},
+      timeout: 15,
+    });
+    expect(stdioCustom.getRequestOptions()).toEqual({timeout: 15000});
+    expect(stdioCustom.getRequestOptions(controller.signal)).toEqual({
+      signal: controller.signal,
+      timeout: 15000,
+    });
+
+    const httpManager = new MCPSessionManager({
+      type: 'StreamableHTTPConnectionParams',
+      url: 'http://test-url',
+      timeout: 30,
+    });
+    expect(httpManager.getRequestOptions()).toEqual({});
+    expect(httpManager.getRequestOptions(controller.signal)).toEqual({
+      signal: controller.signal,
+    });
+
+    const sseManager = new MCPSessionManager({
+      type: 'SseConnectionParams',
+      url: 'http://test-sse-url/sse',
+    });
+    expect(sseManager.getRequestOptions()).toEqual({});
+    expect(sseManager.getRequestOptions(controller.signal)).toEqual({
+      signal: controller.signal,
+    });
   });
 
   it('creates an http client with transport options headers', async () => {
@@ -355,6 +415,150 @@ describe('MCPSessionManager', () => {
       await manager.createSession();
 
       expect(StdioClientTransport).toHaveBeenLastCalledWith(serverParams);
+      expect(vi.mocked(StdioClientTransport).mock.lastCall).toEqual([
+        {command: 'test-command', args: ['arg1']},
+      ]);
+    });
+  });
+
+  describe('extra session headers', () => {
+    it('adds extra headers to the streamable HTTP transportOptions headers, replacing a caller header in any casing', async () => {
+      const transportOptions = {
+        requestInit: {
+          headers: {'X-Test-Header': 'value', 'Authorization': 'Bearer old'},
+        },
+      };
+      const manager = new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: 'http://test-url',
+        transportOptions,
+      });
+
+      await manager.createSession({authorization: 'Bearer new'});
+
+      expect(StreamableHTTPClientTransport).toHaveBeenLastCalledWith(
+        new URL('http://test-url'),
+        {
+          requestInit: {
+            headers: {
+              'X-Test-Header': 'value',
+              'authorization': 'Bearer new',
+              ...trackingHeaders(),
+            },
+          },
+        },
+      );
+      expect(transportOptions.requestInit.headers).toEqual({
+        'X-Test-Header': 'value',
+        'Authorization': 'Bearer old',
+      });
+    });
+
+    it('adds extra headers to the deprecated streamable HTTP header field', async () => {
+      const manager = new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: 'http://test-url',
+        header: {'x-test-header': 'value'},
+      });
+
+      await manager.createSession({'X-API-Key': 'key-1'});
+
+      expect(StreamableHTTPClientTransport).toHaveBeenLastCalledWith(
+        new URL('http://test-url'),
+        {
+          requestInit: {
+            headers: {
+              'x-test-header': 'value',
+              'X-API-Key': 'key-1',
+              ...trackingHeaders(),
+            },
+          },
+        },
+      );
+    });
+
+    it('adds extra headers to the SSE headers, replacing a caller header in any casing', async () => {
+      const manager = new MCPSessionManager({
+        type: 'SseConnectionParams',
+        url: 'http://test-sse-url/sse',
+        headers: {'x-sse-header': 'sse-value', 'AUTHORIZATION': 'Bearer old'},
+      });
+
+      await manager.createSession({Authorization: 'Bearer new'});
+
+      expect(SSEClientTransport).toHaveBeenLastCalledWith(
+        new URL('http://test-sse-url/sse'),
+        {
+          requestInit: {
+            headers: {
+              'x-sse-header': 'sse-value',
+              'Authorization': 'Bearer new',
+              ...trackingHeaders(),
+            },
+          },
+        },
+      );
+    });
+
+    it('adds extra headers to the SSE transportOptions headers', async () => {
+      const manager = new MCPSessionManager({
+        type: 'SseConnectionParams',
+        url: 'http://test-sse-url/sse',
+        transportOptions: {
+          requestInit: {headers: {'x-priority': 'transport-options'}},
+        },
+      });
+
+      await manager.createSession({Authorization: 'Bearer token'});
+
+      expect(SSEClientTransport).toHaveBeenLastCalledWith(
+        new URL('http://test-sse-url/sse'),
+        {
+          requestInit: {
+            headers: {
+              'x-priority': 'transport-options',
+              'Authorization': 'Bearer token',
+              ...trackingHeaders(),
+            },
+          },
+        },
+      );
+    });
+
+    it('collapses extra headers that differ only in casing to the later one', async () => {
+      const manager = new MCPSessionManager({
+        type: 'SseConnectionParams',
+        url: 'http://test-sse-url/sse',
+        headers: {'Authorization': 'Bearer old'},
+      });
+
+      await manager.createSession({
+        Authorization: 'Bearer first',
+        authorization: 'Bearer second',
+      });
+
+      expect(SSEClientTransport).toHaveBeenLastCalledWith(
+        new URL('http://test-sse-url/sse'),
+        {
+          requestInit: {
+            headers: {
+              authorization: 'Bearer second',
+              ...trackingHeaders(),
+            },
+          },
+        },
+      );
+    });
+
+    it('ignores extra headers for stdio', async () => {
+      const serverParams = {command: 'test-command', args: ['arg1']};
+      const manager = new MCPSessionManager({
+        type: 'StdioConnectionParams',
+        serverParams,
+      });
+
+      await manager.createSession({Authorization: 'Bearer token'});
+
       expect(vi.mocked(StdioClientTransport).mock.lastCall).toEqual([
         {command: 'test-command', args: ['arg1']},
       ]);
