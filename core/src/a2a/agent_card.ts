@@ -21,10 +21,11 @@ import {isLoopAgent, LoopAgent} from '../agents/loop_agent.js';
 import {isParallelAgent} from '../agents/parallel_agent.js';
 import {isSequentialAgent} from '../agents/sequential_agent.js';
 import {isBaseExampleProvider} from '../examples/base_example_provider.js';
+import {Example} from '../examples/example.js';
 import {propagateTraceContext} from '../telemetry/api/instrumentation.js';
 import {isBaseTool} from '../tools/base_tool.js';
 import {ExampleTool, isExampleTool} from '../tools/example_tool.js';
-import {getErrorMessage} from '../utils/error_utils.js';
+import {describeValueType, getErrorMessage} from '../utils/error_utils.js';
 import {fetchWithTimeout} from '../utils/fetch_utils.js';
 import {logger} from '../utils/logger.js';
 import {
@@ -506,7 +507,10 @@ const AGENT_CARD_BUILDER_SIGNATURE_SYMBOL = Symbol.for(
 export interface AgentCardBuilderOptions {
   /** The ADK `BaseAgent` or `Workflow` to build an `AgentCard` for. */
   agent: RunnableRoot;
-  /** The RPC URL advertised on the card (default: `'http://localhost:80/a2a'`). */
+  /**
+   * The absolute RPC URL advertised on the card when no `transports` are given
+   * (default: `'http://localhost:80/a2a'`). Trailing slashes are stripped.
+   */
   rpcUrl?: string;
   /** Optional A2A capabilities advertised on the card (default: `{streaming: true}`). */
   capabilities?: AgentCapabilities;
@@ -523,27 +527,36 @@ export interface AgentCardBuilderOptions {
    * unless overridden per tool via `BaseTool.customMetadata['security']`.
    */
   defaultSkillSecurity?: SkillSecurity;
-  /** Optional list of transport interfaces advertised on the card. */
+  /**
+   * Optional list of transport interfaces advertised on the card. When
+   * non-empty, the first one sets the card's `url` and `preferredTransport`,
+   * and `rpcUrl` is unused.
+   */
   transports?: AgentInterface[];
 }
 
 /**
- * Optional security configuration forwarded to {@link getA2AAgentCard}.
+ * Options forwarded to {@link AgentCardBuilder} by {@link getA2AAgentCard}.
+ * The card's URL and interfaces come from the `transports` argument instead.
  */
-export interface GetA2AAgentCardOptions {
-  /** Optional security scheme declarations included on the card. */
-  securitySchemes?: Record<string, SecurityScheme>;
-  /** Optional default security requirements applied to generated skills. */
-  defaultSkillSecurity?: SkillSecurity;
-}
+export type GetA2AAgentCardOptions = Omit<
+  AgentCardBuilderOptions,
+  'agent' | 'rpcUrl' | 'transports'
+>;
 
-function describeNodeType(value: unknown): string {
-  if (typeof value === 'object' && value !== null) {
-    return (
-      (value as {constructor?: {name?: string}}).constructor?.name ?? 'object'
-    );
-  }
-  return typeof value;
+/**
+ * Type guard for {@link AgentCardBuilder}.
+ *
+ * @param obj The value to check.
+ * @returns True if obj is an {@link AgentCardBuilder}.
+ */
+export function isAgentCardBuilder(obj: unknown): obj is AgentCardBuilder {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    AGENT_CARD_BUILDER_SIGNATURE_SYMBOL in obj &&
+    obj[AGENT_CARD_BUILDER_SIGNATURE_SYMBOL] === true
+  );
 }
 
 /**
@@ -556,10 +569,12 @@ function describeNodeType(value: unknown): string {
  * at runtime.
  */
 export class AgentCardBuilder {
+  /** A unique symbol to identify ADK AgentCardBuilder class. */
   readonly [AGENT_CARD_BUILDER_SIGNATURE_SYMBOL] = true;
 
   private readonly agent: RunnableRoot;
-  private readonly rpcUrl: string;
+  private readonly url: string;
+  private readonly preferredTransport: string;
   private readonly capabilities: AgentCapabilities;
   private readonly docUrl?: string;
   private readonly provider?: AgentProvider;
@@ -568,33 +583,42 @@ export class AgentCardBuilder {
   private readonly agentVersion: string;
   private readonly transports?: AgentInterface[];
 
+  /**
+   * @throws TypeError when `agent` is not a `BaseAgent` or `Workflow`,
+   *     `defaultSkillSecurity` is malformed, or the RPC URL is not absolute.
+   */
   constructor(options: AgentCardBuilderOptions) {
-    if (!options?.agent) {
-      throw new Error('Agent cannot be null or undefined.');
-    }
-    if (!isRunnableRoot(options.agent)) {
+    if (!isRunnableRoot(options?.agent)) {
       throw new TypeError(
-        `AgentCardBuilder requires a BaseAgent or Workflow, got ${describeNodeType(options.agent)}.`,
+        `AgentCardBuilder requires a BaseAgent or Workflow, got ${describeValueType(options?.agent)}.`,
       );
     }
     if (
       options.defaultSkillSecurity !== undefined &&
       !isSkillSecurity(options.defaultSkillSecurity)
     ) {
-      throw new Error(
+      throw new TypeError(
         'defaultSkillSecurity must be an Array<Record<string, string[]>>.',
       );
     }
 
+    const primaryTransport = options.transports?.[0];
+    if (primaryTransport) {
+      this.url = primaryTransport.url;
+      this.preferredTransport = primaryTransport.transport;
+      this.transports = options.transports;
+    } else {
+      this.url = normalizeRpcUrl(options.rpcUrl || 'http://localhost:80/a2a');
+      this.preferredTransport = 'JSONRPC';
+    }
+
     this.agent = options.agent;
-    this.rpcUrl = options.rpcUrl || 'http://localhost:80/a2a';
     this.capabilities = options.capabilities ?? {streaming: true};
     this.docUrl = options.docUrl;
     this.provider = options.provider;
     this.securitySchemes = options.securitySchemes;
     this.defaultSkillSecurity = options.defaultSkillSecurity;
     this.agentVersion = options.agentVersion || '0.0.1';
-    this.transports = options.transports;
   }
 
   /**
@@ -602,28 +626,21 @@ export class AgentCardBuilder {
    */
   async build(): Promise<AgentCard> {
     try {
-      const primarySkills = await buildPrimarySkills(
+      const skills = await buildAgentSkills(
         this.agent,
         this.defaultSkillSecurity,
       );
-      const subAgentSkills = await buildSubAgentSkills(
-        this.agent,
-        this.defaultSkillSecurity,
-      );
-      const allSkills = [...primarySkills, ...subAgentSkills];
+      validateSkillSecurityReferences(skills, this.securitySchemes ?? {});
 
-      validateSkillSecurityReferences(allSkills, this.securitySchemes ?? {});
-
-      const cleanUrl = this.rpcUrl.replace(/\/+$/, '');
       const card: AgentCard = {
         name: this.agent.name,
         description: this.agent.description || 'An ADK Agent',
-        url: this.transports?.[0]?.url ?? cleanUrl,
+        url: this.url,
         version: this.agentVersion,
         protocolVersion: '0.3.0',
-        preferredTransport: this.transports?.[0]?.transport ?? 'JSONRPC',
+        preferredTransport: this.preferredTransport,
         capabilities: this.capabilities,
-        skills: allSkills,
+        skills,
         defaultInputModes: ['text/plain'],
         defaultOutputModes: ['text/plain'],
         supportsAuthenticatedExtendedCard: false,
@@ -651,51 +668,40 @@ export class AgentCardBuilder {
 }
 
 /**
+ * Strips trailing slashes from `rpcUrl` and checks that what remains is an
+ * absolute URL.
+ */
+function normalizeRpcUrl(rpcUrl: string): string {
+  const url = rpcUrl.replace(/\/+$/, '');
+  try {
+    new URL(url);
+  } catch {
+    throw new TypeError(`rpcUrl must be an absolute URL, got "${rpcUrl}".`);
+  }
+  return url;
+}
+
+/**
  * Converts an ADK agent to an A2A AgentCard.
+ *
+ * This is {@link AgentCardBuilder} with the card's URL and interfaces taken from
+ * `transports`, so both produce the same card for the same inputs.
  */
 export async function getA2AAgentCard(
   agent: RunnableRoot,
   transports: AgentInterface[],
   options?: GetA2AAgentCardOptions,
 ): Promise<AgentCard> {
-  if (
-    options?.defaultSkillSecurity !== undefined &&
-    !isSkillSecurity(options.defaultSkillSecurity)
-  ) {
-    throw new Error(
-      'defaultSkillSecurity must be an Array<Record<string, string[]>>.',
-    );
-  }
-  const skills = await buildAgentSkills(agent, options?.defaultSkillSecurity);
-  validateSkillSecurityReferences(skills, options?.securitySchemes ?? {});
-
-  const card: AgentCard = {
-    name: agent.name,
-    description: agent.description || '',
-    protocolVersion: '0.3.0',
-    version: '1.0.0',
-    skills,
-    url: transports[0].url,
-    preferredTransport: transports[0].transport,
-    capabilities: {
-      extensions: [],
-      stateTransitionHistory: false,
-      pushNotifications: false,
-      streaming: true,
-    },
-    defaultInputModes: ['text'],
-    defaultOutputModes: ['text'],
-    additionalInterfaces: transports,
-  };
-  if (options?.securitySchemes !== undefined) {
-    card.securitySchemes = options.securitySchemes;
-  }
-  return card;
+  return new AgentCardBuilder({...options, agent, transports}).build();
 }
 
 /**
  * Builds a list of AgentSkills based on agent descriptions and types.
  * This information can be used in AgentCard to help clients understand agent capabilities.
+ *
+ * The result is the primary skills of `agent` followed by the skills of each of
+ * its immediate child nodes: sub-agents for an agent, graph nodes for a
+ * `Workflow`.
  *
  * @param agent The agent to build skills for.
  * @param defaultSkillSecurity Optional default security requirements for generated skills.
@@ -705,18 +711,6 @@ export async function buildAgentSkills(
   agent: RunnableRoot,
   defaultSkillSecurity?: SkillSecurity,
 ): Promise<AgentSkill[]> {
-  if (isWorkflow(agent)) {
-    // A workflow advertises itself as one skill in `buildAgentSkills`.
-    return [
-      buildSkillObject({
-        id: agent.name,
-        name: 'workflow',
-        description: agent.description || `Workflow ${agent.name}`,
-        tags: ['workflow'],
-        security: defaultSkillSecurity,
-      }),
-    ];
-  }
   const [primarySkills, subAgentSkills] = await Promise.all([
     buildPrimarySkills(agent, defaultSkillSecurity),
     buildSubAgentSkills(agent, defaultSkillSecurity),
@@ -757,11 +751,12 @@ function buildSkillObject(params: {
 }
 
 /**
- * Returns the immediate child nodes of an agent or a workflow.
+ * Returns the immediate child nodes of an agent (its sub-agents) or a workflow
+ * (its graph nodes, without `START`).
  */
-export function iterChildNodes(agent: BaseNode): BaseNode[] {
+export function getChildNodes(agent: BaseNode): readonly BaseNode[] {
   if (isBaseAgent(agent)) {
-    return [...agent.subAgents];
+    return agent.subAgents;
   }
   if (isWorkflow(agent) && agent.graph) {
     return agent.graph.nodes.filter((n) => n.name !== START.name);
@@ -791,7 +786,7 @@ export async function buildSubAgentSkills(
 ): Promise<AgentSkill[]> {
   const result: AgentSkill[] = [];
 
-  for (const sub of iterChildNodes(agent)) {
+  for (const sub of getChildNodes(agent)) {
     try {
       const skills = await buildPrimarySkills(sub, defaultSkillSecurity);
       for (const subSkill of skills) {
@@ -880,7 +875,7 @@ export async function buildToolSkills(
       continue;
     }
 
-    const toolName = tool.name || describeNodeType(tool);
+    const toolName = tool.name || describeValueType(tool);
     const toolSecurity = getToolSecurity(tool, defaultSkillSecurity);
 
     toolSkills.push(
@@ -957,7 +952,7 @@ export async function buildNonLlmAgentSkills(
     }),
   ];
 
-  if (iterChildNodes(agent).length > 0) {
+  if (getChildNodes(agent).length > 0) {
     const orchestrationSkill = buildOrchestrationSkill(
       agent,
       agentType,
@@ -979,7 +974,7 @@ export function buildOrchestrationSkill(
   agentType: string,
   defaultSkillSecurity?: SkillSecurity,
 ): AgentSkill | undefined {
-  const childNodes = iterChildNodes(agent);
+  const childNodes = getChildNodes(agent);
   if (childNodes.length === 0) {
     return undefined;
   }
@@ -1035,7 +1030,7 @@ export function getToolSecurity(
     if (isSkillSecurity(security)) {
       return security;
     }
-    const toolName = tool.name || describeNodeType(tool);
+    const toolName = tool.name || describeValueType(tool);
     logger.warn(
       `Tool "${toolName}" customMetadata['security'] does not match Array<Record<string, string[]>>; ignoring and falling back to defaultSkillSecurity.`,
     );
@@ -1096,7 +1091,7 @@ export function buildAgentDescription(agent: BaseNode): string {
  * Returns the workflow-specific description for non-LLM agents and workflows.
  */
 export function getWorkflowDescription(agent: BaseNode): string | undefined {
-  if (iterChildNodes(agent).length === 0) {
+  if (getChildNodes(agent).length === 0) {
     return undefined;
   }
 
@@ -1201,11 +1196,11 @@ export function buildLoopAgentDescription(agent: LoopAgent): string {
  * Builds the description for a graph-based `Workflow`.
  */
 export function buildGraphWorkflowDescription(workflow: Workflow): string {
-  const childNodes = iterChildNodes(workflow);
+  const childNodes = getChildNodes(workflow);
   const descriptions = childNodes.map((childNode) => {
-    const nodeDescription = childNode.description
-      ? childNode.description.replace(/\.+$/, '')
-      : `execute the ${childNode.name} node`;
+    const trimmedDescription = childNode.description.trim().replace(/\.+$/, '');
+    const nodeDescription =
+      trimmedDescription || `execute the ${childNode.name} node`;
     return `${childNode.name}: ${nodeDescription}`;
   });
   return `This workflow orchestrates the following nodes: ${descriptions.join('; ')}.`;
@@ -1232,6 +1227,10 @@ export function getDefaultAgentDescription(agent: BaseNode): string {
 
 /**
  * Returns the agent type tag for skill tagging.
+ *
+ * Skill tags are published on the card and match the ones adk-python emits
+ * (`loop_workflow`, `code_execution`, ...), so clients can filter skills the
+ * same way regardless of which SDK served the card.
  */
 export function getAgentTypeTag(agent: BaseNode): string {
   if (isLoopAgent(agent)) {
@@ -1269,48 +1268,22 @@ function isCompositeShellAgent(agent: BaseNode): boolean {
 }
 
 /**
- * Extracts only the input strings from converted examples so they can be added
- * to an `AgentSkill`.
+ * Extracts the text of each example's input so it can be added to an
+ * `AgentSkill`. The text parts of one input are joined with newlines; an input
+ * with no text parts is skipped.
  */
-export function extractInputsFromExamples(
-  examples?: Array<Record<string, unknown>>,
-): string[] {
+export function extractInputsFromExamples(examples?: Example[]): string[] {
   if (!examples) {
     return [];
   }
 
   const extractedInputs: string[] = [];
   for (const example of examples) {
-    const exampleInput = example['input'];
-    if (
-      typeof exampleInput !== 'object' ||
-      exampleInput === null ||
-      Array.isArray(exampleInput)
-    ) {
-      continue;
-    }
-
-    const inputRecord = exampleInput as Record<string, unknown>;
-    const parts = inputRecord['parts'];
-    if (Array.isArray(parts)) {
-      const partTexts: string[] = [];
-      for (const part of parts) {
-        if (typeof part !== 'object' || part === null || Array.isArray(part)) {
-          continue;
-        }
-        const text = (part as Record<string, unknown>)['text'];
-        if (typeof text === 'string') {
-          partTexts.push(text);
-        }
-      }
-      if (partTexts.length > 0) {
-        extractedInputs.push(partTexts.join('\n'));
-      }
-    } else {
-      const text = inputRecord['text'];
-      if (typeof text === 'string') {
-        extractedInputs.push(text);
-      }
+    const partTexts = (example.input.parts ?? [])
+      .map((part) => part.text)
+      .filter((text): text is string => typeof text === 'string');
+    if (partTexts.length > 0) {
+      extractedInputs.push(partTexts.join('\n'));
     }
   }
 
@@ -1322,7 +1295,7 @@ export function extractInputsFromExamples(
  */
 export async function extractExamplesFromAgent(
   agent: BaseNode,
-): Promise<Array<Record<string, unknown>> | undefined> {
+): Promise<Example[] | undefined> {
   if (!isLlmAgent(agent)) {
     return undefined;
   }
@@ -1347,12 +1320,12 @@ export async function extractExamplesFromAgent(
 }
 
 /**
- * Converts static `ExampleTool` examples to `{input, output}` records, skipping
- * dynamic `BaseExampleProvider` instances.
+ * Returns a copy of the static examples of an `ExampleTool`, or `undefined`
+ * when it uses a dynamic `BaseExampleProvider`.
  */
 export function convertExampleToolExamples(
   tool: ExampleTool,
-): Array<Record<string, unknown>> | undefined {
+): Example[] | undefined {
   if (isBaseExampleProvider(tool.examples) || !Array.isArray(tool.examples)) {
     logger.debug(
       'Skipping dynamic ExampleTool provider when building an agent card',
