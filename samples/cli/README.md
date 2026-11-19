@@ -44,24 +44,24 @@ To use the browser UI instead, serve the file with `adk web`:
 node dev/dist/esm/cli_entrypoint.js web samples/cli/agent.ts
 ```
 
-Add `--reload_agents` to pick up edits to `agent.ts` without a server restart. The server loads the changed agent again on the next request:
+Add `--reload-agents` to pick up edits to `agent.ts` without a server restart. The server loads the changed agent again on the next request:
 
 ```bash
-node dev/dist/esm/cli_entrypoint.js web samples/cli/agent.ts --reload_agents
+node dev/dist/esm/cli_entrypoint.js web samples/cli/agent.ts --reload-agents
 ```
 
-Add `--a2a` to also serve the agent over the Agent2Agent (A2A) protocol below `/a2a/agent`, and `--a2a_auth_token` to require a bearer token on those endpoints:
+Add `--a2a` to also serve the agent over the Agent2Agent (A2A) protocol below `/a2a/agent`, and `--a2a-auth-token` to require a bearer token on those endpoints:
 
 ```bash
-node dev/dist/esm/cli_entrypoint.js web samples/cli/agent.ts --a2a --a2a_auth_token <token>
+node dev/dist/esm/cli_entrypoint.js web samples/cli/agent.ts --a2a --a2a-auth-token <token>
 ```
 
-To keep eval sets and eval results in a Google Cloud Storage bucket instead of the agents directory, add `--eval_storage_uri`. The bucket must exist, `GOOGLE_CLOUD_PROJECT` must name its project, and the optional peer `@google-cloud/storage` must be installed:
+To keep eval sets and eval results in a Google Cloud Storage bucket instead of the agents directory, add `--eval-storage-uri`. The bucket must exist, `GOOGLE_CLOUD_PROJECT` must name its project, and the optional peer `@google-cloud/storage` must be installed:
 
 ```bash
 npm install @google-cloud/storage
 export GOOGLE_CLOUD_PROJECT=<your project>
-node dev/dist/esm/cli_entrypoint.js web samples/cli/agent.ts --eval_storage_uri gs://<bucket name>
+node dev/dist/esm/cli_entrypoint.js web samples/cli/agent.ts --eval-storage-uri gs://<bucket name>
 ```
 
 The UI then saves eval sets to `<appName>/evals/eval_sets/` and eval results to `<appName>/evals/eval_history/` in the bucket.

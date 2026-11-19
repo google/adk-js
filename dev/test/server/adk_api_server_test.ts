@@ -465,7 +465,7 @@ describe('AdkWebServer', () => {
 
   describe('DNS-rebinding guard', () => {
     // Regression tests for a missing DNS-rebinding guard: the server bound
-    // to loopback with no --allow_origins configured accepted requests
+    // to loopback with no --allow-origins configured accepted requests
     // naming an arbitrary Host, which a page reached via a rebound hostname
     // would send. Origin cannot catch this -- browsers omit it on requests
     // they consider same-origin, as a rebound page's are -- so the guard

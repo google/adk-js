@@ -14,7 +14,7 @@ import {formatHeaderForLog} from '../utils/log_utils.js';
 const SAFE_HTTP_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 /**
- * Canonicalizes an `--allow_origins` entry to its origin form, so the gate and
+ * Canonicalizes an `--allow-origins` entry to its origin form, so the gate and
  * `cors()` compare it against the browser's `Origin` consistently. A browser
  * sends `http://localhost:4200`, never the `http://localhost:4200/` a user may
  * type, so a raw string comparison silently never matches. The `*` wildcard is
@@ -43,7 +43,7 @@ export function normalizeOrigin(origin: string): string | null {
 }
 
 /**
- * Parses a raw `--allow_origins` value into the origins the gate enforces and
+ * Parses a raw `--allow-origins` value into the origins the gate enforces and
  * the entries dropped as invalid. The value is a comma-separated list because a
  * browser sends one `Origin` per request, so `cors()` never matches the joined
  * string and the DNS-rebinding guard reads only its first host from it. Each

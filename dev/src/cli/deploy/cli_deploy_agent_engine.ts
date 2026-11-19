@@ -90,7 +90,7 @@ interface ResolveDeploymentEnvParams {
   dotenvVars: Record<string, string>;
   /** Variables passed by the caller. They take precedence over `.env`. */
   callerEnv?: DeploymentEnv;
-  /** Whether `--otel_to_cloud` was explicitly passed. */
+  /** Whether `--otel-to-cloud` was explicitly passed. */
   otelToCloud: boolean;
   /** Path of the `.env` file, used in notices. */
   envFilePath: string;
@@ -135,7 +135,7 @@ function resolveDeploymentEnv(
   if (otelToCloud) {
     if (ENABLE_TELEMETRY_ENV_VAR in params.dotenvVars) {
       console.warn(
-        `Ignoring ${ENABLE_TELEMETRY_ENV_VAR} in .env as \`--otel_to_cloud\` was explicitly passed and takes precedence`,
+        `Ignoring ${ENABLE_TELEMETRY_ENV_VAR} in .env as \`--otel-to-cloud\` was explicitly passed and takes precedence`,
       );
     }
     envVars[ENABLE_TELEMETRY_ENV_VAR] = 'true';
@@ -145,7 +145,7 @@ function resolveDeploymentEnv(
   } else if (['true', '1'].includes(envVars[ENABLE_TELEMETRY_ENV_VAR])) {
     otelToCloud = true;
     console.info(
-      `\`--otel_to_cloud\` is set to true by ${ENABLE_TELEMETRY_ENV_VAR} in ${params.envFilePath}`,
+      `\`--otel-to-cloud\` is set to true by ${ENABLE_TELEMETRY_ENV_VAR} in ${params.envFilePath}`,
     );
   }
 
