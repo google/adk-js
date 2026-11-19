@@ -339,13 +339,13 @@ The executors add their own constructor options.
 | `UnsafeLocalCodeExecutor`        | `commandPath`             | The current Node.js binary                   | The JavaScript runtime.                   |
 | `UnsafeLocalCodeExecutor`        | `shellCommandPath`        | `bash`, `powershell` on Windows              | The shell for shell scripts.              |
 | `ContainerCodeExecutor`          | `image`                   | `adk-code-executor:latest` with `dockerPath` | The image tag to run.                     |
-| `ContainerCodeExecutor`          | `dockerPath`              | None                                         | A directory with a Dockerfile to build.   |
+| `ContainerCodeExecutor`          | `dockerPath`              | `undefined`                                  | A directory with a Dockerfile to build.   |
 | `ContainerCodeExecutor`          | `baseUrl`                 | The local Docker socket                      | The Docker daemon to use.                 |
 | `ContainerCodeExecutor`          | `networkEnabled`          | `false`                                      | Gives the container network access.       |
 | `ContainerCodeExecutor`          | `timeoutSeconds`          | `300`                                        | Kills a run after this many seconds.      |
-| `ContainerCodeExecutor`          | `maxContainers`           | None, and the count is unbounded             | The most session containers to keep.      |
-| `AgentEngineSandboxCodeExecutor` | `sandboxResourceName`     | None                                         | An existing sandbox to use.               |
-| `AgentEngineSandboxCodeExecutor` | `agentEngineResourceName` | None, and one is created                     | The Agent Engine that owns new sandboxes. |
+| `ContainerCodeExecutor`          | `maxContainers`           | `undefined`, and the count is unbounded      | The most session containers to keep.      |
+| `AgentEngineSandboxCodeExecutor` | `sandboxResourceName`     | `undefined`                                  | An existing sandbox to use.               |
+| `AgentEngineSandboxCodeExecutor` | `agentEngineResourceName` | `undefined`, and one is created              | The Agent Engine that owns new sandboxes. |
 | `AgentEngineSandboxCodeExecutor` | `projectId`               | `GOOGLE_CLOUD_PROJECT`                       | The Google Cloud project.                 |
 | `AgentEngineSandboxCodeExecutor` | `location`                | `GOOGLE_CLOUD_LOCATION`, then `us-central1`  | The Google Cloud region.                  |
 

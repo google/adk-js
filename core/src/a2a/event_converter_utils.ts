@@ -298,10 +298,11 @@ function taskToAdkEvent(
  * Messages from the user are skipped, so the request that started the task is
  * never read as output of the agent.
  */
-function getLastAgentMessageParts(history: Message[] = []): A2APart[] {
-  for (let index = history.length - 1; index >= 0; index--) {
-    if (history[index].role === MessageRole.AGENT) {
-      return history[index].parts ?? [];
+function getLastAgentMessageParts(history?: Message[] | null): A2APart[] {
+  const messages = history ?? [];
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (messages[index].role === MessageRole.AGENT) {
+      return messages[index].parts ?? [];
     }
   }
 

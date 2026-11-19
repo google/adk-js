@@ -87,7 +87,7 @@ export type AfterA2ARequestCallback = (
 ) => Promise<void> | void;
 
 /**
- * Configuration for the A2ARemoteAgent.
+ * Configuration for the RemoteA2AAgent.
  */
 export interface RemoteA2AAgentConfig extends BaseAgentConfig {
   /**
@@ -294,7 +294,7 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
     try {
       await this.init();
     } catch (e: unknown) {
-      logger.error(`A2ARemoteAgent ${this.name} failed to initialize:`, e);
+      logger.error(`RemoteA2AAgent ${this.name} failed to initialize:`, e);
 
       yield createEvent({
         author: this.name,
@@ -432,7 +432,7 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
         }
       }
     } catch (e: unknown) {
-      logger.error(`A2ARemoteAgent ${this.name} failed:`, e);
+      logger.error(`RemoteA2AAgent ${this.name} failed:`, e);
 
       const errorMessage = `A2A request failed: ${getErrorMessage(e)}`;
       yield createEvent({
@@ -452,6 +452,6 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
   protected runLiveImpl(
     _context: InvocationContext,
   ): AsyncGenerator<AdkEvent, void, void> {
-    throw new Error('Live mode is not supported in A2ARemoteAgent yet.');
+    throw new Error('Live mode is not supported in RemoteA2AAgent yet.');
   }
 }
