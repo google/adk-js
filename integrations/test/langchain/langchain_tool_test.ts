@@ -289,6 +289,46 @@ describe('LangchainTool', () => {
     });
   });
 
+  it('preserves a parameter literally named required', () => {
+    const zodTool = new LangchainTool({
+      name: 'filter_items',
+      description: 'Filters items by required flag',
+      schema: z.object({required: z.boolean()}),
+      invoke: async () => 'ok',
+    });
+
+    expect(zodTool._getDeclaration()).toEqual({
+      name: 'filter_items',
+      description: 'Filters items by required flag',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          required: {type: Type.BOOLEAN},
+        },
+        required: ['required'],
+      },
+    });
+
+    const rawArgsTool = new LangchainTool({
+      name: 'raw_args_tool',
+      description: 'Raw args tool with required parameter',
+      args: {required: {type: 'boolean'}},
+      _run: () => 'ok',
+    });
+
+    expect(rawArgsTool._getDeclaration()).toEqual({
+      name: 'raw_args_tool',
+      description: 'Raw args tool with required parameter',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          required: {type: Type.BOOLEAN},
+        },
+        required: ['required'],
+      },
+    });
+  });
+
   it('parses the input before calling a runner that does not validate', async () => {
     const runSpy = vi.fn((args: Record<string, unknown>) => args['n']);
     const tool = new LangchainTool({

@@ -8,7 +8,13 @@ import {FunctionDeclaration, Schema, Type} from '@google/genai';
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
 
-import {isZodObject, zodObjectToSchema} from '../utils/simple_zod_to_json.js';
+import {
+  getZodDescription,
+  isZodObject,
+  isZodSchema,
+  isZodVoidOrUndefined,
+  zodObjectToSchema,
+} from '../utils/simple_zod_to_json.js';
 
 import {Context} from '../agents/context.js';
 import {BaseTool, RunAsyncToolRequest} from './base_tool.js';
@@ -91,8 +97,11 @@ export type ToolOptions<TParameters extends ToolInputParameters> = {
   name?: string;
   description: string;
   parameters?: TParameters;
-  /** Optional schema describing the tool's return value. */
-  response?: SchemaLike;
+  /**
+   * Optional schema describing the tool's return value. `null`, `z.null()`,
+   * `z.void()`, and `z.undefined()` declare `{type: Type.NULL}`.
+   */
+  response?: SchemaLike | null;
   execute: ToolExecuteFunction<TParameters>;
   isLongRunning?: boolean;
   customMetadata?: Record<string, unknown>;
@@ -139,16 +148,20 @@ function toSchema<TParameters extends ToolInputParameters>(
   return parameters;
 }
 
-function toResponseSchema(response: SchemaLike): Schema {
+function toResponseSchema(response: SchemaLike | null): Schema {
+  if (response === null || isZodVoidOrUndefined(response)) {
+    const description =
+      response === null
+        ? undefined
+        : response.description || getZodDescription(response);
+    return description !== undefined
+      ? {type: Type.NULL, description}
+      : {type: Type.NULL};
+  }
   if (isZodObject(response)) {
     return zodObjectToSchema(response);
   }
-  if (
-    typeof response === 'object' &&
-    response !== null &&
-    'safeParse' in response &&
-    typeof (response as {safeParse?: unknown}).safeParse === 'function'
-  ) {
+  if (isZodSchema(response)) {
     const jsonSchema = toJsonSchema(response);
     // `toGeminiSchema` carries the schema constraints (bounds, lengths,
     // patterns) at every depth, so nothing is restored here afterwards.
@@ -225,7 +238,7 @@ export class FunctionTool<
   // Typed input parameters.
   private readonly parameters?: TParameters;
   // Optional schema describing the tool's return value.
-  private readonly response?: SchemaLike;
+  private readonly response?: SchemaLike | null;
   // Whether the tool requires user confirmation before running.
   private readonly requireConfirmation: RequireConfirmation<TParameters>;
 
@@ -648,28 +661,30 @@ function resolveReturnSchema(
 ): Schema | undefined {
   const funcObj =
     typeof func === 'function' || isPlainRecord(func)
-      ? (func as {response?: SchemaLike | null; returnType?: string | null})
+      ? (func as {response?: unknown; returnType?: unknown})
       : undefined;
-  const responseCandidate =
-    funcObj?.response !== undefined
-      ? funcObj.response
-      : beforeParamSchema['response'];
-  if (responseCandidate === null) {
+  if (funcObj?.response !== undefined && funcObj.response !== null) {
+    return toResponseSchema(funcObj.response as SchemaLike);
+  }
+  const schemaResponse = beforeParamSchema['response'];
+  if (schemaResponse === null) {
     return {type: Type.NULL};
   }
-  if (responseCandidate !== undefined) {
-    return toResponseSchema(responseCandidate as SchemaLike);
+  if (schemaResponse !== undefined) {
+    return toResponseSchema(schemaResponse as SchemaLike);
   }
-  const returnTypeCandidate =
-    funcObj?.returnType !== undefined
-      ? funcObj.returnType
-      : beforeParamSchema['returnType'];
-  if (returnTypeCandidate === null) {
-    return {type: Type.NULL};
-  }
-  if (typeof returnTypeCandidate === 'string') {
+  if (typeof funcObj?.returnType === 'string') {
     return {
-      type: SCHEMA_TYPE_MAP[returnTypeCandidate] ?? Type.TYPE_UNSPECIFIED,
+      type: SCHEMA_TYPE_MAP[funcObj.returnType] ?? Type.TYPE_UNSPECIFIED,
+    };
+  }
+  const schemaReturnType = beforeParamSchema['returnType'];
+  if (schemaReturnType === null) {
+    return {type: Type.NULL};
+  }
+  if (typeof schemaReturnType === 'string') {
+    return {
+      type: SCHEMA_TYPE_MAP[schemaReturnType] ?? Type.TYPE_UNSPECIFIED,
     };
   }
   if (typeof func === 'function') {
@@ -735,7 +750,9 @@ export function buildFunctionDeclarationForLangchain(
   const explicitRequired = Array.isArray(rawCopy['required'])
     ? (rawCopy['required'] as string[])
     : undefined;
-  delete rawCopy['required'];
+  if (Array.isArray(rawCopy['required'])) {
+    delete rawCopy['required'];
+  }
   const wrapped = processParameterSchema(vertexai, {
     properties: rawCopy,
   });

@@ -10,9 +10,9 @@
  *
  * A deterministic `BaseAgent` that instantiates a `CalendarToolset`,
  * narrows exposed operations with `toolFilter`, configures OAuth 2.0 client
- * credentials and service account credentials (`configureSaAuth`) across
- * `GoogleApiTool` instances, and invokes a tool to observe the generated
- * OpenID Connect authorization request.
+ * credentials and service account credentials (`configureServiceAccountAuth`)
+ * across `GoogleApiTool` instances, and invokes a tool to observe the
+ * generated OpenID Connect authorization request.
  *
  * Easy to get wrong: `CalendarToolset` normalizes each Discovery method `id` to
  * `snake_case`, so `calendar.calendars.get` becomes `calendar_calendars_get`.
@@ -127,7 +127,7 @@ async function describeCalendarToolset(
     const saToolset = new CalendarToolset({
       toolFilter: ['calendar_calendars_get'],
     });
-    saToolset.configureSaAuth(serviceAccount);
+    saToolset.configureServiceAccountAuth(serviceAccount);
     const saTools = await saToolset.getTools();
 
     await unfilteredToolset.close();

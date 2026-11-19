@@ -130,6 +130,22 @@ describe('toJsonSchema', () => {
     expect((json.properties as Record<string, unknown>).count).toBeDefined();
   });
 
+  it('converts Zod v4 void and undefined schemas without throwing', () => {
+    expect(toJsonSchema(z4.void())).toEqual(expect.any(Object));
+    expect(toJsonSchema(z4.undefined())).toEqual(expect.any(Object));
+    expect(toJsonSchema(z4.void().optional())).toEqual(expect.any(Object));
+    expect(toJsonSchema(z4.void().nullable())).toMatchObject({
+      anyOf: [{}, {type: 'null'}],
+    });
+    expect(
+      toJsonSchema(z4.object({ok: z4.boolean(), empty: z4.void().optional()})),
+    ).toMatchObject({
+      type: 'object',
+      properties: {ok: {type: 'boolean'}, empty: {}},
+      required: ['ok'],
+    });
+  });
+
   it('converts a Zod v3 schema to a JSON schema', () => {
     const json = toJsonSchema(z3.object({count: z3.number()}));
     expect(json).toMatchObject({type: 'object'});
