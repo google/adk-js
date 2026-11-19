@@ -26,6 +26,7 @@ import {
   makeFastForwardResult,
   reconstructNodeStatesByPath,
   type RehydratedNode,
+  waitingInterrupts,
 } from './utils/rehydration_utils.js';
 
 /**
@@ -120,6 +121,27 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
           makeFastForwardResult(ctx, prior),
         );
       }
+      // An interrupt of this child is still unanswered: it keeps waiting on it
+      // rather than running again and asking a second time, as in the static
+      // twin (`Workflow.startNodeTask`). For a `ParallelWorker`, that keeps an
+      // item waiting while another item's answer arrives.
+      const waitingOn = waitingInterrupts(
+        prior,
+        node.rerunOnResume,
+        ctx.resumeInputs,
+      );
+      if (waitingOn) {
+        return this.keepWaiting(
+          ctx,
+          {nodePath, runId, options},
+          {
+            output: undefined,
+            route: undefined,
+            branch: prior!.branch ?? ctx.branch,
+            interruptIds: waitingOn,
+          },
+        );
+      }
       // Resume with rerunOnResume=false: a child that interrupted last turn
       // (raised interrupts, produced no output) does NOT re-run its body. It
       // completes with the resolved resume value(s) as its output, which
@@ -134,8 +156,9 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
           handoff,
         );
       }
-      // Otherwise (waiting/unresolved): resume inputs were already merged into
-      // ctx.resumeInputs by the Workflow; fall through to a fresh run.
+      // Otherwise (a rerunOnResume child with some or all of its interrupts
+      // answered): resume inputs were already merged into ctx.resumeInputs by
+      // the Workflow; fall through to a fresh run.
     }
 
     return this.runFresh(ctx, node, input, name, runId, nodePath, options);
@@ -164,6 +187,33 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
       output: result.output,
       result,
     });
+    return this.handBack(ctx, result, run.options);
+  }
+
+  /**
+   * Books a dynamic run that keeps waiting on interrupts from a prior turn
+   * WITHOUT executing its body, and returns `result` (which carries those
+   * interrupt ids) for `ctx.runNode()` to report to the caller.
+   */
+  private keepWaiting(
+    ctx: NodeContext,
+    run: {
+      nodePath: string;
+      runId: string;
+      options: ScheduleDynamicNodeOptions;
+    },
+    result: NodeResult,
+  ): NodeResult {
+    this.state.runs.set(run.nodePath, {
+      state: createNodeState({
+        status: NodeStatus.WAITING,
+        runId: run.runId,
+        parentRunId: ctx.runId,
+        interrupts: [...result.interruptIds],
+      }),
+      result,
+    });
+    result.interruptIds.forEach((id) => this.state.interruptIds.add(id));
     return this.handBack(ctx, result, run.options);
   }
 

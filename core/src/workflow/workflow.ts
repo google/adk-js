@@ -34,6 +34,7 @@ import {
   reconstructNodeRuns,
   RehydratedNode,
   resolvedInterruptResponses,
+  waitingInterrupts,
 } from './utils/rehydration_utils.js';
 
 /**
@@ -451,6 +452,30 @@ export class Workflow extends BaseNode {
           name: nodeName,
           childCtx: makeFastForwardResult(ctx, prior),
         }),
+      );
+      return;
+    }
+
+    // Resume with an interrupt of this node still unanswered: the node keeps
+    // waiting on it rather than running again (see `waitingInterrupts`).
+    // Running it would ask the same question a second time, and under a new id
+    // when the id is generated, so the reply to the question the user saw
+    // would no longer resolve it.
+    const waitingOn = waitingInterrupts(
+      prior,
+      node.rerunOnResume,
+      ctx.resumeInputs,
+    );
+    if (waitingOn) {
+      const waiting: NodeResult = {
+        output: undefined,
+        route: undefined,
+        branch: prior!.branch ?? ctx.branch,
+        interruptIds: waitingOn,
+      };
+      loop.pending.set(
+        nodeName,
+        Promise.resolve({name: nodeName, childCtx: waiting}),
       );
       return;
     }
