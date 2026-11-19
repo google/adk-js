@@ -388,7 +388,11 @@ export class VertexAiSessionService extends BaseSessionService {
       const response = await this.sessions.listInternal({
         name: `reasoningEngines/${reasoningEngineId}`,
         config: {
-          ...(userId ? {filter: `user_id=${quoteFilterLiteral(userId)}`} : {}),
+          // Only an omitted userId lists every user. An empty string still
+          // sends a filter so it cannot return other users' sessions.
+          ...(userId !== undefined
+            ? {filter: `user_id=${quoteFilterLiteral(userId)}`}
+            : {}),
           ...(pageToken ? {pageToken} : {}),
         },
       });
