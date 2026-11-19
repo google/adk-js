@@ -26,6 +26,7 @@ import {
 import {Environment, Tool} from '@google/genai';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {adaptComputerUseTool} from '../../../src/tools/computer_use/computer_use_toolset.js';
+import {logger} from '../../../src/utils/logger.js';
 
 const {lookupMock} = vi.hoisted(() => ({lookupMock: vi.fn()}));
 vi.mock('node:dns/promises', () => ({lookup: lookupMock}));
@@ -1026,26 +1027,65 @@ describe('adaptComputerUseTool', () => {
   });
 
   it.each(['screen_size', 'type_text', 'not_a_method'])(
-    'leaves the request alone for %s',
+    'leaves the request alone and logs a warning for %s',
     async (methodName) => {
       const llmRequest = await requestWithTools();
       const before = {...llmRequest.toolsDict};
       const adapter = vi.fn();
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
-      await adaptComputerUseTool({methodName, adapter, llmRequest});
+      try {
+        await adaptComputerUseTool({methodName, adapter, llmRequest});
 
-      expect(adapter).not.toHaveBeenCalled();
-      expect(llmRequest.toolsDict).toEqual(before);
+        expect(adapter).not.toHaveBeenCalled();
+        expect(llmRequest.toolsDict).toEqual(before);
+        expect(warnSpy).toHaveBeenCalledWith(
+          `Action ${methodName} is not a valid predefined computer use action`,
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
     },
   );
 
-  it('leaves the request alone when the tool is not registered', async () => {
+  it.each(['click', 'take_screenshot', 'double_click'])(
+    'supports Gemini 3.x predefined action %s',
+    async (methodName) => {
+      const {toolset} = makeToolset({computer: new PartialComputer()});
+      const llmRequest = makeRequest('gemini-3-pro-preview');
+      await toolset.processLlmRequest(makeContext(), llmRequest);
+      const original = llmRequest.toolsDict[methodName];
+
+      await adaptComputerUseTool({
+        methodName,
+        adapter: (func) => ({
+          name: methodName,
+          description: `Adapted ${methodName}`,
+          execute: (args, toolContext) => func(args, toolContext),
+        }),
+        llmRequest,
+      });
+
+      expect(llmRequest.toolsDict[methodName]).toBeInstanceOf(ComputerUseTool);
+      expect(llmRequest.toolsDict[methodName]).not.toBe(original);
+    },
+  );
+
+  it('leaves the request alone and logs a warning when the tool is not registered', async () => {
     const llmRequest = makeRequest('gemini-2.5-flash');
     const adapter = vi.fn();
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
-    await adaptComputerUseTool({methodName: 'wait', adapter, llmRequest});
+    try {
+      await adaptComputerUseTool({methodName: 'wait', adapter, llmRequest});
 
-    expect(adapter).not.toHaveBeenCalled();
-    expect(llmRequest.toolsDict).toEqual({});
+      expect(adapter).not.toHaveBeenCalled();
+      expect(llmRequest.toolsDict).toEqual({});
+      expect(warnSpy).toHaveBeenCalledWith(
+        'Action wait not found in toolsDict',
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });

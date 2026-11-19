@@ -86,6 +86,11 @@ const MODERN_EXCLUSION_NAMES = new Set<string>([
   ...OPTIONAL_KEY_ACTIONS,
 ]);
 
+const PREDEFINED_ACTION_NAMES = new Set<string>([
+  ...LEGACY_ACTION_NAMES,
+  ...MODERN_EXCLUSION_NAMES,
+]);
+
 const TYPING_ACTIONS = ['type', 'type_text_at', 'type_text'];
 
 /** The tail of the queue of actions running on each computer. */
@@ -266,15 +271,17 @@ export async function adaptComputerUseTool({
   adapter,
   llmRequest,
 }: AdaptComputerUseToolParams): Promise<void> {
-  if (!LEGACY_ACTION_NAMES.includes(methodName)) {
-    logger.warn(`Method ${methodName} is not a valid BaseComputer method`);
+  if (!PREDEFINED_ACTION_NAMES.has(methodName)) {
+    logger.warn(
+      `Action ${methodName} is not a valid predefined computer use action`,
+    );
     return;
   }
   const original = Object.hasOwn(llmRequest.toolsDict, methodName)
     ? llmRequest.toolsDict[methodName]
     : undefined;
   if (!isComputerUseTool(original)) {
-    logger.warn(`Method ${methodName} not found in toolsDict`);
+    logger.warn(`Action ${methodName} not found in toolsDict`);
     return;
   }
 
