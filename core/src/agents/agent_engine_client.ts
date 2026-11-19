@@ -5,7 +5,6 @@
  */
 
 import type {helpers, protos, v1} from '@google-cloud/aiplatform';
-import type {common} from 'protobufjs';
 import {getErrorMessage} from '../utils/error_utils.js';
 import {loadOptionalPeer} from '../utils/optional_peer.js';
 
@@ -27,7 +26,7 @@ export interface AgentEngineConfig {
  * The client sends `userId`, `sessionId` and `expireTime` as `user_id`,
  * `session_id` and `expire_time`, which are the argument names the remote
  * methods read. When both spellings are given, the snake_case value wins.
- * Other keys are sent unchanged.
+ * Other keys, including `appName`, are sent unchanged.
  */
 export interface SessionConfig {
   userId?: string;
@@ -67,6 +66,13 @@ export interface QueryConfig extends SessionConfig {
   runConfig?: Record<string, unknown>;
   /** The same as {@link QueryConfig.runConfig}. When both are given, this wins. */
   run_config?: Record<string, unknown>;
+  /**
+   * State changes to apply to the session for this query. The client renames
+   * only this top-level key to `state_delta` and sends the contents unchanged.
+   */
+  stateDelta?: Record<string, unknown>;
+  /** The same as {@link QueryConfig.stateDelta}. When both are given, this wins. */
+  state_delta?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -109,6 +115,10 @@ interface QueryMethodCall {
 /**
  * Top-level request keys that the remote methods read in snake_case, as
  * `[camelCase, snake_case]` pairs.
+ *
+ * `appName` is intentionally not aliased to `app_name`: Python `AdkApp` binds
+ * `self._app_name` internally (sending `app_name` raises `TypeError`), while
+ * `adk-js` servers accept both `appName` and `app_name`.
  */
 const WIRE_KEY_ALIASES = [
   ['userId', 'user_id'],
@@ -167,17 +177,38 @@ function buildInputStruct(
 /**
  * Unwraps a `google.protobuf.Value` response payload into a plain JS value.
  *
- * `helpers.fromValue` is typed against protobufjs' `common.IValue`, which
- * declares `nullValue` as the literal `0`, while the generated aiplatform
- * protos declare it as the `NullValue` enum. The two shapes are otherwise
- * identical, so the named cast is safe and — unlike `any` — still breaks the
- * build if either side changes.
+ * Unwraps directly by checking `IValue` value fields rather than calling
+ * `helpers.fromValue`, which throws on non-`Struct` `Value`s (such as
+ * `{nullValue: 0}` returned by `async_delete_session` or scalar/list query
+ * responses) and on `structValue`s without `fields`. Returns `undefined` when
+ * an empty `{}` `IValue` has no value field set.
  */
-function parseOutput(
-  sdkHelpers: AiplatformHelpers,
-  output: protos.google.protobuf.IValue,
-): unknown {
-  return sdkHelpers.fromValue(output as common.IValue);
+function parseOutput(output: protos.google.protobuf.IValue): unknown {
+  if (output.structValue != null) {
+    const struct: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(
+      output.structValue.fields ?? {},
+    )) {
+      struct[key] = parseOutput(value);
+    }
+    return struct;
+  }
+  if (output.listValue != null) {
+    return (output.listValue.values ?? []).map((item) => parseOutput(item));
+  }
+  if (output.nullValue != null) {
+    return null;
+  }
+  if (output.boolValue != null) {
+    return output.boolValue;
+  }
+  if (output.numberValue != null) {
+    return output.numberValue;
+  }
+  if (output.stringValue != null) {
+    return output.stringValue;
+  }
+  return undefined;
 }
 
 /** Server-sent event fields that carry no payload. */
@@ -392,7 +423,7 @@ export class AgentEngineClient {
     const sessionId = config.session_id ?? config.sessionId;
     if (!userId || !sessionId) {
       throw new AgentExecutionError(
-        'Failed to get session: user_id and session_id are required',
+        'Failed to get session: userId and sessionId are required',
       );
     }
     return this.callQueryMethod({
@@ -511,9 +542,7 @@ export class AgentEngineClient {
         classMethod: config.classMethod ?? defaultClassMethod,
         input: buildInputStruct(sdkHelpers, toWireInput(config)),
       });
-      return response.output
-        ? parseOutput(sdkHelpers, response.output)
-        : undefined;
+      return response.output ? parseOutput(response.output) : undefined;
     } catch (err: unknown) {
       throw new AgentExecutionError(
         `${errorPrefix}: ${getErrorMessage(err)}`,
