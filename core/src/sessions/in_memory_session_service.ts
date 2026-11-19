@@ -72,6 +72,17 @@ export class InMemorySessionService extends BaseSessionService {
     sessionId,
   }: CreateSessionRequest): Promise<Session> {
     const filteredState = state ? trimTempState(state) : undefined;
+    for (const [key, value] of Object.entries(filteredState ?? {})) {
+      if (key.startsWith(State.APP_PREFIX)) {
+        this.appState[appName] ??= Object.create(null);
+        this.appState[appName][key.slice(State.APP_PREFIX.length)] = value;
+      } else if (key.startsWith(State.USER_PREFIX)) {
+        this.userState[appName] ??= Object.create(null);
+        this.userState[appName][userId] ??= Object.create(null);
+        this.userState[appName][userId][key.slice(State.USER_PREFIX.length)] =
+          value;
+      }
+    }
     const session = createSession({
       // Surrounding whitespace is dropped so that a later lookup by the bare
       // id finds the session, and a blank id gets a generated one.
