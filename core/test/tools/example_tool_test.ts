@@ -111,6 +111,44 @@ describe('ExampleTool', () => {
     expect(llmRequest.config?.systemInstruction).toContain('```tool_code');
   });
 
+  it('serializes object and array function call args in appended few-shot instructions', async () => {
+    const tool = new ExampleTool([
+      {
+        input: {role: 'user', parts: [{text: 'Hotels in Paris under 200?'}]},
+        output: [
+          {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  name: 'search',
+                  args: {
+                    city: 'Paris',
+                    filters: {maxPrice: 200},
+                    ids: [1, 2],
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+    const toolContext = makeToolContext({
+      role: 'user',
+      parts: [{text: 'Hotels in Paris under 200?'}],
+    });
+    const llmRequest = makeLlmRequest('gemini-2.5-flash');
+
+    await tool.processLlmRequest({toolContext, llmRequest});
+
+    const instruction = llmRequest.config?.systemInstruction;
+    expect(instruction).toContain(
+      `search(city='Paris', filters={"maxPrice":200}, ids=[1,2])`,
+    );
+    expect(instruction).not.toContain('[object Object]');
+  });
+
   it('is a no-op when userContent is undefined', async () => {
     const tool = new ExampleTool([SIMPLE_EXAMPLE]);
     const toolContext = makeToolContext(undefined);

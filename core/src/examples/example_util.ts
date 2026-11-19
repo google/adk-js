@@ -77,6 +77,35 @@ const FUNCTION_RESPONSE_PREFIX = '```tool_outputs\n';
 const FUNCTION_RESPONSE_SUFFIX = '\n```\n';
 
 /**
+ * Formats a single function-call argument value for few-shot example text.
+ *
+ * Strings stay single-quoted to match `adk-python`'s function-call style.
+ * Objects and arrays are serialized with `JSON.stringify` so nested structure
+ * is preserved instead of coercing to `[object Object]` or comma-joined text.
+ */
+function formatFunctionCallArg(value: unknown): string {
+  if (typeof value === 'string') {
+    return `'${value}'`;
+  }
+  if (typeof value === 'object' && value !== null) {
+    try {
+      const serialized = JSON.stringify(value);
+      if (serialized !== undefined) {
+        return serialized;
+      }
+    } catch {
+      // Fall back to string conversion for circular or non-JSON-serializable values.
+    }
+    try {
+      return String(value);
+    } catch {
+      return Object.prototype.toString.call(value);
+    }
+  }
+  return String(value);
+}
+
+/**
  * Converts a list of examples to a string that can be used in a system
  * instruction.
  *
@@ -120,11 +149,7 @@ export function convertExamplesToText(
           const args: string[] = [];
           if (functionCall.args) {
             for (const [k, v] of Object.entries(functionCall.args)) {
-              if (typeof v === 'string') {
-                args.push(`${k}='${v}'`);
-              } else {
-                args.push(`${k}=${v}`);
-              }
+              args.push(`${k}=${formatFunctionCallArg(v)}`);
             }
           }
           const functionCallString = `${functionCall.name}(${args.join(', ')})`;
