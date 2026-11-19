@@ -41,6 +41,8 @@ export interface ToolboxToolLike {
 
 /**
  * Options forwarded to a Toolbox client when loading a tool or toolset.
+ *
+ * @deprecated Unused since {@link ToolboxToolsetClientLike} switched to positional arguments matching `@toolbox-sdk/core`; will be removed in a future major release.
  */
 export interface ToolboxLoadOptions {
   /**

@@ -648,7 +648,7 @@ describe('RemoteA2AAgent', () => {
     const context = buildContext({agent, events: [USER_PING]});
 
     await expect(collect(agent.runLive(context))).rejects.toThrow(
-      'Live mode is not supported in A2ARemoteAgent yet.',
+      'Live mode is not supported in RemoteA2AAgent yet.',
     );
   });
 });

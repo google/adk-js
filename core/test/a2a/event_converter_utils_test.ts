@@ -865,6 +865,33 @@ describe('event_converter_utils', () => {
         expect(toAdkEvent(task, 'inv1', 'agent1')).toBeUndefined();
       });
 
+      it('returns undefined when the history of a task is null or undefined', () => {
+        const taskWithUndefinedHistory: Task = {
+          kind: 'task',
+          id: 'task1',
+          contextId: 'context1',
+          status: {state: 'completed'},
+        };
+        // Wire JSON from a remote A2A peer can send `"history": null` even
+        // though the SDK types `history` as `Message[] | undefined`.
+        const taskWithNullHistory: Task = JSON.parse(
+          JSON.stringify({
+            kind: 'task',
+            id: 'task1',
+            contextId: 'context1',
+            status: {state: 'completed'},
+            history: null,
+          }),
+        );
+
+        expect(
+          toAdkEvent(taskWithUndefinedHistory, 'inv1', 'agent1'),
+        ).toBeUndefined();
+        expect(
+          toAdkEvent(taskWithNullHistory, 'inv1', 'agent1'),
+        ).toBeUndefined();
+      });
+
       it.each([
         {
           source: 'a status message',

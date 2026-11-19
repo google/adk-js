@@ -476,7 +476,7 @@ export abstract class BasePlugin {
    * @param _params.toolContext The context specific to the tool execution.
    * @param _params.error The `Error` that was raised during tool resolution or
    *     execution.
-   * @returns An optional dictionary. If a dictionary is returned, it will be
+   * @returns An optional record. If a record is returned, it will be
    *     used as the tool response instead of the default error response.
    *     Returning `undefined` causes `{error: error.message}` to be returned as
    *     the tool response (unlike adk-python, which re-raises). Non-`Error`
