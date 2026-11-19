@@ -63,4 +63,26 @@ describe('pythonJsonLoads and pythonJsonDumps', () => {
     expect(pythonJsonDumps('\u{1F600}\u00e9\u0000')).toBe(escaped);
     expect(roundTrip(escaped)).toBe(escaped);
   });
+
+  it('serializes non-finite numbers as null when allowNan is false', () => {
+    const value = {
+      nan: Number.NaN,
+      inf: Number.POSITIVE_INFINITY,
+      negInf: Number.NEGATIVE_INFINITY,
+      nested: [1, Number.NaN, Number.POSITIVE_INFINITY],
+    };
+    expect(pythonJsonDumps(value)).toBe(
+      '{"nan": NaN, "inf": Infinity, "negInf": -Infinity, "nested": [1, NaN, Infinity]}',
+    );
+    const strict = pythonJsonDumps(value, {allowNan: false});
+    expect(strict).toBe(
+      '{"nan": null, "inf": null, "negInf": null, "nested": [1, null, null]}',
+    );
+    expect(JSON.parse(strict)).toEqual({
+      nan: null,
+      inf: null,
+      negInf: null,
+      nested: [1, null, null],
+    });
+  });
 });

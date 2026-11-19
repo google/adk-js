@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {type AuthConfig, type Context, State} from '@google/adk';
+import {type AuthConfig, type Context, logger, State} from '@google/adk';
 import {
   BIGQUERY_DEFAULT_SCOPE,
   BIGQUERY_SCOPES,
@@ -14,11 +14,17 @@ import {
   BigQueryCredentialsConfig,
   BigQueryOAuthCredentials,
   getBigQueryClient,
+  type GoogleAuthLibraryCredentials,
   type GoogleOAuthCredentials,
   isBigQueryAuthClient,
   isBigQueryCredentialsConfig,
 } from '@google/adk-integrations';
-import {GoogleAuth, JWT, OAuth2Client} from 'google-auth-library';
+import {
+  type Credentials,
+  GoogleAuth,
+  JWT,
+  OAuth2Client,
+} from 'google-auth-library';
 import {describe, expect, it, vi} from 'vitest';
 
 import {GoogleCredentialsManager} from '../../src/bigquery/bigquery_credentials.js';
@@ -274,6 +280,38 @@ describe('BigQueryCredentialsConfig', () => {
           scopes: ['https://www.googleapis.com/auth/bigquery'],
         }),
     ).toThrow(/If credentials are provided/);
+
+    expect(
+      () =>
+        new BigQueryCredentialsConfig({
+          credentials: {access_token: 'tok'},
+          externalAccessTokenKey: 'my_token_key',
+        }),
+    ).toThrow(/If credentials are provided/);
+
+    expect(
+      () =>
+        new BigQueryCredentialsConfig({
+          credentials: {access_token: 'tok'},
+          scopes: ['https://www.googleapis.com/auth/bigquery'],
+        }),
+    ).toThrow(/If credentials are provided/);
+
+    expect(
+      () =>
+        new BigQueryCredentialsConfig({
+          credentials: {access_token: 'tok', refresh_token: 'rt'},
+          clientId: 'cid',
+        }),
+    ).toThrow(/both clientId and clientSecret must be provided/);
+
+    expect(
+      () =>
+        new BigQueryCredentialsConfig({
+          credentials: {access_token: 'tok', refresh_token: 'rt'},
+          clientSecret: 'csec',
+        }),
+    ).toThrow(/both clientId and clientSecret must be provided/);
   });
 });
 
@@ -807,5 +845,175 @@ describe('GoogleCredentialsManager', () => {
     expect(resolved).toBe(jwtClient);
     expect(getAuthResponse).not.toHaveBeenCalled();
     expect(requestCredential).not.toHaveBeenCalled();
+  });
+
+  it('refreshes BigQueryOAuthCredentials with refreshToken even when initial token and expiry are absent', async () => {
+    const creds = new BigQueryOAuthCredentials({
+      refreshToken: 'refresh_only_token',
+      clientId: 'test_client_id',
+      clientSecret: 'test_client_secret',
+    });
+    expect(creds.expired).toBe(false);
+    expect(creds.valid).toBe(false);
+
+    const config = new BigQueryCredentialsConfig({credentials: creds});
+    const manager = new GoogleCredentialsManager(config);
+    const {context, getAuthResponse, requestCredential, state} =
+      createMockToolContext();
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          access_token: 'fresh_access_token',
+          expires_in: 3600,
+        }),
+        {status: 200, headers: {'Content-Type': 'application/json'}},
+      ),
+    );
+
+    const resolved = (await manager.getValidCredentials(context)) as
+      GoogleOAuthCredentials | undefined;
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(resolved).toBe(creds);
+    expect(resolved?.token).toBe('fresh_access_token');
+    expect(resolved?.valid).toBe(true);
+    expect(getAuthResponse).not.toHaveBeenCalled();
+    expect(requestCredential).not.toHaveBeenCalled();
+    expect(state.get(BIGQUERY_TOKEN_CACHE_KEY)).toBeUndefined();
+    fetchSpy.mockRestore();
+  });
+
+  it('accepts and normalizes google-auth-library Credentials objects', async () => {
+    const futureExpiryMs = Date.now() + 3_600_000;
+    const galCreds: Credentials = {
+      access_token: 'gal_access_token',
+      refresh_token: 'gal_refresh_token',
+      expiry_date: futureExpiryMs,
+      scope:
+        'https://www.googleapis.com/auth/bigquery https://www.googleapis.com/auth/cloud-platform',
+    };
+
+    const config = new BigQueryCredentialsConfig({credentials: galCreds});
+    expect(config.scopes).toEqual([
+      'https://www.googleapis.com/auth/bigquery',
+      'https://www.googleapis.com/auth/cloud-platform',
+    ]);
+    const normalized = config.credentials as GoogleOAuthCredentials;
+    expect(normalized.token).toBe('gal_access_token');
+    expect(normalized.refreshToken).toBe('gal_refresh_token');
+    expect(normalized.expiry).toBe(new Date(futureExpiryMs).toISOString());
+    expect(normalized.valid).toBe(true);
+    expect(normalized.expired).toBe(false);
+
+    const manager = new GoogleCredentialsManager(config);
+    const {context, getAuthResponse, requestCredential} =
+      createMockToolContext();
+    const resolved = await manager.getValidCredentials(context);
+    expect(resolved).toBe(normalized);
+    expect(getAuthResponse).not.toHaveBeenCalled();
+    expect(requestCredential).not.toHaveBeenCalled();
+
+    const bqClient = getBigQueryClient({
+      projectId: 'my-project',
+      credentials: galCreds,
+    });
+    expect((bqClient.credentials as GoogleOAuthCredentials).token).toBe(
+      'gal_access_token',
+    );
+  });
+
+  it('refreshes expired google-auth-library Credentials when clientId and clientSecret are provided', async () => {
+    const credentials: Credentials = {
+      access_token: 'old',
+      refresh_token: 'rt',
+      expiry_date: Date.now() - 60_000,
+    };
+    const config = new BigQueryCredentialsConfig({
+      credentials,
+      clientId: 'cid',
+      clientSecret: 'csec',
+    });
+    expect(config.clientId).toBe('cid');
+    expect(config.clientSecret).toBe('csec');
+
+    const manager = new GoogleCredentialsManager(config);
+    const {context, getAuthResponse, requestCredential, state} =
+      createMockToolContext();
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          access_token: 'refreshed_gal_token',
+          expires_in: 3600,
+        }),
+        {status: 200, headers: {'Content-Type': 'application/json'}},
+      ),
+    );
+
+    const resolved = (await manager.getValidCredentials(context)) as
+      GoogleOAuthCredentials | undefined;
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const fetchCall = fetchSpy.mock.calls[0];
+    expect(fetchCall?.[0]).toBe('https://oauth2.googleapis.com/token');
+    expect(String(fetchCall?.[1]?.body)).toContain('client_id=cid');
+    expect(String(fetchCall?.[1]?.body)).toContain('client_secret=csec');
+    expect(String(fetchCall?.[1]?.body)).toContain('refresh_token=rt');
+    expect(resolved?.token).toBe('refreshed_gal_token');
+    expect(resolved?.valid).toBe(true);
+    expect(resolved?.expired).toBe(false);
+    expect(getAuthResponse).not.toHaveBeenCalled();
+    expect(requestCredential).not.toHaveBeenCalled();
+    expect(state.get(BIGQUERY_TOKEN_CACHE_KEY)).toBeUndefined();
+    fetchSpy.mockRestore();
+  });
+
+  it('logs a warning when refreshing expired Credentials without clientId and clientSecret', async () => {
+    const credentials: Credentials = {
+      access_token: 'old',
+      refresh_token: 'rt',
+      expiry_date: Date.now() - 60_000,
+    };
+    const config = new BigQueryCredentialsConfig({credentials});
+    const manager = new GoogleCredentialsManager(config);
+    const {context, requestCredential} = createMockToolContext();
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    const resolved = await manager.getValidCredentials(context);
+
+    expect(resolved).toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledOnce();
+    expect(warnSpy.mock.calls[0]?.[0]).toContain(
+      'Failed to refresh expired BigQuery credentials:',
+    );
+    expect(requestCredential).toHaveBeenCalledOnce();
+    warnSpy.mockRestore();
+  });
+
+  it('keeps google-auth-library Credentials assignable while keeping union branches disjoint', () => {
+    const galCreds: Credentials = {};
+    const bqCreds: BigQueryCredentials = galCreds;
+    expect(bqCreds).toBe(galCreds);
+
+    const galTyped: GoogleAuthLibraryCredentials = {access_token: 'a'};
+    // @ts-expect-error GoogleAuthLibraryCredentials is disjoint from GoogleOAuthCredentials
+    const invalidOAuth: GoogleOAuthCredentials = galTyped;
+    expect(invalidOAuth).toBe(galTyped);
+
+    const oauthTyped: GoogleOAuthCredentials = {token: 't'};
+    // @ts-expect-error GoogleOAuthCredentials is disjoint from GoogleAuthLibraryCredentials
+    const invalidGal: GoogleAuthLibraryCredentials = oauthTyped;
+    expect(invalidGal).toBe(oauthTyped);
+
+    const authClient: BigQueryAuthClient = {
+      getRequestHeaders: async () => ({Authorization: 'Bearer x'}),
+    };
+    // @ts-expect-error BigQueryAuthClient is disjoint from GoogleAuthLibraryCredentials
+    const invalidClientAsGal: GoogleAuthLibraryCredentials = authClient;
+    // @ts-expect-error BigQueryAuthClient is disjoint from GoogleOAuthCredentials
+    const invalidClientAsOAuth: GoogleOAuthCredentials = authClient;
+    expect(invalidClientAsGal).toBe(authClient);
+    expect(invalidClientAsOAuth).toBe(authClient);
   });
 });

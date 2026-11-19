@@ -135,14 +135,130 @@ export interface GoogleOAuthCredentials {
    * Serializes the credentials to a JSON string for the session cache.
    */
   toJson?: () => string;
+
+  /** Disallows `google-auth-library` `Credentials` keys on OAuth credentials. */
+  access_token?: never;
+  refresh_token?: never;
+  expiry_date?: never;
+  token_type?: never;
+  id_token?: never;
+  scope?: never;
+  /** Disallows {@link BigQueryAuthClient} keys on OAuth credentials. */
+  getRequestHeaders?: never;
+  getAccessToken?: never;
 }
 
 /**
- * Credentials accepted by BigQuery tools and client helpers: either an OAuth2
- * credential object ({@link GoogleOAuthCredentials}) or an auth client that
+ * Structural interface matching `google-auth-library`'s `Credentials` token
+ * payload. Disallows {@link GoogleOAuthCredentials} and
+ * {@link BigQueryAuthClient} keys so {@link BigQueryCredentials} union branches
+ * remain mutually disjoint while accepting `google-auth-library`'s `Credentials`.
+ */
+export interface GoogleAuthLibraryCredentials {
+  access_token?: string | null;
+  refresh_token?: string | null;
+  expiry_date?: number | null;
+  token_type?: string | null;
+  id_token?: string | null;
+  scope?: string;
+  token?: never;
+  refreshToken?: never;
+  tokenUri?: never;
+  clientId?: never;
+  clientSecret?: never;
+  scopes?: never;
+  expiry?: never;
+  valid?: never;
+  expired?: never;
+  refresh?: never;
+  toJson?: never;
+  getRequestHeaders?: never;
+  getAccessToken?: never;
+}
+
+/**
+ * Credentials accepted by BigQuery tools and client helpers: an OAuth2
+ * credential object ({@link GoogleOAuthCredentials}), a `google-auth-library`
+ * token payload ({@link GoogleAuthLibraryCredentials}), or an auth client that
  * produces request headers ({@link BigQueryAuthClient}).
  */
-export type BigQueryCredentials = GoogleOAuthCredentials | BigQueryAuthClient;
+export type BigQueryCredentials =
+  GoogleOAuthCredentials | GoogleAuthLibraryCredentials | BigQueryAuthClient;
+
+function isGoogleAuthLibraryCredentials(
+  credentials: unknown,
+): credentials is GoogleAuthLibraryCredentials {
+  if (typeof credentials !== 'object' || credentials === null) {
+    return false;
+  }
+  if (
+    'token' in credentials ||
+    'refreshToken' in credentials ||
+    'valid' in credentials ||
+    'expired' in credentials ||
+    'refresh' in credentials ||
+    'toJson' in credentials
+  ) {
+    return false;
+  }
+  return (
+    'access_token' in credentials ||
+    'refresh_token' in credentials ||
+    'expiry_date' in credentials ||
+    'token_type' in credentials ||
+    'id_token' in credentials ||
+    'scope' in credentials
+  );
+}
+
+/**
+ * Normalizes a {@link BigQueryCredentials} value into either a
+ * {@link BigQueryAuthClient} or a {@link GoogleOAuthCredentials} object.
+ * Existing {@link GoogleOAuthCredentials} and {@link BigQueryAuthClient}
+ * instances are returned as-is; `google-auth-library` `Credentials` objects are
+ * converted into {@link BigQueryOAuthCredentials}.
+ */
+export function normalizeBigQueryCredentials(
+  credentials: BigQueryCredentials,
+  options?: {clientId?: string; clientSecret?: string},
+): GoogleOAuthCredentials | BigQueryAuthClient {
+  if (isBigQueryAuthClient(credentials)) {
+    return credentials;
+  }
+  if (isGoogleAuthLibraryCredentials(credentials)) {
+    const token =
+      typeof credentials.access_token === 'string' &&
+      credentials.access_token.length > 0
+        ? credentials.access_token
+        : undefined;
+    const refreshToken =
+      typeof credentials.refresh_token === 'string' &&
+      credentials.refresh_token.length > 0
+        ? credentials.refresh_token
+        : undefined;
+    const expiresAt =
+      typeof credentials.expiry_date === 'number' &&
+      Number.isFinite(credentials.expiry_date)
+        ? credentials.expiry_date
+        : undefined;
+    const scopes =
+      typeof credentials.scope === 'string' &&
+      credentials.scope.trim().length > 0
+        ? credentials.scope.trim().split(/\s+/)
+        : undefined;
+    return new BigQueryOAuthCredentials({
+      ...(token !== undefined ? {token} : {}),
+      ...(refreshToken !== undefined ? {refreshToken} : {}),
+      ...(expiresAt !== undefined ? {expiresAt} : {}),
+      ...(scopes !== undefined ? {scopes} : {}),
+      ...(options?.clientId !== undefined ? {clientId: options.clientId} : {}),
+      ...(options?.clientSecret !== undefined
+        ? {clientSecret: options.clientSecret}
+        : {}),
+    });
+  }
+  return credentials;
+}
 
 /**
  * Serialized form of OAuth2 credentials stored in the session cache. It uses
@@ -443,8 +559,11 @@ export class BigQueryOAuthCredentials implements GoogleOAuthCredentials {
 export interface BigQueryCredentialsConfigOptions {
   /**
    * Pre-existing Google OAuth2 credentials or `google-auth-library` client.
-   * Mutually exclusive with `externalAccessTokenKey`, `clientId`,
-   * `clientSecret`, and `scopes`.
+   * Mutually exclusive with `externalAccessTokenKey` and `scopes`. Also
+   * mutually exclusive with `clientId` and `clientSecret`, except when
+   * providing a `google-auth-library` {@link GoogleAuthLibraryCredentials}
+   * payload that needs `clientId` and `clientSecret` to refresh expired
+   * tokens.
    */
   credentials?: BigQueryCredentials;
 
@@ -532,7 +651,21 @@ export class BigQueryCredentialsConfig {
     const hasScopes = Boolean(options.scopes?.length);
 
     if (options.credentials !== undefined) {
-      if (
+      if (isGoogleAuthLibraryCredentials(options.credentials)) {
+        if (options.externalAccessTokenKey !== undefined || hasScopes) {
+          throw new Error(
+            'If credentials are provided, externalAccessTokenKey and scopes must not be provided.',
+          );
+        }
+        if (
+          (options.clientId !== undefined) !==
+          (options.clientSecret !== undefined)
+        ) {
+          throw new Error(
+            'When providing clientId or clientSecret alongside google-auth-library Credentials, both clientId and clientSecret must be provided.',
+          );
+        }
+      } else if (
         options.externalAccessTokenKey !== undefined ||
         options.clientId !== undefined ||
         options.clientSecret !== undefined ||
@@ -561,21 +694,28 @@ export class BigQueryCredentialsConfig {
       );
     }
 
-    this.credentials = options.credentials;
+    const normalizedCredentials =
+      options.credentials !== undefined
+        ? normalizeBigQueryCredentials(options.credentials, {
+            clientId: options.clientId,
+            clientSecret: options.clientSecret,
+          })
+        : undefined;
+    this.credentials = normalizedCredentials;
     this.externalAccessTokenKey = options.externalAccessTokenKey;
     this.clientId = options.clientId;
     this.clientSecret = options.clientSecret;
 
-    if (this.credentials) {
-      if (!isBigQueryAuthClient(this.credentials)) {
-        if (this.credentials.clientId !== undefined) {
-          this.clientId = this.credentials.clientId;
+    if (normalizedCredentials) {
+      if (!isBigQueryAuthClient(normalizedCredentials)) {
+        if (normalizedCredentials.clientId !== undefined) {
+          this.clientId = normalizedCredentials.clientId;
         }
-        if (this.credentials.clientSecret !== undefined) {
-          this.clientSecret = this.credentials.clientSecret;
+        if (normalizedCredentials.clientSecret !== undefined) {
+          this.clientSecret = normalizedCredentials.clientSecret;
         }
-        this.scopes = this.credentials.scopes?.length
-          ? [...this.credentials.scopes]
+        this.scopes = normalizedCredentials.scopes?.length
+          ? [...normalizedCredentials.scopes]
           : [...BIGQUERY_SCOPES];
       } else {
         this.scopes = [...BIGQUERY_SCOPES];
@@ -688,17 +828,34 @@ export class GoogleCredentialsManager {
       creds = this.credentialsConfig.credentials;
     }
 
-    if (creds && !fromCache && isBigQueryAuthClient(creds)) {
-      return creds;
+    const normalizedCreds =
+      creds && !fromCache
+        ? normalizeBigQueryCredentials(creds, {
+            clientId: this.credentialsConfig.clientId,
+            clientSecret: this.credentialsConfig.clientSecret,
+          })
+        : creds;
+
+    if (
+      normalizedCreds &&
+      !fromCache &&
+      isBigQueryAuthClient(normalizedCreds)
+    ) {
+      return normalizedCreds;
     }
 
-    const oauthCreds = creds as GoogleOAuthCredentials | undefined;
+    const oauthCreds = normalizedCreds as GoogleOAuthCredentials | undefined;
 
     if (oauthCreds?.valid) {
       return oauthCreds;
     }
 
-    if (oauthCreds?.expired && oauthCreds.refreshToken && oauthCreds.refresh) {
+    if (
+      oauthCreds &&
+      (oauthCreds.expired || !oauthCreds.token) &&
+      oauthCreds.refreshToken &&
+      oauthCreds.refresh
+    ) {
       try {
         await oauthCreds.refresh();
         if (oauthCreds.valid) {
@@ -711,7 +868,7 @@ export class GoogleCredentialsManager {
           return oauthCreds;
         }
       } catch (err: unknown) {
-        logger.debug('Failed to refresh expired BigQuery credentials:', err);
+        logger.warn('Failed to refresh expired BigQuery credentials:', err);
       }
     }
 
