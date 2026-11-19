@@ -1115,10 +1115,123 @@ describe('openApiSchemaToGeminiSchema', () => {
       },
     });
 
-    expect(schema?.minProperties).toBe(1);
-    expect(schema?.maxProperties).toBe(10);
-    expect(schema?.properties?.['firstName']?.minLength).toBe(1);
-    expect(schema?.properties?.['firstName']?.maxLength).toBe(50);
+    expect(schema?.minProperties).toBe('1');
+    expect(schema?.maxProperties).toBe('10');
+    expect(schema?.properties?.['firstName']?.minLength).toBe('1');
+    expect(schema?.properties?.['firstName']?.maxLength).toBe('50');
+  });
+
+  it('stringifies count/length constraints while keeping minimum and maximum numeric', () => {
+    const schema = openApiSchemaToGeminiSchema({
+      type: 'object',
+      minProperties: 1,
+      maxProperties: 5,
+      properties: {
+        tags: {
+          type: 'array',
+          minItems: 2,
+          maxItems: 8,
+          items: {type: 'string', minLength: 3, maxLength: 20},
+        },
+        score: {
+          type: 'number',
+          minimum: 0,
+          maximum: 100,
+        },
+        snake_case_arr: {
+          type: 'array',
+          min_items: 1,
+          max_items: '4',
+          items: {type: 'string'},
+        },
+      },
+    });
+
+    expect(schema?.minProperties).toBe('1');
+    expect(schema?.maxProperties).toBe('5');
+    expect(schema?.properties?.['tags']?.minItems).toBe('2');
+    expect(schema?.properties?.['tags']?.maxItems).toBe('8');
+    expect(schema?.properties?.['tags']?.items?.minLength).toBe('3');
+    expect(schema?.properties?.['tags']?.items?.maxLength).toBe('20');
+    expect(schema?.properties?.['score']?.minimum).toBe(0);
+    expect(schema?.properties?.['score']?.maximum).toBe(100);
+    expect(schema?.properties?.['snake_case_arr']?.minItems).toBe('1');
+    expect(schema?.properties?.['snake_case_arr']?.maxItems).toBe('4');
+  });
+
+  it('does not stringify non-finite numbers in stringified constraint fields', () => {
+    const schema = openApiSchemaToGeminiSchema({
+      type: 'array',
+      minItems: Infinity,
+      maxItems: Number.NaN,
+      items: {type: 'string'},
+    });
+
+    expect(typeof schema?.minItems).not.toBe('string');
+    expect(typeof schema?.maxItems).not.toBe('string');
+  });
+
+  it('marks enum nullable when null is present and omits enum when only nullish entries exist', () => {
+    const schema = openApiSchemaToGeminiSchema({
+      type: 'object',
+      properties: {
+        status: {
+          type: 'string',
+          enum: ['ACTIVE', 'PAUSED', null],
+        },
+        mixed: {
+          type: 'string',
+          enum: ['a', null, 42, undefined, true],
+        },
+        allNull: {
+          type: 'string',
+          enum: [null],
+        },
+        allNullish: {
+          type: 'string',
+          enum: [null, undefined],
+        },
+      },
+    });
+
+    expect(schema?.properties?.['status']).toEqual({
+      type: Type.STRING,
+      enum: ['ACTIVE', 'PAUSED'],
+      nullable: true,
+    });
+    expect(schema?.properties?.['mixed']).toEqual({
+      type: Type.STRING,
+      enum: ['a', '42', 'true'],
+      nullable: true,
+    });
+    expect(schema?.properties?.['allNull']).toEqual({
+      type: Type.STRING,
+      nullable: true,
+    });
+    expect(schema?.properties?.['allNullish']).toEqual({
+      type: Type.STRING,
+      nullable: true,
+    });
+  });
+
+  it('converts items: true to object items and items: false to maxItems: "0"', () => {
+    const schema = openApiSchemaToGeminiSchema({
+      type: 'object',
+      properties: {
+        allowAny: {type: 'array', items: true},
+        allowNone: {type: 'array', items: false},
+      },
+    });
+
+    expect(schema?.properties?.['allowAny']).toEqual({
+      type: Type.ARRAY,
+      items: {type: Type.OBJECT},
+    });
+    expect(schema?.properties?.['allowNone']).toEqual({
+      type: Type.ARRAY,
+      maxItems: '0',
+    });
+    expect(schema?.properties?.['allowNone']).not.toHaveProperty('items');
   });
 
   it('drops format on untyped schemas and keeps it on nullable type arrays', () => {

@@ -54,12 +54,12 @@ export interface ExtendedInteractionSSEEvent extends Omit<
     text?: string;
     name?: string;
     id?: string;
-    arguments?: Record<string, unknown>;
+    arguments?: string | Record<string, unknown>;
     thought_signature?: string;
     signature?: string;
     data?: string;
     uri?: string;
-    mime_type: string;
+    mime_type?: string;
   };
   status?: string;
   error?: {
@@ -208,7 +208,7 @@ export function convertContentToSteps(content: Content): Interactions.Step[] {
               Outcome.OUTCOME_DEADLINE_EXCEEDED;
           steps.push({
             type: 'code_execution_result',
-            call_id: '',
+            call_id: part.codeExecutionResult.id ?? '',
             result: part.codeExecutionResult.output || '',
             is_error: isError,
           } as Interactions.CodeExecutionResultStep);
@@ -245,7 +245,7 @@ export function convertContentToSteps(content: Content): Interactions.Step[] {
         } else if (part.executableCode) {
           steps.push({
             type: 'code_execution_call',
-            id: '',
+            id: part.executableCode.id ?? '',
             arguments: {
               code: part.executableCode.code || '',
               language: 'python',
@@ -540,9 +540,10 @@ export function convertInteractionToLlmResponse(
   if (interaction.status === 'failed') {
     let errorMsg = 'Unknown error';
     let errorCode = 'UNKNOWN_ERROR';
-    if (interaction.error) {
-      errorMsg = interaction.error.message || errorMsg;
-      errorCode = interaction.error.code || errorCode;
+    const firstError = interaction.errors?.[0] ?? interaction.error;
+    if (firstError) {
+      errorMsg = firstError.message || errorMsg;
+      errorCode = firstError.code || errorCode;
     }
     return {
       errorCode: errorCode,
@@ -574,7 +575,7 @@ export function convertInteractionToLlmResponse(
     interaction.status === 'completed' ||
     interaction.status === 'requires_action'
   ) {
-    finishReason = 'STOP' as FinishReason;
+    finishReason = FinishReason.STOP;
   }
 
   return {
@@ -737,7 +738,7 @@ export function convertInteractionEventToLlmResponse(
           : undefined,
       partial: false,
       turnComplete: true,
-      finishReason: 'STOP' as FinishReason,
+      finishReason: FinishReason.STOP,
       interactionId: interactionId,
     };
   } else if (eventType === 'interaction.status_update') {
@@ -751,7 +752,7 @@ export function convertInteractionEventToLlmResponse(
             : undefined,
         partial: false,
         turnComplete: true,
-        finishReason: 'STOP' as FinishReason,
+        finishReason: FinishReason.STOP,
         interactionId: interactionId,
       };
     } else if (status === 'failed') {
@@ -888,16 +889,19 @@ export async function* generateContentViaInteractions(
   const systemInstruction = extractSystemInstruction(llmRequest.config || {});
   const generationConfig = buildGenerationConfig(llmRequest.config || {});
   const previousInteractionId = llmRequest.previousInteractionId;
+  // Interactions.Model enumerates known model literals while BaseLlm.model accepts arbitrary/custom endpoint model strings.
+  const resolvedModel = (llmRequest.model ||
+    'gemini-2.5-flash') as Interactions.Model;
 
   logger.info(
-    `Sending request via interactions API, model: ${llmRequest.model}, stream: ${stream}, previous_interaction_id: ${previousInteractionId}`,
+    `Sending request via interactions API, model: ${resolvedModel}, stream: ${stream}, previousInteractionId: ${previousInteractionId}`,
   );
 
   let currentInteractionId = previousInteractionId;
 
   if (stream) {
     const responses = (await apiClient.interactions.create({
-      model: (llmRequest.model || 'gemini-2.5-flash') as 'gemini-2.5-flash',
+      model: resolvedModel,
       input: inputSteps,
       stream: true,
       system_instruction: systemInstruction,
@@ -928,13 +932,13 @@ export async function* generateContentViaInteractions(
         content: {role: 'model', parts: aggregatedParts},
         partial: false,
         turnComplete: true,
-        finishReason: 'STOP' as FinishReason,
+        finishReason: FinishReason.STOP,
         interactionId: currentInteractionId,
       };
     }
   } else {
     const interaction = (await apiClient.interactions.create({
-      model: (llmRequest.model || 'gemini-2.5-flash') as 'gemini-2.5-flash',
+      model: resolvedModel,
       input: inputSteps,
       stream: false,
       system_instruction: systemInstruction,

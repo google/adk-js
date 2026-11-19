@@ -5,17 +5,31 @@
  */
 
 export class AsyncLocalStorage<T> {
-  private store: T | undefined;
-  run<R>(store: T, callback: () => R): R {
-    const previous = this.store;
-    this.store = store;
+  private currentStore: T | undefined;
+
+  /**
+   * Executes `callback` with `store` active for its synchronous execution.
+   *
+   * Because browsers lack native async context propagation, this fallback
+   * restores the previous store immediately in `finally` when `callback`
+   * returns (before any continuation after `await`) so concurrent async
+   * operations never observe or corrupt each other's store.
+   */
+  run<R, TArgs extends unknown[]>(
+    store: T,
+    callback: (...args: TArgs) => R,
+    ...args: TArgs
+  ): R {
+    const previous = this.currentStore;
+    this.currentStore = store;
     try {
-      return callback();
+      return callback(...args);
     } finally {
-      this.store = previous;
+      this.currentStore = previous;
     }
   }
+
   getStore(): T | undefined {
-    return this.store;
+    return this.currentStore;
   }
 }
