@@ -16,6 +16,8 @@ import {
 } from '@google/adk';
 import type {FunctionDeclaration} from '@google/genai';
 
+import {cloneSchemaRecord} from '../utils/schema_clone.js';
+
 /**
  * Schema formats accepted on a wrapped CrewAI tool.
  */
@@ -76,6 +78,8 @@ export interface CrewaiToolConfig {
 
 const CREWAI_TOOL_SIGNATURE_SYMBOL = Symbol.for('google.adk.crewaiTool');
 
+const GENERIC_RUNNER_NAMES = new Set(['run', 'anonymous']);
+
 /**
  * Type guard to check if an object is an instance of {@link CrewaiTool}.
  */
@@ -97,7 +101,7 @@ function isCrewaiToolConfig(
     'tool' in value &&
     typeof (value as CrewaiToolConfig).tool === 'object' &&
     (value as CrewaiToolConfig).tool !== null &&
-    typeof (value as CrewaiToolConfig).tool.run === 'function'
+    typeof (value as {run?: unknown}).run !== 'function'
   );
 }
 
@@ -112,14 +116,14 @@ function readRawSchema(argsSchema: CrewaiSchemaLike): Record<string, unknown> {
   if (
     typeof (argsSchema as {toJsonSchema?: unknown}).toJsonSchema === 'function'
   ) {
-    return structuredClone(
+    return cloneSchemaRecord(
       (
         argsSchema as {toJsonSchema: () => Record<string, unknown>}
       ).toJsonSchema(),
     );
   }
   if (typeof (argsSchema as {jsonSchema?: unknown}).jsonSchema === 'function') {
-    return structuredClone(
+    return cloneSchemaRecord(
       (argsSchema as {jsonSchema: () => Record<string, unknown>}).jsonSchema(),
     );
   }
@@ -127,16 +131,16 @@ function readRawSchema(argsSchema: CrewaiSchemaLike): Record<string, unknown> {
     typeof (argsSchema as {modelJsonSchema?: unknown}).modelJsonSchema ===
     'function'
   ) {
-    return structuredClone(
+    return cloneSchemaRecord(
       (
         argsSchema as {modelJsonSchema: () => Record<string, unknown>}
       ).modelJsonSchema(),
     );
   }
   if (isZodSchema(argsSchema)) {
-    return structuredClone(toJsonSchema(argsSchema));
+    return cloneSchemaRecord(toJsonSchema(argsSchema));
   }
-  return structuredClone(argsSchema as Record<string, unknown>);
+  return cloneSchemaRecord(argsSchema as Record<string, unknown>);
 }
 
 /**
@@ -235,11 +239,28 @@ export class CrewaiTool extends FunctionTool<ToolInputParameters> {
           description: options?.description,
         };
 
+    if (
+      typeof config.tool !== 'object' ||
+      config.tool === null ||
+      typeof config.tool.run !== 'function'
+    ) {
+      throw new TypeError(
+        'CrewaiTool requires a tool object with a run method.',
+      );
+    }
+
+    const strippedRunName = config.tool.run.name
+      ? config.tool.run.name.replace(/^(?:bound\s+)+/, '')
+      : '';
+    const runFnName =
+      strippedRunName && !GENERIC_RUNNER_NAMES.has(strippedRunName)
+        ? strippedRunName
+        : undefined;
     const resolvedName =
       config.name ||
       (config.tool.name
         ? config.tool.name.replace(/ /g, '_').toLowerCase()
-        : config.tool.run.name || 'crewai_tool');
+        : runFnName || 'crewai_tool');
     const resolvedDescription =
       config.description || config.tool.description || '';
 
