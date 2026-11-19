@@ -283,17 +283,19 @@ describe('AgentEngineClient', () => {
       });
     }
 
-    it('sends session keys in snake_case', async () => {
+    it('sends session keys in snake_case and keeps appName unchanged', async () => {
       await client.createSession({
         userId: 'u1',
         sessionId: 's1',
         expireTime: '2026-12-31T00:00:00Z',
+        appName: 'my-app',
       });
 
       expect(sentInput()).toEqual({
         user_id: 'u1',
         session_id: 's1',
         expire_time: '2026-12-31T00:00:00Z',
+        appName: 'my-app',
       });
     });
 
@@ -358,7 +360,7 @@ describe('AgentEngineClient', () => {
       'getSession rejects a missing $name before any call',
       async ({config}) => {
         await expect(client.getSession(config)).rejects.toThrow(
-          'Failed to get session: user_id and session_id are required',
+          'Failed to get session: userId and sessionId are required',
         );
         expect(mockGrpcClient.queryReasoningEngine).not.toHaveBeenCalled();
       },
@@ -383,6 +385,21 @@ describe('AgentEngineClient', () => {
         client.deleteSession({userId: 'u1', sessionId: 's1'}),
       ).resolves.toBeUndefined();
     });
+
+    it.each([
+      {name: 'nullValue: 0', output: {nullValue: 0}},
+      {name: 'kind: nullValue', output: {kind: 'nullValue', nullValue: 0}},
+      {name: 'empty Value {}', output: {}},
+    ])(
+      'deleteSession resolves to undefined when response output is $name',
+      async ({output}) => {
+        mockGrpcClient.queryReasoningEngine.mockResolvedValue([{output}]);
+
+        await expect(
+          client.deleteSession({userId: 'u1', sessionId: 's1'}),
+        ).resolves.toBeUndefined();
+      },
+    );
 
     it.each([
       {
@@ -529,6 +546,48 @@ describe('AgentEngineClient', () => {
       const res = await client.query({message: 'hello'});
       expect(res).toBeUndefined();
     });
+
+    it.each([
+      {name: 'nullValue', output: {nullValue: 0}, expected: null},
+      {name: 'boolValue false', output: {boolValue: false}, expected: false},
+      {name: 'numberValue 0', output: {numberValue: 0}, expected: 0},
+      {name: 'stringValue', output: {stringValue: 'ok'}, expected: 'ok'},
+      {name: 'empty stringValue', output: {stringValue: ''}, expected: ''},
+      {
+        name: 'listValue',
+        output: {
+          listValue: {
+            values: [
+              {stringValue: 'a'},
+              {numberValue: 2},
+              {boolValue: true},
+              {nullValue: 0},
+              {structValue: {fields: {nested: {stringValue: 'b'}}}},
+            ],
+          },
+        },
+        expected: ['a', 2, true, null, {nested: 'b'}],
+      },
+      {
+        name: 'structValue without fields',
+        output: {structValue: {}},
+        expected: {},
+      },
+      {
+        name: 'structValue without kind',
+        output: {structValue: {fields: {count: {numberValue: 42}}}},
+        expected: {count: 42},
+      },
+      {name: 'empty Value', output: {}, expected: undefined},
+    ])(
+      'unwraps non-struct and plain IValue output ($name)',
+      async ({output, expected}) => {
+        mockGrpcClient.queryReasoningEngine.mockResolvedValue([{output}]);
+
+        const res = await client.query({message: 'hello'});
+        expect(res).toEqual(expected);
+      },
+    );
 
     it('throws AgentExecutionError on failure', async () => {
       mockGrpcClient.queryReasoningEngine.mockRejectedValue(
