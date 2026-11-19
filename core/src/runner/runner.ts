@@ -490,17 +490,18 @@ export class Runner {
         author: 'model',
         content: beforeRunCallbackResponse,
       });
+      // Run the on_event callbacks on the early-exit event too.
       // TODO: b/447446338 - In the future, do *not* save live call
       // audio content to the session.
-      await this.sessionService.appendEvent({
-        session: invocationContext.session,
-        event: earlyExitEvent,
-      });
+      const outputEvent = await this.processAndAppendEvent(
+        invocationContext,
+        earlyExitEvent,
+      );
       if (invocationContext.abortSignal?.aborted) {
         return;
       }
 
-      yield earlyExitEvent;
+      yield outputEvent;
     } else {
       // Step 2: Otherwise continue with normal execution
       let abortSealed = false;
@@ -920,11 +921,14 @@ export class Runner {
         author: 'model',
         content: beforeRunCallbackResponse,
       });
-      await this.sessionService.appendEvent({
-        session: invocationContext.session,
-        event: earlyExitEvent,
-      });
-      yield earlyExitEvent;
+      const outputEvent = await this.processAndAppendEvent(
+        invocationContext,
+        earlyExitEvent,
+      );
+      if (invocationContext.abortSignal?.aborted) {
+        return;
+      }
+      yield outputEvent;
       return;
     }
 
