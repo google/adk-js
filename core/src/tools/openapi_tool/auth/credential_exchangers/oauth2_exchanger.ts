@@ -30,7 +30,7 @@ export function checkSchemeCredentialType(
 ): asserts authCredential is AuthCredential {
   if (!authCredential) {
     throw new Error(
-      'authCredential is empty. Please create AuthCredential using OAuth2Auth.',
+      'authCredential is empty. Please create AuthCredential using OAuth2Auth or HttpAuth.',
     );
   }
 
@@ -39,14 +39,14 @@ export function checkSchemeCredentialType(
     authScheme.type !== AuthSchemeType.OAUTH2
   ) {
     throw new Error(
-      'Invalid security scheme, expect AuthSchemeType.openIdConnect or ' +
-        `AuthSchemeType.oauth2 auth scheme, but got ${authScheme.type}`,
+      'Invalid security scheme, expect AuthSchemeType.OPEN_ID_CONNECT or ' +
+        `AuthSchemeType.OAUTH2 auth scheme, but got ${authScheme.type}`,
     );
   }
 
   if (!authCredential.oauth2 && !authCredential.http) {
     throw new Error(
-      'authCredential is not configured with oauth2. Please create AuthCredential and set OAuth2Auth.',
+      'authCredential is not configured with oauth2 or http. Please create AuthCredential and set OAuth2Auth or HttpAuth.',
     );
   }
 }

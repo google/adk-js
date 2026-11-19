@@ -348,7 +348,7 @@ export function extractResourceName(urlOrPath: string): APIHubResourceNames {
     throw new Error(
       `Location not found in URL or path in APIHubClient. Input path is ` +
         `'${urlOrPath}'. Please make sure there is either ` +
-        `'/location/LOCATION_ID' in the path.`,
+        `'/locations/LOCATION_ID' in the path.`,
     );
   }
 

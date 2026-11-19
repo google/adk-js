@@ -159,12 +159,12 @@ describe('cli/cli_eval', () => {
       });
     });
 
-    it('throws when the config file does not contain a criteria dictionary', () => {
+    it('throws when the config file does not contain a criteria object', () => {
       const configPath = path.join(tempDir, 'bad_config.json');
       fs.writeFileSync(configPath, JSON.stringify({wrong: 123}));
 
       expect(() => getEvaluationCriteriaOrDefault(configPath)).toThrow(
-        /Expected a 'criteria' dictionary/,
+        /Expected a 'criteria' object/,
       );
     });
   });
@@ -292,6 +292,21 @@ describe('cli/cli_eval', () => {
 
       const resetFn = await tryGetResetFunc(tempDir);
       expect(typeof resetFn).toBe('function');
+    });
+
+    it('prefers resetData over reset_data when both are exported', async () => {
+      const agentFile = path.join(tempDir, 'precedence_agent.js');
+      fs.writeFileSync(
+        agentFile,
+        [
+          `export function resetData() { return 'camel-reset'; }`,
+          `export function reset_data() { return 'snake-reset'; }`,
+        ].join('\n'),
+      );
+
+      const resetFn = await tryGetResetFunc(agentFile);
+      expect(typeof resetFn).toBe('function');
+      expect(await resetFn?.()).toBe('camel-reset');
     });
 
     it('throws when module does not export a BaseAgent', async () => {

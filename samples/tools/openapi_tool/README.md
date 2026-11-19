@@ -114,8 +114,9 @@ The name to pass is the one the toolset stored. adk-js derives it from the
 `operationId`, so `getUuid` becomes `get_uuid`. A toolset built with `prefix`
 stores the prefixed name, and that is what `getTool` matches.
 
-**A failing call is a result, not an exception.** A non-2xx response comes back
-as `{error: "Tool <name> execution failed. …"}`, so the model reads the failure
+**An HTTP error response is a result, not an exception.** An HTTP response
+with status `>= 400` comes back as `{error: "Tool <name> execution failed. …"}`
+(while `fetch` transport failures still reject), so the model reads the failure
 and can retry or report it. Say in the instruction what the agent should do
 with it.
 

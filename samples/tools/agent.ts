@@ -10,7 +10,7 @@
  *
  * A deterministic `BaseAgent` that exercises the `tools` subsystem end-to-end:
  * - `FunctionTool` with a `response` schema and bidirectional live streaming via
- *   `_callLive` with an `AsyncQueue` registered on `ctx.activeStreamingTools`
+ *   `_callLive` with a `LiveRequestQueue` registered on `ctx.activeStreamingTools`
  * - `AuthenticatedFunctionTool` and `BaseAuthenticatedTool` resolving
  *   `AuthCredential` values through `CredentialManager`
  * - `LongRunningFunctionTool` with `isLongRunning: true`

@@ -90,7 +90,7 @@ export class State {
   }
 
   /**
-   * Returns the value of the state dict for the given key.
+   * Returns the value of the state record for the given key.
    *
    * Only keys the state holds itself are found. Names inherited from
    * `Object.prototype`, such as `toString`, are treated as missing.
@@ -113,7 +113,7 @@ export class State {
   }
 
   /**
-   * Sets the value of the state dict for the given key.
+   * Sets the value of the state record for the given key.
    *
    * @param key The key to set the value for.
    * @param value The value to set.
@@ -143,7 +143,7 @@ export class State {
   }
 
   /**
-   * Updates the state dict with the given delta.
+   * Updates the state record with the given delta.
    *
    * @param delta The delta to update the state with.
    */

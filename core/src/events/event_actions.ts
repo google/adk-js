@@ -58,7 +58,7 @@ export interface EventActions {
   requestedAuthConfigs: {[key: string]: AuthConfig};
 
   /**
-   * A dict of tool confirmation requested by this event, keyed by the function
+   * A record of tool confirmation requested by this event, keyed by the function
    * call id.
    */
   requestedToolConfirmations: {[key: string]: ToolConfirmation};
@@ -77,11 +77,11 @@ export interface EventActions {
 }
 
 /**
- * Creates an {@link EventActions} object with default empty-dict values for
- * all dictionary fields.
+ * Creates an {@link EventActions} object with default empty-record values for
+ * all record fields.
  *
  * @param state - Optional partial {@link EventActions} whose properties
- *   override the defaults. Dictionary fields (`stateDelta`, `artifactDelta`,
+ *   override the defaults. Record fields (`stateDelta`, `artifactDelta`,
  *   `requestedAuthConfigs`, `requestedToolConfirmations`) default to `{}`;
  *   scalar fields (`skipSummarization`, `transferToAgent`, `escalate`) default
  *   to `undefined`.

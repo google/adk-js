@@ -46,6 +46,9 @@ import {
 
 /**
  * Error message when evaluation dependencies are missing.
+ *
+ * @deprecated Retained for cross-SDK parity; evaluation runs natively in
+ * `@google/adk` without extra dependencies.
  */
 export const MISSING_EVAL_DEPENDENCIES_MESSAGE =
   'Eval module is not installed, please install via `pip install google-adk[eval]`.';
@@ -61,7 +64,7 @@ export const TOOL_TRAJECTORY_SCORE_KEY = 'tool_trajectory_avg_score';
 export const RESPONSE_MATCH_SCORE_KEY = 'response_match_score';
 
 /**
- * Metric key for LLM-based response evaluation score.
+ * Metric key for ROUGE-1 F-measure response evaluation score.
  */
 export const RESPONSE_EVALUATION_SCORE_KEY = 'response_evaluation_score';
 
@@ -251,7 +254,7 @@ export function getEvaluationCriteriaOrDefault(
       return (configData as {criteria: Record<string, number>}).criteria;
     }
     throw new Error(
-      `Invalid format for test_config.json at ${evalConfigFilePath}. Expected a 'criteria' dictionary.`,
+      `Invalid format for test_config.json at ${evalConfigFilePath}. Expected a 'criteria' object.`,
     );
   }
 
@@ -307,7 +310,7 @@ export async function getRootAgent(
 }
 
 /**
- * Attempts to retrieve an optional `reset_data` or `resetData` function from
+ * Attempts to retrieve an optional `resetData` or `reset_data` function from
  * the agent module.
  *
  * @param agentModuleFilePath File or directory path to the agent module.
@@ -326,10 +329,10 @@ export async function tryGetResetFunc(
         : undefined;
 
     const resetCandidate =
-      mod.reset_data ??
       mod.resetData ??
-      nestedAgent?.reset_data ??
-      nestedAgent?.resetData;
+      mod.reset_data ??
+      nestedAgent?.resetData ??
+      nestedAgent?.reset_data;
 
     if (typeof resetCandidate === 'function') {
       return resetCandidate as () => void | Promise<void>;

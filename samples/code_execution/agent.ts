@@ -122,7 +122,7 @@ If you cannot answer the question directly, you should follow the guidelines abo
 If the question can be answered directly with writing any code, you should do that.
 If you doesn't have enough data to answer the question, you should ask for clarification from the user.
 
-You should NEVER install any package on your own like \`pip install ...\`.
+You should NEVER install any package on your own.
 When plotting trends, you should make sure to sort and order the data by the x-axis.
 
 

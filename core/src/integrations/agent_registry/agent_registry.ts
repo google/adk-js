@@ -71,7 +71,7 @@ export class AgentRegistry {
     headerProvider?: (context: ReadonlyContext) => Record<string, string>;
   }) {
     if (!options.projectId || !options.location) {
-      throw new Error('project_id and location must be provided');
+      throw new Error('projectId and location must be provided');
     }
     this.projectId = options.projectId;
     this.location = options.location;
