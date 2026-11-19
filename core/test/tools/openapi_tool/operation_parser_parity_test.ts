@@ -8,9 +8,8 @@
  * Ported from adk-python at ref `v0.1.0`:
  * `tests/unittests/tools/openapi_tool/openapi_spec_parser/test_operation_parser.py`.
  *
- * Each `it(...)` title is the Python test name verbatim, so a reviewer can
- * grep the original. Three of the 25 reference tests are not portable and are
- * listed in the pull request body.
+ * Three of the 25 reference tests are not portable and are listed in the pull
+ * request body.
  *
  * The reference file sits in a nested directory; every adk-js openapi test
  * sits flat in `core/test/tools/openapi_tool/`, so this follows the target's
@@ -64,7 +63,8 @@ const sampleOperation: OpenAPIV3.OperationObject = {
 };
 
 describe('OperationParser parity with adk-python v0.1.0', () => {
-  it('test_operation_parser_initialization', () => {
+  // test_operation_parser_initialization
+  it('parses operation parameters, requestBody properties, and return value on construction', () => {
     const parser = new OperationParser(sampleOperation);
 
     // The reference asserts `parser.operation == sample_operation`. The field
@@ -74,7 +74,8 @@ describe('OperationParser parity with adk-python v0.1.0', () => {
     expect(parser.getReturnValue()).toBeDefined();
   });
 
-  it('test_process_operation_parameters', () => {
+  // test_process_operation_parameters
+  it('parses query and header operation parameters', () => {
     // The reference calls the private `_process_operation_parameters` after
     // constructing with `should_parse=False`. adk-js keeps the method private,
     // so an operation holding only `parameters` drives the same code path.
@@ -92,7 +93,8 @@ describe('OperationParser parity with adk-python v0.1.0', () => {
     expect(params[1].paramLocation).toBe('header');
   });
 
-  it('test_process_request_body', () => {
+  // test_process_request_body
+  it('expands object requestBody properties into body parameters', () => {
     // Ported through the constructor with a requestBody-only operation; the
     // reference calls the private `_process_request_body` directly.
     const operation: OpenAPIV3.OperationObject = {
@@ -109,7 +111,8 @@ describe('OperationParser parity with adk-python v0.1.0', () => {
     expect(params[1].paramLocation).toBe('body');
   });
 
-  it('test_process_request_body_array', () => {
+  // test_process_request_body_array
+  it('parses an array requestBody schema into a single body parameter', () => {
     const operation: OpenAPIV3.OperationObject = {
       requestBody: {
         content: {
@@ -151,7 +154,8 @@ describe('OperationParser parity with adk-python v0.1.0', () => {
     });
   });
 
-  it('test_process_request_body_no_name', () => {
+  // test_process_request_body_no_name
+  it('parses a primitive requestBody schema with an empty originalName', () => {
     const operation: OpenAPIV3.OperationObject = {
       requestBody: {
         content: {'application/json': {schema: {type: 'string'}}},
@@ -166,7 +170,8 @@ describe('OperationParser parity with adk-python v0.1.0', () => {
     expect(params[0].paramLocation).toBe('body');
   });
 
-  it('test_dedupe_param_names', () => {
+  // test_dedupe_param_names
+  it('deduplicates identically named parameters across locations', () => {
     // The reference assigns three duplicate params and calls the private
     // `_dedupe_param_names`. Three identically named query parameters drive
     // the same code path through the constructor.
@@ -189,14 +194,16 @@ describe('OperationParser parity with adk-python v0.1.0', () => {
     expect(params[2].name).toBe('test_2');
   });
 
-  it('test_process_return_value', () => {
+  // test_process_return_value
+  it('parses the 200 response into the return value', () => {
     const parser = new OperationParser(sampleOperation);
 
     expect(parser.getReturnValue()).toBeDefined();
     expect(parser.getReturnTypeHint()).toBe('str');
   });
 
-  it('test_process_return_value_no_2xx', () => {
+  // test_process_return_value_no_2xx
+  it('defaults return type hint to Any when no 2xx response exists', () => {
     const operation: OpenAPIV3.OperationObject = {
       responses: {'400': {description: 'Client Error'}},
     };
@@ -206,7 +213,8 @@ describe('OperationParser parity with adk-python v0.1.0', () => {
     expect(parser.getReturnTypeHint()).toBe('Any');
   });
 
-  it('test_process_return_value_multiple_2xx', () => {
+  // test_process_return_value_multiple_2xx
+  it('selects the smallest 2xx status code when multiple 2xx responses exist', () => {
     const operation: OpenAPIV3.OperationObject = {
       responses: {
         '201': {
@@ -235,7 +243,8 @@ describe('OperationParser parity with adk-python v0.1.0', () => {
     expect(returnValue!.paramSchema.type).toBe('boolean');
   });
 
-  it('test_process_return_value_no_content', () => {
+  // test_process_return_value_no_content
+  it('defaults return type hint to Any when 2xx response has empty content', () => {
     const operation: OpenAPIV3.OperationObject = {
       responses: {'200': {description: 'Success', content: {}}},
     };
@@ -244,7 +253,8 @@ describe('OperationParser parity with adk-python v0.1.0', () => {
     expect(parser.getReturnTypeHint()).toBe('Any');
   });
 
-  it('test_process_return_value_no_schema', () => {
+  // test_process_return_value_no_schema
+  it('defaults return type hint to Any when 2xx media type omits schema', () => {
     const operation: OpenAPIV3.OperationObject = {
       responses: {
         '200': {description: 'Success', content: {'application/json': {}}},
@@ -255,25 +265,29 @@ describe('OperationParser parity with adk-python v0.1.0', () => {
     expect(parser.getReturnTypeHint()).toBe('Any');
   });
 
-  it('test_get_function_name', () => {
+  // test_get_function_name
+  it('returns the snake-cased operationId from getFunctionName', () => {
     const parser = new OperationParser(sampleOperation);
 
     expect(parser.getFunctionName()).toBe('test_operation');
   });
 
-  it('test_get_function_name_missing_id', () => {
+  // test_get_function_name_missing_id
+  it('throws when operationId is missing', () => {
     const parser = new OperationParser({responses: {}});
 
     expect(() => parser.getFunctionName()).toThrow('Operation ID is missing');
   });
 
-  it('test_get_return_type_hint', () => {
+  // test_get_return_type_hint
+  it('returns the Python type hint for the return value', () => {
     const parser = new OperationParser(sampleOperation);
 
     expect(parser.getReturnTypeHint()).toBe('str');
   });
 
-  it('test_get_parameters', () => {
+  // test_get_parameters
+  it('returns all parsed ApiParameter objects', () => {
     const parser = new OperationParser(sampleOperation);
     const params = parser.getParameters();
 
@@ -288,7 +302,8 @@ describe('OperationParser parity with adk-python v0.1.0', () => {
     }
   });
 
-  it('test_get_return_value', () => {
+  // test_get_return_value
+  it('returns the parsed return value ApiParameter', () => {
     const parser = new OperationParser(sampleOperation);
     const returnValue = parser.getReturnValue();
 
@@ -298,19 +313,22 @@ describe('OperationParser parity with adk-python v0.1.0', () => {
     expect(returnValue!.paramSchema).toBeDefined();
   });
 
-  it('test_get_auth_scheme_name', () => {
+  // test_get_auth_scheme_name
+  it('returns the first security scheme name', () => {
     const parser = new OperationParser(sampleOperation);
 
     expect(parser.getAuthSchemeName()).toBe('oauth2');
   });
 
-  it('test_get_auth_scheme_name_no_security', () => {
+  // test_get_auth_scheme_name_no_security
+  it('returns an empty string when no security scheme is configured', () => {
     const parser = new OperationParser({responses: {}});
 
     expect(parser.getAuthSchemeName()).toBe('');
   });
 
-  it('test_get_pydoc_string', () => {
+  // test_get_pydoc_string
+  it('generates a Python-style docstring from summary, parameters, and return value', () => {
     const parser = new OperationParser(sampleOperation);
     const pydocString = parser.getPydocString();
 
@@ -322,7 +340,8 @@ describe('OperationParser parity with adk-python v0.1.0', () => {
     expect(pydocString).toContain('Success');
   });
 
-  it('test_get_json_schema', () => {
+  // test_get_json_schema
+  it('generates a JSON schema for the operation arguments', () => {
     const parser = new OperationParser(sampleOperation);
     const jsonSchema = parser.getJsonSchema();
 
@@ -338,7 +357,8 @@ describe('OperationParser parity with adk-python v0.1.0', () => {
     expect(jsonSchema.required).toEqual([]);
   });
 
-  it('test_load', () => {
+  // test_load
+  it('constructs an OperationParser from pre-parsed parameters and return value', () => {
     const operation: OpenAPIV3.OperationObject = {
       operationId: 'my_op',
       responses: {},
@@ -368,7 +388,8 @@ describe('OperationParser parity with adk-python v0.1.0', () => {
     expect(parser.getFunctionName()).toBe('my_op');
   });
 
-  it('test_operation_parser_with_dict', () => {
+  // test_operation_parser_with_dict
+  it('parses a plain object operation definition', () => {
     const operationDict: Record<string, unknown> = {
       operationId: 'test_dict_operation',
       parameters: [{name: 'dict_param', in: 'query', schema: {type: 'string'}}],
@@ -390,7 +411,8 @@ describe('OperationParser parity with adk-python v0.1.0', () => {
 });
 
 describe('OperationParser requestBody empty object', () => {
-  it('test_process_request_body_empty_object', () => {
+  // test_process_request_body_empty_object
+  it('produces no parameters for an empty object requestBody by default', () => {
     const operation: OpenAPIV3.OperationObject = {
       requestBody: {
         content: {
@@ -408,7 +430,8 @@ describe('OperationParser requestBody empty object', () => {
     expect(params).toHaveLength(0);
   });
 
-  it('test_process_request_body_empty_object_with_unconstrained_compat_option', () => {
+  // test_process_request_body_empty_object_with_unconstrained_compat_option
+  it('exposes an unconstrained object requestBody as a body parameter when compat option is set', () => {
     const operation: OpenAPIV3.OperationObject = {
       requestBody: {
         content: {

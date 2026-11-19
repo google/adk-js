@@ -268,7 +268,7 @@ describe('ContentRequestProcessor', () => {
   });
 
   it.each(['default', 'none'] as const)(
-    'test_anthropic_model_preserves_function_call_ids (%s)',
+    'preserves Anthropic function call IDs (%s)',
     async (includeContents) => {
       const events: Event[] = [
         createEvent({

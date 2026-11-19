@@ -93,7 +93,7 @@ describe('LangGraphAgent', () => {
   ];
 
   it.each(testCases)(
-    'test_langgraph_agent ($name)',
+    'runs LangGraphAgent ($name)',
     async ({hasCheckpointer, rawEvents, expectedMessages}) => {
       const mockGraph: CompiledGraphLike = {
         getGraph: vi.fn(),

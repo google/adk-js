@@ -209,17 +209,20 @@ function createPreparedOpenapiSpec(): OpenAPIV3.Document {
   };
 }
 
-describe('TestGoogleApiToOpenApiConverter', () => {
+// TestGoogleApiToOpenApiConverter
+describe('GoogleApiToOpenApiConverter', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('test_init', () => {
+  // test_init
+  it('initializes with API name and version', () => {
     const converter = new GoogleApiToOpenApiConverter('calendar', 'v3');
     expect(converter).toBeDefined();
   });
 
-  it('test_fetch_google_api_spec', async () => {
+  // test_fetch_google_api_spec
+  it('fetches the Google API discovery spec from the discovery URL', async () => {
     const calendarApiSpec = createCalendarApiSpec();
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
@@ -235,7 +238,8 @@ describe('TestGoogleApiToOpenApiConverter', () => {
     );
   });
 
-  it('test_fetch_google_api_spec_error', async () => {
+  // test_fetch_google_api_spec_error
+  it('throws an HTTP error when fetching the Google API spec fails', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: false,
       status: 404,
@@ -248,7 +252,8 @@ describe('TestGoogleApiToOpenApiConverter', () => {
     );
   });
 
-  it('test_convert_info', () => {
+  // test_convert_info
+  it('converts API metadata into OpenAPI info and externalDocs', () => {
     const calendarApiSpec = createCalendarApiSpec();
     const openapiSpec = createPreparedOpenapiSpec();
     convertInfo(calendarApiSpec, openapiSpec, 'calendar', 'v3');
@@ -263,7 +268,8 @@ describe('TestGoogleApiToOpenApiConverter', () => {
     expect(externalDocs?.url).toBe('https://developers.google.com/calendar/');
   });
 
-  it('test_convert_servers', () => {
+  // test_convert_servers
+  it('converts rootUrl and servicePath into OpenAPI servers', () => {
     const calendarApiSpec = createCalendarApiSpec();
     const openapiSpec = createPreparedOpenapiSpec();
     convertServers(calendarApiSpec, openapiSpec, 'calendar', 'v3');
@@ -274,7 +280,8 @@ describe('TestGoogleApiToOpenApiConverter', () => {
     expect(servers[0].description).toBe('calendar v3 API');
   });
 
-  it('test_convert_security_schemes', () => {
+  // test_convert_security_schemes
+  it('converts OAuth2 scopes and adds apiKey to securitySchemes', () => {
     const calendarApiSpec = createCalendarApiSpec();
     const openapiSpec = createPreparedOpenapiSpec();
     convertSecuritySchemes(calendarApiSpec, openapiSpec);
@@ -298,7 +305,8 @@ describe('TestGoogleApiToOpenApiConverter', () => {
     expect(apiKey.name).toBe('key');
   });
 
-  it('test_convert_schemas', () => {
+  // test_convert_schemas
+  it('converts discovery schemas and nested references into component schemas', () => {
     const calendarApiSpec = createCalendarApiSpec();
     const openapiSpec = createPreparedOpenapiSpec();
     convertSchemas(calendarApiSpec, openapiSpec);
@@ -333,7 +341,8 @@ describe('TestGoogleApiToOpenApiConverter', () => {
     expect(responseStatus.enum).toContain('accepted');
   });
 
-  it('test_convert_schema_object', () => {
+  // test_convert_schema_object
+  it('converts object, array, ref, and enum schema definitions', () => {
     const cases: Array<{
       schemaDef: GoogleApiSchema;
       expectedType: string | undefined;
@@ -386,7 +395,8 @@ describe('TestGoogleApiToOpenApiConverter', () => {
     }
   });
 
-  it('test_extract_path_parameters', () => {
+  // test_extract_path_parameters
+  it('extracts path parameter names from URL templates', () => {
     const cases: Array<{path: string; expectedParams: string[]}> = [
       {
         path: '/calendars/{calendarId}/events/{eventId}',
@@ -409,7 +419,8 @@ describe('TestGoogleApiToOpenApiConverter', () => {
     }
   });
 
-  it('test_convert_parameter_schema', () => {
+  // test_convert_parameter_schema
+  it('converts parameter pattern, integer format, and enum attributes', () => {
     const cases: Array<{
       paramData: GoogleApiParameter;
       expectedResult: Record<string, unknown>;
@@ -443,7 +454,8 @@ describe('TestGoogleApiToOpenApiConverter', () => {
     }
   });
 
-  it('test_convert', async () => {
+  // test_convert
+  it('fetches and converts a discovery spec into a complete OpenAPI document', async () => {
     const calendarApiSpec = createCalendarApiSpec();
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
@@ -487,7 +499,8 @@ describe('TestGoogleApiToOpenApiConverter', () => {
     expect(responseSchema.$ref).toBe('#/components/schemas/Calendar');
   });
 
-  it('test_convert_methods', () => {
+  // test_convert_methods
+  it('converts resource methods into OpenAPI paths, parameters, and bodies', () => {
     const calendarApiSpec = createCalendarApiSpec();
     const openapiSpec = createPreparedOpenapiSpec();
     const methods = calendarApiSpec.resources?.['calendars']?.methods ?? {};
@@ -519,7 +532,8 @@ describe('TestGoogleApiToOpenApiConverter', () => {
     expect(responseRef.$ref).toBe('#/components/schemas/Calendar');
   });
 
-  it('test_convert_resources', () => {
+  // test_convert_resources
+  it('recursively converts nested resources into OpenAPI path operations', () => {
     const calendarApiSpec = createCalendarApiSpec();
     const openapiSpec = createPreparedOpenapiSpec();
     convertResources(calendarApiSpec.resources ?? {}, openapiSpec);
@@ -539,7 +553,8 @@ describe('TestGoogleApiToOpenApiConverter', () => {
     expect(paramNames).toContain('orderBy');
   });
 
-  it('test_integration_calendar_api', async () => {
+  // test_integration_calendar_api
+  it('converts the full Calendar API discovery spec end-to-end', async () => {
     const calendarApiSpec = createCalendarApiSpec();
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
