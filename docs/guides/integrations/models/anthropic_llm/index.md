@@ -192,11 +192,11 @@ export const rootAgent = new LlmAgent({
   - `redacted_thinking` blocks convert to `Part` objects with `{thought: true, thoughtSignature: block.data}` (with `text` omitted).
   - Empty or whitespace-only `text` blocks in the Anthropic response are skipped when building `LlmResponse.content.parts`.
 - **Request conversion and round-tripping**:
-  - `Part` objects with `thought: true` and non-empty `text` convert back to `{type: 'thinking', thinking: part.text, signature: part.thoughtSignature ?? ''}`.
+  - `Part` objects with `thought: true` and non-empty `text` (or `text: ''` with a non-empty `thoughtSignature`) convert back to `{type: 'thinking', thinking: part.text, signature: part.thoughtSignature ?? ''}`.
   - `Part` objects with `thought: true`, no `text`, and a non-empty `thoughtSignature` convert back to `{type: 'redacted_thinking', data: part.thoughtSignature}`.
-  - Bare `{thought: true}` parts with neither non-empty `text` nor a non-empty `thoughtSignature` throw an error.
+  - `{thought: true}` parts without non-empty `text` and without a non-empty `thoughtSignature` throw an error when passed directly to `partToMessageBlock`.
   - Content-free `thoughtSignature` parts (for example, trailing signature parts produced by another model in a shared session) are dropped with a warning. When a `thoughtSignature` is attached alongside real content (`text`, `functionCall`, or `functionResponse`), the content block is kept and `thoughtSignature` is ignored.
-  - Empty text parts (`text: ''` with no other payload) are skipped. If skipping empty text parts leaves a `user` turn with no content blocks, a single `{type: 'text', text: '.'}` placeholder block is emitted so user/assistant alternation stays intact. Any turn whose parts are all dropped is omitted from `messages`.
+  - Empty text parts (`text: ''` with no `thoughtSignature` or other payload, including unsigned `{thought: true, text: ''}`) are skipped. If skipping empty text parts leaves a `user` turn with no content blocks, a single `{type: 'text', text: '.'}` placeholder block is emitted so user/assistant alternation stays intact. Any turn whose parts are all dropped is omitted from `messages`.
 
 ### Thinking token usage
 
@@ -212,11 +212,11 @@ When `thinking_tokens` is `null` or `undefined`, `thoughtsTokenCount` is omitted
 
 `AnthropicLlm` and `Claude` convert these `Part` kinds in `LlmRequest.contents` in addition to text, function calls and thinking:
 
-| `Part`                                    | Anthropic content block                                                     |
-| :---------------------------------------- | :-------------------------------------------------------------------------- |
-| `inlineData` with an `image/*` `mimeType` | `{type: 'image', source: {type: 'base64', media_type, data}}`               |
-| `executableCode`                          | A `text` block: `Code:` and the code in a `python` fence                    |
-| `codeExecutionResult`                     | A `text` block: `Execution Result:` and the output in a `code_output` fence |
+| `Part`                                    | Anthropic content block                                                                |
+| :---------------------------------------- | :------------------------------------------------------------------------------------- |
+| `inlineData` with an `image/*` `mimeType` | `{type: 'image', source: {type: 'base64', media_type, data}}`                          |
+| `executableCode`                          | A `text` block: `Code:` and the code in a language-tagged fence (defaults to `python`) |
+| `codeExecutionResult`                     | A `text` block: `Execution Result:` and the output in a `code_output` fence            |
 
 - **Image types**: `media_type` is the `mimeType` without parameters, in lower case. It must be `image/jpeg`, `image/png`, `image/gif` or `image/webp`. A different image type throws `Unsupported Anthropic image MIME type: <mimeType>`.
 - **Image data**: `inlineData.data` is a base64 string and is sent unchanged. An image part without `data` throws an error.
