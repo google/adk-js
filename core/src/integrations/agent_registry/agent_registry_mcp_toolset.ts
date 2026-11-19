@@ -8,8 +8,10 @@ import type {ListToolsResult} from '@modelcontextprotocol/sdk/types.js';
 import {ReadonlyContext} from '../../agents/readonly_context.js';
 import {AuthCredential} from '../../auth/auth_credential.js';
 import {AuthScheme} from '../../auth/auth_schemes.js';
+import {AuthConfig} from '../../auth/auth_tool.js';
 import {BaseTool} from '../../tools/base_tool.js';
 import {BaseToolset, ToolPredicate} from '../../tools/base_toolset.js';
+import {resolveAuthConfig} from '../../tools/mcp/mcp_auth_utils.js';
 import {
   MCPSessionManager,
   StreamableHTTPConnectionParams,
@@ -36,6 +38,7 @@ export class AgentRegistrySingleMCPToolset extends BaseToolset {
   ) => Promise<Record<string, string>> | Record<string, string>;
   readonly authScheme?: AuthScheme;
   readonly authCredential?: AuthCredential;
+  private readonly authConfig?: AuthConfig;
 
   /**
    * @param options - Configuration for the MCP toolset.
@@ -47,8 +50,13 @@ export class AgentRegistrySingleMCPToolset extends BaseToolset {
    * @param options.prefix - Optional prefix prepended to each tool name (e.g. `myServer_toolName`).
    * @param options.headerProvider - Optional async function called immediately before each
    *   {@link getTools} invocation to supply or refresh request headers (e.g. GCP auth tokens).
+   * @param options.authConfig - Optional authentication configuration forwarded to each
+   *   resolved {@link MCPTool}. Give either this or `authScheme`, not both.
    * @param options.authScheme - Optional auth scheme forwarded to each resolved tool.
    * @param options.authCredential - Optional credential forwarded to each resolved tool.
+   *   Requires `authScheme`.
+   * @param options.credentialKey - Optional credential service key used with `authScheme`.
+   *   Defaults to a key derived from `authScheme` and `authCredential`.
    */
   constructor(options: {
     destinationResourceId?: string;
@@ -58,15 +66,21 @@ export class AgentRegistrySingleMCPToolset extends BaseToolset {
     headerProvider?: (
       context?: ReadonlyContext,
     ) => Promise<Record<string, string>> | Record<string, string>;
+    authConfig?: AuthConfig;
     authScheme?: AuthScheme;
     authCredential?: AuthCredential;
+    credentialKey?: string;
   }) {
     super(options.toolFilter || [], options.prefix);
     this.destinationResourceId = options.destinationResourceId;
     this.connectionParams = options.connectionParams;
     this.headerProvider = options.headerProvider;
-    this.authScheme = options.authScheme;
-    this.authCredential = options.authCredential;
+    this.authConfig = resolveAuthConfig(
+      options,
+      'AgentRegistrySingleMCPToolset',
+    );
+    this.authScheme = this.authConfig?.authScheme;
+    this.authCredential = this.authConfig?.rawAuthCredential;
   }
 
   /**
@@ -122,11 +136,12 @@ export class AgentRegistrySingleMCPToolset extends BaseToolset {
       const prefixedName = this.prefix
         ? `${this.prefix}_${tool.name}`
         : tool.name;
-      const mcpTool = new MCPTool(
-        {...tool, name: prefixedName},
-        sessionManager,
-        tool.name,
-      );
+      const mcpTool = new MCPTool({
+        mcpTool: {...tool, name: prefixedName},
+        mcpSessionManager: sessionManager,
+        originalName: tool.name,
+        authConfig: this.authConfig,
+      });
 
       // Inject gcp.mcp.server.destination.id telemetry key for tracing tools execution
       const toolWithMetadata = mcpTool as unknown as {

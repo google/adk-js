@@ -7,7 +7,17 @@
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {
   AgentRegistrySingleMCPToolset,
+  AuthConfig,
+  AuthCredential,
+  AuthCredentialTypes,
+  AuthScheme,
+  Context,
+  createSession,
   GCP_MCP_SERVER_DESTINATION_ID,
+  GcpAuthProviderScheme,
+  InMemoryCredentialService,
+  InvocationContext,
+  isBaseAuthenticatedTool,
 } from '../../src/index.js';
 import {StreamableHTTPConnectionParams} from '../../src/tools/mcp/mcp_session_manager.js';
 import {logger} from '../../src/utils/logger.js';
@@ -19,6 +29,7 @@ const mockListTools = vi.fn().mockResolvedValue({
   ],
 });
 
+const mockCallTool = vi.fn().mockResolvedValue({content: []});
 const mockConnect = vi.fn().mockResolvedValue(undefined);
 const mockClose = vi.fn().mockResolvedValue(undefined);
 
@@ -28,6 +39,7 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
       connect: mockConnect,
       close: mockClose,
       listTools: mockListTools,
+      callTool: mockCallTool,
     };
   }),
 }));
@@ -52,6 +64,7 @@ describe('AgentRegistrySingleMCPToolset', () => {
         {name: 'fetch', description: 'Fetch a URL', inputSchema: {}},
       ],
     });
+    mockCallTool.mockResolvedValue({content: []});
   });
 
   describe('getTools — tool name prefixing', () => {
@@ -235,6 +248,244 @@ describe('AgentRegistrySingleMCPToolset', () => {
         expect.objectContaining({message: 'close failed'}),
       );
       warnSpy.mockRestore();
+    });
+  });
+
+  describe('getTools auth forwarding', () => {
+    function createToolContext(credentialService?: InMemoryCredentialService) {
+      const session = createSession({
+        id: 'sess-1',
+        appName: 'app-1',
+        userId: 'user-1',
+      });
+      const invocationContext = {
+        abortSignal: new AbortController().signal,
+        session,
+        credentialService,
+      } as unknown as InvocationContext;
+      return new Context({invocationContext, functionCallId: 'fc-1'});
+    }
+
+    it('forwards authScheme and authCredential to each MCPTool and sends bearer header on tool calls', async () => {
+      const Transport = (
+        await import('@modelcontextprotocol/sdk/client/streamableHttp.js')
+      ).StreamableHTTPClientTransport as unknown as ReturnType<typeof vi.fn>;
+
+      const authScheme: AuthScheme = {type: 'http', scheme: 'bearer'};
+      const authCredential: AuthCredential = {
+        authType: AuthCredentialTypes.HTTP,
+        http: {scheme: 'bearer', credentials: {token: 'demo-bearer-token'}},
+      };
+      const toolset = new AgentRegistrySingleMCPToolset({
+        connectionParams: BASE_PARAMS,
+        authScheme,
+        authCredential,
+      });
+
+      const tools = await toolset.getTools();
+      expect(tools).toHaveLength(2);
+      expect(
+        Transport.mock.calls.at(-1)?.[1]?.requestInit?.headers,
+      ).not.toHaveProperty('Authorization');
+
+      for (const tool of tools) {
+        expect(isBaseAuthenticatedTool(tool)).toBe(true);
+        const forwarded = (tool as unknown as {authConfig?: AuthConfig})
+          .authConfig;
+        expect(forwarded).toBeDefined();
+        expect(forwarded?.authScheme).toEqual(authScheme);
+        expect(forwarded?.rawAuthCredential).toEqual(authCredential);
+        expect(forwarded?.credentialKey).toBeTruthy();
+      }
+
+      await tools[0].runAsync({
+        args: {q: 'hello'},
+        toolContext: createToolContext(),
+      });
+
+      expect(
+        Transport.mock.calls.at(-1)?.[1]?.requestInit?.headers,
+      ).toMatchObject({Authorization: 'Bearer demo-bearer-token'});
+      expect(mockCallTool).toHaveBeenCalledWith(
+        {name: 'search', arguments: {q: 'hello'}},
+        undefined,
+        expect.anything(),
+      );
+    });
+
+    it('forwards API key auth and overlays it over headerProvider headers', async () => {
+      const Transport = (
+        await import('@modelcontextprotocol/sdk/client/streamableHttp.js')
+      ).StreamableHTTPClientTransport as unknown as ReturnType<typeof vi.fn>;
+
+      const toolset = new AgentRegistrySingleMCPToolset({
+        connectionParams: BASE_PARAMS,
+        headerProvider: async () => ({
+          'X-Trace': 'trace-1',
+          'x-api-key': 'stale-key',
+        }),
+        authScheme: {type: 'apiKey', in: 'header', name: 'X-API-Key'},
+        authCredential: {
+          authType: AuthCredentialTypes.API_KEY,
+          apiKey: 'demo-api-key',
+        },
+        credentialKey: 'custom-api-key',
+      });
+
+      const [tool] = await toolset.getTools();
+      const forwarded = (tool as unknown as {authConfig?: AuthConfig})
+        .authConfig;
+      expect(forwarded?.credentialKey).toBe('custom-api-key');
+
+      await tool.runAsync({
+        args: {},
+        toolContext: createToolContext(),
+      });
+
+      const callHeaders =
+        Transport.mock.calls.at(-1)?.[1]?.requestInit?.headers;
+      expect(callHeaders).toMatchObject({
+        'X-Trace': 'trace-1',
+        'X-API-Key': 'demo-api-key',
+      });
+      expect(callHeaders).not.toHaveProperty('x-api-key');
+    });
+
+    it('forwards explicit authConfig and exposes authScheme and authCredential on the toolset', async () => {
+      const authConfig: AuthConfig = {
+        authScheme: {type: 'apiKey', in: 'header', name: 'X-Api-Token'},
+        rawAuthCredential: {
+          authType: AuthCredentialTypes.API_KEY,
+          apiKey: 'demo-token',
+        },
+        credentialKey: 'explicit-config-key',
+      };
+      const toolset = new AgentRegistrySingleMCPToolset({
+        connectionParams: BASE_PARAMS,
+        authConfig,
+      });
+
+      expect(toolset.authScheme).toEqual(authConfig.authScheme);
+      expect(toolset.authCredential).toEqual(authConfig.rawAuthCredential);
+
+      const [tool] = await toolset.getTools();
+      expect((tool as unknown as {authConfig?: AuthConfig}).authConfig).toEqual(
+        authConfig,
+      );
+    });
+
+    it('forwards gcpAuthProviderScheme so tools request or load credentials via CredentialManager', async () => {
+      const Transport = (
+        await import('@modelcontextprotocol/sdk/client/streamableHttp.js')
+      ).StreamableHTTPClientTransport as unknown as ReturnType<typeof vi.fn>;
+
+      const gcpScheme = {
+        type: 'gcpAuthProviderScheme',
+        name: 'projects/p/locations/l/authProviders/ap-1',
+        continueUri: 'https://app.example.com/continue',
+      } as GcpAuthProviderScheme as unknown as AuthScheme;
+
+      const toolset = new AgentRegistrySingleMCPToolset({
+        connectionParams: BASE_PARAMS,
+        authScheme: gcpScheme,
+      });
+
+      const [tool] = await toolset.getTools();
+      const forwarded = (tool as unknown as {authConfig?: AuthConfig})
+        .authConfig;
+      expect(forwarded?.authScheme).toEqual(gcpScheme);
+
+      const credentialService = new InMemoryCredentialService();
+      const firstContext = createToolContext(credentialService);
+      const pendingResult = await tool.runAsync({
+        args: {},
+        toolContext: firstContext,
+      });
+      expect(pendingResult).toBe('Pending User Authorization.');
+      expect(firstContext.actions.requestedAuthConfigs['fc-1']).toEqual(
+        forwarded,
+      );
+      expect(mockCallTool).not.toHaveBeenCalled();
+
+      await credentialService.saveCredential(
+        {
+          ...forwarded!,
+          exchangedAuthCredential: {
+            authType: AuthCredentialTypes.OAUTH2,
+            oauth2: {accessToken: 'demo-provider-token'},
+          },
+        },
+        firstContext,
+      );
+
+      await tool.runAsync({
+        args: {q: 'billing'},
+        toolContext: createToolContext(credentialService),
+      });
+
+      expect(
+        Transport.mock.calls.at(-1)?.[1]?.requestInit?.headers,
+      ).toMatchObject({Authorization: 'Bearer demo-provider-token'});
+      expect(mockCallTool).toHaveBeenCalledOnce();
+    });
+
+    it('leaves tool authConfig undefined when no auth options are configured', async () => {
+      const toolset = new AgentRegistrySingleMCPToolset({
+        connectionParams: BASE_PARAMS,
+      });
+
+      const [tool] = await toolset.getTools();
+      expect(
+        (tool as unknown as {authConfig?: AuthConfig}).authConfig,
+      ).toBeUndefined();
+
+      await tool.runAsync({
+        args: {},
+        toolContext: createToolContext(),
+      });
+      expect(mockCallTool).toHaveBeenCalledOnce();
+    });
+
+    it('rejects authConfig given together with authScheme', () => {
+      const authScheme: AuthScheme = {type: 'http', scheme: 'bearer'};
+      expect(
+        () =>
+          new AgentRegistrySingleMCPToolset({
+            connectionParams: BASE_PARAMS,
+            authConfig: {
+              authScheme,
+              credentialKey: 'k1',
+            },
+            authScheme,
+          }),
+      ).toThrow(
+        'AgentRegistrySingleMCPToolset takes either authConfig or authScheme, authCredential and credentialKey, not both.',
+      );
+    });
+
+    it('rejects authCredential or credentialKey without authScheme', () => {
+      expect(
+        () =>
+          new AgentRegistrySingleMCPToolset({
+            connectionParams: BASE_PARAMS,
+            authCredential: {
+              authType: AuthCredentialTypes.API_KEY,
+              apiKey: 'demo-api-key',
+            },
+          }),
+      ).toThrow(
+        'AgentRegistrySingleMCPToolset needs an authScheme when authCredential or credentialKey is set.',
+      );
+
+      expect(
+        () =>
+          new AgentRegistrySingleMCPToolset({
+            connectionParams: BASE_PARAMS,
+            credentialKey: 'only-key',
+          }),
+      ).toThrow(
+        'AgentRegistrySingleMCPToolset needs an authScheme when authCredential or credentialKey is set.',
+      );
     });
   });
 
