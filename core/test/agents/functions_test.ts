@@ -2878,7 +2878,7 @@ describe('async tool callbacks on LlmAgent', () => {
     });
   }
 
-  it('test_async_before_tool_callback', async () => {
+  it('returns short-circuited response from async beforeToolCallback', async () => {
     const mockResp = {test: 'before_tool_callback'};
     const resultEvent = await invokeToolWithCallbacks({
       beforeToolCallback: async () => mockResp,
@@ -2890,7 +2890,7 @@ describe('async tool callbacks on LlmAgent', () => {
     ).toEqual(mockResp);
   });
 
-  it('test_async_after_tool_callback', async () => {
+  it('returns overridden response from async afterToolCallback', async () => {
     const mockResp = {test: 'after_tool_callback'};
     const resultEvent = await invokeToolWithCallbacks({
       afterToolCallback: async () => mockResp,

@@ -1750,7 +1750,7 @@ describe('Runner artifact saving (`saveInputBlobsAsArtifacts`)', () => {
     });
   });
 
-  it('testSaveArtifacts_modelAccessibleUri_attachesFileData', async () => {
+  it('attaches fileData when the saved artifact has a model-accessible URI', async () => {
     const session = await sessionService.createSession({
       appName: TEST_APP_ID,
       userId: TEST_USER_ID,
@@ -1805,7 +1805,7 @@ describe('Runner artifact saving (`saveInputBlobsAsArtifacts`)', () => {
     ]);
   });
 
-  it('testSaveArtifacts_nonAccessibleUri_onlyAttachesPlaceholder', async () => {
+  it('attaches only the text placeholder when the artifact URI is not model-accessible', async () => {
     const session = await sessionService.createSession({
       appName: TEST_APP_ID,
       userId: TEST_USER_ID,
@@ -1852,7 +1852,7 @@ describe('Runner artifact saving (`saveInputBlobsAsArtifacts`)', () => {
     ]);
   });
 
-  it('testSaveArtifacts_immutability_doesNotMutateInput', async () => {
+  it('does not mutate the input message when saving input blobs as artifacts', async () => {
     const session = await sessionService.createSession({
       appName: TEST_APP_ID,
       userId: TEST_USER_ID,
@@ -1888,7 +1888,7 @@ describe('Runner artifact saving (`saveInputBlobsAsArtifacts`)', () => {
     expect(newMessage.parts![0].text).toBeUndefined();
   });
 
-  it('testSaveArtifacts_displayNameResolution', async () => {
+  it('resolves explicit and generated display names when saving artifacts', async () => {
     const session = await sessionService.createSession({
       appName: TEST_APP_ID,
       userId: TEST_USER_ID,
@@ -1943,7 +1943,7 @@ describe('Runner artifact saving (`saveInputBlobsAsArtifacts`)', () => {
     expect(parts[3].fileData?.displayName).toMatch(/artifact_.+_1/);
   });
 
-  it('testSaveArtifacts_errorResiliency_retainsOriginalPart', async () => {
+  it('retains the original inlineData part when saving an artifact fails', async () => {
     const session = await sessionService.createSession({
       appName: TEST_APP_ID,
       userId: TEST_USER_ID,

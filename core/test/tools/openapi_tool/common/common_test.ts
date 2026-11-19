@@ -7,13 +7,12 @@
 /**
  * Ported from adk-python
  * `src/google/adk/tests/unittests/tools/openapi_tool/common/test_common.py`
- * at tag `v0.1.0`. Test names are kept verbatim so a reviewer can grep the
- * original; a parametrized case appends its input in brackets so a failure
- * names the case.
+ * at tag `v0.1.0`. A parametrized case appends its input in brackets so a
+ * failure names the case.
  *
- * `TestToSnakeCase` and `TestRenamePythonKeywords` cover functions that live in
+ * `toSnakeCaseName` and `renameReservedKeywords` cover functions that live in
  * `core/src/utils/case_utils.ts`, not in the module under test. They stay here
- * so that the ported set matches the reference file one class at a time.
+ * so that the ported set matches the reference file one group at a time.
  */
 
 import {
@@ -41,7 +40,9 @@ const UNKNOWN_TYPE_SCHEMA: OpenAPIV3.SchemaObject =
 const ITEMLESS_ARRAY_SCHEMA: OpenAPIV3.SchemaObject =
   JSON.parse('{"type":"array"}');
 
-describe('TestToSnakeCase', () => {
+// TestToSnakeCase
+describe('toSnakeCaseName', () => {
+  // test_to_snake_case
   it.each([
     ['lowerCamelCase', 'lower_camel_case'],
     ['UpperCamelCase', 'upper_camel_case'],
@@ -73,12 +74,14 @@ describe('TestToSnakeCase', () => {
     ['123Start', '123_start'],
     ['End123', 'end123'],
     ['Mid123dle', 'mid123dle'],
-  ])('test_to_snake_case [%s]', (input, expected) => {
+  ])('converts [%s] to snake_case', (input, expected) => {
     expect(toSnakeCaseName(input)).toBe(expected);
   });
 });
 
-describe('TestRenamePythonKeywords', () => {
+// TestRenamePythonKeywords
+describe('renameReservedKeywords', () => {
+  // test_rename_python_keywords
   it.each([
     // The reference's own cases. These are reserved in BOTH languages, so they
     // cannot tell the two keyword lists apart -- they passed while the wrong
@@ -89,7 +92,7 @@ describe('TestRenamePythonKeywords', () => {
     ['normal', 'normal'],
     ['param_if', 'param_if'],
     ['', ''],
-  ])('test_rename_python_keywords [%s]', (input, expected) => {
+  ])('renames reserved keyword [%s]', (input, expected) => {
     expect(renameReservedKeywords(input)).toBe(expected);
   });
 
@@ -116,8 +119,10 @@ describe('TestRenamePythonKeywords', () => {
   );
 });
 
-describe('TestApiParameter', () => {
-  it('test_api_parameter_initialization', () => {
+// TestApiParameter
+describe('ApiParameter', () => {
+  // test_api_parameter_initialization
+  it('initializes name, schema, type hint, and description from options', () => {
     const schema: OpenAPIV3.SchemaObject = {
       type: 'string',
       description: 'A string parameter',
@@ -138,7 +143,8 @@ describe('TestApiParameter', () => {
     expect(param.description).toBe('A string description');
   });
 
-  it('test_api_parameter_keyword_rename', () => {
+  // test_api_parameter_keyword_rename
+  it('prefixes reserved keyword parameter names with param_', () => {
     const param = createApiParameter({
       originalName: 'in',
       paramLocation: 'query',
@@ -148,7 +154,8 @@ describe('TestApiParameter', () => {
     expect(param.name).toBe('param_in');
   });
 
-  it('test_api_parameter_custom_py_name', () => {
+  // test_api_parameter_custom_py_name
+  it('uses the explicit name when provided', () => {
     const param = createApiParameter({
       originalName: 'testParam',
       paramLocation: 'query',
@@ -161,6 +168,7 @@ describe('TestApiParameter', () => {
 
   // The reference also asserts a `type_value` column. adk-js does not port
   // `get_type_value`, so only the type hint is checked.
+  // test_api_parameter_type_hint_helper
   it.each<[OpenAPIV3.SchemaObject, string]>([
     [{type: 'integer'}, 'int'],
     [{type: 'number'}, 'float'],
@@ -174,7 +182,7 @@ describe('TestApiParameter', () => {
     [{type: 'object'}, 'Dict[str, Any]'],
     [UNKNOWN_TYPE_SCHEMA, 'Any'],
     [{}, 'Any'],
-  ])('test_api_parameter_type_hint_helper [%j]', (schema, expectedHint) => {
+  ])('computes Python type hint for [%j]', (schema, expectedHint) => {
     const param = createApiParameter({
       originalName: 'test',
       paramLocation: 'query',
@@ -184,7 +192,8 @@ describe('TestApiParameter', () => {
     expect(getTypeHint(param.paramSchema)).toBe(expectedHint);
   });
 
-  it('test_api_parameter_description', () => {
+  // test_api_parameter_description
+  it('uses the explicit description over the schema description', () => {
     const param = createApiParameter({
       originalName: 'param1',
       paramLocation: 'query',
@@ -195,7 +204,8 @@ describe('TestApiParameter', () => {
     expect(param.description).toBe('The description');
   });
 
-  it('test_api_parameter_description_use_schema_fallback', () => {
+  // test_api_parameter_description_use_schema_fallback
+  it('falls back to the schema description when description is omitted', () => {
     const param = createApiParameter({
       originalName: 'param1',
       paramLocation: 'query',
@@ -206,13 +216,15 @@ describe('TestApiParameter', () => {
   });
 });
 
-describe('TestTypeHintHelper', () => {
+// TestTypeHintHelper
+describe('getTypeHint', () => {
+  // test_get_type_value_and_hint
   it.each<[OpenAPIV3.SchemaObject, string]>([
     [{type: 'integer'}, 'int'],
     [{type: 'number'}, 'float'],
     [{type: 'string'}, 'str'],
     [{type: 'array', items: {type: 'string'}}, 'List[str]'],
-  ])('test_get_type_value_and_hint [%j]', (schema, expectedHint) => {
+  ])('returns type hint string for [%j]', (schema, expectedHint) => {
     const param = createApiParameter({
       originalName: 'test_param',
       paramLocation: 'query',
@@ -224,8 +236,10 @@ describe('TestTypeHintHelper', () => {
   });
 });
 
-describe('TestPydocHelper', () => {
-  it('test_generate_param_doc_simple', () => {
+// TestPydocHelper
+describe('Pydoc helpers', () => {
+  // test_generate_param_doc_simple
+  it('formats a simple parameter docstring line', () => {
     const param = createApiParameter({
       originalName: 'test_param',
       paramLocation: 'query',
@@ -236,7 +250,8 @@ describe('TestPydocHelper', () => {
     expect(generateParamDoc(param)).toBe('test_param (str): Test description');
   });
 
-  it('test_generate_param_doc_no_description', () => {
+  // test_generate_param_doc_no_description
+  it('formats a parameter docstring line when description is missing', () => {
     const param = createApiParameter({
       originalName: 'test_param',
       paramLocation: 'query',
@@ -246,7 +261,8 @@ describe('TestPydocHelper', () => {
     expect(generateParamDoc(param)).toBe('test_param (int): ');
   });
 
-  it('test_generate_param_doc_object', () => {
+  // test_generate_param_doc_object
+  it('formats nested property lines for an object parameter', () => {
     const param = createApiParameter({
       originalName: 'test_param',
       paramLocation: 'query',
@@ -267,7 +283,8 @@ describe('TestPydocHelper', () => {
     );
   });
 
-  it('test_generate_param_doc_object_no_properties', () => {
+  // test_generate_param_doc_object_no_properties
+  it('formats an object parameter without properties as a single line', () => {
     const param = createApiParameter({
       originalName: 'test_param',
       paramLocation: 'query',
@@ -280,7 +297,8 @@ describe('TestPydocHelper', () => {
     );
   });
 
-  it('test_generate_return_doc_simple', () => {
+  // test_generate_return_doc_simple
+  it('formats a simple return docstring line', () => {
     const responses: OpenAPIV3.ResponsesObject = {
       '200': {
         description: 'Successful response',
@@ -293,7 +311,8 @@ describe('TestPydocHelper', () => {
     );
   });
 
-  it('test_generate_return_doc_no_content', () => {
+  // test_generate_return_doc_no_content
+  it('returns an empty string when the response has no content', () => {
     const responses: OpenAPIV3.ResponsesObject = {
       '204': {description: 'No content'},
     };
@@ -301,7 +320,8 @@ describe('TestPydocHelper', () => {
     expect(generateReturnDoc(responses)).toBe('');
   });
 
-  it('test_generate_return_doc_object', () => {
+  // test_generate_return_doc_object
+  it('formats nested property lines for an object return value', () => {
     const responses: OpenAPIV3.ResponsesObject = {
       '200': {
         description: 'Successful object response',
@@ -328,7 +348,8 @@ describe('TestPydocHelper', () => {
     );
   });
 
-  it('test_generate_return_doc_multiple_success', () => {
+  // test_generate_return_doc_multiple_success
+  it('formats the 200 response docstring when error responses are present', () => {
     const responses: OpenAPIV3.ResponsesObject = {
       '200': {
         description: 'Successful response',
@@ -342,7 +363,8 @@ describe('TestPydocHelper', () => {
     );
   });
 
-  it('test_generate_return_doc_2xx_smallest_status_code_response', () => {
+  // test_generate_return_doc_2xx_smallest_status_code_response
+  it('picks the smallest 2xx status code response for the return docstring', () => {
     const responses: OpenAPIV3.ResponsesObject = {
       '201': {
         description: '201 response',
@@ -358,7 +380,8 @@ describe('TestPydocHelper', () => {
     expect(generateReturnDoc(responses)).toBe('Returns (str): 200 response');
   });
 
-  it('test_generate_return_doc_contentful_response', () => {
+  // test_generate_return_doc_contentful_response
+  it('picks the first 2xx response with content for the return docstring', () => {
     const responses: OpenAPIV3.ResponsesObject = {
       '200': {description: 'No content response'},
       '201': {
