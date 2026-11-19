@@ -159,7 +159,7 @@ describe('deployToAgentEngine', () => {
       agentPath: 'path/to/agent',
       displayName: 'test-agent',
       tempFolder,
-      adkVersion: '1.0.0',
+      adkVersion: '2.5.0',
       project: 'test-project',
       region: 'us-central1',
       port: 8080,
@@ -319,7 +319,7 @@ describe('deployToAgentEngine', () => {
   });
 
   it('should install the requested adkVersion in the Dockerfile', async () => {
-    await deployToAgentEngine(defaultOptions);
+    await deployToAgentEngine({...defaultOptions, adkVersion: '1.0.0'});
 
     expect(saveToFile).toHaveBeenCalledWith(
       path.join(tempFolder, 'Dockerfile'),
@@ -974,10 +974,10 @@ describe('deployToAgentEngine', () => {
       return mockCreateInternal.mock.calls[0][0].config.spec.deploymentSpec.env;
     }
 
-    it('should start the server with --otel_to_cloud and set telemetry env when otelToCloud is true', async () => {
+    it('should start the server with --otel-to-cloud and set telemetry env when otelToCloud is true', async () => {
       await deployToAgentEngine({...defaultOptions, otelToCloud: true});
 
-      expect(getDockerfileContent()).toContain('--otel_to_cloud');
+      expect(getDockerfileContent()).toContain('--otel-to-cloud');
       expect(getCreatedEnv()).toEqual([
         {name: 'GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY', value: 'true'},
         {name: 'ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS', value: 'false'},
@@ -988,6 +988,7 @@ describe('deployToAgentEngine', () => {
     it('should not enable telemetry or send env when otelToCloud is false and there is no .env', async () => {
       await deployToAgentEngine({...defaultOptions, otelToCloud: false});
 
+      expect(getDockerfileContent()).not.toContain('--otel-to-cloud');
       expect(getDockerfileContent()).not.toContain('--otel_to_cloud');
       expect(
         mockCreateInternal.mock.calls[0][0].config.spec.deploymentSpec,
@@ -1003,13 +1004,13 @@ describe('deployToAgentEngine', () => {
 
         await deployToAgentEngine(defaultOptions);
 
-        expect(getDockerfileContent()).toContain('--otel_to_cloud');
+        expect(getDockerfileContent()).toContain('--otel-to-cloud');
         expect(getCreatedEnv()).toEqual([
           {name: 'GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY', value},
           {name: 'MY_VAR', value: 'hello'},
         ]);
         expect(console.info).toHaveBeenCalledWith(
-          `\`--otel_to_cloud\` is set to true by GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY in ${path.join(agentDir, '.env')}`,
+          `\`--otel-to-cloud\` is set to true by GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY in ${path.join(agentDir, '.env')}`,
         );
       },
     );
@@ -1019,6 +1020,7 @@ describe('deployToAgentEngine', () => {
 
       await deployToAgentEngine(defaultOptions);
 
+      expect(getDockerfileContent()).not.toContain('--otel-to-cloud');
       expect(getDockerfileContent()).not.toContain('--otel_to_cloud');
       expect(getCreatedEnv()).toEqual([
         {name: 'GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY', value: 'false'},
@@ -1030,13 +1032,13 @@ describe('deployToAgentEngine', () => {
 
       await deployToAgentEngine({...defaultOptions, otelToCloud: true});
 
-      expect(getDockerfileContent()).toContain('--otel_to_cloud');
+      expect(getDockerfileContent()).toContain('--otel-to-cloud');
       expect(getCreatedEnv()).toEqual([
         {name: 'GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY', value: 'true'},
         {name: 'ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS', value: 'false'},
       ]);
       expect(console.warn).toHaveBeenCalledWith(
-        'Ignoring GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY in .env as `--otel_to_cloud` was explicitly passed and takes precedence',
+        'Ignoring GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY in .env as `--otel-to-cloud` was explicitly passed and takes precedence',
       );
     });
 
@@ -1094,6 +1096,7 @@ describe('deployToAgentEngine', () => {
         {name: 'OTHER_VAR', value: 'other'},
         {name: 'CALLER_VAR', value: 'caller'},
       ]);
+      expect(getDockerfileContent()).not.toContain('--otel-to-cloud');
       expect(getDockerfileContent()).not.toContain('--otel_to_cloud');
     });
 
@@ -1197,7 +1200,7 @@ describe('deployToAgentEngine', () => {
       });
 
       expect(getDockerfileContent()).toContain(
-        "--memory_service_uri='rag://test-corpus'",
+        "--memory-service-uri='rag://test-corpus'",
       );
     });
 
@@ -1264,7 +1267,7 @@ describe('deployToAgentEngine', () => {
       expect(config.updateMask.split(',')).not.toContain(
         'spec.deployment_spec.secret_env',
       );
-      expect(getDockerfileContent()).toContain('--otel_to_cloud');
+      expect(getDockerfileContent()).toContain('--otel-to-cloud');
     });
   });
 });

@@ -77,7 +77,7 @@ function getLogLevelFromOptions(options: {
 
   if (typeof options.log_level === 'string') {
     // `??`, not `||`: LogLevel.DEBUG is 0, so `||` fell through to INFO and
-    // made `--log_level debug` a silent no-op.
+    // made `--log-level debug` a silent no-op.
     return LOG_LEVEL_MAP[options.log_level.toLowerCase()] ?? LogLevel.INFO;
   }
 
@@ -268,7 +268,7 @@ export function getMemoryServiceFromOptions(
 }
 
 /**
- * Builds the GCS eval managers that `--eval_storage_uri` names, or returns
+ * Builds the GCS eval managers that `--eval-storage-uri` names, or returns
  * `undefined` when the option is not set.
  */
 async function getEvalManagersFromOptions(options: {
@@ -384,7 +384,7 @@ function getBoolean(option?: string | boolean): boolean {
 }
 
 /**
- * Splits the comma-separated --allowed_hosts value into a list, dropping
+ * Splits the comma-separated --allowed-hosts value into a list, dropping
  * empty/whitespace-only entries. An unset or empty option yields undefined
  * rather than [], so it composes with ServerOptions.allowedHosts?: string[]
  * without callers needing to special-case "no value provided".
@@ -421,13 +421,13 @@ const ORIGINS_OPTION = new Option(
 const ALLOWED_HOSTS_OPTION = new Option(
   '--allowed-hosts, --allowed_hosts <string>',
   'Optional. Comma-separated list of additional Host header values the ' +
-    'DNS-rebinding guard accepts, independent of --allow_origins. Use ' +
+    'DNS-rebinding guard accepts, independent of --allow-origins. Use ' +
     'this to widen the guard for a reverse proxy in front of a ' +
-    'loopback-bound server without opening --allow_origins to "*".',
+    'loopback-bound server without opening --allow-origins to "*".',
 ).default('');
 const VERBOSE_OPTION = new Option(
   '-v, --verbose',
-  'Optional. Log at debug level. Shorthand for --log_level debug',
+  'Optional. Log at debug level. Shorthand for --log-level debug',
 ).default(false);
 const LOG_LEVEL_OPTION = new Option(
   '--log-level, --log_level <string>',
@@ -435,7 +435,7 @@ const LOG_LEVEL_OPTION = new Option(
 ).default('info');
 const SESSION_SERVICE_URI_OPTION = new Option(
   '--session-service-uri, --session_service_uri <string>',
-  'Optional. The URI of the session service. Supported URIs: agentengine://<agent_engine> for Agent Engine session service, memory:// for in-memory session service.',
+  'Optional. The URI of the session service. Supported URIs: agentengine://<agent-engine-id> for Agent Engine session service, memory:// for in-memory session service.',
 );
 const ARTIFACT_SERVICE_URI_OPTION = new Option(
   '--artifact-service-uri, --artifact_service_uri <string>',
@@ -443,11 +443,11 @@ const ARTIFACT_SERVICE_URI_OPTION = new Option(
 );
 const MEMORY_SERVICE_URI_OPTION = new Option(
   '--memory-service-uri, --memory_service_uri <string>',
-  'Optional. The URI of the memory service. Supported URIs: rag://<rag_corpus_id> for Vertex AI RAG memory service, agentengine://<agent_engine> for Agent Engine memory service, memory:// for in-memory.',
+  'Optional. The URI of the memory service. Supported URIs: rag://<rag-corpus-id> for Vertex AI RAG memory service, agentengine://<agent-engine-id> for Agent Engine memory service, memory:// for in-memory.',
 );
 
 /**
- * Adds ADK services options (--session_service_uri, --artifact_service_uri, --memory_service_uri) to a command.
+ * Adds ADK services options (--session-service-uri, --artifact-service-uri, --memory-service-uri) to a command.
  * @param cmd The command to configure.
  * @returns The configured command.
  */
@@ -536,7 +536,7 @@ export const REPOSITORY_DEPLOY_OPTION = new Option(
 );
 export const STAGING_BUCKET_DEPLOY_OPTION = new Option(
   '--staging-bucket, --staging_bucket [string]',
-  'Optional. Google Cloud Storage bucket name (no gs:// prefix) used for deployment staging. Cloud Build logs are written to gs://<staging_bucket>/logs. If not set, gs://<project>_cloudbuild/logs is used.',
+  'Optional. Google Cloud Storage bucket name (no gs:// prefix) used for deployment staging. Cloud Build logs are written to gs://<staging-bucket>/logs. If not set, gs://<project>_cloudbuild/logs is used.',
 );
 export const AGENT_ENGINE_ID_OPTION = new Option(
   '--agent-engine-id, --agent_engine_id [id]',
@@ -741,7 +741,7 @@ export function createProgram(): Command {
     )
     .option(
       '--session-id, --session_id <string>',
-      'Optional. The session ID to save the session to on exit when --save_session is set to true. User will be prompted to enter a session ID if not set.',
+      'Optional. The session ID to save the session to on exit when --save-session is set to true. User will be prompted to enter a session ID if not set.',
     )
     .option(
       '--replay <string>',
@@ -749,7 +749,7 @@ export function createProgram(): Command {
     )
     .option(
       '--resume <string>',
-      'The json file that contains a previously saved session (by --save_session option). The previous session will be re-displayed. And user can continue to interact with the agent.',
+      'The json file that contains a previously saved session (by --save-session option). The previous session will be re-displayed. And user can continue to interact with the agent.',
     )
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION);
@@ -804,7 +804,7 @@ export function createProgram(): Command {
         'and IDs is not allowed), each optionally followed by ' +
         ':eval_1,eval_2. Existing files take precedence over eval set IDs ' +
         'with the same name; otherwise values are read from local storage ' +
-        'or the --eval_storage_uri bucket.',
+        'or the --eval-storage-uri bucket.',
     )
     .option(
       '--config-file-path, --config_file_path <string>',

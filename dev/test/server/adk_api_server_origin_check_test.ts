@@ -117,8 +117,8 @@ describe('AdkApiServer origin validation', () => {
     expect(response.status).toBe(200);
   });
 
-  it('does not allowlist Origin: null from a scheme-less allow_origins entry', async () => {
-    // A scheme-less `--allow_origins localhost:4200` used to normalize to the
+  it('does not allowlist Origin: null from a scheme-less --allow-origins entry', async () => {
+    // A scheme-less `--allow-origins localhost:4200` used to normalize to the
     // opaque "null" origin and grant every `Origin: null` request. The entry is
     // now dropped, so the opaque origin is refused.
     const port = await startServer({allowOrigins: 'localhost:4200'});

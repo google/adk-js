@@ -123,12 +123,12 @@ The ADK CLI commands (`run`, `web`, `api_server` / `api-server`, `deploy cloud_r
 
 - `--session-service-uri, --session_service_uri <string>`: Session service URI. Supported schemes include:
   - `memory://`: In-memory session service (`InMemorySessionService`).
-  - `agentengine://<agent_engine>`: Agent Engine sessions (`VertexAiSessionService`), supporting both short resource IDs (`agentengine://123`) with project and region from the environment or `.env`, and full resource names (`agentengine://projects/{project}/locations/{location}/reasoningEngines/{id}`).
+  - `agentengine://<agent-engine-id>`: Agent Engine sessions (`VertexAiSessionService`), supporting both short resource IDs (`agentengine://123`) with project and region from the environment or `.env`, and full resource names (`agentengine://projects/{project}/locations/{location}/reasoningEngines/{id}`).
 - `--artifact-service-uri, --artifact_service_uri <string>`: Artifact service URI (e.g. `gs://<bucket>` for Google Cloud Storage).
 - `--memory-service-uri, --memory_service_uri <string>`: Memory service URI. Supported schemes include:
   - `memory://`: In-memory memory service (`InMemoryMemoryService`).
-  - `rag://<rag_corpus_id>` or `rag://projects/{project}/locations/{location}/ragCorpora/{id}`: Vertex AI RAG memory service (`VertexAiRagMemoryService`).
-  - `agentengine://<agent_engine>`: Agent Engine memory bank (`VertexAiMemoryBankService`), supporting both short resource IDs (`agentengine://123`) with project and region from the environment or `.env`, and full resource names (`agentengine://projects/{project}/locations/{location}/reasoningEngines/{id}`).
+  - `rag://<rag-corpus-id>` or `rag://projects/{project}/locations/{location}/ragCorpora/{id}`: Vertex AI RAG memory service (`VertexAiRagMemoryService`).
+  - `agentengine://<agent-engine-id>`: Agent Engine memory bank (`VertexAiMemoryBankService`), supporting both short resource IDs (`agentengine://123`) with project and region from the environment or `.env`, and full resource names (`agentengine://projects/{project}/locations/{location}/reasoningEngines/{id}`).
 
 ### Reloading agents and serving them over A2A
 
@@ -138,10 +138,10 @@ The ADK CLI commands (`run`, `web`, `api_server` / `api-server`, `deploy cloud_r
 - A change to any other JavaScript or TypeScript file, such as a new agent or a helper that several agents share, reloads every agent.
 - A change to any other file is ignored.
 
-An agent that imports a file from the directory of another agent is not reloaded when that file changes. Keep shared code inside `<agents dir>` outside individual `<agents dir>/<name>/` subdirectories (for example, in `<agents dir>/shared/`), or restart the server. `adk run` with `--reload_agents` watches the one agent file that it runs and uses the new agent for the next turn.
+An agent that imports a file from the directory of another agent is not reloaded when that file changes. Keep shared code inside `<agents dir>` outside individual `<agents dir>/<name>/` subdirectories (for example, in `<agents dir>/shared/`), or restart the server. `adk run` with `--reload-agents` watches the one agent file that it runs and uses the new agent for the next turn.
 
 ```bash
-adk web path/to/agents --reload_agents
+adk web path/to/agents --reload-agents
 ```
 
 `adk web` and `adk api_server` accept `--a2a [boolean]` (default `false`). With the option, the server serves each agent that it loaded at startup over the Agent2Agent (A2A) protocol below `/a2a/<appName>`. `--a2a-auth-token, --a2a_auth_token <string>` sets a shared bearer token for these endpoints, and callers must send `Authorization: Bearer <token>`. The `ADK_A2A_AUTH_TOKEN` environment variable sets the same token when the option is absent. Without a token, the server serves the A2A endpoints without authentication.
@@ -151,7 +151,7 @@ export ADK_A2A_AUTH_TOKEN=<token>
 adk api_server path/to/agents --a2a
 ```
 
-`adk deploy cloud_run` accepts the same two options. `--a2a` starts the deployed server with `--a2a`. `--a2a_auth_token` reaches Cloud Run as the `ADK_A2A_AUTH_TOKEN` environment variable and is not written into the image. Without a token, the command prints a security warning, because the deployed A2A endpoints then accept every caller. `adk deploy agent_engine` and `adk deploy reasoning_engine` accept `--a2a`, which also starts the deployed server with `--a2a`. They do not accept `--a2a_auth_token`.
+`adk deploy cloud_run` accepts the same two options. `--a2a` starts the deployed server with `--a2a`. `--a2a-auth-token` reaches Cloud Run as the `ADK_A2A_AUTH_TOKEN` environment variable and is not written into the image. Without a token, the command prints a security warning, because the deployed A2A endpoints then accept every caller. `adk deploy agent_engine` and `adk deploy reasoning_engine` accept `--a2a`, which also starts the deployed server with `--a2a`. They do not accept `--a2a-auth-token`.
 
 ### Session conversion and empty state
 
@@ -203,11 +203,11 @@ adk api_server path/to/agents --a2a
 adk eval path/to/agents/my_app my_eval_set:case_1,case_2
 
 export GOOGLE_CLOUD_PROJECT=my-project
-adk web --eval_storage_uri gs://my-bucket path/to/agents
-adk eval path/to/agents/my_app my_eval_set:case_1,case_2 --eval_storage_uri gs://my-bucket
+adk web --eval-storage-uri gs://my-bucket path/to/agents
+adk eval path/to/agents/my_app my_eval_set:case_1,case_2 --eval-storage-uri gs://my-bucket
 ```
 
-`adk eval` accepts either existing eval set file paths or eval set IDs (mixing file paths and IDs in one invocation is rejected). Existing regular files take precedence over eval set IDs with the same name in the working directory; otherwise each eval set ID is read from the local agents directory (or from the bucket when `--eval_storage_uri` is set) and the command fails when an ID is not there. It saves the results to the configured eval results manager in both cases.
+`adk eval` accepts either existing eval set file paths or eval set IDs (mixing file paths and IDs in one invocation is rejected). Existing regular files take precedence over eval set IDs with the same name in the working directory; otherwise each eval set ID is read from the local agents directory (or from the bucket when `--eval-storage-uri` is set) and the command fails when an ID is not there. It saves the results to the configured eval results manager in both cases.
 
 The bucket uses this layout:
 
@@ -289,7 +289,6 @@ const mapping = parseAndGetEvalsToRun([
 
 - `createEmptyState` only inspects `LlmAgent` instances whose `instruction` is a static `string`. Placeholders inside an `InstructionProvider` function are not extracted statically.
 - `loadDotenvForAgent`, `logToTmpFolder`, `setupAdkLogger`, `runEvals`, and the GCS eval managers use Node.js filesystem and process modules (`node:fs`, `node:os`, `node:path`) and are exported from the Node `@google/adk` entrypoint, not the browser bundle.
-- `getAgentGraph(rootAgent, highlightsPairs, true)` requires the Graphviz `dot` binary to be installed on `PATH` when rendering a PNG buffer.
 
 ## Related samples
 

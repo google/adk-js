@@ -1512,7 +1512,7 @@ describe('CLI Entrypoint', () => {
         const evalSetArgument = evalCommand?.registeredArguments[1];
 
         expect(evalSetArgument?.name()).toBe('eval_set_file_path_or_id');
-        expect(evalSetArgument?.description).toContain('--eval_storage_uri');
+        expect(evalSetArgument?.description).toContain('--eval-storage-uri');
         expect(evalSetArgument?.description).toContain('eval set IDs');
       });
 

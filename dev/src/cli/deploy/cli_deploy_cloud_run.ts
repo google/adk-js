@@ -162,7 +162,7 @@ export async function deployToCloudRun(options: DeployToCloudRunOptions) {
     console.warn(
       'SECURITY WARNING: deploying the A2A surface WITHOUT authentication, ' +
         'so any caller that can reach the service can invoke the agent and ' +
-        'its tools. Pass --a2a_auth_token=<secret> to require a bearer ' +
+        'its tools. Pass --a2a-auth-token=<secret> to require a bearer ' +
         'credential.',
     );
   }
