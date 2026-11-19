@@ -110,6 +110,139 @@ describe('convertExamplesToText', () => {
     const result = convertExamplesToText([example]);
     expect(result).toContain('response');
   });
+
+  it('serializes object and array function call args as JSON while keeping strings single-quoted', () => {
+    const example: Example = {
+      input: {
+        role: 'user',
+        parts: [{text: 'Hotels in Paris under 200?'}],
+      },
+      output: [
+        {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                name: 'search',
+                args: {
+                  city: 'Paris',
+                  filters: {maxPrice: 200},
+                  ids: [1, 2],
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const gemini2Result = convertExamplesToText([example], 'gemini-2.5-flash');
+    expect(gemini2Result).toContain(
+      `\`\`\`\nsearch(city='Paris', filters={"maxPrice":200}, ids=[1,2])\n\`\`\``,
+    );
+    expect(gemini2Result).not.toContain('[object Object]');
+
+    const legacyResult = convertExamplesToText([example], 'gemini-1.5-pro');
+    expect(legacyResult).toContain(
+      `\`\`\`tool_code\nsearch(city='Paris', filters={"maxPrice":200}, ids=[1,2])\n\`\`\``,
+    );
+  });
+
+  it('serializes nested objects, arrays of objects, empty collections, and null-prototype objects', () => {
+    const nullProto = Object.assign(Object.create(null), {maxPrice: 200});
+    const example: Example = {
+      input: {parts: [{text: 'Run complex query'}]},
+      output: [
+        {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                name: 'query',
+                args: {
+                  nested: {a: [1, {b: 'c'}]},
+                  items: [{id: 1}, {id: 2}],
+                  emptyObj: {},
+                  emptyArr: [],
+                  nullProto,
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = convertExamplesToText([example], 'gemini-2.5-flash');
+    expect(result).toContain(
+      'query(nested={"a":[1,{"b":"c"}]}, items=[{"id":1},{"id":2}], emptyObj={}, emptyArr=[], nullProto={"maxPrice":200})',
+    );
+  });
+
+  it('preserves primitive non-string function call args', () => {
+    const example: Example = {
+      input: {parts: [{text: 'List items'}]},
+      output: [
+        {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                name: 'list',
+                args: {
+                  limit: 10,
+                  offset: 0,
+                  active: true,
+                  archived: false,
+                  cursor: null,
+                  optional: undefined,
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = convertExamplesToText([example], 'gemini-2.5-flash');
+    expect(result).toContain(
+      'list(limit=10, offset=0, active=true, archived=false, cursor=null, optional=undefined)',
+    );
+  });
+
+  it('falls back safely without throwing for circular or non-JSON-serializable object args', () => {
+    const circular: Record<string, unknown> = {};
+    circular['self'] = circular;
+    const circularNullProto = Object.create(null) as Record<string, unknown>;
+    circularNullProto['self'] = circularNullProto;
+    const undefinedToJson = {toJSON: () => undefined};
+
+    const example: Example = {
+      input: {parts: [{text: 'Handle tricky objects'}]},
+      output: [
+        {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                name: 'inspect',
+                args: {
+                  circular,
+                  circularNullProto,
+                  undefinedToJson,
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = convertExamplesToText([example], 'gemini-2.5-flash');
+    expect(result).toContain(
+      'inspect(circular=[object Object], circularNullProto=[object Object], undefinedToJson=[object Object])',
+    );
+  });
 });
 
 describe('buildExampleSi', () => {
