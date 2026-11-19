@@ -17,6 +17,7 @@ import {
   Language,
   Outcome,
   Part,
+  SafetyPolicy,
 } from '@google/genai';
 import {describe, expect, it, vi} from 'vitest';
 import {
@@ -716,9 +717,72 @@ describe('interactions_utils', () => {
       };
 
       expect(convertToolsConfigToInteractionsFormat(config)).toEqual([
+        {type: 'computer_use', environment: 'browser'},
+      ]);
+    });
+
+    it('forwards all supported computerUse fields to interactions format', () => {
+      const config: GenerateContentConfig = {
+        tools: [
+          {
+            computerUse: {
+              environment: Environment.ENVIRONMENT_MOBILE,
+              excludedPredefinedFunctions: ['drag_and_drop', 'wait'],
+              enablePromptInjectionDetection: true,
+              disabledSafetyPolicies: [
+                SafetyPolicy.FINANCIAL_TRANSACTIONS,
+                SafetyPolicy.DATA_MODIFICATION,
+                SafetyPolicy.SAFETY_POLICY_UNSPECIFIED,
+              ],
+            },
+          },
+        ],
+      };
+
+      expect(convertToolsConfigToInteractionsFormat(config)).toEqual([
+        {
+          type: 'computer_use',
+          environment: 'mobile',
+          excluded_predefined_functions: ['drag_and_drop', 'wait'],
+          enable_prompt_injection_detection: true,
+          disabled_safety_policies: [
+            'financial_transactions',
+            'data_modification',
+          ],
+        },
+      ]);
+    });
+
+    it('omits ENVIRONMENT_UNSPECIFIED when converting computerUse tool', () => {
+      const config: GenerateContentConfig = {
+        tools: [
+          {computerUse: {environment: Environment.ENVIRONMENT_UNSPECIFIED}},
+        ],
+      };
+
+      expect(convertToolsConfigToInteractionsFormat(config)).toEqual([
         {type: 'computer_use'},
       ]);
     });
+
+    it.each([
+      {name: 'empty array', policies: []},
+      {
+        name: 'only SAFETY_POLICY_UNSPECIFIED',
+        policies: [SafetyPolicy.SAFETY_POLICY_UNSPECIFIED],
+      },
+    ])(
+      'preserves empty disabled_safety_policies when input is $name',
+      ({policies}) => {
+        const config: GenerateContentConfig = {
+          tools: [{computerUse: {disabledSafetyPolicies: policies}}],
+        };
+
+        expect(convertToolsConfigToInteractionsFormat(config)).toEqual([
+          {type: 'computer_use', disabled_safety_policies: []},
+        ]);
+      },
+    );
   });
 
   describe('convertInteractionToLlmResponse', () => {
