@@ -273,85 +273,136 @@ class ProgressiveStrategy implements StreamingStrategy {
 class NonProgressiveStrategy implements StreamingStrategy {
   private text = '';
   private thoughtText = '';
+  // Gemini streams parallel function calls one per chunk and signs only the
+  // first. They are held and emitted as one event so the session history keeps
+  // them in a single model content, which is what the signature contract
+  // expects. Emitting them one by one leaves later calls as unsigned turns.
+  private functionCallParts: Part[] = [];
 
   async *processResponse(
     llmResponse: LlmResponse,
   ): AsyncGenerator<LlmResponse, void, void> {
-    if (llmResponse.content?.parts) {
-      const nonTextParts: Part[] = [];
-      let sawTextPart = false;
+    const parts = llmResponse.content?.parts;
+    if (!parts?.length) {
+      yield llmResponse;
+      return;
+    }
 
-      for (const part of llmResponse.content.parts) {
-        if (typeof part.text === 'string') {
-          sawTextPart = true;
-          if (part.thought) {
-            this.thoughtText += part.text;
-          } else {
-            this.text += part.text;
-          }
-          continue;
+    // Audio interleaved with text keeps the text buffered, so the text is
+    // delivered once in the final aggregate instead of being split around
+    // each audio chunk.
+    const startsWithInlineData = !!parts[0]?.inlineData;
+    const otherParts: Part[] = [];
+    let pendingTextParts: Part[] = [];
+
+    for (const part of parts) {
+      if (typeof part.text === 'string') {
+        // Text after the calls ends the run of parallel calls. Empty text
+        // (e.g. a trailing signature-only part) does not.
+        if (part.text) {
+          yield* this.flushFunctionCalls(llmResponse);
         }
+        if (part.thought) {
+          this.thoughtText += part.text;
+        } else {
+          this.text += part.text;
+        }
+        pendingTextParts.push(part);
+        continue;
+      }
 
-        if (part.functionCall && !part.functionCall.id) {
+      if (part.functionCall) {
+        if (!part.functionCall.id) {
           part.functionCall.id = generateClientFunctionCallId();
         }
-        nonTextParts.push(part);
+        yield* this.flushText(llmResponse);
+        pendingTextParts = [];
+        this.functionCallParts.push(part);
+        continue;
       }
 
-      if (nonTextParts.length > 0) {
-        // Audio interleaved with text keeps the text buffered, so the text is
-        // delivered once in the final aggregate instead of being split around
-        // each audio chunk.
-        const startsWithInlineData = !!llmResponse.content.parts[0]?.inlineData;
-        if (!startsWithInlineData && (this.thoughtText || this.text)) {
-          const parts: Part[] = [];
-          if (this.thoughtText) {
-            parts.push({text: this.thoughtText, thought: true});
-          }
-          if (this.text) {
-            parts.push({text: this.text});
-          }
-          yield {
-            content: {
-              role: 'model',
-              parts: parts,
-            },
-            usageMetadata: llmResponse.usageMetadata,
-            partial: false,
-          };
-          this.thoughtText = '';
-          this.text = '';
-        }
-        yield {
-          ...llmResponse,
-          content: {
-            role: llmResponse.content.role,
-            parts: nonTextParts,
-          },
-          partial: false,
-        };
-        return;
-      }
-
-      if (sawTextPart) {
-        llmResponse.partial = true;
-      }
+      otherParts.push(part);
     }
-    yield llmResponse;
+
+    if (otherParts.length > 0) {
+      yield* this.flushFunctionCalls(llmResponse);
+      if (!startsWithInlineData) {
+        yield* this.flushText(llmResponse);
+      }
+      yield {
+        ...llmResponse,
+        content: {
+          role: llmResponse.content!.role,
+          parts: otherParts,
+        },
+        partial: false,
+      };
+      return;
+    }
+
+    if (pendingTextParts.length === parts.length) {
+      llmResponse.partial = true;
+      yield llmResponse;
+    } else if (pendingTextParts.length > 0) {
+      // Function calls are never yielded as partial events, since the agent
+      // would execute them.
+      yield {
+        ...llmResponse,
+        content: {
+          role: llmResponse.content!.role,
+          parts: pendingTextParts,
+        },
+        partial: true,
+      };
+    }
   }
 
   close(): Part[] | undefined {
-    if (this.text || this.thoughtText) {
-      const parts: Part[] = [];
-      if (this.thoughtText) {
-        parts.push({text: this.thoughtText, thought: true});
-      }
-      if (this.text) {
-        parts.push({text: this.text});
-      }
-      return parts;
+    const parts = [...this.takeTextParts(), ...this.takeFunctionCallParts()];
+    return parts.length > 0 ? parts : undefined;
+  }
+
+  private *flushText(llmResponse: LlmResponse): Generator<LlmResponse> {
+    const parts = this.takeTextParts();
+    if (parts.length > 0) {
+      yield {
+        content: {role: 'model', parts},
+        usageMetadata: llmResponse.usageMetadata,
+        partial: false,
+      };
     }
-    return undefined;
+  }
+
+  private *flushFunctionCalls(
+    llmResponse: LlmResponse,
+  ): Generator<LlmResponse> {
+    const parts = this.takeFunctionCallParts();
+    if (parts.length > 0) {
+      yield {
+        content: {role: 'model', parts},
+        usageMetadata: llmResponse.usageMetadata,
+        partial: false,
+      };
+    }
+  }
+
+  private takeTextParts(): Part[] {
+    const parts: Part[] = [];
+    if (this.thoughtText) {
+      parts.push({text: this.thoughtText, thought: true});
+    }
+    if (this.text) {
+      parts.push({text: this.text});
+    }
+    this.thoughtText = '';
+    this.text = '';
+    return parts;
+  }
+
+  private takeFunctionCallParts(): Part[] {
+    const parts = this.functionCallParts;
+    this.functionCallParts = [];
+    return parts;
   }
 }
 
@@ -377,7 +428,6 @@ export class GeminiStreamingResponseAggregator {
   private response?: GenerateContentResponse;
   private finishReason?: FinishReason;
 
-  private lastThoughtSignature: {value?: string | Uint8Array} = {};
   private readonly strategy: StreamingStrategy;
 
   constructor({
@@ -430,16 +480,6 @@ export class GeminiStreamingResponseAggregator {
     if (llmResponse.finishReason) {
       this.finishReason = llmResponse.finishReason;
     }
-    if (llmResponse.content && llmResponse.content.parts) {
-      for (const part of llmResponse.content.parts) {
-        if (part.thoughtSignature) {
-          this.lastThoughtSignature.value = part.thoughtSignature;
-        } else if (part.functionCall && this.lastThoughtSignature.value) {
-          part.thoughtSignature = this.lastThoughtSignature.value.toString();
-        }
-      }
-    }
-
     yield* this.strategy.processResponse(llmResponse);
   }
 
