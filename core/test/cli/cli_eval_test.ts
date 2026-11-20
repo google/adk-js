@@ -22,19 +22,25 @@ import {
   EvalStatus,
   Event,
   getEvaluationCriteriaOrDefault,
+  getRegisteredEvalMetrics,
   getRootAgent,
   getSessionServiceFromUri,
   InMemorySessionService,
   InputValidationError,
   INTERNAL_METADATA_PREFIX,
   InvocationContext,
+  type ListMetricsInfoResponse,
   LlmAgent,
   loadEvalSetFromFile,
   LocalEvalSetResultsManager,
   LocalEvalSetsManager,
+  type MetricInfo,
+  type MetricInterval,
+  type MetricValueInfo,
   MISSING_EVAL_DEPENDENCIES_MESSAGE,
   NotFoundError,
   parseAndGetEvalsToRun,
+  RESPONSE_EVALUATION_SCORE_KEY,
   RESPONSE_MATCH_SCORE_KEY,
   runEvals,
   TOOL_TRAJECTORY_SCORE_KEY,
@@ -133,6 +139,62 @@ describe('cli/cli_eval', () => {
     expect(EvalStatus.PASSED).toBe(1);
     expect(EvalStatus.FAILED).toBe(2);
     expect(EvalStatus.NOT_EVALUATED).toBe(3);
+  });
+
+  describe('getRegisteredEvalMetrics', () => {
+    it('returns descriptors for the three registered evaluation metrics', () => {
+      const metrics: MetricInfo[] = getRegisteredEvalMetrics();
+      const closedUnitInterval: MetricInterval = {
+        minValue: 0,
+        openAtMin: false,
+        maxValue: 1,
+        openAtMax: false,
+      };
+      const expectedValueInfo: MetricValueInfo = {
+        interval: closedUnitInterval,
+      };
+      const responsePayload: ListMetricsInfoResponse = {metricsInfo: metrics};
+
+      expect(responsePayload.metricsInfo).toHaveLength(3);
+      expect(metrics.map((m) => m.metricName)).toEqual([
+        TOOL_TRAJECTORY_SCORE_KEY,
+        RESPONSE_MATCH_SCORE_KEY,
+        RESPONSE_EVALUATION_SCORE_KEY,
+      ]);
+
+      for (const metric of metrics) {
+        expect(metric.description).toEqual(expect.any(String));
+        expect((metric.description ?? '').length).toBeGreaterThan(0);
+        expect(metric.requiresThreshold).toBe(true);
+        expect(metric.metricValueInfo).toEqual(expectedValueInfo);
+      }
+    });
+
+    it('returns fresh copies so mutating a returned descriptor does not affect subsequent calls', () => {
+      const first = getRegisteredEvalMetrics();
+      const firstMetric = first[0];
+      expect(firstMetric).toBeDefined();
+      if (firstMetric) {
+        firstMetric.metricName = 'mutated-metric';
+        firstMetric.requiresThreshold = false;
+        if (firstMetric.metricValueInfo.interval) {
+          firstMetric.metricValueInfo.interval.minValue = -10;
+          firstMetric.metricValueInfo.interval.maxValue = 999;
+        }
+      }
+      first.pop();
+
+      const second = getRegisteredEvalMetrics();
+      expect(second).toHaveLength(3);
+      expect(second[0]?.metricName).toBe(TOOL_TRAJECTORY_SCORE_KEY);
+      expect(second[0]?.requiresThreshold).toBe(true);
+      expect(second[0]?.metricValueInfo.interval).toEqual({
+        minValue: 0,
+        openAtMin: false,
+        maxValue: 1,
+        openAtMax: false,
+      });
+    });
   });
 
   describe('getEvaluationCriteriaOrDefault', () => {

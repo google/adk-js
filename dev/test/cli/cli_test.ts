@@ -34,6 +34,7 @@ import {createAgent} from '../../src/cli/cli_create.js';
 import {runAgent} from '../../src/cli/cli_run.js';
 import {deployToAgentEngine} from '../../src/cli/deploy/cli_deploy_agent_engine.js';
 import {deployToCloudRun} from '../../src/cli/deploy/cli_deploy_cloud_run.js';
+import {deployToGke} from '../../src/cli/deploy/cli_deploy_gke.js';
 import {runIntegrationTests} from '../../src/integration/run_integration_tests.js';
 import {AdkApiServer} from '../../src/server/adk_api_server.js';
 import {AdkLogger} from '../../src/utils/logger.js';
@@ -59,6 +60,13 @@ vi.mock('../../src/cli/deploy/cli_deploy_agent_engine', () => ({
 
 vi.mock('../../src/cli/deploy/cli_deploy_cloud_run', () => ({
   deployToCloudRun: vi.fn(),
+}));
+
+vi.mock('../../src/cli/deploy/cli_deploy_gke', async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import('../../src/cli/deploy/cli_deploy_gke.js')
+  >()),
+  deployToGke: vi.fn(),
 }));
 
 vi.mock('../../src/integration/run_integration_tests', () => ({
@@ -570,6 +578,7 @@ describe('CLI Entrypoint', () => {
         ['deploy', 'agent_engine'],
         () => deployToAgentEngine,
       ],
+      ['deploy gke', ['deploy', 'gke'], () => deployToGke],
     ])('is on for %s', async (_name, args, target) => {
       await parse(args);
 
@@ -837,6 +846,177 @@ describe('CLI Entrypoint', () => {
     });
   });
 
+  describe('command: deploy gke', () => {
+    it('should call deployToGke with defaults', async () => {
+      await parse(['deploy', 'gke']);
+
+      expect(deployToGke).toHaveBeenCalledWith(
+        expect.objectContaining({
+          port: 8000,
+          serviceName: 'adk-default-service-name',
+          serviceType: 'ClusterIP',
+          adkVersion: version,
+          withUi: false,
+          logLevel: 'info',
+          a2a: false,
+        }),
+      );
+    });
+
+    it('should leave tempFolder unset so no temp directory is created eagerly', async () => {
+      await parse(['deploy', 'gke']);
+
+      expect(
+        (deployToGke as Mock).mock.calls[0]?.[0]?.tempFolder,
+      ).toBeUndefined();
+    });
+
+    it('should forward snake_case options and trailing agent path to deployToGke', async () => {
+      await parse([
+        'deploy',
+        'gke',
+        '--project',
+        'test-proj',
+        '--region',
+        'us-central1',
+        '--cluster_name',
+        'my-cluster',
+        '--service_name',
+        'my-gke-svc',
+        '--service_type',
+        'LoadBalancer',
+        '--app_name',
+        'custom-app',
+        '--temp_folder',
+        '/tmp/custom-gke',
+        '--port',
+        '9090',
+        '--adk_version',
+        '1.2.0',
+        '--with_ui=true',
+        '--allow_origins',
+        'http://localhost:3000',
+        '--session_service_uri',
+        'memory://',
+        '--artifact_service_uri',
+        'gs://my-bucket',
+        '--memory_service_uri',
+        'rag://my-corpus',
+        '--trace_to_cloud=true',
+        '--a2a=true',
+        './my-agent-path',
+      ]);
+
+      expect((deployToGke as Mock).mock.calls[0]?.[0]).toMatchObject({
+        agentPath: expect.stringContaining('my-agent-path'),
+        project: 'test-proj',
+        region: 'us-central1',
+        clusterName: 'my-cluster',
+        serviceName: 'my-gke-svc',
+        serviceType: 'LoadBalancer',
+        appName: 'custom-app',
+        tempFolder: '/tmp/custom-gke',
+        port: 9090,
+        adkVersion: '1.2.0',
+        withUi: true,
+        allowOrigins: 'http://localhost:3000',
+        sessionServiceUri: 'memory://',
+        artifactServiceUri: 'gs://my-bucket',
+        memoryServiceUri: 'rag://my-corpus',
+        otelToCloud: true,
+        a2a: true,
+      });
+    });
+
+    it('should forward bare boolean flags when agent path precedes them', async () => {
+      await parse([
+        'deploy',
+        'gke',
+        './my-agent-path',
+        '--cluster_name',
+        'my-cluster',
+        '--with_ui',
+        '--trace_to_cloud',
+        '--a2a',
+      ]);
+
+      expect((deployToGke as Mock).mock.calls[0]?.[0]).toMatchObject({
+        agentPath: expect.stringContaining('my-agent-path'),
+        clusterName: 'my-cluster',
+        withUi: true,
+        otelToCloud: true,
+        a2a: true,
+      });
+    });
+
+    it('should forward kebab-case options and --verbose log level to deployToGke', async () => {
+      await parse([
+        'deploy',
+        'gke',
+        './my-agent-path',
+        '--cluster-name',
+        'kebab-cluster',
+        '--service-name',
+        'kebab-svc',
+        '--service-type',
+        'NodePort',
+        '--app-name',
+        'kebab-app',
+        '--temp-folder',
+        '/tmp/kebab-gke',
+        '--adk-version',
+        '2.0.0',
+        '--with-ui',
+        '--allow-origins',
+        'https://example.com',
+        '--session-service-uri',
+        'memory://',
+        '--artifact-service-uri',
+        'gs://kebab-bucket',
+        '--memory-service-uri',
+        'rag://kebab-corpus',
+        '--otel-to-cloud',
+        '--verbose',
+      ]);
+
+      expect((deployToGke as Mock).mock.calls[0]?.[0]).toMatchObject({
+        agentPath: expect.stringContaining('my-agent-path'),
+        clusterName: 'kebab-cluster',
+        serviceName: 'kebab-svc',
+        serviceType: 'NodePort',
+        appName: 'kebab-app',
+        tempFolder: '/tmp/kebab-gke',
+        adkVersion: '2.0.0',
+        withUi: true,
+        logLevel: 'debug',
+        allowOrigins: 'https://example.com',
+        sessionServiceUri: 'memory://',
+        artifactServiceUri: 'gs://kebab-bucket',
+        memoryServiceUri: 'rag://kebab-corpus',
+        otelToCloud: true,
+      });
+    });
+
+    it('should reject an unsupported --service-type choice', async () => {
+      const configureAll = (cmd: Command) => {
+        cmd.configureOutput({
+          writeOut: () => {},
+          writeErr: () => {},
+        });
+        cmd.exitOverride();
+        cmd.commands.forEach(configureAll);
+      };
+      configureAll(program);
+
+      await expect(
+        parse(['deploy', 'gke', '--service-type', 'ExternalName']),
+      ).rejects.toMatchObject({
+        code: 'commander.invalidArgument',
+        exitCode: 1,
+      });
+    });
+  });
+
   describe('deploy failures', () => {
     it.each([
       ['deploy cloud_run', ['deploy', 'cloud_run'], () => deployToCloudRun],
@@ -845,6 +1025,7 @@ describe('CLI Entrypoint', () => {
         ['deploy', 'agent_engine'],
         () => deployToAgentEngine,
       ],
+      ['deploy gke', ['deploy', 'gke'], () => deployToGke],
     ])(
       '%s exits non-zero when the deployment fails',
       async (_name, args, target) => {

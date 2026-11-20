@@ -25,6 +25,7 @@ import {
   Event,
   getFunctionCalls,
   getFunctionResponses,
+  getRegisteredEvalMetrics,
   InMemoryArtifactService,
   InMemoryCredentialService,
   InMemoryMemoryService,
@@ -1602,8 +1603,35 @@ export class AdkApiServer {
     );
 
     app.get('/apps/:appName/eval_metrics', (req: Request, res: Response) => {
-      return res.status(501).json({error: 'Not implemented'});
+      try {
+        validatePathSegment(req.params['appName'], 'appName');
+        return res.json(getRegisteredEvalMetrics());
+      } catch (e: unknown) {
+        if (e instanceof InputValidationError) {
+          return res.status(400).json({error: e.message});
+        }
+        const error = `Failed to list eval metrics: ${getErrorMessage(e)}`;
+        this.logger.error(error);
+        return res.status(500).json({error});
+      }
     });
+
+    app.get(
+      '/dev/apps/:appName/metrics-info',
+      (req: Request, res: Response) => {
+        try {
+          validatePathSegment(req.params['appName'], 'appName');
+          return res.json({metricsInfo: getRegisteredEvalMetrics()});
+        } catch (e: unknown) {
+          if (e instanceof InputValidationError) {
+            return res.status(400).json({error: e.message});
+          }
+          const error = `Failed to list metrics info: ${getErrorMessage(e)}`;
+          this.logger.error(error);
+          return res.status(500).json({error});
+        }
+      },
+    );
 
     // -------------------------- Run related endpoints ------------------------
     app.post('/run', async (req: Request, res: Response) => {
