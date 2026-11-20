@@ -6,10 +6,12 @@
 
 import {
   AsyncQueue,
+  BaseAgent,
   BaseLlm,
   BaseLlmConnection,
   BasePlugin,
   BaseTool,
+  createEvent,
   Event,
   FunctionTool,
   getFunctionCalls,
@@ -1954,6 +1956,136 @@ describe('Runner.runLive', () => {
       capturedContext?.activeStreamingTools?.['monitor_stock_price']?.task,
     ).toBeUndefined();
   });
+
+  it.each([
+    {replaceEvent: false, finalMedia: false, earlyExit: false},
+    {replaceEvent: false, finalMedia: false, earlyExit: true},
+    {replaceEvent: false, finalMedia: true, earlyExit: false},
+    {replaceEvent: false, finalMedia: true, earlyExit: true},
+    {replaceEvent: true, finalMedia: false, earlyExit: false},
+    {replaceEvent: true, finalMedia: false, earlyExit: true},
+    {replaceEvent: true, finalMedia: true, earlyExit: false},
+    {replaceEvent: true, finalMedia: true, earlyExit: true},
+  ])(
+    'filters inline media after onEventCallback and preserves event identity (replaceEvent=$replaceEvent, finalMedia=$finalMedia, earlyExit=$earlyExit)',
+    async ({replaceEvent, finalMedia, earlyExit}) => {
+      const buildContent = (media: boolean): Content => ({
+        role: 'model',
+        parts: [
+          media
+            ? {inlineData: {data: 'AAA=', mimeType: 'audio/pcm'}}
+            : {text: 'transcript'},
+        ],
+      });
+
+      const runLiveSpy = vi.fn();
+      let sourceSnapshot:
+        | {id: string; invocationId: string; timestamp: number; author?: string}
+        | undefined;
+
+      const mediaAgent = new (class extends BaseAgent {
+        protected override async *runAsyncImpl(): AsyncGenerator<
+          Event,
+          void,
+          void
+        > {}
+        protected override async *runLiveImpl(
+          ctx: InvocationContext,
+        ): AsyncGenerator<Event, void, void> {
+          runLiveSpy();
+          yield createEvent({
+            invocationId: ctx.invocationId,
+            author: this.name,
+            content: buildContent(!finalMedia),
+          });
+        }
+      })({name: 'mediaAgent'});
+
+      const transformPlugin = new (class extends BasePlugin {
+        constructor() {
+          super('transformPlugin');
+        }
+        override async beforeRunCallback(): Promise<Content | undefined> {
+          return earlyExit ? buildContent(!finalMedia) : undefined;
+        }
+        override async onEventCallback({
+          event,
+        }: {
+          invocationContext: InvocationContext;
+          event: Event;
+        }): Promise<Event | undefined> {
+          sourceSnapshot = {
+            id: event.id,
+            invocationId: event.invocationId,
+            timestamp: event.timestamp,
+            author: event.author,
+          };
+          if (replaceEvent) {
+            return createEvent({
+              content: buildContent(finalMedia),
+            });
+          }
+          event.content = buildContent(finalMedia);
+          return undefined;
+        }
+      })();
+
+      const localSessionService = new InMemorySessionService();
+      const createdSession = await localSessionService.createSession({
+        appName: 'liveMediaApp',
+        userId: 'user-1',
+        sessionId: 'session-live-media',
+      });
+      const runner = new Runner({
+        appName: 'liveMediaApp',
+        agent: mediaAgent,
+        sessionService: localSessionService,
+        plugins: [transformPlugin],
+      });
+
+      const queue = new LiveRequestQueue();
+      queue.close();
+      const events: Event[] = [];
+      try {
+        for await (const event of runner.runLive({
+          userId: 'user-1',
+          sessionId: createdSession.id,
+          liveRequestQueue: queue,
+        })) {
+          events.push(event);
+        }
+      } finally {
+        await runner.close();
+      }
+
+      expect(runLiveSpy).toHaveBeenCalledTimes(earlyExit ? 0 : 1);
+      expect(events).toHaveLength(1);
+      expect(events[0].id).toBe(sourceSnapshot?.id);
+      expect(events[0].invocationId).toBe(sourceSnapshot?.invocationId);
+      expect(events[0].invocationId).not.toBe('');
+      expect(events[0].timestamp).toBe(sourceSnapshot?.timestamp);
+      expect(events[0].author).toBe(earlyExit ? 'model' : 'mediaAgent');
+      expect(events[0].content).toEqual(buildContent(finalMedia));
+
+      const storedSession = await localSessionService.getSession({
+        appName: 'liveMediaApp',
+        userId: 'user-1',
+        sessionId: createdSession.id,
+      });
+      if (finalMedia) {
+        expect(storedSession?.events).toEqual([]);
+      } else {
+        expect(storedSession?.events).toHaveLength(1);
+        expect(storedSession?.events[0]).toMatchObject({
+          id: events[0].id,
+          invocationId: events[0].invocationId,
+          timestamp: events[0].timestamp,
+          author: events[0].author,
+          content: events[0].content,
+        });
+      }
+    },
+  );
 });
 
 /**
