@@ -493,13 +493,16 @@ async function answerUnresolvableCall({
     `Function ${toolName} is not found in the toolsDict.`,
   );
   const tool = new ToolNotFoundPlaceholder(toolName, error);
+  const functionArgs = functionCall.args
+    ? structuredClone(functionCall.args)
+    : {};
   return recordToolExecution(
-    {tool, args: functionCall.args ?? {}, invocationContext},
+    {tool, args: functionArgs, invocationContext},
     async () => {
       const onToolErrorResponse =
         await invocationContext.pluginManager.runOnToolErrorCallback({
           tool,
-          toolArgs: functionCall.args ?? {},
+          toolArgs: functionArgs,
           toolContext,
           error,
         });
@@ -607,7 +610,9 @@ export async function handleFunctionCallList({
 
     // TODO - b/436079721: implement [tracer.start_as_current_span]
     logger.debug(`execute_tool ${tool.name}`);
-    const functionArgs = functionCall.args ?? {};
+    const functionArgs = functionCall.args
+      ? structuredClone(functionCall.args)
+      : {};
 
     // Step 1: Check if plugin before_tool_callback overrides the function
     // response.

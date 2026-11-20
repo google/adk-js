@@ -73,7 +73,7 @@ export const agent = new LlmAgent({
 ## How it works
 
 1. **Default request processor chain**: When `config.requestProcessors` is omitted, `LlmAgent` initializes `this.requestProcessors` in this order:
-   - `BASIC_LLM_REQUEST_PROCESSOR`: Copies `agent.generateContentConfig`, sets `llmRequest.model`, and applies `agent.outputSchema` when tools are not combined with an unsupported model. When `invocationContext.runConfig` is set, it also copies `responseModalities`, `speechConfig`, `inputAudioTranscription`, `outputAudioTranscription`, `realtimeInputConfig`, `enableAffectiveDialog` and `proactivity` onto `llmRequest.liveConnectConfig`.
+   - `BASIC_LLM_REQUEST_PROCESSOR`: Copies `agent.generateContentConfig`, sets `llmRequest.model`, and applies `agent.outputSchema` when tools are not combined with an unsupported model. When `invocationContext.runConfig` is set, it also copies `responseModalities`, `speechConfig`, `inputAudioTranscription`, `outputAudioTranscription`, `realtimeInputConfig`, `enableAffectiveDialog`, `proactivity`, and `sessionResumption` onto `llmRequest.liveConnectConfig`.
    - `AUTH_PREPROCESSOR`: Resumes pending credential requests for `adk_request_credential` from user responses.
    - `IDENTITY_LLM_REQUEST_PROCESSOR`: Appends the agent `name` and `description` to the system instruction.
    - `INSTRUCTIONS_LLM_REQUEST_PROCESSOR`: Resolves `agent.globalInstruction` and `agent.instruction` as a string or `InstructionProvider`, interpolates `{state}` and `{artifact.*}` placeholders on string instructions via `injectSessionState(template, readonlyContext)` (or lets custom `InstructionProvider` functions call `injectSessionState` directly), and appends them to `llmRequest`.
@@ -126,13 +126,14 @@ When `requestProcessors` or `responseProcessors` is omitted, `LlmAgent` construc
 
 The `RunConfig` interface controls streaming mode, Compositional Function Calling, output modalities, and LLM call limits for a single invocation.
 
-| Option               | Type            | Default              | Description                                                                                                                 |
-| :------------------- | :-------------- | :------------------- | :-------------------------------------------------------------------------------------------------------------------------- |
-| `streamingMode`      | `StreamingMode` | `StreamingMode.NONE` | Set `StreamingMode.SSE` to yield partial streaming events during `runAsync`; `StreamingMode.NONE` yields complete turns.    |
-| `supportCfc`         | `boolean`       | `false`              | Routes `callLlmAsync` through `runLiveFlow` with `Modality.TEXT` and `BuiltInCodeExecutor`.                                 |
-| `responseModalities` | `Modality[]`    | `undefined`          | Output modalities copied onto `llmRequest.liveConnectConfig`, overridden to `[Modality.TEXT]` when `supportCfc` is enabled. |
-| `maxLlmCalls`        | `number`        | `500`                | Maximum number of LLM calls permitted in a single invocation; values `<= 0` disable enforcement.                            |
-| `pauseOnToolCalls`   | `boolean`       | `false`              | Suspends the agent loop immediately after yielding a model event that contains function calls.                              |
+| Option               | Type                      | Default              | Description                                                                                                                 |
+| :------------------- | :------------------------ | :------------------- | :-------------------------------------------------------------------------------------------------------------------------- |
+| `streamingMode`      | `StreamingMode`           | `StreamingMode.NONE` | Set `StreamingMode.SSE` to yield partial streaming events during `runAsync`; `StreamingMode.NONE` yields complete turns.    |
+| `supportCfc`         | `boolean`                 | `false`              | Routes `callLlmAsync` through `runLiveFlow` with `Modality.TEXT` and `BuiltInCodeExecutor`.                                 |
+| `responseModalities` | `Modality[]`              | `undefined`          | Output modalities copied onto `llmRequest.liveConnectConfig`, overridden to `[Modality.TEXT]` when `supportCfc` is enabled. |
+| `sessionResumption`  | `SessionResumptionConfig` | `undefined`          | Session resumption settings shallow-cloned onto `llmRequest.liveConnectConfig.sessionResumption` for live connections.      |
+| `maxLlmCalls`        | `number`                  | `500`                | Maximum number of LLM calls permitted in a single invocation; values `<= 0` disable enforcement.                            |
+| `pauseOnToolCalls`   | `boolean`                 | `false`              | Suspends the agent loop immediately after yielding a model event that contains function calls.                              |
 
 Passing `supportCfc: true` in `runConfig` switches turn-by-turn `callLlmAsync` execution onto the bidirectional live connection while still enforcing `maxLlmCalls`, applying `afterModelCallback`, and filtering partial events according to `StreamingMode`.
 
