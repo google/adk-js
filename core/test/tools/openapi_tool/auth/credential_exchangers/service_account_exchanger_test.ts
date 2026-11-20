@@ -4,26 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-// Ported from adk-python v0.1.0:
-// src/google/adk/tests/unittests/tools/openapi_tool/auth/credential_exchangers/test_service_account_exchanger.py
-//
-// Four of the five reference tests port, under adk-js naming:
-//   test_exchange_credential_success
-//     -> 'should exchange explicit key material for a bearer token'
-//   test_exchange_credential_use_default_credential_success
-//     -> 'should exchange application default credentials for a bearer token'
-//   test_exchange_credential_missing_service_account_info
-//     -> 'should report the missing credentials when serviceAccount is absent'
-//   test_exchange_credential_exchange_failure
-//     -> 'should wrap a failure from the JWT client'
-//
-// test_exchange_credential_missing_auth_credential does not port. adk-python's
-// parameter defaults to `None`, and adk-js declares `authCredential` as
-// required on `BaseCredentialExchanger`, so no caller reaches that state
-// without defeating the type. Both Python cases assert the same message from
-// the same guard, which 'should report the missing credentials when
-// serviceAccount is absent' pins here.
-
 import {
   AuthCredential,
   AuthCredentialMissingError,
@@ -66,7 +46,7 @@ function stubJwtOnce(authorize: Mock): void {
   });
 }
 
-/** Mirrors the ten-field service account block the reference test builds. */
+/** Builds a complete service account credential fixture. */
 function serviceAccountCredential(): ServiceAccountCredential {
   return {
     type: 'service_account',
@@ -93,7 +73,7 @@ function explicitCredential(): AuthCredential {
   };
 }
 
-describe('ServiceAccountCredentialExchanger (adk-python v0.1.0 parity)', () => {
+describe('ServiceAccountCredentialExchanger', () => {
   let exchanger: ServiceAccountCredentialExchanger;
 
   beforeEach(() => {
@@ -120,7 +100,6 @@ describe('ServiceAccountCredentialExchanger (adk-python v0.1.0 parity)', () => {
         authType: AuthCredentialTypes.SERVICE_ACCOUNT,
         serviceAccount: {
           useDefaultCredential: true,
-          scopes: ['https://www.googleapis.com/auth/cloud-platform'],
         },
       },
     });
@@ -129,6 +108,9 @@ describe('ServiceAccountCredentialExchanger (adk-python v0.1.0 parity)', () => {
     expect(result.credential.http?.scheme).toBe('bearer');
     expect(result.credential.http?.credentials.token).toBe('mock_access_token');
     expect(GoogleAuth).toHaveBeenCalledTimes(1);
+    expect(GoogleAuth).toHaveBeenCalledWith({
+      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+    });
     expect(JWT).not.toHaveBeenCalled();
   });
 
@@ -140,10 +122,7 @@ describe('ServiceAccountCredentialExchanger (adk-python v0.1.0 parity)', () => {
     ).rejects.toThrow('Service account credentials are missing');
   });
 
-  // The TYPE, not just the message. Every other assertion in this file pins the
-  // text, which is why the error class could change twice without a single test
-  // noticing -- and why it could change back just as quietly.
-  it('throws AuthCredentialMissingError, the type adk-python raises', async () => {
+  it('throws AuthCredentialMissingError when serviceAccount is absent', async () => {
     await expect(
       exchanger.exchange({
         authCredential: {authType: AuthCredentialTypes.SERVICE_ACCOUNT},
@@ -171,17 +150,12 @@ describe('ServiceAccountCredentialExchanger (adk-python v0.1.0 parity)', () => {
       vi.fn().mockRejectedValue(new Error('Failed to load credentials')),
     );
 
-    // adk-python reports `Failed to exchange service account token`. adk-js
-    // names the path it took, and that extra word is kept.
     // One rejection, asserted twice: `stubJwtOnce` only stubs the next call,
     // so a second `exchange()` would take the success mock.
     const failed = exchanger.exchange({authCredential: explicitCredential()});
     await expect(failed).rejects.toThrow(
       'Failed to exchange explicit service account token: Failed to load credentials',
     );
-    // The TYPE, not only the message. Asserting the message alone let this
-    // site sit on the wrong error class for two review rounds: reverting it to
-    // `CredentialExchangeError` kept every test green.
     await expect(failed).rejects.toThrow(AuthCredentialMissingError);
     expect(JWT).toHaveBeenCalledTimes(1);
   });
