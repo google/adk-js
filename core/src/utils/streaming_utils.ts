@@ -39,6 +39,7 @@ class ProgressiveStrategy implements StreamingStrategy {
   private partsSequence: Part[] = [];
   private currentTextBuffer = '';
   private currentTextIsThought?: boolean;
+  private currentTextThoughtSignature?: string;
 
   // For streaming function call arguments
   private currentFcName?: string;
@@ -51,19 +52,24 @@ class ProgressiveStrategy implements StreamingStrategy {
       return;
     }
 
-    if (this.currentTextIsThought) {
-      this.partsSequence.push({
-        text: this.currentTextBuffer,
-        thought: true,
-      });
-    } else {
-      this.partsSequence.push({
-        text: this.currentTextBuffer,
-      });
+    const mergedPart: Part = this.currentTextIsThought
+      ? {
+          text: this.currentTextBuffer,
+          thought: true,
+        }
+      : {
+          text: this.currentTextBuffer,
+        };
+
+    if (this.currentTextThoughtSignature) {
+      mergedPart.thoughtSignature = this.currentTextThoughtSignature;
     }
+
+    this.partsSequence.push(mergedPart);
 
     this.currentTextBuffer = '';
     this.currentTextIsThought = undefined;
+    this.currentTextThoughtSignature = undefined;
   }
 
   private getValueFromPartialArg(
@@ -227,8 +233,9 @@ class ProgressiveStrategy implements StreamingStrategy {
   async *processResponse(
     llmResponse: LlmResponse,
   ): AsyncGenerator<LlmResponse, void, void> {
-    if (llmResponse.content && llmResponse.content.parts) {
-      for (const part of llmResponse.content.parts) {
+    const parts = llmResponse.content?.parts;
+    if (parts) {
+      for (const part of parts) {
         if (part.text) {
           const isThought = part.thought ?? false;
           if (
@@ -242,13 +249,28 @@ class ProgressiveStrategy implements StreamingStrategy {
             this.currentTextIsThought = isThought;
           }
           this.currentTextBuffer += part.text;
+          if (part.thoughtSignature && !this.currentTextThoughtSignature) {
+            this.currentTextThoughtSignature = part.thoughtSignature;
+          }
         } else if (part.functionCall) {
           this.processFunctionCallPart(part);
-        } else {
+        } else if (!isEmptyContentPart(part)) {
           this.flushTextBufferToSequence();
           this.partsSequence.push(part);
         }
       }
+    }
+
+    // Do not yield spurious empty partial events for chunks that carry only
+    // thoughtSignature (and empty or no text).
+    if (
+      parts?.length &&
+      parts.some(isSignatureOnlyPart) &&
+      parts.every(
+        (part) => isSignatureOnlyPart(part) || isEmptyContentPart(part),
+      )
+    ) {
+      return;
     }
 
     llmResponse.partial = true;
@@ -273,6 +295,47 @@ class ProgressiveStrategy implements StreamingStrategy {
 class NonProgressiveStrategy implements StreamingStrategy {
   private text = '';
   private thoughtText = '';
+  private textThoughtSignature?: string;
+  private thoughtTextSignature?: string;
+  private signatureParts: Part[] = [];
+
+  private hasBufferedParts(): boolean {
+    return (
+      Boolean(this.thoughtText) ||
+      Boolean(this.text) ||
+      this.signatureParts.length > 0
+    );
+  }
+
+  private buildBufferedParts(): Part[] {
+    const parts: Part[] = [];
+    if (this.thoughtText) {
+      const thoughtPart: Part = {text: this.thoughtText, thought: true};
+      if (this.thoughtTextSignature) {
+        thoughtPart.thoughtSignature = this.thoughtTextSignature;
+      }
+      parts.push(thoughtPart);
+    }
+    if (this.text) {
+      const textPart: Part = {text: this.text};
+      if (this.textThoughtSignature) {
+        textPart.thoughtSignature = this.textThoughtSignature;
+      }
+      parts.push(textPart);
+    }
+    if (this.signatureParts.length > 0) {
+      parts.push(...this.signatureParts);
+    }
+    return parts;
+  }
+
+  private clearBuffers(): void {
+    this.thoughtText = '';
+    this.text = '';
+    this.thoughtTextSignature = undefined;
+    this.textThoughtSignature = undefined;
+    this.signatureParts = [];
+  }
 
   async *processResponse(
     llmResponse: LlmResponse,
@@ -280,14 +343,35 @@ class NonProgressiveStrategy implements StreamingStrategy {
     if (llmResponse.content?.parts) {
       const nonTextParts: Part[] = [];
       let sawTextPart = false;
+      let sawNonEmptyTextPart = false;
+      let sawSignatureOnlyPart = false;
 
       for (const part of llmResponse.content.parts) {
+        if (isSignatureOnlyPart(part)) {
+          sawSignatureOnlyPart = true;
+          if (nonTextParts.length > 0) {
+            nonTextParts.push(part);
+          } else {
+            this.signatureParts.push(part);
+          }
+          continue;
+        }
+
         if (typeof part.text === 'string') {
           sawTextPart = true;
+          if (part.text) {
+            sawNonEmptyTextPart = true;
+          }
           if (part.thought) {
             this.thoughtText += part.text;
+            if (part.thoughtSignature && !this.thoughtTextSignature) {
+              this.thoughtTextSignature = part.thoughtSignature;
+            }
           } else {
             this.text += part.text;
+            if (part.thoughtSignature && !this.textThoughtSignature) {
+              this.textThoughtSignature = part.thoughtSignature;
+            }
           }
           continue;
         }
@@ -303,24 +387,16 @@ class NonProgressiveStrategy implements StreamingStrategy {
         // delivered once in the final aggregate instead of being split around
         // each audio chunk.
         const startsWithInlineData = !!llmResponse.content.parts[0]?.inlineData;
-        if (!startsWithInlineData && (this.thoughtText || this.text)) {
-          const parts: Part[] = [];
-          if (this.thoughtText) {
-            parts.push({text: this.thoughtText, thought: true});
-          }
-          if (this.text) {
-            parts.push({text: this.text});
-          }
+        if (!startsWithInlineData && this.hasBufferedParts()) {
           yield {
             content: {
               role: 'model',
-              parts: parts,
+              parts: this.buildBufferedParts(),
             },
             usageMetadata: llmResponse.usageMetadata,
             partial: false,
           };
-          this.thoughtText = '';
-          this.text = '';
+          this.clearBuffers();
         }
         yield {
           ...llmResponse,
@@ -333,6 +409,10 @@ class NonProgressiveStrategy implements StreamingStrategy {
         return;
       }
 
+      if (sawSignatureOnlyPart && !sawNonEmptyTextPart) {
+        return;
+      }
+
       if (sawTextPart) {
         llmResponse.partial = true;
       }
@@ -341,15 +421,8 @@ class NonProgressiveStrategy implements StreamingStrategy {
   }
 
   close(): Part[] | undefined {
-    if (this.text || this.thoughtText) {
-      const parts: Part[] = [];
-      if (this.thoughtText) {
-        parts.push({text: this.thoughtText, thought: true});
-      }
-      if (this.text) {
-        parts.push({text: this.text});
-      }
-      return parts;
+    if (this.hasBufferedParts()) {
+      return this.buildBufferedParts();
     }
     return undefined;
   }
@@ -419,7 +492,9 @@ export class GeminiStreamingResponseAggregator {
     }
 
     this.response = response;
-    this.usageMetadata = llmResponse.usageMetadata;
+    if (llmResponse.usageMetadata) {
+      this.usageMetadata = llmResponse.usageMetadata;
+    }
     if (llmResponse.groundingMetadata) {
       this.groundingMetadata = llmResponse.groundingMetadata;
     }
@@ -486,6 +561,24 @@ export class GeminiStreamingResponseAggregator {
 }
 
 /**
+ * Checks if a response part carries only a thoughtSignature without any other
+ * content payload (such as `{text: '', thoughtSignature: '...'}` or
+ * `{thoughtSignature: '...'}`).
+ */
+function isSignatureOnlyPart(part: Part): boolean {
+  return (
+    Boolean(part.thoughtSignature?.length) &&
+    !part.functionCall &&
+    !part.functionResponse &&
+    !part.fileData &&
+    !part.inlineData &&
+    !part.executableCode &&
+    !part.codeExecutionResult &&
+    (!part.text || part.text === '')
+  );
+}
+
+/**
  * Checks if a response part has no meaningful content (empty text, no tool calls, etc.)
  */
 export function isEmptyContentPart(part: Part): boolean {
@@ -496,6 +589,7 @@ export function isEmptyContentPart(part: Part): boolean {
     !part.inlineData &&
     !part.executableCode &&
     !part.codeExecutionResult &&
+    !part.thoughtSignature?.length &&
     (!part.text || part.text === '')
   );
 }
