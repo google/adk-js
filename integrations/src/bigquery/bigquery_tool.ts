@@ -121,9 +121,10 @@ export class BigQueryTool<
   readonly credentialsManager?: GoogleCredentialsManager;
 
   /**
-   * The configuration for BigQuery tools, or `undefined` when not configured.
+   * The configuration for BigQuery tools. Defaults to `new BigQueryToolConfig()`
+   * when omitted.
    */
-  readonly toolConfig?: BigQueryToolConfig;
+  readonly toolConfig: BigQueryToolConfig;
 
   /**
    * Parameter names omitted from the model's function declaration.
@@ -147,7 +148,7 @@ export class BigQueryTool<
       ? isBigQueryToolConfig(options.toolConfig)
         ? options.toolConfig
         : new BigQueryToolConfig(options.toolConfig)
-      : undefined;
+      : new BigQueryToolConfig();
     const execute = options.execute;
 
     super({

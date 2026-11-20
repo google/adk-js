@@ -18,22 +18,39 @@ describe('BigQueryToolConfig and WriteMode', () => {
     expect(WriteMode.ALLOWED).toBe('allowed');
   });
 
-  it('initializes with default WriteMode.BLOCKED', () => {
+  it('initializes with default WriteMode.BLOCKED and maxQueryResultRows 50', () => {
     const config = new BigQueryToolConfig();
     expect(config.writeMode).toBe(WriteMode.BLOCKED);
+    expect(config.maxQueryResultRows).toBe(50);
   });
 
-  it('accepts a custom writeMode', () => {
+  it('accepts a custom writeMode and maxQueryResultRows', () => {
     const protectedConfig = new BigQueryToolConfig({
       writeMode: WriteMode.PROTECTED,
+      maxQueryResultRows: 25,
     });
     expect(protectedConfig.writeMode).toBe(WriteMode.PROTECTED);
+    expect(protectedConfig.maxQueryResultRows).toBe(25);
 
     const allowedConfig = new BigQueryToolConfig({
       writeMode: WriteMode.ALLOWED,
+      maxQueryResultRows: 100,
     });
     expect(allowedConfig.writeMode).toBe(WriteMode.ALLOWED);
+    expect(allowedConfig.maxQueryResultRows).toBe(100);
   });
+
+  it.each([0, -1, 1.5, Number.NaN])(
+    'throws RangeError when maxQueryResultRows is %s',
+    (invalidRows) => {
+      expect(
+        () => new BigQueryToolConfig({maxQueryResultRows: invalidRows}),
+      ).toThrow(RangeError);
+      expect(
+        () => new BigQueryToolConfig({maxQueryResultRows: invalidRows}),
+      ).toThrow('maxQueryResultRows must be a positive integer.');
+    },
+  );
 
   it('identifies BigQueryToolConfig instances via isBigQueryToolConfig', () => {
     const config = new BigQueryToolConfig();
