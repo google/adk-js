@@ -68,6 +68,7 @@ export class ApigeeLlm extends Gemini {
     location,
     project,
     headers,
+    retryOptions,
   }: ApigeeLlmParams) {
     if (!validateModel(model)) {
       throw new Error(
@@ -80,6 +81,7 @@ export class ApigeeLlm extends Gemini {
     super({
       ...apigeeToGeminiInitParams({model, vertexai, project, location, apiKey}),
       headers,
+      retryOptions,
     });
 
     this.proxyUrl = proxyUrl ?? '';
