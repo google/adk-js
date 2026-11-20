@@ -50,6 +50,16 @@ export {
 } from './bigquery/config.js';
 export type {BigQueryToolConfigOptions} from './bigquery/config.js';
 export {
+  ASK_DATA_INSIGHTS_DESCRIPTION,
+  askDataInsights,
+  askDataInsightsParameters,
+} from './bigquery/data_insights_tool.js';
+export type {
+  AskDataInsightsArgs,
+  AskDataInsightsResult,
+  AskDataInsightsSuccessResult,
+} from './bigquery/data_insights_tool.js';
+export {
   getDatasetInfo,
   getDatasetInfoParameters,
   getTableInfo,
