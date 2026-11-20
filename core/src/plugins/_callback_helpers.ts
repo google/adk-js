@@ -113,21 +113,30 @@ function safeGet(obj: unknown, name: string): unknown {
 
 /**
  * The entries of a plain-object result that the built-in rules read, through
- * descriptors so no getter or accessor runs. Any other result has no entries.
+ * descriptors so no getter or accessor runs. Any other result, or one whose
+ * reflection traps throw, returns the entries collected so far.
  */
 function resultFields(result: unknown): Map<string, unknown> {
   const fields = new Map<string, unknown>();
-  if (typeof result !== 'object' || result === null || Array.isArray(result)) {
-    return fields;
-  }
-  const prototype: unknown = Object.getPrototypeOf(result);
-  if (prototype !== Object.prototype && prototype !== null) {
-    return fields;
-  }
-  for (const name of RESULT_FIELD_NAMES) {
-    if (Object.hasOwn(result, name)) {
-      fields.set(name, ownDataValue(result, name));
+  try {
+    if (
+      typeof result !== 'object' ||
+      result === null ||
+      Array.isArray(result)
+    ) {
+      return fields;
     }
+    const prototype: unknown = Object.getPrototypeOf(result);
+    if (prototype !== Object.prototype && prototype !== null) {
+      return fields;
+    }
+    for (const name of RESULT_FIELD_NAMES) {
+      if (Object.hasOwn(result, name)) {
+        fields.set(name, ownDataValue(result, name));
+      }
+    }
+  } catch {
+    return fields;
   }
   return fields;
 }

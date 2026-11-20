@@ -31,6 +31,30 @@ import {
 import {BasePlugin} from './base_plugin.js';
 
 /**
+ * Formats a value with `String()`, returning `'[unserializable]'` if coercion
+ * throws (for example on null-prototype objects or revoked proxies).
+ */
+function safeToString(value: unknown): string {
+  try {
+    return String(value);
+  } catch {
+    return '[unserializable]';
+  }
+}
+
+/**
+ * Serializes a value with `JSON.stringify`, falling back to `safeToString` when
+ * serialization throws or returns `undefined`.
+ */
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? safeToString(value);
+  } catch {
+    return safeToString(value);
+  }
+}
+
+/**
  * Options for configuring {@link LoggingPlugin}.
  */
 export interface LoggingPluginOptions {
@@ -446,12 +470,12 @@ export class LoggingPlugin extends BasePlugin {
     return parts.join(' | ');
   }
 
-  private formatArgs(args: Record<string, unknown>, maxLength = 300): string {
-    if (!args) {
+  private formatArgs(args: unknown, maxLength = 300): string {
+    if (args === null || args === undefined) {
       return '{}';
     }
 
-    let formatted = JSON.stringify(args);
+    let formatted = safeStringify(args);
     if (formatted.length > maxLength) {
       formatted = formatted.substring(0, maxLength) + '...}';
     }
@@ -460,9 +484,7 @@ export class LoggingPlugin extends BasePlugin {
 
   private formatValue(value: unknown, maxLength = 300): string {
     let formatted =
-      typeof value === 'string'
-        ? `'${value}'`
-        : (JSON.stringify(value) ?? String(value));
+      typeof value === 'string' ? `'${value}'` : safeStringify(value);
     if (formatted.length > maxLength) {
       formatted = formatted.slice(0, maxLength) + '...';
     }
