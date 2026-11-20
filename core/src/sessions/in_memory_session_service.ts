@@ -202,7 +202,11 @@ export class InMemorySessionService extends BaseSessionService {
           id: session.id,
           appName: session.appName,
           userId: session.userId,
-          state: {},
+          state: mergeStates(
+            this.appState[appName],
+            this.userState[appName]?.[session.userId],
+            cloneDeep(session.state),
+          ),
           events: [],
           lastUpdateTime: session.lastUpdateTime,
         }),

@@ -12,7 +12,6 @@ const ADK_LABEL = 'google-adk';
 const LANGUAGE_LABEL = 'gl-typescript';
 const AGENT_ENGINE_TELEMETRY_TAG = 'remote_reasoning_engine';
 const AGENT_ENGINE_TELEMETRY_ENV_VARIABLE_NAME = 'GOOGLE_CLOUD_AGENT_ENGINE_ID';
-const TRACKING_HEADER_NAMES = ['x-goog-api-client', 'user-agent'] as const;
 
 /**
  * The header shapes that `fetch` accepts. This matches the DOM library's
@@ -107,10 +106,6 @@ export function getTrackingHeaders(): Record<string, string> {
   };
 }
 
-function isTrackingHeaderName(name: string): boolean {
-  return TRACKING_HEADER_NAMES.some((trackingName) => trackingName === name);
-}
-
 function isHeaders(
   headers: Headers | Record<string, string>,
 ): headers is Headers {
@@ -157,18 +152,33 @@ export function headerEntries(headers?: HeadersInput): Array<[string, string]> {
  * The input is never mutated.
  *
  * @param headers The caller's headers, in any `HeadersInit` shape.
+ * @param trackingHeaders Base tracking headers to merge first; defaults to
+ *     {@link getTrackingHeaders}.
  * @return A new plain object with the merged headers.
  */
 export function mergeTrackingHeaders(
   headers?: HeadersInput,
+  trackingHeaders: Record<string, string> = getTrackingHeaders(),
 ): Record<string, string> {
+  const normalizedTrackingHeaders = new Map<string, string[]>();
+  for (const [name, trackingValue] of Object.entries(trackingHeaders)) {
+    const lowerName = name.toLowerCase();
+    const tokens = normalizedTrackingHeaders.get(lowerName) ?? [];
+    for (const token of trackingValue.split(/\s+/)) {
+      if (token && !tokens.includes(token)) {
+        tokens.push(token);
+      }
+    }
+    normalizedTrackingHeaders.set(lowerName, tokens);
+  }
+
   const otherHeaders = new Headers();
   const originalNames = new Map<string, string>();
   const callerValues = new Map<string, string[]>();
 
   for (const [name, value] of headerEntries(headers)) {
     const lowerName = name.toLowerCase();
-    if (isTrackingHeaderName(lowerName)) {
+    if (normalizedTrackingHeaders.has(lowerName)) {
       callerValues.set(lowerName, [
         ...(callerValues.get(lowerName) ?? []),
         value,
@@ -193,8 +203,8 @@ export function mergeTrackingHeaders(
 
   const merged = Object.fromEntries(mergedEntries) as Record<string, string>;
 
-  for (const [name, trackingValue] of Object.entries(getTrackingHeaders())) {
-    const tokens = trackingValue.split(' ');
+  for (const [name, baseTokens] of normalizedTrackingHeaders) {
+    const tokens = [...baseTokens];
     for (const value of callerValues.get(name) ?? []) {
       for (const token of value.split(/\s+/)) {
         if (token && !tokens.includes(token)) {
