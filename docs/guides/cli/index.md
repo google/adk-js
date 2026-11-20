@@ -1,12 +1,13 @@
 # CLI and Evaluation Utilities
 
-The CLI utilities in `@google/adk` prepare an agent's environment, state, logging, runner lifecycle, and evaluation datasets when running from the command line, the development server, or an automated test harness. This guide covers `.env` discovery (`walkToRootUntilFound`, `loadDotenvForAgent`), session-to-eval conversion and state initialization (`convertSessionToEvalInvocations`, `convertSessionToEvalFormat`, `createEmptyState`), CLI log routing (`setupAdkLogger`, `logToTmpFolder`), runner cleanup (`closeRunners`), and batch evaluation (`runEvals`, `LocalEvalSetsManager`, `LocalEvalSetResultsManager`, `convertEvalSetToSchema`, `loadEvalSetFromFile`, `getEvaluationCriteriaOrDefault`, `parseAndGetEvalsToRun`).
+The CLI utilities in `@google/adk` prepare an agent's environment, state, logging, runner lifecycle, and evaluation datasets when running from the command line, the development server, or an automated test harness. This guide covers `.env` discovery (`walkToRootUntilFound`, `loadDotenvForAgent`), session-to-eval conversion and state initialization (`convertSessionToEvalInvocations`, `convertSessionToEvalFormat`, `createEmptyState`), CLI log routing (`setupAdkLogger`, `logToTmpFolder`), runner cleanup (`closeRunners`), container deployment (`adk deploy cloud_run`, `adk deploy agent_engine`, `adk deploy gke`), and batch evaluation (`runEvals`, `getRegisteredEvalMetrics`, `LocalEvalSetsManager`, `LocalEvalSetResultsManager`, `convertEvalSetToSchema`, `loadEvalSetFromFile`, `getEvaluationCriteriaOrDefault`, `parseAndGetEvalsToRun`).
 
 - `walkToRootUntilFound` and `loadDotenvForAgent` - Locate a `.env` file by walking up from an agent directory to the filesystem root and load its variables into `process.env`.
-- `createEmptyState`, `convertSessionToEvalInvocations`, and `convertSessionToEvalFormat` - Initialize `{var}` placeholders referenced in agent instructions and convert recorded `Session` events into structured `EvalInvocation` or `EvaluationItem` turns.
+- `createEmptyState`, `convertSessionToEvalInvocations`, and `convertSessionToEvalFormat` - Initialize `{var}` placeholders referenced across agent trees, `Workflow` graphs, and `ParallelWorker` nodes, and convert recorded `Session` events into structured `EvalInvocation` or `EvaluationItem` turns.
 - `setupAdkLogger` and `logToTmpFolder` - Route the global ADK logger to `stderr` or to a timestamped log file in the system temporary folder with a `.latest.log` symlink.
 - `closeRunners` - Close multiple `Runner` instances concurrently with a 30-second timeout (`RUNNER_CLEANUP_TIMEOUT_MS`).
-- `runEvals`, `LocalEvalSetsManager`, `LocalEvalSetResultsManager`, `convertEvalSetToSchema`, `loadEvalSetFromFile`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun` - Manage local `.evalset.json` datasets (`EvalSet` and `EvalCase`), run multi-turn evaluation cases against an agent, score tool trajectory accuracy and ROUGE-1 response match, and persist `EvalSetResult` records on disk.
+- `runEvals`, `getRegisteredEvalMetrics`, `LocalEvalSetsManager`, `LocalEvalSetResultsManager`, `convertEvalSetToSchema`, `loadEvalSetFromFile`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun` - Manage local `.evalset.json` datasets (`EvalSet` and `EvalCase`), inspect registered `MetricInfo` descriptors, run multi-turn evaluation cases against an agent, score tool trajectory accuracy and ROUGE-1 response match, and persist `EvalSetResult` records on disk.
+- `BaseAgentLoader`, `AgentLoader`, `AgentChangeEventHandler`, `SharedValue`, and `ServerOptions` (in `@google/adk-devtools`) - Supply custom agent loaders to `AdkApiServer`, track the active app with `SharedValue`, and invalidate cached runners when watched agent files change.
 
 ## Introduction
 
@@ -119,7 +120,7 @@ When deploying to Vertex AI Agent Engine (`adk deploy agent_engine`, `adk deploy
 
 ### ADK service options
 
-The ADK CLI commands (`run`, `web`, `api_server` / `api-server`, `deploy cloud_run` / `deploy cloud-run`, `deploy agent_engine` / `deploy agent-engine`, and `deploy reasoning_engine` / `deploy reasoning-engine`) support configurable backend services via `--session-service-uri` (`--session_service_uri`), `--artifact-service-uri` (`--artifact_service_uri`), and `--memory-service-uri` (`--memory_service_uri`):
+The ADK CLI commands (`run`, `web`, `api_server` / `api-server`, `deploy cloud_run` / `deploy cloud-run`, `deploy gke`, `deploy agent_engine` / `deploy agent-engine`, and `deploy reasoning_engine` / `deploy reasoning-engine`) support configurable backend services via `--session-service-uri` (`--session_service_uri`), `--artifact-service-uri` (`--artifact_service_uri`), and `--memory-service-uri` (`--memory_service_uri`):
 
 - `--session-service-uri, --session_service_uri <string>`: Session service URI. Supported schemes include:
   - `memory://`: In-memory session service (`InMemorySessionService`).
@@ -151,11 +152,83 @@ export ADK_A2A_AUTH_TOKEN=<token>
 adk api_server path/to/agents --a2a
 ```
 
-`adk deploy cloud_run` accepts the same two options. `--a2a` starts the deployed server with `--a2a`. `--a2a_auth_token` reaches Cloud Run as the `ADK_A2A_AUTH_TOKEN` environment variable and is not written into the image. Without a token, the command prints a security warning, because the deployed A2A endpoints then accept every caller. `adk deploy agent_engine` and `adk deploy reasoning_engine` accept `--a2a`, which also starts the deployed server with `--a2a`. They do not accept `--a2a_auth_token`.
+`adk deploy cloud_run` accepts the same two options. `--a2a` starts the deployed server with `--a2a`. `--a2a_auth_token` reaches Cloud Run as the `ADK_A2A_AUTH_TOKEN` environment variable and is not written into the image. Without a token, the command prints a security warning, because the deployed A2A endpoints then accept every caller. `adk deploy gke`, `adk deploy agent_engine`, and `adk deploy reasoning_engine` accept `--a2a`, which also starts the deployed server with `--a2a`. They do not accept `--a2a_auth_token`.
+
+### Deploying to Google Kubernetes Engine (`adk deploy gke`)
+
+`adk deploy gke [agents_dir]` stages compiled agent bundles into a private temporary directory, builds and pushes a timestamp-tagged container image (`gcr.io/<project>/<serviceName>:<YYYYMMDD-HHMMSS>`) with Cloud Build (`gcloud builds submit`), writes a Kubernetes `apps/v1` `Deployment` and `v1` `Service` manifest (`deployment.yaml`), fetches cluster credentials via `gcloud container clusters get-credentials`, applies the manifest with `kubectl apply -f`, and removes temporary staging files on exit.
+
+```bash
+adk deploy gke path/to/agent \
+  --project my-gcp-project \
+  --region us-central1 \
+  --cluster_name my-gke-cluster \
+  --service_name support-agent
+```
+
+Key options (all accept both `--snake_case` and `--kebab-case` spellings):
+
+- `--cluster-name, --cluster_name <string>`: Target GKE cluster name (required).
+- `--project [string]`: Google Cloud project ID. Falls back to `gcloud config get-value project` when omitted.
+- `--region <string>`: GKE cluster region. When omitted, `--region` and `GOOGLE_CLOUD_LOCATION` are omitted cleanly.
+- `--service-name, --service_name <string>`: Kubernetes `Deployment` and `Service` name (must be a valid RFC 1123 DNS label; default `'adk-default-service-name'`).
+- `--service-type, --service_type <string>`: Kubernetes `Service` type: `'ClusterIP'` (default), `'NodePort'`, or `'LoadBalancer'`. When `'ClusterIP'` is used, the service stays internal to the cluster and the CLI logs a `kubectl port-forward svc/<serviceName> <port>:80` command for local testing.
+- `--port <number>` (default `8000`), `--app-name, --app_name <string>`, `--temp-folder, --temp_folder <string>`, `--adk-version, --adk_version [string]`, `--with-ui, --with_ui [boolean]`, `--allow-origins, --allow_origins <string>`, `--otel-to-cloud, --otel_to_cloud [boolean]`, `--trace-to-cloud, --trace_to_cloud [boolean]`, `--a2a [boolean]`, and the `--session-service-uri`, `--artifact-service-uri`, and `--memory-service-uri` options.
 
 ### Session conversion and empty state
 
-`createEmptyState(agent, initializedStates)` walks `agent.subAgents` recursively. For every `LlmAgent` whose `instruction` is a string, it finds `{var}` word placeholders (`/{([\w]+)}/g`) and sets each key to `''`. Keys passed in `initializedStates` are copied on top so caller-supplied values win over the empty defaults.
+`createEmptyState(agent, initializedStates)` accepts a `BaseAgent` or `BaseNode` root (including `Workflow` and `ParallelWorker`). It traverses `agent.subAgents`, `workflow.graph.nodes`, and `parallelWorker.inner` while tracking visited nodes so cyclic graphs terminate cleanly. For every `LlmAgent` whose `instruction` is a string, it finds `{var}` word placeholders (`/{([\w]+)}/g`) and sets each key to `''`. Keys passed in `initializedStates` are copied on top so caller-supplied values win over the empty defaults.
+
+### Programmatic agent loaders in `@google/adk-devtools`
+
+`@google/adk-devtools` exports `BaseAgentLoader` (`isBaseAgentLoader` and `AgentFileHandle`), the filesystem-backed `AgentLoader` (`AgentFile`, `FileModuleType`, `AgentFileOptions`, `AgentLoadFailure`), `AgentChangeEventHandler` (`AgentChangeEventHandlerOptions` and `CachingAgentLoader`), `SharedValue` (`isSharedValue` and `SharedValueOptions`), and `ServerOptions` for programmatic `AdkApiServer` setups:
+
+- Subclass `BaseAgentLoader` to serve agents from memory or a custom registry via `listAgents()` and `getAgentFile(agentName)` without writing temporary files (`readReadme` on `AgentFileHandle` is optional, and `disposeAll()` defaults to a no-op).
+- `AdkApiServer` exposes `runnersToClean: Set<string>` and `currentAppNameRef: SharedValue<string>`. When an app name is added to `runnersToClean`, the next request retires the cached `Runner` and builds a fresh one.
+- Passing `reloadAgents: true` with `agentsDir` and a custom `BaseAgentLoader` attaches `AgentChangeEventHandler` so edits to `.js`, `.cjs`, `.mjs`, `.ts`, `.mts`, `.cts`, `.yaml`, or `.yml` files inside agent directories (ignoring `node_modules` and dot-prefixed directories) call `removeAgentFromCache` (when implemented) and add affected agent names to `runnersToClean`.
+
+```ts
+import {LlmAgent, type RunnableRoot} from '@google/adk';
+import {
+  AdkApiServer,
+  type AgentFileHandle,
+  BaseAgentLoader,
+  type ServerOptions,
+} from '@google/adk-devtools';
+
+class InMemoryAgentLoader extends BaseAgentLoader {
+  constructor(private readonly agents: ReadonlyMap<string, RunnableRoot>) {
+    super();
+  }
+
+  override async listAgents(): Promise<string[]> {
+    return [...this.agents.keys()].sort();
+  }
+
+  override async getAgentFile(agentName: string): Promise<AgentFileHandle> {
+    const agent = this.agents.get(agentName);
+    if (!agent) {
+      throw new Error(`Agent '${agentName}' not found.`);
+    }
+    return {
+      load: async () => agent,
+      retain: () => ({async [Symbol.asyncDispose](): Promise<void> {}}),
+      async [Symbol.asyncDispose](): Promise<void> {},
+    };
+  }
+}
+
+const supportAgent = new LlmAgent({
+  name: 'supportAgent',
+  model: 'gemini-flash-latest',
+  instruction: 'Answer support questions.',
+});
+const options: ServerOptions = {
+  agentLoader: new InMemoryAgentLoader(new Map([['supportApp', supportAgent]])),
+  port: 8000,
+};
+const server = new AdkApiServer(options);
+```
 
 `convertSessionToEvalInvocations(session)` scans `session.events` in order and groups each `author === 'user'` event that has non-empty `content.parts` with all subsequent non-user events until the next user turn, returning an array of `EvalInvocation` records:
 
@@ -180,8 +253,10 @@ adk api_server path/to/agents --a2a
 3. Runs every user turn in the case through a `Runner` and converts the recorded session with `convertSessionToEvalFormat`.
 4. Scores each requested `EvalMetric`:
    - `TOOL_TRAJECTORY_SCORE_KEY` (`'tool_trajectory_avg_score'`): `1.0` for a turn when the actual `expected_tool_use` list matches the expected list in length, `tool_name`, and deep `tool_input`; `0.0` otherwise.
-   - `RESPONSE_MATCH_SCORE_KEY` (`'response_match_score'`): unigram ROUGE-1 F1 score between the expected `reference` and the actual `reference`.
+   - `RESPONSE_MATCH_SCORE_KEY` (`'response_match_score'`) and `RESPONSE_EVALUATION_SCORE_KEY` (`'response_evaluation_score'`): unigram ROUGE-1 F1 score in `[0, 1]` between the expected `reference` and the actual `reference`.
 5. Yields an `EvalResult` (`EvalCaseResult`) with `eval_set_id`, `session_details`, per-invocation and overall metric results, and sets `final_eval_status` to `EvalStatus.PASSED`, `EvalStatus.FAILED`, or `EvalStatus.NOT_EVALUATED`.
+
+`getRegisteredEvalMetrics()` returns fresh `MetricInfo[]` descriptors (`{metricName, description, metricValueInfo: {interval: {minValue: 0, openAtMin: false, maxValue: 1, openAtMax: false}}, requiresThreshold: true}`) for the three supported metrics (`MetricInfo`, `MetricValueInfo`, `MetricInterval`, and `ListMetricsInfoResponse` are exported from `@google/adk`). On `AdkApiServer`, `GET /apps/:appName/eval_metrics` returns `MetricInfo[]` and `GET /dev/apps/:appName/metrics-info` returns `ListMetricsInfoResponse` (`{metricsInfo: MetricInfo[]}`), validating `appName` as a single path segment and returning HTTP 400 on invalid input.
 
 ### Managing eval sets, persisting evaluation results, and closing runners
 

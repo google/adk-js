@@ -10,6 +10,7 @@ import {
   Modality,
   ProactivityConfig,
   RealtimeInputConfig,
+  SessionResumptionConfig,
   SpeechConfig,
 } from '@google/genai';
 
@@ -105,6 +106,11 @@ export interface RunConfig {
    * `triggerTokens`, the server compresses older history to `targetTokens`.
    */
   contextWindowCompression?: ContextWindowCompressionConfig;
+
+  /**
+   * Session resumption configuration for live agents.
+   */
+  sessionResumption?: SessionResumptionConfig;
 
   /**
    * A limit on the total number of llm calls for a given run.

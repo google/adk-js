@@ -25,6 +25,7 @@ import {
   Event,
   getFunctionCalls,
   getFunctionResponses,
+  getRegisteredEvalMetrics,
   InMemoryArtifactService,
   InMemoryCredentialService,
   InMemoryMemoryService,
@@ -69,9 +70,12 @@ import {version} from '../version.js';
 
 export type {AddSessionToEvalSetRequest, RunEvalRequest, RunEvalResult};
 
+import {AgentChangeEventHandler} from '../utils/agent_change_handler.js';
 import {AgentFileOptions, AgentLoader} from '../utils/agent_loader.js';
+import type {BaseAgentLoader} from '../utils/base_agent_loader.js';
 import {formatHeaderForLog} from '../utils/log_utils.js';
 import {AdkLogger} from '../utils/logger.js';
+import {SharedValue} from '../utils/shared_value.js';
 import {
   ApiServerSpanExporter,
   hrTimeToNanoseconds,
@@ -105,7 +109,10 @@ import {renderStructureGraphAsDot} from './structure_graph.js';
  */
 export const A2A_AUTH_TOKEN_ENV_VAR = 'ADK_A2A_AUTH_TOKEN';
 
-interface ServerOptions {
+/**
+ * Configuration options for {@link AdkApiServer}.
+ */
+export interface ServerOptions {
   agentsDir?: string;
   host?: string;
   port?: number;
@@ -123,7 +130,7 @@ interface ServerOptions {
    * {@link LocalEvalSetResultsManager} on the agents directory.
    */
   evalSetResultsManager?: EvalSetResultsManager;
-  agentLoader?: AgentLoader;
+  agentLoader?: BaseAgentLoader;
   agentFileLoadOptions?: AgentFileOptions;
   serveDebugUI?: boolean;
   /**
@@ -218,9 +225,15 @@ export class AdkApiServer {
   }
 
   readonly app: express.Application;
+  /** App names whose cached {@link Runner} instances must be recreated on the next run. */
+  readonly runnersToClean = new Set<string>();
+  /** Shared reference tracking the most recently executed app name. */
+  readonly currentAppNameRef = new SharedValue<string>({value: ''});
   private readonly agentsDir?: string;
-  private readonly agentLoader: AgentLoader;
+  private readonly agentLoader: BaseAgentLoader;
   private readonly ownsAgentLoader: boolean;
+  private readonly reloadAgents: boolean;
+  private agentChangeWatcher?: fs.FSWatcher;
   /**
    * Caches below are keyed by request path parameters (`appName`, `eventId`,
    * `sessionId`), so each is created with `Object.create(null)`. On an
@@ -280,12 +293,13 @@ export class AdkApiServer {
       options.evalSetResultsManager ??
       new LocalEvalSetResultsManager(evalBaseDir);
     this.ownsAgentLoader = options.agentLoader === undefined;
+    this.reloadAgents = options.reloadAgents ?? false;
     this.agentLoader =
       options.agentLoader ??
       new AgentLoader(
         options.agentsDir,
         options.agentFileLoadOptions,
-        options.reloadAgents ?? false,
+        this.reloadAgents,
       );
     this.serveDebugUI = options.serveDebugUI ?? false;
     // A browser sends one Origin per request, so a comma-separated
@@ -380,7 +394,43 @@ export class AdkApiServer {
     }
   }
 
+  private startAgentChangeWatcher(): void {
+    if (
+      this.agentChangeWatcher ||
+      this.ownsAgentLoader ||
+      !this.reloadAgents ||
+      !this.agentsDir
+    ) {
+      return;
+    }
+
+    try {
+      const resolvedAgentsDir = path.resolve(this.agentsDir);
+      const changeHandler = new AgentChangeEventHandler({
+        agentLoader: this.agentLoader,
+        runnersToClean: this.runnersToClean,
+        agentsDir: resolvedAgentsDir,
+      });
+      const isSingleFile =
+        fs.existsSync(resolvedAgentsDir) &&
+        fs.statSync(resolvedAgentsDir).isFile();
+      this.agentChangeWatcher = fs.watch(
+        isSingleFile ? path.dirname(resolvedAgentsDir) : resolvedAgentsDir,
+        isSingleFile ? {} : {recursive: true},
+        changeHandler.createWatchListener(),
+      );
+      this.agentChangeWatcher.on('error', (err) => {
+        this.logger.warn(`Agent file watcher error: ${getErrorMessage(err)}`);
+      });
+    } catch (err: unknown) {
+      this.logger.warn(
+        `Could not start agent file watcher: ${getErrorMessage(err)}`,
+      );
+    }
+  }
+
   private async init() {
+    this.startAgentChangeWatcher();
     const app = this.app;
     const requestHooks = await this.setupTelemetry();
     this.requestHooks = requestHooks;
@@ -668,7 +718,11 @@ export class AdkApiServer {
 
           const agentFile = await this.agentLoader.getAgentFile(appName);
           return res.json(
-            serializeAppInfo(appName, rootAgent, await agentFile.readReadme()),
+            serializeAppInfo(
+              appName,
+              rootAgent,
+              await agentFile.readReadme?.(),
+            ),
           );
         } catch (e) {
           const error = `Failed to get app info: ${e}`;
@@ -1206,11 +1260,10 @@ export class AdkApiServer {
           await using _bundleLease = agentFile.retain();
           const loaded = await agentFile.load();
           const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
-          const initialSessionState = isApp(rootAgent)
-            ? {...session.state}
-            : 'subAgents' in rootAgent
-              ? createEmptyState(rootAgent, session.state)
-              : {...session.state};
+          const initialSessionState = createEmptyState(
+            rootAgent,
+            session.state,
+          );
 
           const newEvalCase: EvalCase = {
             evalId,
@@ -1550,8 +1603,35 @@ export class AdkApiServer {
     );
 
     app.get('/apps/:appName/eval_metrics', (req: Request, res: Response) => {
-      return res.status(501).json({error: 'Not implemented'});
+      try {
+        validatePathSegment(req.params['appName'], 'appName');
+        return res.json(getRegisteredEvalMetrics());
+      } catch (e: unknown) {
+        if (e instanceof InputValidationError) {
+          return res.status(400).json({error: e.message});
+        }
+        const error = `Failed to list eval metrics: ${getErrorMessage(e)}`;
+        this.logger.error(error);
+        return res.status(500).json({error});
+      }
     });
+
+    app.get(
+      '/dev/apps/:appName/metrics-info',
+      (req: Request, res: Response) => {
+        try {
+          validatePathSegment(req.params['appName'], 'appName');
+          return res.json({metricsInfo: getRegisteredEvalMetrics()});
+        } catch (e: unknown) {
+          if (e instanceof InputValidationError) {
+            return res.status(400).json({error: e.message});
+          }
+          const error = `Failed to list metrics info: ${getErrorMessage(e)}`;
+          this.logger.error(error);
+          return res.status(500).json({error});
+        }
+      },
+    );
 
     // -------------------------- Run related endpoints ------------------------
     app.post('/run', async (req: Request, res: Response) => {
@@ -2415,6 +2495,7 @@ export class AdkApiServer {
       // Resolve the app through the loader first, so an unknown app name
       // never reaches the `.env` lookup.
       const agentFile = await this.agentLoader.getAgentFile(appName);
+      this.currentAppNameRef.value = appName;
       this.loadAgentDotenv(appName);
       await using _bundleLease = agentFile.retain();
       const loaded = await agentFile.load();
@@ -2458,6 +2539,8 @@ export class AdkApiServer {
   }
 
   async stop(): Promise<void> {
+    this.agentChangeWatcher?.close();
+    this.agentChangeWatcher = undefined;
     const runners = [
       ...Object.values(this.runnerCache),
       ...this.retiredRunners,
@@ -2579,8 +2662,9 @@ export class AdkApiServer {
   ): Promise<Runner> {
     const isAppInstance = isApp(agentOrApp);
     const agent = isAppInstance ? agentOrApp.rootAgent : agentOrApp;
+    const shouldClean = this.runnersToClean.delete(appName);
     const previousRunner = this.runnerCache[appName];
-    if (!previousRunner || previousRunner.agent !== agent) {
+    if (shouldClean || !previousRunner || previousRunner.agent !== agent) {
       this.runnerCache[appName] = new Runner({
         app: isAppInstance ? agentOrApp : undefined,
         appName,
@@ -2611,6 +2695,7 @@ export class AdkApiServer {
     validatePathSegment(options.appName, 'appName');
     // Resolve the agent first, so an unknown appName never loads a .env file.
     const agentFile = await this.agentLoader.getAgentFile(options.appName);
+    this.currentAppNameRef.value = options.appName;
     this.loadAgentDotenv(options.appName);
     await using _bundleLease = agentFile.retain();
     const loaded = await agentFile.load();

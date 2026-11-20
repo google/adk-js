@@ -13,6 +13,7 @@ import {
   MemoryMetadataValue,
 } from '@google-cloud/vertexai/build/src/genai/types.js';
 import {Content, createUserContent} from '@google/genai';
+import {REQUEST_CREDENTIAL_FUNCTION_CALL_NAME} from '../agents/framework_function_calls.js';
 import {Event} from '../events/event.js';
 import {Session} from '../sessions/session.js';
 import {logger} from '../utils/logger.js';
@@ -55,12 +56,38 @@ const ENABLE_CONSOLIDATION_KEY = 'enable_consolidation';
 const MAX_DIRECT_MEMORIES_PER_GENERATE_CALL = 5;
 
 /**
- * Reports whether an event carries nothing worth writing to memory. The part
- * fields below mirror `_should_filter_out_event` in adk-python's
- * `memory/vertex_ai_memory_bank_service.py`.
+ * Reports whether an event is a credential-exchange control-plane event whose
+ * payload must not be sent to Memory Bank.
+ */
+function isCredentialEvent(event: Event): boolean {
+  return Boolean(
+    event.content?.parts?.some(
+      (p) =>
+        p.functionCall?.name === REQUEST_CREDENTIAL_FUNCTION_CALL_NAME ||
+        p.functionResponse?.name === REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+    ),
+  );
+}
+
+/**
+ * Returns a copy of `content` with `thought` parts removed, without mutating
+ * the input `Content` or its `parts` array.
+ */
+function withoutThoughts(content?: Content): Content | undefined {
+  if (!content?.parts?.some((part) => part.thought)) {
+    return content;
+  }
+  return {
+    ...content,
+    parts: content.parts.filter((part) => !part.thought),
+  };
+}
+
+/**
+ * Reports whether `content` carries nothing worth writing to memory.
  */
 function shouldFilterOutEvent(content?: Content): boolean {
-  return !(content?.parts || []).some(
+  return !(content?.parts ?? []).some(
     (p) =>
       p.text ||
       p.inlineData ||
@@ -262,13 +289,17 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
   }): Promise<void> {
     const directEvents: GenerateMemoriesRequestDirectContentsSourceEvent[] = [];
     for (const event of request.eventsToProcess) {
-      if (shouldFilterOutEvent(event.content)) {
+      if (isCredentialEvent(event)) {
+        continue;
+      }
+      const content = withoutThoughts(event.content);
+      if (!content || shouldFilterOutEvent(content)) {
         continue;
       }
       // Deep-clone into a plain JSON object so nothing non-serializable
       // reaches the request body.
       directEvents.push({
-        content: JSON.parse(JSON.stringify(event.content)),
+        content: JSON.parse(JSON.stringify(content)),
       });
     }
 
