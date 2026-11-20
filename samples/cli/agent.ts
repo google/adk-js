@@ -43,7 +43,9 @@ import {
   LocalEvalSetsManager,
   parseAndGetEvalsToRun,
   runEvals,
+  START,
   stringifyContent,
+  Workflow,
 } from '@google/adk';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -146,6 +148,27 @@ async function main() {
   const initialState = createEmptyState(rootAgent, {locale: 'en-GB'});
   process.stdout.write(
     `Initialized state from instruction placeholders: ${JSON.stringify(initialState)}\n`,
+  );
+
+  const triageWorkflow = new Workflow({
+    name: 'triageWorkflow',
+    edges: [
+      [
+        START,
+        new LlmAgent({
+          name: 'triageStep',
+          model: 'gemini-flash-latest',
+          instruction:
+            'Classify ticket {ticketId} with priority {priorityLevel}.',
+        }),
+      ],
+    ],
+  });
+  const workflowState = createEmptyState(triageWorkflow, {
+    priorityLevel: 'high',
+  });
+  process.stdout.write(
+    `Initialized workflow state placeholders: ${JSON.stringify(workflowState)}\n`,
   );
 
   const runner = new InMemoryRunner({agent: rootAgent, appName});
