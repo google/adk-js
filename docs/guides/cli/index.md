@@ -186,6 +186,7 @@ Key options (all accept both `--snake_case` and `--kebab-case` spellings):
 - Subclass `BaseAgentLoader` to serve agents from memory or a custom registry via `listAgents()` and `getAgentFile(agentName)` without writing temporary files (`readReadme` on `AgentFileHandle` is optional, and `disposeAll()` defaults to a no-op).
 - `AdkApiServer` exposes `runnersToClean: Set<string>` and `currentAppNameRef: SharedValue<string>`. When an app name is added to `runnersToClean`, the next request retires the cached `Runner` and builds a fresh one.
 - Passing `reloadAgents: true` with `agentsDir` and a custom `BaseAgentLoader` attaches `AgentChangeEventHandler` so edits to `.js`, `.cjs`, `.mjs`, `.ts`, `.mts`, `.cts`, `.yaml`, or `.yml` files inside agent directories (ignoring `node_modules` and dot-prefixed directories) call `removeAgentFromCache` (when implemented) and add affected agent names to `runnersToClean`.
+- Pass `registerProcessors` on `ServerOptions` to receive the active OpenTelemetry `TracerProvider` during `AdkApiServer` telemetry initialization.
 
 ```ts
 import {LlmAgent, type RunnableRoot} from '@google/adk';
@@ -243,6 +244,8 @@ const server = new AdkApiServer(options);
 `setupAdkLogger(level)` installs a logger via `setLogger` that formats records with an ISO timestamp and level name and writes them to `process.stderr`.
 
 `logToTmpFolder(options)` creates `<os.tmpdir()>/<subFolder>/<logFilePrefix>.<timestamp>.<pid>.log`, routes the global ADK logger to append to that file, and updates `<logFilePrefix>.latest.log` in the same folder as a symbolic link pointing to the newest log file. The default `subFolder` contains the current user name, so users who share a temp folder do not write to the same files. The process ID in the file name keeps two processes that start in the same second apart. The folder is created with mode `0o700` and the log file with mode `0o600`.
+
+On the CLI, `adk web`, `adk api_server` (`api-server`), `adk run`, `adk eval`, `adk deploy cloud_run` (`cloud-run`), `adk deploy agent_engine` (`agent-engine`), `adk deploy reasoning_engine` (`reasoning-engine`), and `adk deploy gke` accept `-v, --verbose` as a shorthand for `--log_level debug`. When both `-v` / `--verbose` and an explicit `--log-level` / `--log_level` option are passed in either order, the explicit `--log_level` value takes precedence.
 
 ### Evaluation runner
 

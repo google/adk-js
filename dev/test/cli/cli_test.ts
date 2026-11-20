@@ -8,12 +8,15 @@ import {
   createEvent,
   DatabaseSessionService,
   type DatabaseSessionServiceOptions,
+  GcsArtifactService,
   InMemoryMemoryService,
   InMemorySessionService,
   LocalEvalSetResultsManager,
   LocalEvalSetsManager,
+  logger,
   LogLevel,
   logToTmpFolder,
+  setLogLevel,
   setupAdkLogger,
   VertexAiMemoryBankService,
   VertexAiRagMemoryService,
@@ -2427,6 +2430,418 @@ describe('CLI Entrypoint', () => {
         );
       });
     });
+  });
+
+  describe('verbose and log level precedence', () => {
+    it.each([
+      {label: 'web with -v', args: ['web', '-v']},
+      {label: 'web with --verbose', args: ['web', '--verbose']},
+      {label: 'api_server with -v', args: ['api_server', '-v']},
+      {label: 'api_server with --verbose', args: ['api_server', '--verbose']},
+      {label: 'api-server with -v', args: ['api-server', '-v']},
+    ])('sets LogLevel.DEBUG for $label', async ({args}) => {
+      await parse(args);
+
+      expect(setupAdkLogger).toHaveBeenCalledWith(LogLevel.DEBUG);
+      expect(AdkApiServer).toHaveBeenCalledWith(
+        expect.objectContaining({logLevel: LogLevel.DEBUG}),
+      );
+    });
+
+    it.each([
+      {
+        label: 'web with -v before --log_level error',
+        args: ['web', '-v', '--log_level', 'error'],
+        expected: LogLevel.ERROR,
+      },
+      {
+        label: 'web with --log_level warning before -v',
+        args: ['web', '--log_level', 'warning', '-v'],
+        expected: LogLevel.WARN,
+      },
+      {
+        label: 'web with --verbose and --log-level=info',
+        args: ['web', '--verbose', '--log-level=info'],
+        expected: LogLevel.INFO,
+      },
+      {
+        label: 'api_server with -v before --log_level error',
+        args: ['api_server', '-v', '--log_level', 'error'],
+        expected: LogLevel.ERROR,
+      },
+      {
+        label: 'api_server with --log-level warning before --verbose',
+        args: ['api_server', '--log-level', 'warning', '--verbose'],
+        expected: LogLevel.WARN,
+      },
+      {
+        label: 'api-server with --verbose and --log_level=info',
+        args: ['api-server', '--verbose', '--log_level=info'],
+        expected: LogLevel.INFO,
+      },
+    ])(
+      'honours explicit log level over verbose for $label',
+      async ({args, expected}) => {
+        await parse(args);
+
+        expect(setupAdkLogger).toHaveBeenCalledWith(expected);
+        expect(AdkApiServer).toHaveBeenCalledWith(
+          expect.objectContaining({logLevel: expected}),
+        );
+      },
+    );
+
+    it.each([
+      {label: '-v before agent path', args: ['run', '-v', 'agent.ts']},
+      {label: '-v after agent path', args: ['run', 'agent.ts', '-v']},
+    ])('sets LogLevel.DEBUG on run when $label', async ({args}) => {
+      await parse(args);
+
+      expect(logToTmpFolder).toHaveBeenCalledWith({level: LogLevel.DEBUG});
+      expect(runAgent).toHaveBeenCalledWith(
+        expect.objectContaining({agentPath: 'agent.ts'}),
+      );
+    });
+
+    it.each([
+      {
+        label: '-v precedes --log_level error',
+        args: ['run', '-v', '--log_level', 'error', 'agent.ts'],
+        expected: LogLevel.ERROR,
+      },
+      {
+        label: '--log-level warning precedes -v',
+        args: ['run', '--log-level', 'warning', '-v', 'agent.ts'],
+        expected: LogLevel.WARN,
+      },
+      {
+        label: '--verbose accompanies --log_level=info',
+        args: ['run', 'agent.ts', '--verbose', '--log_level=info'],
+        expected: LogLevel.INFO,
+      },
+    ])(
+      'honours explicit log level over verbose on run when $label',
+      async ({args, expected}) => {
+        await parse(args);
+
+        expect(logToTmpFolder).toHaveBeenCalledWith({level: expected});
+      },
+    );
+
+    describe('command: eval log level precedence', () => {
+      let tempDir: string;
+      let agentDir: string;
+
+      beforeEach(() => {
+        tempDir = fs.mkdtempSync(
+          path.join(os.tmpdir(), 'adk-cli-eval-loglevel-'),
+        );
+        agentDir = path.join(tempDir, 'evalApp');
+        fs.mkdirSync(agentDir, {recursive: true});
+        fs.writeFileSync(
+          path.join(agentDir, 'agent.js'),
+          [
+            `import {BaseAgent, createEvent} from '@google/adk';`,
+            `class EvalAgent extends BaseAgent {`,
+            `  constructor() { super({name: 'evalAgent'}); }`,
+            `  async *runAsyncImpl(ctx) {`,
+            `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'ok'}]}});`,
+            `  }`,
+            `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+            `}`,
+            `export const rootAgent = new EvalAgent();`,
+          ].join('\n'),
+          'utf-8',
+        );
+      });
+
+      afterEach(() => {
+        setLogLevel(LogLevel.INFO);
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      });
+
+      it.each([
+        {
+          label: '-v alone',
+          extraArgs: ['-v'],
+          expected: LogLevel.DEBUG,
+        },
+        {
+          label: '--verbose alone',
+          extraArgs: ['--verbose'],
+          expected: LogLevel.DEBUG,
+        },
+        {
+          label: '-v before --log_level error',
+          extraArgs: ['-v', '--log_level', 'error'],
+          expected: LogLevel.ERROR,
+        },
+        {
+          label: '--log-level warning before --verbose',
+          extraArgs: ['--log-level', 'warning', '--verbose'],
+          expected: LogLevel.WARN,
+        },
+        {
+          label: '--verbose with --log_level=info',
+          extraArgs: ['--verbose', '--log_level=info'],
+          expected: LogLevel.INFO,
+        },
+      ])(
+        'sets core log level to $expected on eval with $label',
+        async ({extraArgs, expected}) => {
+          const setLogLevelSpy = vi.spyOn(logger, 'setLogLevel');
+          const stdoutSpy = vi
+            .spyOn(process.stdout, 'write')
+            .mockImplementation(() => true);
+          try {
+            await parse(['eval', agentDir, ...extraArgs]);
+
+            expect(process.exitCode).toBeUndefined();
+            expect(setLogLevelSpy).toHaveBeenCalledWith(expected);
+          } finally {
+            stdoutSpy.mockRestore();
+            setLogLevelSpy.mockRestore();
+          }
+        },
+      );
+    });
+
+    it.each([
+      {
+        label: 'deploy cloud_run with -v',
+        args: ['deploy', 'cloud_run', '-v'],
+        target: () => deployToCloudRun,
+      },
+      {
+        label: 'deploy cloud-run with --verbose',
+        args: ['deploy', 'cloud-run', '--verbose'],
+        target: () => deployToCloudRun,
+      },
+      {
+        label: 'deploy agent_engine with -v',
+        args: ['deploy', 'agent_engine', '-v'],
+        target: () => deployToAgentEngine,
+      },
+      {
+        label: 'deploy agent-engine with --verbose',
+        args: ['deploy', 'agent-engine', '--verbose'],
+        target: () => deployToAgentEngine,
+      },
+      {
+        label: 'deploy reasoning_engine with -v',
+        args: ['deploy', 'reasoning_engine', '-v'],
+        target: () => deployToAgentEngine,
+      },
+      {
+        label: 'deploy reasoning-engine with --verbose',
+        args: ['deploy', 'reasoning-engine', '--verbose'],
+        target: () => deployToAgentEngine,
+      },
+      {
+        label: 'deploy gke with -v',
+        args: ['deploy', 'gke', '-v'],
+        target: () => deployToGke,
+      },
+    ])('forwards debug logLevel for $label', async ({args, target}) => {
+      await parse(args);
+
+      expect(target()).toHaveBeenCalledWith(
+        expect.objectContaining({logLevel: 'debug'}),
+      );
+    });
+
+    it.each([
+      {
+        label: 'deploy cloud_run with -v before --log_level error',
+        args: ['deploy', 'cloud_run', '-v', '--log_level', 'error'],
+        target: () => deployToCloudRun,
+        expected: 'error',
+      },
+      {
+        label: 'deploy cloud-run with --log-level warning before --verbose',
+        args: ['deploy', 'cloud-run', '--log-level', 'warning', '--verbose'],
+        target: () => deployToCloudRun,
+        expected: 'warning',
+      },
+      {
+        label: 'deploy agent_engine with -v before --log_level error',
+        args: ['deploy', 'agent_engine', '-v', '--log_level', 'error'],
+        target: () => deployToAgentEngine,
+        expected: 'error',
+      },
+      {
+        label: 'deploy agent-engine with --log-level info before -v',
+        args: ['deploy', 'agent-engine', '--log-level', 'info', '-v'],
+        target: () => deployToAgentEngine,
+        expected: 'info',
+      },
+      {
+        label: 'deploy reasoning_engine with --verbose and --log_level=warning',
+        args: [
+          'deploy',
+          'reasoning_engine',
+          '--verbose',
+          '--log_level=warning',
+        ],
+        target: () => deployToAgentEngine,
+        expected: 'warning',
+      },
+      {
+        label: 'deploy gke with -v before --log_level error',
+        args: ['deploy', 'gke', '-v', '--log_level', 'error'],
+        target: () => deployToGke,
+        expected: 'error',
+      },
+      {
+        label: 'deploy gke with --log-level warning before --verbose',
+        args: ['deploy', 'gke', '--log-level', 'warning', '--verbose'],
+        target: () => deployToGke,
+        expected: 'warning',
+      },
+    ])(
+      'honours explicit log level over verbose for $label',
+      async ({args, target, expected}) => {
+        await parse(args);
+
+        expect(target()).toHaveBeenCalledWith(
+          expect.objectContaining({logLevel: expected}),
+        );
+      },
+    );
+
+    it.each([
+      {
+        label: 'space-separated short flags -v and -p 8080',
+        args: [
+          'deploy',
+          'cloud_run',
+          './my-agent-path',
+          '--project=my-proj',
+          '--region=us-west1',
+          '-v',
+          '-p',
+          '8080',
+          '--extra-flag=passthrough',
+        ],
+        expected: {
+          port: 8080,
+          logLevel: 'debug',
+          extraGcloudArgs: ['--extra-flag=passthrough'],
+        },
+      },
+      {
+        label: 'attached short flag -p8080 with -v',
+        args: [
+          'deploy',
+          'cloud_run',
+          './my-agent-path',
+          '--project=my-proj',
+          '--region=us-west1',
+          '-v',
+          '-p8080',
+          '--extra-flag=passthrough',
+        ],
+        expected: {
+          port: 8080,
+          logLevel: 'debug',
+          extraGcloudArgs: ['--extra-flag=passthrough'],
+        },
+      },
+      {
+        label: 'combined attached short flags -vp8080',
+        args: [
+          'deploy',
+          'cloud_run',
+          './my-agent-path',
+          '--project=my-proj',
+          '--region=us-west1',
+          '-vp8080',
+          '--extra-flag=passthrough',
+        ],
+        expected: {
+          port: 8080,
+          logLevel: 'debug',
+          extraGcloudArgs: ['--extra-flag=passthrough'],
+        },
+      },
+      {
+        label: 'combined space-separated short flags -vp 8080',
+        args: [
+          'deploy',
+          'cloud_run',
+          './my-agent-path',
+          '--project',
+          'my-proj',
+          '--region',
+          'us-west1',
+          '-vp',
+          '8080',
+          '--extra-flag=passthrough',
+        ],
+        expected: {
+          port: 8080,
+          logLevel: 'debug',
+          extraGcloudArgs: ['--extra-flag=passthrough'],
+        },
+      },
+      {
+        label: 'space-separated -v and --log_level error after agent path',
+        args: [
+          'deploy',
+          'cloud_run',
+          './my-agent-path',
+          '-v',
+          '--log_level',
+          'error',
+          '--extra-flag=passthrough',
+        ],
+        expected: {
+          port: 8000,
+          logLevel: 'error',
+          extraGcloudArgs: ['--extra-flag=passthrough'],
+        },
+      },
+    ])(
+      'excludes recognized options from deploy cloud_run extraGcloudArgs for $label',
+      async ({args, expected}) => {
+        await parse(args);
+
+        const deployOptions = vi.mocked(deployToCloudRun).mock.calls[0]?.[0];
+        expect(deployOptions).toMatchObject(expected);
+      },
+    );
+  });
+
+  describe('combined service URI options on server commands', () => {
+    it.each(['web', 'api_server'])(
+      'passes session, artifact, and memory services to AdkApiServer on %s when service URIs are set',
+      async (subcommand) => {
+        vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'test-project');
+        vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'us-central1');
+
+        await parse([
+          subcommand,
+          './my-agents-dir',
+          '--session_service_uri',
+          'sqlite:///:memory:',
+          '--artifact_service_uri',
+          'gs://my-bucket',
+          '--memory_service_uri',
+          'rag://my-corpus',
+        ]);
+
+        const serverOptions = vi.mocked(AdkApiServer).mock.calls[0]?.[0];
+        expect(serverOptions?.sessionService).toBeInstanceOf(
+          DatabaseSessionService,
+        );
+        expect(serverOptions?.artifactService).toBeInstanceOf(
+          GcsArtifactService,
+        );
+        expect(serverOptions?.memoryService).toBeInstanceOf(
+          VertexAiRagMemoryService,
+        );
+      },
+    );
   });
 });
 
