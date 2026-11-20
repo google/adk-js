@@ -106,6 +106,26 @@ export function runArtifactServiceTests(
       expect(loaded?.text).toBe(text);
     });
 
+    it('saves and loads an empty text artifact', async () => {
+      const filename = 'empty.txt';
+      const version = await service.saveArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename,
+        artifact: {text: ''},
+      });
+
+      const loaded = await service.loadArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename,
+        version,
+      });
+      expect(loaded?.text).toBe('');
+    });
+
     it('throws error if artifact has no content', async () => {
       await expect(
         service.saveArtifact({

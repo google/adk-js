@@ -51,7 +51,7 @@ export class GcsArtifactService implements BaseArtifactService {
   async saveArtifact(request: SaveArtifactRequest): Promise<number> {
     if (
       !request.artifact.inlineData &&
-      !request.artifact.text &&
+      request.artifact.text === undefined &&
       !request.artifact.fileData
     ) {
       throw new Error('Artifact must have either inlineData or text content.');
