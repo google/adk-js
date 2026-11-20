@@ -22,6 +22,7 @@ import {
   LlmResponse,
   LoggingPlugin,
   type LoggingPluginOptions,
+  PluginManager,
   ReflectAndRetryToolPlugin,
   toolResultClassification,
   type ToolResultClassification,
@@ -34,6 +35,7 @@ import {resetLogger, setLogger} from '../../src/utils/logger.js';
 function makeMockLogger() {
   const infoCalls: string[] = [];
   const warnCalls: string[] = [];
+  const errorCalls: string[] = [];
   const mockLogger = {
     setLogLevel: () => {},
     log: () => {},
@@ -44,9 +46,11 @@ function makeMockLogger() {
     warn: (...args: unknown[]) => {
       warnCalls.push(args.map((a) => String(a)).join(' '));
     },
-    error: () => {},
+    error: (...args: unknown[]) => {
+      errorCalls.push(args.map((a) => String(a)).join(' '));
+    },
   };
-  return {mockLogger, infoCalls, warnCalls};
+  return {mockLogger, infoCalls, warnCalls, errorCalls};
 }
 
 class ScriptedLlm extends BaseLlm {
@@ -83,6 +87,60 @@ function makeNodeEvent(
     nodeInfo: {path: 'wf@1/step@2', messageAsOutput},
     ...rest,
   });
+}
+
+function makeCircularObject(): Record<string, unknown> {
+  const circular: Record<string, unknown> = {label: 'cycle'};
+  circular.cycle = circular;
+  return circular;
+}
+
+function makeCircularNullProtoObject(): Record<string, unknown> {
+  const nullProto: Record<string, unknown> = Object.create(null);
+  nullProto.cycle = nullProto;
+  return nullProto;
+}
+
+function makeFunctionRecord(): Record<string, unknown> {
+  const emptyRecord: Record<string, unknown> = {};
+  return Object.assign(function stepCallback() {}, emptyRecord);
+}
+
+function makeRevokedProxy(): Record<string, unknown> {
+  const {proxy, revoke} = Proxy.revocable<Record<string, unknown>>({}, {});
+  revoke();
+  return proxy;
+}
+
+function makeThrowingProxy(secret: string): Record<string, unknown> {
+  const throwTrap = (): never => {
+    throw new Error(secret);
+  };
+  return new Proxy<Record<string, unknown>>(
+    {},
+    {
+      getPrototypeOf: throwTrap,
+      getOwnPropertyDescriptor: throwTrap,
+      ownKeys: throwTrap,
+      has: throwTrap,
+      get: throwTrap,
+    },
+  );
+}
+
+function makeDescriptorThrowingProxy(secret: string): Record<string, unknown> {
+  const throwTrap = (): never => {
+    throw new Error(secret);
+  };
+  return new Proxy<Record<string, unknown>>(
+    {},
+    {
+      getOwnPropertyDescriptor: throwTrap,
+      ownKeys: throwTrap,
+      has: throwTrap,
+      get: throwTrap,
+    },
+  );
 }
 
 async function createRetryAnswer(
@@ -165,15 +223,18 @@ describe('LoggingPlugin', () => {
 
   let infoCalls: string[];
   let warnCalls: string[];
+  let errorCalls: string[];
 
   beforeEach(() => {
     const {
       mockLogger,
       infoCalls: calls,
       warnCalls: warnings,
+      errorCalls: errors,
     } = makeMockLogger();
     infoCalls = calls;
     warnCalls = warnings;
+    errorCalls = errors;
     setLogger(mockLogger);
   });
 
@@ -1276,5 +1337,336 @@ describe('LoggingPlugin', () => {
     });
 
     expect(infoCalls.some((m) => m.includes('...'))).toBe(true);
+  });
+
+  it('onEventCallback logs BigInt, circular, null-prototype, symbol, and function node outputs without throwing', async () => {
+    const plugin = new LoggingPlugin();
+    const pluginManager = new PluginManager([plugin]);
+    infoCalls.length = 0;
+
+    const namedStep = function stepFn() {
+      return 1;
+    };
+    const cases: Array<{output: unknown; expected: string}> = [
+      {output: 42n, expected: 'Node Output: 42'},
+      {output: 0n, expected: 'Node Output: 0'},
+      {output: {count: 42n}, expected: 'Node Output: [object Object]'},
+      {
+        output: makeCircularObject(),
+        expected: 'Node Output: [object Object]',
+      },
+      {
+        output: makeCircularNullProtoObject(),
+        expected: 'Node Output: [unserializable]',
+      },
+      {
+        output: Symbol('nodeTag'),
+        expected: 'Node Output: Symbol(nodeTag)',
+      },
+      {
+        output: namedStep,
+        expected: 'Node Output: function stepFn()',
+      },
+    ];
+
+    for (const {output, expected} of cases) {
+      infoCalls.length = 0;
+      await expect(
+        pluginManager.runOnEventCallback({
+          invocationContext: mockInvocationContext,
+          event: makeNodeEvent({output}),
+        }),
+      ).resolves.toBeUndefined();
+      expect(infoCalls.join('\n')).toContain(expected);
+    }
+
+    expect(warnCalls).toEqual([]);
+    expect(errorCalls).toEqual([]);
+  });
+
+  it('onEventCallback handles revoked and trap-throwing Proxy node outputs without leaking trap errors', async () => {
+    const plugin = new LoggingPlugin();
+    const pluginManager = new PluginManager([plugin]);
+    infoCalls.length = 0;
+    const secret = 'sentinel-trap-secret';
+
+    for (const output of [makeRevokedProxy(), makeThrowingProxy(secret)]) {
+      infoCalls.length = 0;
+      await expect(
+        pluginManager.runOnEventCallback({
+          invocationContext: mockInvocationContext,
+          event: makeNodeEvent({output}),
+        }),
+      ).resolves.toBeUndefined();
+      expect(infoCalls.join('\n')).toContain('Node Output: [unserializable]');
+    }
+
+    const allLogs = [...infoCalls, ...warnCalls, ...errorCalls].join('\n');
+    expect(allLogs).not.toContain(secret);
+    expect(warnCalls).toEqual([]);
+    expect(errorCalls).toEqual([]);
+  });
+
+  it('onEventCallback truncates long fallback string representations', async () => {
+    const plugin = new LoggingPlugin();
+
+    await plugin.onEventCallback({
+      invocationContext: mockInvocationContext,
+      event: makeNodeEvent({output: Symbol('s'.repeat(350))}),
+    });
+
+    expect(infoCalls.join('\n')).toContain(
+      `Node Output: Symbol(${'s'.repeat(293)}...\u001b[0m`,
+    );
+  });
+
+  it('afterToolCallback logs BigInt, circular, and null-prototype tool results without throwing', async () => {
+    const plugin = new LoggingPlugin();
+    const pluginManager = new PluginManager([plugin]);
+    const appTool = new FunctionTool({
+      name: 'appTool',
+      description: 'Returns arbitrary results.',
+      execute: () => ({}),
+    });
+    infoCalls.length = 0;
+
+    const cases: Array<{result: Record<string, unknown>; expected: string}> = [
+      {result: {count: 42n}, expected: 'Result: [object Object]'},
+      {result: makeCircularObject(), expected: 'Result: [object Object]'},
+      {
+        result: makeCircularNullProtoObject(),
+        expected: 'Result: [unserializable]',
+      },
+      {
+        result: makeFunctionRecord(),
+        expected: 'Result: function stepCallback()',
+      },
+    ];
+
+    for (const {result, expected} of cases) {
+      infoCalls.length = 0;
+      await expect(
+        pluginManager.runAfterToolCallback({
+          tool: appTool,
+          toolArgs: {},
+          toolContext: mockToolContext,
+          result,
+        }),
+      ).resolves.toBeUndefined();
+
+      const out = infoCalls.join('\n');
+      expect(out).toContain('🔧 TOOL COMPLETED');
+      expect(out).toContain(expected);
+      expect(out).not.toContain('TOOL ERROR');
+    }
+
+    expect(warnCalls).toEqual([]);
+    expect(errorCalls).toEqual([]);
+  });
+
+  it('afterToolCallback handles revoked and trap-throwing Proxy results without throwing or leaking trap errors', async () => {
+    const secret = 'sentinel-trap-secret';
+    const appTool = new FunctionTool({
+      name: 'appTool',
+      description: 'Returns proxy results.',
+      execute: () => ({}),
+    });
+    const plugin = new LoggingPlugin();
+    const pluginManager = new PluginManager([plugin]);
+    infoCalls.length = 0;
+
+    for (const result of [
+      makeRevokedProxy(),
+      makeThrowingProxy(secret),
+      makeDescriptorThrowingProxy(secret),
+    ]) {
+      infoCalls.length = 0;
+      await expect(
+        pluginManager.runAfterToolCallback({
+          tool: appTool,
+          toolArgs: {},
+          toolContext: mockToolContext,
+          result,
+        }),
+      ).resolves.toBeUndefined();
+
+      const out = infoCalls.join('\n');
+      expect(out).toContain('🔧 TOOL COMPLETED');
+      expect(out).toContain('Result: [unserializable]');
+      expect(out).not.toContain(secret);
+    }
+
+    expect(warnCalls).toEqual([]);
+    expect(errorCalls).toEqual([]);
+  });
+
+  it('afterToolCallback with toolResultClassifier handles revoked and trap-throwing Proxy results without leaking trap errors', async () => {
+    const secret = 'sentinel-trap-secret';
+    const appTool = new FunctionTool({
+      name: 'appTool',
+      description: 'Returns proxy results.',
+      execute: () => ({}),
+    });
+    const plugin = new LoggingPlugin({
+      toolResultClassifier: classifyStatusField,
+    });
+    const pluginManager = new PluginManager([plugin]);
+    infoCalls.length = 0;
+
+    for (const result of [
+      makeRevokedProxy(),
+      makeThrowingProxy(secret),
+      makeDescriptorThrowingProxy(secret),
+    ]) {
+      infoCalls.length = 0;
+      warnCalls.length = 0;
+      await expect(
+        pluginManager.runAfterToolCallback({
+          tool: appTool,
+          toolArgs: {},
+          toolContext: mockToolContext,
+          result,
+        }),
+      ).resolves.toBeUndefined();
+
+      const out = infoCalls.join('\n');
+      const warnings = warnCalls.join('\n');
+      expect(out).toContain('🔧 TOOL COMPLETED');
+      expect(out).toContain('Result: [unserializable]');
+      expect(out).not.toContain(secret);
+      expect(warnings).toContain(
+        'toolResultClassifier failed or returned an unusable verdict for tool appTool; applying the built-in rule instead.',
+      );
+      expect(warnings).not.toContain(secret);
+    }
+
+    expect(errorCalls).toEqual([]);
+  });
+
+  it('beforeToolCallback and onToolErrorCallback handle unserializable tool arguments without throwing or leaking trap errors', async () => {
+    const secret = 'sentinel-trap-secret';
+    const appTool = new FunctionTool({
+      name: 'appTool',
+      description: 'Accepts arbitrary arguments.',
+      execute: () => ({}),
+    });
+    const plugin = new LoggingPlugin();
+    const pluginManager = new PluginManager([plugin]);
+    infoCalls.length = 0;
+
+    const argCases: Array<{
+      toolArgs: Record<string, unknown>;
+      expected: string;
+    }> = [
+      {toolArgs: {count: 42n}, expected: 'Arguments: [object Object]'},
+      {
+        toolArgs: makeCircularObject(),
+        expected: 'Arguments: [object Object]',
+      },
+      {
+        toolArgs: makeCircularNullProtoObject(),
+        expected: 'Arguments: [unserializable]',
+      },
+      {
+        toolArgs: makeFunctionRecord(),
+        expected: 'Arguments: function stepCallback()',
+      },
+      {toolArgs: makeRevokedProxy(), expected: 'Arguments: [unserializable]'},
+      {
+        toolArgs: makeThrowingProxy(secret),
+        expected: 'Arguments: [unserializable]',
+      },
+    ];
+
+    for (const {toolArgs, expected} of argCases) {
+      infoCalls.length = 0;
+      await expect(
+        pluginManager.runBeforeToolCallback({
+          tool: appTool,
+          toolArgs,
+          toolContext: mockToolContext,
+        }),
+      ).resolves.toBeUndefined();
+      expect(infoCalls.join('\n')).toContain(expected);
+
+      infoCalls.length = 0;
+      await expect(
+        pluginManager.runOnToolErrorCallback({
+          tool: appTool,
+          toolArgs,
+          toolContext: mockToolContext,
+          error: new Error('tool failed'),
+        }),
+      ).resolves.toBeUndefined();
+      expect(infoCalls.join('\n')).toContain(expected);
+    }
+
+    const allLogs = [...infoCalls, ...warnCalls, ...errorCalls].join('\n');
+    expect(allLogs).not.toContain(secret);
+    expect(warnCalls).toEqual([]);
+    expect(errorCalls).toEqual([]);
+  });
+
+  it('runner completes when tools return BigInt or circular values with LoggingPlugin registered', async () => {
+    const bigIntTool = new FunctionTool({
+      name: 'bigIntTool',
+      description: 'Returns a BigInt value.',
+      execute: () => 42n,
+    });
+    const circularTool = new FunctionTool({
+      name: 'circularTool',
+      description: 'Returns a circular object.',
+      execute: () => makeCircularObject(),
+    });
+    const agent = new LlmAgent({
+      name: 'agent',
+      model: new ScriptedLlm([
+        {
+          content: {
+            role: 'model',
+            parts: [{functionCall: {name: 'bigIntTool', args: {}}}],
+          },
+        },
+        {
+          content: {
+            role: 'model',
+            parts: [{functionCall: {name: 'circularTool', args: {}}}],
+          },
+        },
+        {
+          content: {
+            role: 'model',
+            parts: [{text: 'completed'}],
+          },
+        },
+      ]),
+      tools: [bigIntTool, circularTool],
+    });
+    const runner = new InMemoryRunner({
+      app: new App({
+        name: 'test-app',
+        rootAgent: agent,
+        plugins: [new LoggingPlugin()],
+      }),
+    });
+    const session = await runner.sessionService.createSession({
+      appName: 'test-app',
+      userId: 'user-1',
+    });
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: 'user-1',
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'go'}]},
+    })) {
+      events.push(event);
+    }
+
+    expect(events.length).toBeGreaterThan(0);
+    expect(
+      infoCalls.filter((m) => m.includes('🔧 TOOL COMPLETED')),
+    ).toHaveLength(2);
+    expect(errorCalls).toEqual([]);
   });
 });
