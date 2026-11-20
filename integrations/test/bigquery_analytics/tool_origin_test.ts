@@ -8,6 +8,7 @@ import {
   AgentTool,
   BaseTool,
   LlmAgent,
+  LoadMcpResourceTool,
   RemoteA2AAgent,
   WebMCPTool,
 } from '@google/adk';
@@ -41,8 +42,8 @@ function remoteAgent(name: string): RemoteA2AAgent {
 }
 
 describe('getToolOrigin', () => {
-  it('classifies a WebMCPTool as MCP', () => {
-    const tool = new WebMCPTool({
+  it('classifies a WebMCPTool and LoadMcpResourceTool as MCP', () => {
+    const webMcpTool = new WebMCPTool({
       tool: {
         name: 'page_search',
         description: 'Search the page.',
@@ -50,7 +51,11 @@ describe('getToolOrigin', () => {
         execute: () => Promise.resolve(''),
       },
     } as unknown as ConstructorParameters<typeof WebMCPTool>[0]);
-    expect(getToolOrigin({tool})).toBe('MCP');
+    const resourceTool = Object.create(
+      LoadMcpResourceTool.prototype,
+    ) as LoadMcpResourceTool;
+    expect(getToolOrigin({tool: webMcpTool})).toBe('MCP');
+    expect(getToolOrigin({tool: resourceTool})).toBe('MCP');
   });
 
   it('reads an inherited AgentTool agent', () => {

@@ -226,15 +226,6 @@ const EVAL_VIEW_CORE_EVENTS: ReadonlySet<string> = new Set([
   'INVOCATION_COMPLETED',
 ]);
 
-/**
- * Required events the eval views only read agent metadata (`description`,
- * `sub_agents`) from, and that the `@google/adk` runner does not emit yet
- * (google/adk-js#1131), so validation does not insist on them.
- */
-const EVAL_VIEW_UNVALIDATED_EVENTS: ReadonlySet<string> = new Set([
-  'AGENT_STARTING',
-]);
-
 const EVAL_VIEW_EVENTS_BY_MODE: Readonly<
   Record<EvalViewMode, ReadonlySet<string>>
 > = {
@@ -483,8 +474,7 @@ export function buildEvalTurnViewSql({
 /**
  * Rejects a config whose table cannot feed the eval views: `content` denied, an
  * unknown `evalViewMode`, or a required event filtered out by `eventDenylist` /
- * `eventAllowlist`. An empty allowlist means "unset". `AGENT_STARTING` may be
- * filtered out, since the runner does not emit it yet.
+ * `eventAllowlist`. An empty allowlist means "unset".
  */
 export function validateEvalViewConfig({
   config,
@@ -512,11 +502,7 @@ export function validateEvalViewConfig({
       `${prefix} with unknown evalViewMode='${mode}'; expected one of ${pythonList(Object.keys(EVAL_VIEW_EVENTS_BY_MODE))}.`,
     );
   }
-  const requiredEvents = new Set(
-    [...EVAL_VIEW_EVENTS_BY_MODE[mode]].filter(
-      (event) => !EVAL_VIEW_UNVALIDATED_EVENTS.has(event),
-    ),
-  );
+  const requiredEvents = EVAL_VIEW_EVENTS_BY_MODE[mode];
   const deniedEvents = (config.eventDenylist ?? []).filter((event) =>
     requiredEvents.has(event),
   );
