@@ -490,17 +490,15 @@ export class Runner {
         author: 'model',
         content: beforeRunCallbackResponse,
       });
-      // TODO: b/447446338 - In the future, do *not* save live call
-      // audio content to the session.
-      await this.sessionService.appendEvent({
-        session: invocationContext.session,
+      const outputEvent = await this.processAndAppendEvent({
+        invocationContext,
         event: earlyExitEvent,
       });
       if (invocationContext.abortSignal?.aborted) {
         return;
       }
 
-      yield earlyExitEvent;
+      yield outputEvent;
     } else {
       // Step 2: Otherwise continue with normal execution
       let abortSealed = false;
@@ -517,10 +515,10 @@ export class Runner {
           // Step 3: Run the on_event callbacks before persisting so
           // callback changes are stored in the session and match the
           // streamed event.
-          const outputEvent = await this.processAndAppendEvent(
+          const outputEvent = await this.processAndAppendEvent({
             invocationContext,
             event,
-          );
+          });
           if (invocationContext.abortSignal?.aborted) {
             break;
           }
@@ -633,19 +631,25 @@ export class Runner {
   }
 
   /**
-   * Runs the on_event plugin callbacks on an event and appends the result to
-   * the session unless it is partial.
+   * Runs `onEventCallback` on an event and appends the result to the session
+   * unless it is partial or a live inline-media event.
    *
    * @returns The event as streamed to the caller.
    */
-  private async processAndAppendEvent(
-    invocationContext: InvocationContext,
-    event: Event,
-  ): Promise<Event> {
+  private async processAndAppendEvent({
+    invocationContext,
+    event,
+    isLiveCall = false,
+  }: {
+    invocationContext: InvocationContext;
+    event: Event;
+    isLiveCall?: boolean;
+  }): Promise<Event> {
     const modifiedEvent = await this.pluginManager.runOnEventCallback({
       invocationContext,
       event,
     });
+    const partial = modifiedEvent?.partial ?? event.partial;
     const outputEvent = modifiedEvent
       ? {
           ...withInternalMetadataOf(event, modifiedEvent),
@@ -654,9 +658,16 @@ export class Runner {
           timestamp: event.timestamp,
           author: modifiedEvent.author || event.author,
           branch: modifiedEvent.branch ?? event.branch,
+          ...(partial !== undefined ? {partial} : {}),
         }
       : event;
-    if (!event.partial) {
+    if (isLiveCall && invocationContext.abortSignal?.aborted) {
+      return outputEvent;
+    }
+    if (
+      !outputEvent.partial &&
+      (!isLiveCall || !isLiveModelMediaEventWithInlineData(outputEvent))
+    ) {
       await this.sessionService.appendEvent({
         session: invocationContext.session,
         event: outputEvent,
@@ -684,7 +695,7 @@ export class Runner {
     const outputEvents: Event[] = [];
     for (const event of abortEvents) {
       outputEvents.push(
-        await this.processAndAppendEvent(invocationContext, event),
+        await this.processAndAppendEvent({invocationContext, event}),
       );
     }
     return outputEvents;
@@ -920,11 +931,15 @@ export class Runner {
         author: 'model',
         content: beforeRunCallbackResponse,
       });
-      await this.sessionService.appendEvent({
-        session: invocationContext.session,
+      const outputEvent = await this.processAndAppendEvent({
+        invocationContext,
         event: earlyExitEvent,
+        isLiveCall: true,
       });
-      yield earlyExitEvent;
+      if (invocationContext.abortSignal?.aborted) {
+        return;
+      }
+      yield outputEvent;
       return;
     }
 
@@ -936,29 +951,16 @@ export class Runner {
         return;
       }
 
-      const modifiedEvent = await this.pluginManager.runOnEventCallback({
+      const outputEvent = await this.processAndAppendEvent({
         invocationContext,
         event,
+        isLiveCall: true,
       });
       if (invocationContext.abortSignal?.aborted) {
         return;
       }
 
-      const eventToProcess = modifiedEvent
-        ? withInternalMetadataOf(event, modifiedEvent)
-        : event;
-
-      if (
-        !eventToProcess.partial &&
-        !isLiveModelMediaEventWithInlineData(eventToProcess)
-      ) {
-        await this.sessionService.appendEvent({
-          session: invocationContext.session,
-          event: eventToProcess,
-        });
-      }
-
-      yield eventToProcess;
+      yield outputEvent;
     }
   }
 }
