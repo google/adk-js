@@ -642,7 +642,6 @@ export {RUNNER_CLEANUP_TIMEOUT_MS, closeRunners} from './cli/utils/cleanup.js';
 export {
   convertSessionToEvalFormat,
   convertSessionToEvalInvocations,
-  createEmptyState,
 } from './cli/utils/evals.js';
 export type {
   EvalCase,
@@ -654,6 +653,7 @@ export type {
   IntermediateAgentResponseItem,
   ToolUseItem,
 } from './cli/utils/evals.js';
+export {createEmptyState} from './cli/utils/state.js';
 export {
   buildFunctionDeclarationForLangchain,
   buildFunctionDeclarationForParamsForCrewai,

@@ -6,9 +6,9 @@
 
 import {Content, FunctionCall, FunctionResponse, Part} from '@google/genai';
 
-import {BaseAgent} from '../../agents/base_agent.js';
-import {isLlmAgent} from '../../agents/llm_agent.js';
 import {Session} from '../../sessions/session.js';
+
+export {createEmptyState} from './state.js';
 
 /**
  * Represents a single expected tool invocation in an evaluation item.
@@ -289,47 +289,4 @@ export function convertSessionToEvalInvocations(
   }
 
   return invocations;
-}
-
-function populateEmptyState(
-  agent: BaseAgent,
-  allState: Record<string, unknown>,
-): void {
-  for (const subAgent of agent.subAgents) {
-    populateEmptyState(subAgent, allState);
-  }
-
-  if (
-    isLlmAgent(agent) &&
-    agent.instruction &&
-    typeof agent.instruction === 'string'
-  ) {
-    const matches = agent.instruction.matchAll(/\{([\w]+)\}/g);
-    for (const match of matches) {
-      allState[match[1]] = '';
-    }
-  }
-}
-
-/**
- * Creates a state object initialized with empty strings `''` for all `{var}`
- * placeholders referenced in the instruction strings of `agent` and its
- * sub-agents, overridden by any keys provided in `initializedStates`.
- *
- * @param agent The root agent to inspect.
- * @param initializedStates Optional pre-initialized state values that take precedence.
- * @returns The combined state record.
- */
-export function createEmptyState(
-  agent: BaseAgent,
-  initializedStates?: Record<string, unknown>,
-): Record<string, unknown> {
-  const subAgentsState: Record<string, unknown> = {};
-  populateEmptyState(agent, subAgentsState);
-  if (initializedStates) {
-    for (const [k, v] of Object.entries(initializedStates)) {
-      subAgentsState[k] = v;
-    }
-  }
-  return subAgentsState;
 }

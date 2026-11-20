@@ -3,10 +3,11 @@
 The CLI utilities in `@google/adk` prepare an agent's environment, state, logging, runner lifecycle, and evaluation datasets when running from the command line, the development server, or an automated test harness. This guide covers `.env` discovery (`walkToRootUntilFound`, `loadDotenvForAgent`), session-to-eval conversion and state initialization (`convertSessionToEvalInvocations`, `convertSessionToEvalFormat`, `createEmptyState`), CLI log routing (`setupAdkLogger`, `logToTmpFolder`), runner cleanup (`closeRunners`), and batch evaluation (`runEvals`, `LocalEvalSetsManager`, `LocalEvalSetResultsManager`, `convertEvalSetToSchema`, `loadEvalSetFromFile`, `getEvaluationCriteriaOrDefault`, `parseAndGetEvalsToRun`).
 
 - `walkToRootUntilFound` and `loadDotenvForAgent` - Locate a `.env` file by walking up from an agent directory to the filesystem root and load its variables into `process.env`.
-- `createEmptyState`, `convertSessionToEvalInvocations`, and `convertSessionToEvalFormat` - Initialize `{var}` placeholders referenced in agent instructions and convert recorded `Session` events into structured `EvalInvocation` or `EvaluationItem` turns.
+- `createEmptyState`, `convertSessionToEvalInvocations`, and `convertSessionToEvalFormat` - Initialize `{var}` placeholders referenced across agent trees, `Workflow` graphs, and `ParallelWorker` nodes, and convert recorded `Session` events into structured `EvalInvocation` or `EvaluationItem` turns.
 - `setupAdkLogger` and `logToTmpFolder` - Route the global ADK logger to `stderr` or to a timestamped log file in the system temporary folder with a `.latest.log` symlink.
 - `closeRunners` - Close multiple `Runner` instances concurrently with a 30-second timeout (`RUNNER_CLEANUP_TIMEOUT_MS`).
 - `runEvals`, `LocalEvalSetsManager`, `LocalEvalSetResultsManager`, `convertEvalSetToSchema`, `loadEvalSetFromFile`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun` - Manage local `.evalset.json` datasets (`EvalSet` and `EvalCase`), run multi-turn evaluation cases against an agent, score tool trajectory accuracy and ROUGE-1 response match, and persist `EvalSetResult` records on disk.
+- `BaseAgentLoader`, `AgentLoader`, `AgentChangeEventHandler`, `SharedValue`, and `ServerOptions` (in `@google/adk-devtools`) - Supply custom agent loaders to `AdkApiServer`, track the active app with `SharedValue`, and invalidate cached runners when watched agent files change.
 
 ## Introduction
 
@@ -155,7 +156,58 @@ adk api_server path/to/agents --a2a
 
 ### Session conversion and empty state
 
-`createEmptyState(agent, initializedStates)` walks `agent.subAgents` recursively. For every `LlmAgent` whose `instruction` is a string, it finds `{var}` word placeholders (`/{([\w]+)}/g`) and sets each key to `''`. Keys passed in `initializedStates` are copied on top so caller-supplied values win over the empty defaults.
+`createEmptyState(agent, initializedStates)` accepts a `BaseAgent` or `BaseNode` root (including `Workflow` and `ParallelWorker`). It traverses `agent.subAgents`, `workflow.graph.nodes`, and `parallelWorker.inner` while tracking visited nodes so cyclic graphs terminate cleanly. For every `LlmAgent` whose `instruction` is a string, it finds `{var}` word placeholders (`/{([\w]+)}/g`) and sets each key to `''`. Keys passed in `initializedStates` are copied on top so caller-supplied values win over the empty defaults.
+
+### Programmatic agent loaders in `@google/adk-devtools`
+
+`@google/adk-devtools` exports `BaseAgentLoader` (`isBaseAgentLoader` and `AgentFileHandle`), the filesystem-backed `AgentLoader` (`AgentFile`, `FileModuleType`, `AgentFileOptions`, `AgentLoadFailure`), `AgentChangeEventHandler` (`AgentChangeEventHandlerOptions` and `CachingAgentLoader`), `SharedValue` (`isSharedValue` and `SharedValueOptions`), and `ServerOptions` for programmatic `AdkApiServer` setups:
+
+- Subclass `BaseAgentLoader` to serve agents from memory or a custom registry via `listAgents()` and `getAgentFile(agentName)` without writing temporary files (`readReadme` on `AgentFileHandle` is optional, and `disposeAll()` defaults to a no-op).
+- `AdkApiServer` exposes `runnersToClean: Set<string>` and `currentAppNameRef: SharedValue<string>`. When an app name is added to `runnersToClean`, the next request retires the cached `Runner` and builds a fresh one.
+- Passing `reloadAgents: true` with `agentsDir` and a custom `BaseAgentLoader` attaches `AgentChangeEventHandler` so edits to `.js`, `.cjs`, `.mjs`, `.ts`, `.mts`, `.cts`, `.yaml`, or `.yml` files inside agent directories (ignoring `node_modules` and dot-prefixed directories) call `removeAgentFromCache` (when implemented) and add affected agent names to `runnersToClean`.
+
+```ts
+import {LlmAgent, type RunnableRoot} from '@google/adk';
+import {
+  AdkApiServer,
+  type AgentFileHandle,
+  BaseAgentLoader,
+  type ServerOptions,
+} from '@google/adk-devtools';
+
+class InMemoryAgentLoader extends BaseAgentLoader {
+  constructor(private readonly agents: ReadonlyMap<string, RunnableRoot>) {
+    super();
+  }
+
+  override async listAgents(): Promise<string[]> {
+    return [...this.agents.keys()].sort();
+  }
+
+  override async getAgentFile(agentName: string): Promise<AgentFileHandle> {
+    const agent = this.agents.get(agentName);
+    if (!agent) {
+      throw new Error(`Agent '${agentName}' not found.`);
+    }
+    return {
+      load: async () => agent,
+      retain: () => ({async [Symbol.asyncDispose](): Promise<void> {}}),
+      async [Symbol.asyncDispose](): Promise<void> {},
+    };
+  }
+}
+
+const supportAgent = new LlmAgent({
+  name: 'supportAgent',
+  model: 'gemini-flash-latest',
+  instruction: 'Answer support questions.',
+});
+const options: ServerOptions = {
+  agentLoader: new InMemoryAgentLoader(new Map([['supportApp', supportAgent]])),
+  port: 8000,
+};
+const server = new AdkApiServer(options);
+```
 
 `convertSessionToEvalInvocations(session)` scans `session.events` in order and groups each `author === 'user'` event that has non-empty `content.parts` with all subsequent non-user events until the next user turn, returning an array of `EvalInvocation` records:
 
