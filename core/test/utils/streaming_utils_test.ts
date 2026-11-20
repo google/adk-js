@@ -1078,3 +1078,358 @@ describe('GeminiStreamingResponseAggregator with inline audio', () => {
     ]);
   });
 });
+
+describe('GeminiStreamingResponseAggregator thoughtSignature preservation', () => {
+  async function processAll(
+    aggregator: GeminiStreamingResponseAggregator,
+    responses: GenerateContentResponse[],
+  ) {
+    const yielded = [];
+    for (const response of responses) {
+      for await (const res of aggregator.processResponse(response)) {
+        yielded.push(res);
+      }
+    }
+    return {yielded, finalResponse: aggregator.close()};
+  }
+
+  it('isEmptyContentPart returns false for parts carrying thoughtSignature', () => {
+    expect(
+      isEmptyContentPart({text: '', thoughtSignature: 'sig-trailing-stop'}),
+    ).toBe(false);
+    expect(isEmptyContentPart({thoughtSignature: 'sig-only'})).toBe(false);
+    expect(
+      isEmptyContentPart({thought: true, thoughtSignature: 'sig-redacted'}),
+    ).toBe(false);
+    expect(isEmptyContentPart({text: '', thoughtSignature: ''})).toBe(true);
+    expect(isEmptyContentPart({})).toBe(true);
+  });
+
+  describe.each([false, true])(
+    'isProgressiveMode=%s',
+    (isProgressiveMode: boolean) => {
+      it('preserves trailing empty-text thoughtSignature STOP chunk without emitting an empty partial', async () => {
+        const aggregator = new GeminiStreamingResponseAggregator({
+          isProgressiveMode,
+        });
+
+        const {yielded, finalResponse} = await processAll(aggregator, [
+          createResponse({
+            content: {
+              role: 'model',
+              parts: [{text: 'Thinking...', thought: true}],
+            },
+          }),
+          createResponse({
+            content: {role: 'model', parts: [{text: 'Final answer.'}]},
+          }),
+          createResponse({
+            content: {
+              role: 'model',
+              parts: [{text: '', thoughtSignature: 'sig-trailing-stop'}],
+            },
+            finishReason: FinishReason.STOP,
+          }),
+        ]);
+
+        expect(yielded).toHaveLength(2);
+        expect(yielded.every((r) => r.partial)).toBe(true);
+        expect(finalResponse).toBeDefined();
+        expect(finalResponse?.partial).toBe(false);
+        expect(finalResponse?.finishReason).toBe(FinishReason.STOP);
+        expect(finalResponse?.content?.parts).toEqual([
+          {text: 'Thinking...', thought: true},
+          {text: 'Final answer.'},
+          {text: '', thoughtSignature: 'sig-trailing-stop'},
+        ]);
+      });
+
+      it('preserves text-free thoughtSignature parts without splitting the turn or emitting empty partials', async () => {
+        const aggregator = new GeminiStreamingResponseAggregator({
+          isProgressiveMode,
+        });
+
+        const {yielded, finalResponse} = await processAll(aggregator, [
+          createResponse({
+            content: {
+              role: 'model',
+              parts: [{text: 'At minute 5 the presenter speaks.'}],
+            },
+          }),
+          createResponse({
+            content: {
+              role: 'model',
+              parts: [{thoughtSignature: 'call-context'}],
+            },
+          }),
+          createResponse({
+            content: {role: 'model', parts: [{text: ''}]},
+            finishReason: FinishReason.STOP,
+          }),
+        ]);
+
+        expect(yielded).toHaveLength(1);
+        expect(yielded[0].partial).toBe(true);
+        expect(finalResponse?.partial).toBe(false);
+        expect(finalResponse?.finishReason).toBe(FinishReason.STOP);
+        expect(finalResponse?.content?.parts).toEqual([
+          {text: 'At minute 5 the presenter speaks.'},
+          {thoughtSignature: 'call-context'},
+        ]);
+      });
+
+      it('preserves thoughtSignature from the first chunk of a merged text run', async () => {
+        const aggregator = new GeminiStreamingResponseAggregator({
+          isProgressiveMode,
+        });
+
+        const {finalResponse} = await processAll(aggregator, [
+          createResponse({
+            content: {
+              role: 'model',
+              parts: [{text: 'At minute 5 ', thoughtSignature: 'text-sig'}],
+            },
+          }),
+          createResponse({
+            content: {role: 'model', parts: [{text: 'the presenter speaks.'}]},
+            finishReason: FinishReason.STOP,
+          }),
+        ]);
+
+        expect(finalResponse?.content?.parts).toEqual([
+          {
+            text: 'At minute 5 the presenter speaks.',
+            thoughtSignature: 'text-sig',
+          },
+        ]);
+      });
+
+      it('preserves thoughtSignature from a later chunk of a merged text run', async () => {
+        const aggregator = new GeminiStreamingResponseAggregator({
+          isProgressiveMode,
+        });
+
+        const {finalResponse} = await processAll(aggregator, [
+          createResponse({
+            content: {role: 'model', parts: [{text: 'At minute 5 '}]},
+          }),
+          createResponse({
+            content: {
+              role: 'model',
+              parts: [
+                {text: 'the presenter speaks.', thoughtSignature: 'late-sig'},
+              ],
+            },
+            finishReason: FinishReason.STOP,
+          }),
+        ]);
+
+        expect(finalResponse?.content?.parts).toEqual([
+          {
+            text: 'At minute 5 the presenter speaks.',
+            thoughtSignature: 'late-sig',
+          },
+        ]);
+      });
+
+      it('keeps separate thoughtSignatures for thought and answer runs', async () => {
+        const aggregator = new GeminiStreamingResponseAggregator({
+          isProgressiveMode,
+        });
+
+        const {finalResponse} = await processAll(aggregator, [
+          createResponse({
+            content: {
+              role: 'model',
+              parts: [
+                {
+                  text: 'Let me check.',
+                  thought: true,
+                  thoughtSignature: 'thought-sig',
+                },
+              ],
+            },
+          }),
+          createResponse({
+            content: {
+              role: 'model',
+              parts: [{text: 'It is a dog.', thoughtSignature: 'answer-sig'}],
+            },
+            finishReason: FinishReason.STOP,
+          }),
+        ]);
+
+        expect(finalResponse?.content?.parts).toEqual([
+          {
+            text: 'Let me check.',
+            thought: true,
+            thoughtSignature: 'thought-sig',
+          },
+          {
+            text: 'It is a dog.',
+            thoughtSignature: 'answer-sig',
+          },
+        ]);
+      });
+
+      it('preserves redacted thoughtSignature parts and usageMetadata across trailing signature chunks', async () => {
+        const aggregator = new GeminiStreamingResponseAggregator({
+          isProgressiveMode,
+        });
+
+        const chunk1 = createResponse({
+          content: {role: 'model', parts: [{text: 'Answer text'}]},
+        });
+        chunk1.usageMetadata = {
+          promptTokenCount: 12,
+          candidatesTokenCount: 8,
+          totalTokenCount: 20,
+        };
+
+        const chunk2 = createResponse({
+          content: {
+            role: 'model',
+            parts: [{thought: true, thoughtSignature: 'sig-redacted'}],
+          },
+          finishReason: FinishReason.MAX_TOKENS,
+        });
+
+        const {yielded, finalResponse} = await processAll(aggregator, [
+          chunk1,
+          chunk2,
+        ]);
+
+        expect(yielded).toHaveLength(1);
+        expect(finalResponse?.partial).toBe(false);
+        expect(finalResponse?.finishReason).toBe(FinishReason.MAX_TOKENS);
+        expect(finalResponse?.errorCode).toBe(FinishReason.MAX_TOKENS);
+        expect(finalResponse?.usageMetadata).toEqual({
+          promptTokenCount: 12,
+          candidatesTokenCount: 8,
+          totalTokenCount: 20,
+        });
+        expect(finalResponse?.content?.parts).toEqual([
+          {text: 'Answer text'},
+          {thought: true, thoughtSignature: 'sig-redacted'},
+        ]);
+      });
+
+      it('drops empty sibling text parts while keeping signature-only parts without spurious partials', async () => {
+        const aggregator = new GeminiStreamingResponseAggregator({
+          isProgressiveMode,
+        });
+
+        const {yielded, finalResponse} = await processAll(aggregator, [
+          createResponse({
+            content: {role: 'model', parts: [{text: 'Hello'}]},
+          }),
+          createResponse({
+            content: {
+              role: 'model',
+              parts: [{text: ''}, {thoughtSignature: 'sig-mixed'}],
+            },
+            finishReason: FinishReason.STOP,
+          }),
+        ]);
+
+        expect(yielded).toHaveLength(1);
+        expect(finalResponse?.content?.parts).toEqual([
+          {text: 'Hello'},
+          {thoughtSignature: 'sig-mixed'},
+        ]);
+      });
+    },
+  );
+
+  it('preserves text thoughtSignature when flushing buffered text before a functionCall in non-progressive mode', async () => {
+    const aggregator = new GeminiStreamingResponseAggregator({
+      isProgressiveMode: false,
+    });
+
+    const {yielded, finalResponse} = await processAll(aggregator, [
+      createResponse({
+        content: {
+          role: 'model',
+          parts: [
+            {
+              text: 'Checking weather...',
+              thought: true,
+              thoughtSignature: 'sig-thought',
+            },
+          ],
+        },
+      }),
+      createResponse({
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {name: 'get_weather', args: {city: 'NYC'}},
+              thoughtSignature: 'sig-fc',
+            },
+          ],
+        },
+        finishReason: FinishReason.STOP,
+      }),
+    ]);
+
+    expect(yielded).toHaveLength(3);
+    expect(yielded[1].partial).toBe(false);
+    expect(yielded[1].content?.parts).toEqual([
+      {
+        text: 'Checking weather...',
+        thought: true,
+        thoughtSignature: 'sig-thought',
+      },
+    ]);
+    expect(yielded[2].partial).toBe(false);
+    expect(yielded[2].content?.parts).toEqual([
+      {
+        functionCall: {
+          name: 'get_weather',
+          args: {city: 'NYC'},
+          id: 'mocked-fc-id',
+        },
+        thoughtSignature: 'sig-fc',
+      },
+    ]);
+    expect(finalResponse).toBeUndefined();
+  });
+
+  it('keeps trailing signature-only part with functionCall in the same event in non-progressive mode', async () => {
+    const aggregator = new GeminiStreamingResponseAggregator({
+      isProgressiveMode: false,
+    });
+
+    const {yielded, finalResponse} = await processAll(aggregator, [
+      createResponse({
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {name: 'get_weather', args: {city: 'NYC'}},
+              thoughtSignature: 'sig-fc',
+            },
+            {text: '', thoughtSignature: 'sig-trailing'},
+          ],
+        },
+        finishReason: FinishReason.STOP,
+      }),
+    ]);
+
+    expect(yielded).toHaveLength(1);
+    expect(yielded[0].partial).toBe(false);
+    expect(yielded[0].content?.parts).toEqual([
+      {
+        functionCall: {
+          name: 'get_weather',
+          args: {city: 'NYC'},
+          id: 'mocked-fc-id',
+        },
+        thoughtSignature: 'sig-fc',
+      },
+      {text: '', thoughtSignature: 'sig-trailing'},
+    ]);
+    expect(finalResponse).toBeUndefined();
+  });
+});
