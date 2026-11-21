@@ -11,6 +11,7 @@ import {
   Event,
   getLogger,
   MemoryEntry,
+  REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
   Session,
   VertexAiMemoryBankService,
   VertexAiMemoryBankServiceOptions,
@@ -312,6 +313,161 @@ describe('VertexAiMemoryBankService', () => {
 
       expect(mockMemories.generateInternal).not.toHaveBeenCalled();
     });
+
+    it('skips an event whose only part is a thought with text', async () => {
+      const session = sessionWithEvents([
+        createEvent({
+          author: 'agent',
+          content: {
+            role: 'model',
+            parts: [
+              {text: 'the user sounds anxious, keep it short', thought: true},
+            ],
+          },
+          timestamp: Date.now(),
+        }),
+      ]);
+
+      await service.addSessionToMemory(session);
+
+      expect(mockMemories.generateInternal).not.toHaveBeenCalled();
+    });
+
+    it('strips thought parts from mixed events without mutating session events', async () => {
+      const thoughtText = 'the user sounds anxious, keep the reply short';
+      const mixedEvent = createEvent({
+        author: 'agent',
+        content: {
+          role: 'model',
+          parts: [
+            {text: thoughtText, thought: true},
+            {text: 'Here is the answer.'},
+          ],
+        },
+        timestamp: Date.now(),
+      });
+      const thoughtOnlyEvent = createEvent({
+        author: 'agent',
+        content: {
+          role: 'model',
+          parts: [{text: thoughtText, thought: true}],
+        },
+        timestamp: Date.now(),
+      });
+      const session = sessionWithEvents([mixedEvent, thoughtOnlyEvent]);
+
+      await service.addSessionToMemory(session);
+
+      expect(mockMemories.generateInternal).toHaveBeenCalledTimes(1);
+      expect(mockMemories.generateInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          directContentsSource: {
+            events: [
+              {
+                content: {
+                  role: 'model',
+                  parts: [{text: 'Here is the answer.'}],
+                },
+              },
+            ],
+          },
+        }),
+      );
+      expect(
+        JSON.stringify(mockMemories.generateInternal.mock.calls),
+      ).not.toContain(thoughtText);
+      expect(mixedEvent.content?.parts).toEqual([
+        {text: thoughtText, thought: true},
+        {text: 'Here is the answer.'},
+      ]);
+    });
+
+    it.each<[string, Part]>([
+      [
+        'credential functionCall',
+        {
+          functionCall: {
+            name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+            args: {authConfig: {authScheme: {type: 'oauth2'}}},
+          },
+        },
+      ],
+      [
+        'credential functionResponse',
+        {
+          functionResponse: {
+            name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+            response: {accessToken: 'test-access-token'},
+          },
+        },
+      ],
+    ])('skips a standalone %s event', async (_, credentialPart) => {
+      const session = sessionWithEvents([
+        createEvent({
+          author: 'agent',
+          content: {parts: [credentialPart]},
+          timestamp: Date.now(),
+        }),
+      ]);
+
+      await service.addSessionToMemory(session);
+
+      expect(mockMemories.generateInternal).not.toHaveBeenCalled();
+    });
+
+    it('skips credential-exchange events while retaining regular events', async () => {
+      const credentialToken = 'test-access-token';
+      const session = sessionWithEvents([
+        createEvent({
+          author: 'user',
+          content: {parts: [{text: 'user question'}]},
+          timestamp: Date.now(),
+        }),
+        createEvent({
+          author: 'agent',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+                  args: {authConfig: {authScheme: {type: 'oauth2'}}},
+                },
+              },
+            ],
+          },
+          timestamp: Date.now(),
+        }),
+        createEvent({
+          author: 'user',
+          content: {
+            role: 'user',
+            parts: [
+              {
+                functionResponse: {
+                  name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+                  response: {accessToken: credentialToken},
+                },
+              },
+            ],
+          },
+          timestamp: Date.now(),
+        }),
+      ]);
+
+      await service.addSessionToMemory(session);
+
+      expect(mockMemories.generateInternal).toHaveBeenCalledTimes(1);
+      expect(mockMemories.generateInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          directContentsSource: {
+            events: [{content: {parts: [{text: 'user question'}]}}],
+          },
+        }),
+      );
+      expect(
+        JSON.stringify(mockMemories.generateInternal.mock.calls),
+      ).not.toContain(credentialToken);
+    });
   });
 
   describe('addEventsToMemory', () => {
@@ -336,6 +492,74 @@ describe('VertexAiMemoryBankService', () => {
           }),
         }),
       );
+    });
+
+    it('skips credential events and strips thought parts without mutating input events', async () => {
+      const credentialToken = 'secret-oauth-token';
+      const thoughtText = 'private model reasoning';
+      const mixedEvent = createEvent({
+        author: 'agent',
+        content: {
+          role: 'model',
+          parts: [{text: thoughtText, thought: true}, {text: 'Visible reply.'}],
+        },
+        timestamp: Date.now(),
+      });
+      const events: Event[] = [
+        mixedEvent,
+        createEvent({
+          author: 'agent',
+          content: {
+            role: 'model',
+            parts: [{text: thoughtText, thought: true}],
+          },
+          timestamp: Date.now(),
+        }),
+        createEvent({
+          author: 'user',
+          content: {
+            role: 'user',
+            parts: [
+              {
+                functionResponse: {
+                  name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+                  response: {accessToken: credentialToken},
+                },
+              },
+            ],
+          },
+          timestamp: Date.now(),
+        }),
+      ];
+
+      await service.addEventsToMemory({
+        appName: 'test-app',
+        userId: 'test-user',
+        events,
+        customMetadata: {revisionTtl: '3600s'},
+      });
+
+      expect(mockMemories.generateInternal).toHaveBeenCalledTimes(1);
+      expect(mockMemories.generateInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          directContentsSource: {
+            events: [
+              {
+                content: {
+                  role: 'model',
+                  parts: [{text: 'Visible reply.'}],
+                },
+              },
+            ],
+          },
+        }),
+      );
+      const serializedCalls = JSON.stringify(
+        mockMemories.generateInternal.mock.calls,
+      );
+      expect(serializedCalls).not.toContain(thoughtText);
+      expect(serializedCalls).not.toContain(credentialToken);
+      expect(mixedEvent.content?.parts).toHaveLength(2);
     });
   });
 

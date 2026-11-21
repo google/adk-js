@@ -415,5 +415,34 @@ describe('client_labels', () => {
       );
       expect(warnSpy).not.toHaveBeenCalled();
     });
+
+    it('merges custom base trackingHeaders case-insensitively without mutating inputs', () => {
+      const customTrackingHeaders = {
+        'User-Agent': 'custom-framework/1.0 shared/1.0',
+        'X-Goog-Api-Client': 'custom-client/1.0',
+      };
+      const callerHeaders = {
+        'user-agent': 'shared/1.0 caller-app/2.0',
+        'x-goog-api-client': 'caller-client/2.0',
+        'X-Custom': 'value',
+      };
+
+      const merged = mergeTrackingHeaders(callerHeaders, customTrackingHeaders);
+
+      expect(merged).toEqual({
+        'X-Custom': 'value',
+        'user-agent': 'custom-framework/1.0 shared/1.0 caller-app/2.0',
+        'x-goog-api-client': 'custom-client/1.0 caller-client/2.0',
+      });
+      expect(customTrackingHeaders).toEqual({
+        'User-Agent': 'custom-framework/1.0 shared/1.0',
+        'X-Goog-Api-Client': 'custom-client/1.0',
+      });
+      expect(callerHeaders).toEqual({
+        'user-agent': 'shared/1.0 caller-app/2.0',
+        'x-goog-api-client': 'caller-client/2.0',
+        'X-Custom': 'value',
+      });
+    });
   });
 });

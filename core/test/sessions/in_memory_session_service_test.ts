@@ -348,6 +348,57 @@ describe('InMemorySessionService', () => {
       expect(response.sessions[1].events).toEqual([]);
     });
 
+    it('returns merged session, user, and app state on listed sessions', async () => {
+      const appName = 'app';
+      const userId = 'user';
+      const s1 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 'session0',
+        state: {key: 'valuesession0'},
+      });
+      await service.appendEvent({
+        session: s1,
+        event: createEvent({
+          timestamp: 1000,
+          actions: createEventActions({
+            stateDelta: {
+              [`${State.APP_PREFIX}shared`]: 'appVal',
+              [`${State.USER_PREFIX}pref`]: 'userVal',
+            },
+          }),
+        }),
+      });
+      await service.createSession({
+        appName,
+        userId,
+        sessionId: 'session1',
+        state: {key: 'valuesession1'},
+      });
+
+      const response = await service.listSessions({
+        appName,
+        userId,
+        order: 'asc',
+      });
+
+      expect(response.sessions).toHaveLength(2);
+      expect(response.sessions[0].id).toBe('session0');
+      expect(response.sessions[0].state).toEqual({
+        key: 'valuesession0',
+        [`${State.APP_PREFIX}shared`]: 'appVal',
+        [`${State.USER_PREFIX}pref`]: 'userVal',
+      });
+      expect(response.sessions[0].events).toEqual([]);
+      expect(response.sessions[1].id).toBe('session1');
+      expect(response.sessions[1].state).toEqual({
+        key: 'valuesession1',
+        [`${State.APP_PREFIX}shared`]: 'appVal',
+        [`${State.USER_PREFIX}pref`]: 'userVal',
+      });
+      expect(response.sessions[1].events).toEqual([]);
+    });
+
     it('lists every user of the app when userId is omitted', async () => {
       const appName = 'app';
       await service.createSession({appName, userId: 'user1'});

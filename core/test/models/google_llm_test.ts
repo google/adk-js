@@ -135,6 +135,23 @@ describe('GoogleLlm', () => {
     expect(options.headers!['x-goog-api-client']).toContain('google-adk/');
   });
 
+  it('should store retryOptions and forward them on apiClient httpOptions', () => {
+    const retryOptions = {initialDelay: 1, attempts: 2};
+    const llm = new Gemini({apiKey: 'test-key', retryOptions});
+    const spy = vi.mocked(GoogleGenAI);
+    spy.mockClear();
+
+    expect(llm.retryOptions).toEqual(retryOptions);
+    expect(llm.apiClient).toBeDefined();
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        httpOptions: expect.objectContaining({
+          retryOptions,
+        }),
+      }),
+    );
+  });
+
   it('should initialize liveApiClient with only tracking headers and apiVersion', () => {
     const userHeaders = {'x-custom-header': 'should-not-be-here'};
     const llm = new TestGemini({apiKey: 'test-key', headers: userHeaders});
@@ -771,6 +788,12 @@ describe('GoogleLlm', () => {
         responses.push(response);
       }
 
+      const expectedTrackingHeaders = Object.fromEntries(
+        Object.entries(trackingHeaders).map(([key, value]) => [
+          key,
+          `${value} custom`,
+        ]),
+      );
       expect(responses).toHaveLength(1);
       expect(generateContentMock).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -778,7 +801,7 @@ describe('GoogleLlm', () => {
             httpOptions: {
               headers: {
                 'custom-header': 'custom-value',
-                ...trackingHeaders,
+                ...expectedTrackingHeaders,
               },
             },
           }),
@@ -823,34 +846,196 @@ describe('GoogleLlm', () => {
       );
     });
 
-    it('should leave config.httpOptions undefined when no custom headers are provided', async () => {
-      const llm = new TestGemini({apiKey: 'test-key'});
+    it.each([true, false])(
+      'should patch tracking headers when config.httpOptions is undefined (stream=%s)',
+      async (stream) => {
+        const llm = new TestGemini({apiKey: 'test-key'});
+        const trackingHeaders = llm.getTrackingHeaders();
+        const responseChunk = {
+          candidates: [{content: {parts: [{text: 'response'}]}}],
+        };
+        const generateContentMock = vi.fn().mockResolvedValue(responseChunk);
+        const generateContentStreamMock = vi
+          .fn()
+          .mockResolvedValue([responseChunk]);
+        llm.apiClient.models.generateContent = generateContentMock;
+        llm.apiClient.models.generateContentStream = generateContentStreamMock;
+
+        const llmRequest: LlmRequest = {
+          contents: [{role: 'user', parts: [{text: 'hello'}]}],
+          config: {},
+          liveConnectConfig: {},
+          toolsDict: {},
+        };
+
+        const responses: LlmResponse[] = [];
+        for await (const response of llm.generateContentAsync(
+          llmRequest,
+          stream,
+        )) {
+          responses.push(response);
+        }
+
+        expect(responses).toHaveLength(stream ? 2 : 1);
+        const targetMock = stream
+          ? generateContentStreamMock
+          : generateContentMock;
+        expect(targetMock).toHaveBeenCalledTimes(1);
+        expect(targetMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            config: expect.objectContaining({
+              httpOptions: {
+                headers: trackingHeaders,
+              },
+            }),
+          }),
+        );
+      },
+    );
+
+    it('should preserve constructor tracking headers alongside ADK labels and combine per-request headers without duplicating non-tracking headers', async () => {
+      const spy = vi.mocked(GoogleGenAI);
+      spy.mockClear();
+      const llm = new TestGemini({
+        apiKey: 'test-key',
+        headers: {
+          'x-custom-header': 'client-value',
+          'User-Agent': 'ctor-agent/1.0',
+          'X-Goog-Api-Client': 'ctor-client/1.0',
+        },
+      });
+      const baseTracking = llm.getTrackingHeaders();
       const generateContentMock = vi.fn().mockResolvedValue({
         candidates: [{content: {parts: [{text: 'response'}]}}],
       });
       llm.apiClient.models.generateContent = generateContentMock;
 
-      const llmRequest: LlmRequest = {
+      expect(spy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          httpOptions: {
+            headers: {
+              'x-custom-header': 'client-value',
+              'x-goog-api-client': `${baseTracking['x-goog-api-client']} ctor-client/1.0`,
+              'user-agent': `${baseTracking['user-agent']} ctor-agent/1.0`,
+            },
+          },
+        }),
+      );
+
+      const defaultRequest: LlmRequest = {
         contents: [{role: 'user', parts: [{text: 'hello'}]}],
         config: {},
         liveConnectConfig: {},
         toolsDict: {},
       };
-
-      const responses: LlmResponse[] = [];
-      for await (const response of llm.generateContentAsync(
-        llmRequest,
-        false,
-      )) {
-        responses.push(response);
+      for await (const _ of llm.generateContentAsync(defaultRequest, false)) {
+        // consume response
       }
 
-      expect(responses).toHaveLength(1);
-      expect(llmRequest.config?.httpOptions).toBeUndefined();
-      expect(generateContentMock).toHaveBeenCalledTimes(1);
-      expect(
-        generateContentMock.mock.calls[0]?.[0]?.config?.httpOptions,
-      ).toBeUndefined();
+      expect(generateContentMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            httpOptions: {
+              headers: {
+                'x-goog-api-client': `${baseTracking['x-goog-api-client']} ctor-client/1.0`,
+                'user-agent': `${baseTracking['user-agent']} ctor-agent/1.0`,
+              },
+            },
+          }),
+        }),
+      );
+
+      const overrideRequest: LlmRequest = {
+        contents: [{role: 'user', parts: [{text: 'hello'}]}],
+        config: {
+          httpOptions: {
+            headers: {
+              'x-custom-header': 'request-value',
+              'user-agent': 'req-agent/2.0',
+              'x-goog-api-client': 'req-client/2.0',
+            },
+          },
+        },
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+      for await (const _ of llm.generateContentAsync(overrideRequest, false)) {
+        // consume response
+      }
+
+      expect(generateContentMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            httpOptions: {
+              headers: {
+                'x-custom-header': 'request-value',
+                'x-goog-api-client': `${baseTracking['x-goog-api-client']} ctor-client/1.0 req-client/2.0`,
+                'user-agent': `${baseTracking['user-agent']} ctor-agent/1.0 req-agent/2.0`,
+              },
+            },
+          }),
+        }),
+      );
+    });
+
+    it('should honor overridden trackingHeaders on a Gemini subclass in generateContentAsync', async () => {
+      class SubclassGemini extends Gemini {
+        protected override get trackingHeaders(): Record<string, string> {
+          return {
+            'x-goog-api-client': 'subclass-client/1.0',
+            'user-agent': 'subclass-agent/1.0',
+          };
+        }
+      }
+
+      const spy = vi.mocked(GoogleGenAI);
+      spy.mockClear();
+      const llm = new SubclassGemini({
+        apiKey: 'test-key',
+        headers: {'User-Agent': 'ctor-agent/1.0'},
+      });
+      const generateContentMock = vi.fn().mockResolvedValue({
+        candidates: [{content: {parts: [{text: 'response'}]}}],
+      });
+      llm.apiClient.models.generateContent = generateContentMock;
+
+      expect(spy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          httpOptions: {
+            headers: {
+              'x-goog-api-client': 'subclass-client/1.0',
+              'user-agent': 'subclass-agent/1.0 ctor-agent/1.0',
+            },
+          },
+        }),
+      );
+
+      const llmRequest: LlmRequest = {
+        contents: [{role: 'user', parts: [{text: 'hello'}]}],
+        config: {
+          httpOptions: {
+            headers: {'user-agent': 'req-agent/2.0'},
+          },
+        },
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+      for await (const _ of llm.generateContentAsync(llmRequest, false)) {
+        // consume response
+      }
+
+      expect(generateContentMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            httpOptions: {
+              headers: {
+                'x-goog-api-client': 'subclass-client/1.0',
+                'user-agent': 'subclass-agent/1.0 ctor-agent/1.0 req-agent/2.0',
+              },
+            },
+          }),
+        }),
+      );
     });
   });
 
@@ -1759,7 +1944,11 @@ describe('Gemini computer use requests', () => {
 
     await send(llmRequest);
 
-    expect(llmRequest.config).toEqual({});
+    expect(llmRequest.config).toEqual({
+      httpOptions: {
+        headers: new TestGemini({apiKey: 'test-key'}).getTrackingHeaders(),
+      },
+    });
     expect(llmRequest.toolsDict).toEqual({wait: waitTool});
   });
 
