@@ -55,6 +55,11 @@ import {createAgent} from './cli_create.js';
 import {runAgent} from './cli_run.js';
 import {deployToAgentEngine} from './deploy/cli_deploy_agent_engine.js';
 import {deployToCloudRun} from './deploy/cli_deploy_cloud_run.js';
+import {
+  deployToGke,
+  GKE_SERVICE_TYPES,
+  type GkeServiceType,
+} from './deploy/cli_deploy_gke.js';
 
 dotenv.config({quiet: true});
 
@@ -1103,6 +1108,89 @@ export function createProgram(): Command {
   registerAgentEngineCommand(
     DEPLOY_COMMAND.command('reasoning_engine').alias('reasoning-engine'),
   );
+
+  const deployGkeCommand = DEPLOY_COMMAND.command('gke')
+    .description('Deploys an agent to Google Kubernetes Engine (GKE)')
+    .addArgument(AGENT_DIR_ARGUMENT)
+    .addOption(PORT_OPTION)
+    .addOption(PROJECT_DEPLOY_OPTION)
+    .option(
+      '--region <string>',
+      'Optional. Google Cloud region of the GKE cluster.',
+    )
+    .option(
+      '--cluster-name, --cluster_name <string>',
+      'The name of the GKE cluster.',
+    )
+    .option(
+      '--service-name, --service_name <string>',
+      'Optional. The service name to use in GKE. Default: "adk-default-service-name"',
+      'adk-default-service-name',
+    )
+    .addOption(
+      new Option(
+        '--service-type, --service_type <string>',
+        'Optional. The Kubernetes Service type.',
+      )
+        .choices([...GKE_SERVICE_TYPES])
+        .default('ClusterIP'),
+    )
+    .option(
+      '--app-name, --app_name <string>',
+      'Optional. App name of the ADK API server. Default: folder or file name of the agent source.',
+      '',
+    )
+    .option(
+      '--temp-folder, --temp_folder <string>',
+      'Optional. Temp folder for the generated GKE source files (default: a private directory created in the system temp directory).',
+    )
+    .addOption(ADK_VERSION_OPTION)
+    .addOption(WITH_UI_OPTION)
+    .addOption(ORIGINS_OPTION)
+    .addOption(VERBOSE_OPTION)
+    .addOption(LOG_LEVEL_OPTION);
+  adkServicesOptions(deployGkeCommand)
+    .addOption(OTEL_TO_CLOUD_OPTION)
+    .option(
+      '--trace-to-cloud, --trace_to_cloud [boolean]',
+      'Optional. Whether to enable Cloud Trace for GKE.',
+      false,
+    )
+    .addOption(COMPILE_AGENT_FILE)
+    .addOption(BUNDLE_AGENT_FILE)
+    .addOption(AGENT_FILE_MODULE_TYPE)
+    .addOption(A2A_OPTION)
+    .action(async (agentPath: string, options: Record<string, string>) => {
+      const otelToCloud =
+        getBoolean(options['otel_to_cloud']) ||
+        getBoolean(options['trace_to_cloud']);
+      try {
+        await deployToGke({
+          agentPath: getAbsolutePath(agentPath),
+          project: options['project'],
+          region: options['region'],
+          clusterName: options['cluster_name'],
+          serviceName: options['service_name'],
+          serviceType: options['service_type'] as GkeServiceType,
+          ...(options['app_name'] ? {appName: options['app_name']} : {}),
+          tempFolder: options['temp_folder'],
+          port: parseInt(options['port'], 10),
+          withUi: getBoolean(options['with_ui']),
+          logLevel: options['verbose'] ? 'debug' : options['log_level'],
+          adkVersion: options['adk_version'],
+          allowOrigins: options['allow_origins'],
+          sessionServiceUri: options['session_service_uri'],
+          artifactServiceUri: options['artifact_service_uri'],
+          memoryServiceUri: options['memory_service_uri'],
+          ...(otelToCloud ? {otelToCloud: true} : {}),
+          agentFileLoadOptions: getAgentFileOptions({...options, minify: true}),
+          a2a: getBoolean(options['a2a']),
+        });
+      } catch (error) {
+        logger.error('Error deploying agent:', (error as Error).message);
+        process.exitCode = 1;
+      }
+    });
 
   const CONFORMANCE_COMMAND = program
     .command('integration')

@@ -24,15 +24,18 @@ import {
   EvalStatus,
   Event,
   FunctionTool,
+  getRegisteredEvalMetrics,
   InMemoryArtifactService,
   InMemoryCredentialService,
   InMemoryMemoryService,
   InMemorySessionService,
   INTERNAL_METADATA_PREFIX,
   InvocationContext,
+  type ListMetricsInfoResponse,
   LlmAgent,
   LocalEvalSetResultsManager,
   LocalEvalSetsManager,
+  type MetricInfo,
   node,
   NotFoundError,
   RESTORED_EVENT_KEY,
@@ -4966,6 +4969,22 @@ describe('AdkWebServer', () => {
       }
     });
 
+    it('lists registered evaluation metrics from /apps/:appName/eval_metrics and /dev/apps/:appName/metrics-info', async () => {
+      const expectedMetrics = getRegisteredEvalMetrics();
+
+      const evalMetricsRes = await client.get<MetricInfo[]>(
+        '/apps/testApp/eval_metrics',
+      );
+      expect(evalMetricsRes.status).toBe(200);
+      expect(evalMetricsRes.data).toEqual(expectedMetrics);
+
+      const devMetricsInfoRes = await client.get<ListMetricsInfoResponse>(
+        '/dev/apps/testApp/metrics-info',
+      );
+      expect(devMetricsInfoRes.status).toBe(200);
+      expect(devMetricsInfoRes.data).toEqual({metricsInfo: expectedMetrics});
+    });
+
     it('does not load the .env file of an app that the loader does not know', async () => {
       const tempAgentsDir = fs.mkdtempSync(
         path.join(os.tmpdir(), 'adk-unknown-app-env-test-'),
@@ -5291,6 +5310,32 @@ describe('AdkApiServer path validation', () => {
         const response = await sendRawRequest(server.url, {
           method: 'GET',
           rawPath: `/apps/${appName}/eval_sets`,
+        });
+
+        expect(response.status).toBe(400);
+        expect(JSON.parse(response.body).error).toMatch(/appName/);
+      },
+    );
+
+    it.each(invalidAppNames)(
+      'returns 400 from GET eval_metrics for appName %s',
+      async (appName) => {
+        const response = await sendRawRequest(server.url, {
+          method: 'GET',
+          rawPath: `/apps/${appName}/eval_metrics`,
+        });
+
+        expect(response.status).toBe(400);
+        expect(JSON.parse(response.body).error).toMatch(/appName/);
+      },
+    );
+
+    it.each(invalidAppNames)(
+      'returns 400 from GET /dev/apps/:appName/metrics-info for appName %s',
+      async (appName) => {
+        const response = await sendRawRequest(server.url, {
+          method: 'GET',
+          rawPath: `/dev/apps/${appName}/metrics-info`,
         });
 
         expect(response.status).toBe(400);

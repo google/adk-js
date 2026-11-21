@@ -34,9 +34,9 @@ Credentials for tools that call protected APIs: how a credential is described, h
 
 ### CLI
 
-Environment loading, session-to-eval conversion, instruction placeholder initialization, log routing, runner cleanup, and batch evaluation utilities backing the ADK CLI and development server.
+Environment loading, session-to-eval conversion, instruction placeholder initialization, log routing, runner cleanup, container deployment (`adk deploy cloud_run`, `adk deploy agent_engine`, `adk deploy gke`), and batch evaluation utilities backing the ADK CLI and development server.
 
-- [CLI and Evaluation Utilities](cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalInvocations`, `convertSessionToEvalFormat`, `setupAdkLogger`, `logToTmpFolder`, `closeRunners`, `runEvals`, `LocalEvalSetsManager`, `LocalEvalSetResultsManager`, `EvalSetsManager`, `EvalSetResultsManager`, `GcsEvalSetsManager`, `GcsEvalSetResultsManager`, `createGcsEvalManagersFromUri`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun`.
+- [CLI and Evaluation Utilities](cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalInvocations`, `convertSessionToEvalFormat`, `setupAdkLogger`, `logToTmpFolder`, `closeRunners`, `runEvals`, `getRegisteredEvalMetrics`, `MetricInfo`, `MetricValueInfo`, `MetricInterval`, `ListMetricsInfoResponse`, `LocalEvalSetsManager`, `LocalEvalSetResultsManager`, `EvalSetsManager`, `EvalSetResultsManager`, `GcsEvalSetsManager`, `GcsEvalSetResultsManager`, `createGcsEvalManagersFromUri`, `getEvaluationCriteriaOrDefault`, `parseAndGetEvalsToRun`, and `adk deploy gke`.
 
 ### Code executors
 

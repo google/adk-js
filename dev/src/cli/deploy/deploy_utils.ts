@@ -91,7 +91,11 @@ export interface BaseDeployOptions extends CreateDockerFileContentOptions {
 // anything outside this set.
 const SAFE_DOCKERFILE_TOKEN_RE = /^[A-Za-z0-9_.-]{1,128}$/;
 
-function assertSafeDockerfileToken(value: string, label: string): void {
+/**
+ * Validates that `value` is a safe plain-identifier token for embedding in
+ * generated deployment files.
+ */
+export function assertSafeDockerfileToken(value: string, label: string): void {
   if (!SAFE_DOCKERFILE_TOKEN_RE.test(value)) {
     throw new Error(
       `Invalid ${label} ${JSON.stringify(value)}: must match ${SAFE_DOCKERFILE_TOKEN_RE} to be safely embedded in the generated Dockerfile.`,
@@ -125,6 +129,17 @@ function assertNoDockerfileNewline(value: string, label: string): void {
 // metacharacters (including the `<`/`>` of comparator ranges) are rejected.
 const SAFE_NPM_VERSION_RE = /^[A-Za-z0-9_.+~^-]{1,128}$/;
 
+/**
+ * Validates that `value` is a safe npm version, range, or dist-tag.
+ */
+export function assertSafeNpmVersion(value: string): void {
+  if (!SAFE_NPM_VERSION_RE.test(value)) {
+    throw new Error(
+      `Invalid adkVersion ${JSON.stringify(value)}: must match ${SAFE_NPM_VERSION_RE} to be safely embedded in the generated Dockerfile.`,
+    );
+  }
+}
+
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -142,11 +157,7 @@ export function createDockerFileContent(
     assertSafeDockerfileToken(options.appName, 'appName');
   }
   const adkVersion = options.adkVersion || version;
-  if (!SAFE_NPM_VERSION_RE.test(adkVersion)) {
-    throw new Error(
-      `Invalid adkVersion ${JSON.stringify(adkVersion)}: must match ${SAFE_NPM_VERSION_RE} to be safely embedded in the generated Dockerfile.`,
-    );
-  }
+  assertSafeNpmVersion(adkVersion);
 
   const adkCommand = options.withUi ? 'web' : 'api_server';
   const adkServerOptions = [`--port=${options.port}`, '--host=0.0.0.0'];
@@ -203,6 +214,17 @@ export function createDockerFileContent(
     adkServerOptions.push('--a2a');
   }
 
+  const envLines = [
+    'ENV PATH="/home/myuser/.local/bin:$PATH"',
+    'ENV GOOGLE_GENAI_USE_ENTERPRISE=1',
+  ];
+  if (options.project) {
+    envLines.push(`ENV GOOGLE_CLOUD_PROJECT=${options.project}`);
+  }
+  if (options.region) {
+    envLines.push(`ENV GOOGLE_CLOUD_LOCATION=${options.region}`);
+  }
+
   return `
 FROM ${NODE_BASE_IMAGE}
 WORKDIR /app
@@ -215,10 +237,7 @@ RUN adduser --disabled-password --gecos "" myuser && chown myuser:myuser /app
 USER myuser
 
 # Set up environment variables - Start
-ENV PATH="/home/myuser/.local/bin:$PATH"
-ENV GOOGLE_GENAI_USE_ENTERPRISE=1
-ENV GOOGLE_CLOUD_PROJECT=${options.project}
-ENV GOOGLE_CLOUD_LOCATION=${options.region}
+${envLines.join('\n')}
 # Set up environment variables - End
 
 # Copy application files
