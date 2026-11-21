@@ -183,6 +183,9 @@ function applyLiveRunConfig(
       (liveConfig as Record<string, unknown>)[k] = runConfig[k];
     }
   }
+  if (runConfig.sessionResumption !== undefined) {
+    liveConfig.sessionResumption = {...runConfig.sessionResumption};
+  }
   if (runConfig.supportCfc) {
     liveConfig.responseModalities = [Modality.TEXT];
   }
@@ -1076,6 +1079,15 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // =========================================================================
     applyLiveRunConfig(invocationContext.runConfig, llmRequest);
 
+    // Seed the invocation handle from runConfig.sessionResumption so an
+    // initial connect with a caller-provided handle skips history replay and
+    // enables reconnects before the server issues a new handle.
+    const configuredHandle =
+      llmRequest.liveConnectConfig?.sessionResumption?.handle;
+    if (!invocationContext.liveSessionResumptionHandle && configuredHandle) {
+      invocationContext.liveSessionResumptionHandle = configuredHandle;
+    }
+
     const llm = this.canonicalModel;
     let reconnectAttempts = 0;
 
@@ -1092,8 +1104,10 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       if (handle) {
         llmRequest.liveConnectConfig ??= {};
         llmRequest.liveConnectConfig.sessionResumption = {
+          ...llmRequest.liveConnectConfig.sessionResumption,
           handle,
-          transparent: true,
+          transparent:
+            llmRequest.liveConnectConfig.sessionResumption?.transparent ?? true,
         };
       }
 
@@ -1444,10 +1458,21 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
               const previousAgent = invocationContext.agent;
               invocationContext.agent = subAgent;
               // Child agent starts its own live session; do not carry over
-              // the parent's resumption handle.
+              // the parent's resumption handle or runConfig handle.
               const previousHandle =
                 invocationContext.liveSessionResumptionHandle;
+              const previousRunConfig = invocationContext.runConfig;
               invocationContext.liveSessionResumptionHandle = undefined;
+              if (previousRunConfig?.sessionResumption?.handle !== undefined) {
+                const sessionResumption = {
+                  ...previousRunConfig.sessionResumption,
+                };
+                delete sessionResumption.handle;
+                invocationContext.runConfig = {
+                  ...previousRunConfig,
+                  sessionResumption,
+                };
+              }
               try {
                 for await (const subEvent of subAgent.runLive(
                   invocationContext,
@@ -1457,6 +1482,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
               } finally {
                 invocationContext.agent = previousAgent;
                 invocationContext.liveSessionResumptionHandle = previousHandle;
+                invocationContext.runConfig = previousRunConfig;
               }
             }
             return;

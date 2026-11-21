@@ -98,12 +98,14 @@ describe('createRunConfig', () => {
       automaticActivityDetection: {disabled: false},
     };
     const proactivity = {proactiveAudio: true};
+    const sessionResumption = {transparent: true};
     const config = createRunConfig({
       outputAudioTranscription,
       inputAudioTranscription,
       realtimeInputConfig,
       enableAffectiveDialog: true,
       proactivity,
+      sessionResumption,
     });
 
     expect(config.outputAudioTranscription).toBe(outputAudioTranscription);
@@ -114,5 +116,6 @@ describe('createRunConfig', () => {
     ).toBe(false);
     expect(config.enableAffectiveDialog).toBe(true);
     expect(config.proactivity).toBe(proactivity);
+    expect(config.sessionResumption).toEqual({transparent: true});
   });
 });

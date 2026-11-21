@@ -8,6 +8,7 @@ import {
   BaseAgent,
   BaseLlm,
   BaseLlmConnection,
+  createRunConfig,
   createSession,
   FunctionTool,
   Gemini,
@@ -312,6 +313,7 @@ describe('BasicLlmRequestProcessor', () => {
       realtimeInputConfig: {automaticActivityDetection: {disabled: true}},
       enableAffectiveDialog: true,
       proactivity: {proactiveAudio: true},
+      sessionResumption: {transparent: true},
     };
     const invocationContext = createMockInvocationContext(agent, runConfig);
     const llmRequest = makeLlmRequest();
@@ -331,6 +333,32 @@ describe('BasicLlmRequestProcessor', () => {
     expect(llmRequest.liveConnectConfig.proactivity).toEqual({
       proactiveAudio: true,
     });
+    expect(llmRequest.liveConnectConfig.sessionResumption).toEqual({
+      transparent: true,
+    });
+    expect(llmRequest.liveConnectConfig.sessionResumption).not.toBe(
+      runConfig.sessionResumption,
+    );
+  });
+
+  it('should clear prior liveConnectConfig.sessionResumption when runConfig omits it', async () => {
+    const agent = new LlmAgent({
+      name: 'testAgent',
+      model: 'test-basic-processor-model',
+    });
+    const invocationContext = createMockInvocationContext(
+      agent,
+      createRunConfig(),
+    );
+    const llmRequest = makeLlmRequest();
+    llmRequest.liveConnectConfig.sessionResumption = {
+      handle: 'stale-handle',
+      transparent: true,
+    };
+
+    await runProcessor(invocationContext, llmRequest);
+
+    expect(llmRequest.liveConnectConfig.sessionResumption).toBeUndefined();
   });
 
   it('should not populate liveConnectConfig when runConfig is not set', async () => {
@@ -348,6 +376,7 @@ describe('BasicLlmRequestProcessor', () => {
     expect(llmRequest.liveConnectConfig.realtimeInputConfig).toBeUndefined();
     expect(llmRequest.liveConnectConfig.enableAffectiveDialog).toBeUndefined();
     expect(llmRequest.liveConnectConfig.proactivity).toBeUndefined();
+    expect(llmRequest.liveConnectConfig.sessionResumption).toBeUndefined();
   });
 
   it('should yield no events', async () => {
