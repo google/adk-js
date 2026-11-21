@@ -43,6 +43,10 @@ class LRUCache<K, V> {
     return item;
   }
 
+  clear(): void {
+    this.cache.clear();
+  }
+
   set(key: K, value: V): void {
     if (this.cache.size >= this.maxSize && !this.cache.has(key)) {
       const lruKey = this.cache.keys().next().value;
@@ -84,6 +88,7 @@ export class LLMRegistry {
       );
     }
     LLMRegistry.llmRegistryDict.set(modelNameRegex, llmCls);
+    LLMRegistry.resolveCache.clear();
   }
 
   /**
