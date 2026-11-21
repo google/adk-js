@@ -42,6 +42,7 @@ export const credentialsConfig = new BigQueryCredentialsConfig({
 
 export const toolConfig = new BigQueryToolConfig({
   writeMode: WriteMode.BLOCKED,
+  maxQueryResultRows: 50,
 });
 
 export const bigQueryToolset = new BigQueryToolset({
@@ -53,6 +54,7 @@ export const bigQueryToolset = new BigQueryToolset({
     'list_table_ids',
     'get_table_info',
     'execute_sql',
+    'ask_data_insights',
   ],
 });
 

@@ -17,6 +17,7 @@ import {
   BigQueryToolConfig,
   type BigQueryToolConfigOptions,
   isBigQueryToolConfig,
+  resolveMaxQueryResultRows,
   WriteMode,
 } from './config.js';
 import {
@@ -24,7 +25,6 @@ import {
   toBigQueryToolErrorResult,
 } from './tool_error.js';
 
-const DEFAULT_MAX_QUERY_RESULT_ROWS = 50;
 const MAX_REMEMBERED_SESSIONS = 1024;
 
 interface BigQuerySessionInfo {
@@ -153,7 +153,7 @@ function toJsonSerializableValue(val: unknown): unknown {
 
 /**
  * Runs a BigQuery or BigQuery ML SQL query in the specified project and returns
- * up to 50 rows.
+ * up to `config.maxQueryResultRows` rows (`50` by default).
  *
  * In read-only mode (when `config.writeMode` is {@link WriteMode.BLOCKED} or
  * omitted), a dry-run check verifies that the query is a SELECT statement before
@@ -168,6 +168,9 @@ export async function executeSql(
   toolContext?: Context,
 ): Promise<ExecuteSqlResult> {
   try {
+    const maxQueryResultRows = resolveMaxQueryResultRows(
+      args.config?.maxQueryResultRows,
+    );
     const bqClient = getBigQueryClient({
       projectId: args.project_id,
       credentials: args.credentials,
@@ -236,7 +239,7 @@ export async function executeSql(
     const queryOptions: BigQueryQueryOptions = {
       query: args.query,
       projectId: bqClient.projectId,
-      maxResults: DEFAULT_MAX_QUERY_RESULT_ROWS,
+      maxResults: maxQueryResultRows,
     };
     if (connectionProperties !== undefined) {
       queryOptions.connectionProperties = connectionProperties;
@@ -251,7 +254,7 @@ export async function executeSql(
       return sanitized;
     });
     const result: ExecuteSqlSuccessResult = {status: 'SUCCESS', rows};
-    if (rows.length === DEFAULT_MAX_QUERY_RESULT_ROWS) {
+    if (rows.length === maxQueryResultRows) {
       result.result_is_likely_truncated = true;
     }
     return result;
@@ -260,13 +263,16 @@ export async function executeSql(
   }
 }
 
-const EXECUTE_SQL_BASE_DESCRIPTION =
-  'Run a BigQuery or BigQuery ML SQL query in the project and return the result. ' +
-  "Returns {status: 'SUCCESS', rows}, where each row is an object that maps column names " +
-  'to values. At most 50 rows are returned. If the result contains ' +
-  'result_is_likely_truncated: true, more rows can match the query than ' +
-  'the result contains; use aggregation, filters or LIMIT to get a ' +
-  "smaller result. On failure, returns {status: 'ERROR', error_details}.";
+function buildExecuteSqlBaseDescription(maxRows: number): string {
+  return (
+    'Run a BigQuery or BigQuery ML SQL query in the project and return the result. ' +
+    "Returns {status: 'SUCCESS', rows}, where each row is an object that maps column names " +
+    `to values. At most ${maxRows} ${maxRows === 1 ? 'row is' : 'rows are'} returned. If the result contains ` +
+    'result_is_likely_truncated: true, more rows can match the query than ' +
+    'the result contains; use aggregation, filters or LIMIT to get a ' +
+    "smaller result. On failure, returns {status: 'ERROR', error_details}."
+  );
+}
 
 const EXECUTE_SQL_WRITE_EXAMPLES =
   '\n\nExamples of write queries:\n' +
@@ -326,18 +332,21 @@ const EXECUTE_SQL_PROTECTED_WRITE_EXAMPLES =
   '- Only temporary models can be created or deleted. Do not try creating a permanent model (non-TEMP model) or deleting one.';
 
 /**
- * Returns the description for the `execute_sql` tool based on the configured write mode.
+ * Returns the description for the `execute_sql` tool based on the configured
+ * write mode and `maxQueryResultRows` limit.
  */
 export function getExecuteSqlDescription(
   config?: BigQueryToolConfig | BigQueryToolConfigOptions,
 ): string {
+  const maxRows = resolveMaxQueryResultRows(config?.maxQueryResultRows);
+  const baseDescription = buildExecuteSqlBaseDescription(maxRows);
   if (config?.writeMode === WriteMode.PROTECTED) {
-    return `${EXECUTE_SQL_BASE_DESCRIPTION}${EXECUTE_SQL_PROTECTED_WRITE_EXAMPLES}`;
+    return `${baseDescription}${EXECUTE_SQL_PROTECTED_WRITE_EXAMPLES}`;
   }
   if (config?.writeMode === WriteMode.ALLOWED) {
-    return `${EXECUTE_SQL_BASE_DESCRIPTION}${EXECUTE_SQL_WRITE_EXAMPLES}`;
+    return `${baseDescription}${EXECUTE_SQL_WRITE_EXAMPLES}`;
   }
-  return EXECUTE_SQL_BASE_DESCRIPTION;
+  return baseDescription;
 }
 
 /**
