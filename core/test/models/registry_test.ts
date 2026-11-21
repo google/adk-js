@@ -40,7 +40,9 @@ class TestLlmModel extends BaseLlm {
     super({model});
   }
 
-  static override readonly supportedModels = ['test-llm-model'];
+  static override readonly supportedModels: Array<string | RegExp> = [
+    'test-llm-model',
+  ];
 
   async *generateContentAsync(
     _llmRequest: LlmRequest,
@@ -88,6 +90,26 @@ describe('LLMRegistry', () => {
     });
 
     expect(agent.canonicalModel).toBeInstanceOf(TestLlmModel);
+  });
+
+  it.each([
+    {pattern: 'replaceable-string-.*', model: 'replaceable-string-v1'},
+    {pattern: /replaceable-regexp-.*/, model: 'replaceable-regexp-v1'},
+  ])('uses a replacement class after resolving $model', ({pattern, model}) => {
+    class OriginalLlm extends TestLlmModel {
+      static override readonly supportedModels = [pattern];
+    }
+    class ReplacementLlm extends TestLlmModel {
+      static override readonly supportedModels = [pattern];
+    }
+
+    LLMRegistry.register(OriginalLlm);
+    expect(LLMRegistry.resolve(model)).toBe(OriginalLlm);
+
+    LLMRegistry.register(ReplacementLlm);
+
+    expect(LLMRegistry.resolve(model)).toBe(ReplacementLlm);
+    expect(LLMRegistry.newLlm(model)).toBeInstanceOf(ReplacementLlm);
   });
 });
 
