@@ -169,6 +169,100 @@ export interface RunEvalRequest {
 }
 
 /**
+ * Numeric range of values supported by an evaluation metric.
+ */
+export interface MetricInterval {
+  minValue: number;
+  openAtMin: boolean;
+  maxValue: number;
+  openAtMax: boolean;
+}
+
+/**
+ * Value domain metadata for an evaluation metric.
+ */
+export interface MetricValueInfo {
+  interval?: MetricInterval;
+}
+
+/**
+ * Descriptor for a registered evaluation metric.
+ */
+export interface MetricInfo {
+  metricName: string;
+  description?: string;
+  metricValueInfo: MetricValueInfo;
+  requiresThreshold: boolean;
+}
+
+/**
+ * Response payload listing registered evaluation metric descriptors.
+ */
+export interface ListMetricsInfoResponse {
+  metricsInfo: MetricInfo[];
+}
+
+const REGISTERED_EVAL_METRICS: ReadonlyArray<{
+  readonly metricName: string;
+  readonly description: string;
+  readonly minValue: number;
+  readonly openAtMin: boolean;
+  readonly maxValue: number;
+  readonly openAtMax: boolean;
+  readonly requiresThreshold: boolean;
+}> = [
+  {
+    metricName: TOOL_TRAJECTORY_SCORE_KEY,
+    description:
+      'Compares expected and actual tool call trajectories (tool names and arguments) across turns. Scores range from 0 to 1, where 1 indicates an exact match.',
+    minValue: 0,
+    openAtMin: false,
+    maxValue: 1,
+    openAtMax: false,
+    requiresThreshold: true,
+  },
+  {
+    metricName: RESPONSE_MATCH_SCORE_KEY,
+    description:
+      'Measures unigram ROUGE-1 F1 similarity between the expected reference response and the actual final response. Scores range from 0 to 1, where higher values are better.',
+    minValue: 0,
+    openAtMin: false,
+    maxValue: 1,
+    openAtMax: false,
+    requiresThreshold: true,
+  },
+  {
+    metricName: RESPONSE_EVALUATION_SCORE_KEY,
+    description:
+      'Evaluates final response similarity against the expected reference response in [0, 1], where higher values indicate closer alignment.',
+    minValue: 0,
+    openAtMin: false,
+    maxValue: 1,
+    openAtMax: false,
+    requiresThreshold: true,
+  },
+];
+
+/**
+ * Returns fresh descriptors for the evaluation metrics supported by {@link runEvals}.
+ */
+export function getRegisteredEvalMetrics(): MetricInfo[] {
+  return REGISTERED_EVAL_METRICS.map((metric) => ({
+    metricName: metric.metricName,
+    description: metric.description,
+    metricValueInfo: {
+      interval: {
+        minValue: metric.minValue,
+        openAtMin: metric.openAtMin,
+        maxValue: metric.maxValue,
+        openAtMax: metric.openAtMax,
+      },
+    },
+    requiresThreshold: metric.requiresThreshold,
+  }));
+}
+
+/**
  * Result returned for a single evaluation case by the `run_eval` and
  * `eval_results` endpoints.
  */

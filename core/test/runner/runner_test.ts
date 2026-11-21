@@ -22,9 +22,12 @@ import {
   InvocationContext,
   isParallelWorker,
   isRoutableLlmAgent,
+  LiveRequestQueue,
   LlmAgent,
+  node,
   ParallelWorker,
   RESTORED_EVENT_KEY,
+  RunnableRoot,
   Runner,
   ScopedArtifactService,
   SessionArtifactService,
@@ -649,6 +652,32 @@ describe('Runner.determineAgentForResumption', () => {
     expect(result.name).toBe('sub_agent1');
   });
 
+  it('returns false from isRoutableLlmAgent for a non-LLM BaseAgent and its LLM child', () => {
+    class CustomBaseAgent extends BaseAgent {
+      protected override async *runAsyncImpl(): AsyncGenerator<
+        Event,
+        void,
+        void
+      > {}
+      protected override async *runLiveImpl(): AsyncGenerator<
+        Event,
+        void,
+        void
+      > {}
+    }
+
+    const customParent = new CustomBaseAgent({name: 'customParent'});
+    const llmChild = new LlmAgent({
+      name: 'llmChild',
+      model: 'gemini-flash-latest',
+      parentAgent: customParent,
+    });
+    customParent.subAgents.push(llmChild);
+
+    expect(isRoutableLlmAgent(customParent)).toBe(false);
+    expect(isRoutableLlmAgent(llmChild)).toBe(false);
+  });
+
   it('does not route to a non-transferable agent through a synthetic abort response', async () => {
     const session = await sessionService.createSession({
       appName: TEST_APP_ID,
@@ -1262,6 +1291,374 @@ describe('Runner with plugins', () => {
     expect(session!.events.length).toBe(3);
     expect(session!.events[1].author).toBe('test_agent');
     expect(session!.events[2].errorCode).toBe('INVOCATION_ABORTED');
+  });
+
+  it.each<{
+    name: string;
+    isLive: boolean;
+    createRoot: (onRun: () => void) => RunnableRoot;
+  }>([
+    {
+      name: 'a BaseAgent root in runAsync',
+      isLive: false,
+      createRoot: (onRun) =>
+        new (class extends BaseAgent {
+          protected override async *runAsyncImpl(
+            context: InvocationContext,
+          ): AsyncGenerator<Event, void, void> {
+            onRun();
+            yield createEvent({
+              invocationId: context.invocationId,
+              author: this.name,
+              content: {role: 'model', parts: [{text: 'Agent response'}]},
+            });
+          }
+          protected override async *runLiveImpl(): AsyncGenerator<
+            Event,
+            void,
+            void
+          > {}
+        })({name: 'baseRoot'}),
+    },
+    {
+      name: 'an LlmAgent root in runAsync',
+      isLive: false,
+      createRoot: (onRun) =>
+        new (class extends LlmAgent {
+          constructor() {
+            super({name: 'llmRoot', model: 'gemini-flash-latest'});
+          }
+          protected override async *runAsyncImpl(
+            context: InvocationContext,
+          ): AsyncGenerator<Event, void, void> {
+            onRun();
+            yield createEvent({
+              invocationId: context.invocationId,
+              author: this.name,
+              content: {role: 'model', parts: [{text: 'LLM response'}]},
+            });
+          }
+        })(),
+    },
+    {
+      name: 'a Workflow root in runAsync',
+      isLive: false,
+      createRoot: (onRun) =>
+        new Workflow({
+          name: 'workflowRoot',
+          edges: [
+            [
+              'START',
+              node(
+                () => {
+                  onRun();
+                  return 'workflow output';
+                },
+                {name: 'workflowStep'},
+              ),
+            ],
+          ],
+        }),
+    },
+    {
+      name: 'a BaseAgent root in runLive',
+      isLive: true,
+      createRoot: (onRun) =>
+        new (class extends BaseAgent {
+          protected override async *runAsyncImpl(): AsyncGenerator<
+            Event,
+            void,
+            void
+          > {}
+          protected override async *runLiveImpl(
+            context: InvocationContext,
+          ): AsyncGenerator<Event, void, void> {
+            onRun();
+            yield createEvent({
+              invocationId: context.invocationId,
+              author: this.name,
+              content: {role: 'model', parts: [{text: 'Live response'}]},
+            });
+          }
+        })({name: 'liveRoot'}),
+    },
+  ])(
+    'processes beforeRunCallback early-exit events through onEventCallback for $name',
+    async ({isLive, createRoot}) => {
+      const runSpy = vi.fn();
+      const earlyExitPlugin = new (class extends BasePlugin {
+        constructor() {
+          super('earlyExitPlugin');
+        }
+        override async beforeRunCallback(): Promise<Content | undefined> {
+          return {
+            role: 'model',
+            parts: [{text: 'Blocked by beforeRunCallback'}],
+          };
+        }
+        override async onEventCallback({
+          event,
+        }: {
+          invocationContext: InvocationContext;
+          event: Event;
+        }): Promise<Event | undefined> {
+          return createEvent({
+            invocationId: '',
+            author: '',
+            content: {
+              role: event.content?.role,
+              parts: [{text: 'Replaced by onEventCallback'}],
+            },
+            customMetadata: {pluginKey: 'pluginValue'},
+          });
+        }
+      })();
+
+      const localRunner = new Runner({
+        app: new App({
+          name: 'earlyExitApp',
+          rootAgent: createRoot(runSpy),
+          plugins: [earlyExitPlugin],
+        }),
+        sessionService,
+        artifactService,
+      });
+      const createdSession = await sessionService.createSession({
+        appName: 'earlyExitApp',
+        userId: 'user-1',
+        sessionId: 'session-early-exit',
+      });
+
+      const queue = new LiveRequestQueue();
+      queue.close();
+      const stream = isLive
+        ? localRunner.runLive({
+            userId: 'user-1',
+            sessionId: createdSession.id,
+            liveRequestQueue: queue,
+          })
+        : localRunner.runAsync({
+            userId: 'user-1',
+            sessionId: createdSession.id,
+            newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+          });
+
+      const events: Event[] = [];
+      for await (const event of stream) {
+        events.push(event);
+      }
+
+      expect(runSpy).not.toHaveBeenCalled();
+      expect(events).toHaveLength(1);
+      const streamedEvent = events[0];
+      expect(streamedEvent.author).toBe('model');
+      expect(streamedEvent.invocationId).not.toBe('');
+      expect(streamedEvent.content).toEqual({
+        role: 'model',
+        parts: [{text: 'Replaced by onEventCallback'}],
+      });
+      expect(streamedEvent.customMetadata).toEqual({pluginKey: 'pluginValue'});
+
+      const persistedSession = await sessionService.getSession({
+        appName: 'earlyExitApp',
+        userId: 'user-1',
+        sessionId: createdSession.id,
+      });
+      expect(persistedSession?.events).toHaveLength(isLive ? 1 : 2);
+      const lastPersisted = persistedSession?.events.at(-1);
+      expect(lastPersisted).toEqual(streamedEvent);
+      expect(lastPersisted?.id).toBe(streamedEvent.id);
+      expect(lastPersisted?.timestamp).toBe(streamedEvent.timestamp);
+      expect(lastPersisted?.invocationId).toBe(streamedEvent.invocationId);
+      expect(lastPersisted?.author).toBe('model');
+      expect(lastPersisted?.content).toEqual(streamedEvent.content);
+      expect(lastPersisted?.customMetadata).toEqual(
+        streamedEvent.customMetadata,
+      );
+    },
+  );
+
+  it('preserves partial state across onEventCallback replacements and skips persisting partial output events', async () => {
+    // (a) When onEventCallback marks a non-partial early-exit or agent event as
+    // partial: true, Runner yields the partial event without appending it.
+    for (const earlyExit of [true, false]) {
+      const localSessionService = new InMemorySessionService();
+      const appendSpy = vi.spyOn(localSessionService, 'appendEvent');
+      const markPartialPlugin = new (class extends BasePlugin {
+        constructor() {
+          super('markPartialPlugin');
+        }
+        override async beforeRunCallback(): Promise<Content | undefined> {
+          return earlyExit
+            ? {role: 'model', parts: [{text: 'Early exit source'}]}
+            : undefined;
+        }
+        override async onEventCallback({
+          event,
+        }: {
+          invocationContext: InvocationContext;
+          event: Event;
+        }): Promise<Event | undefined> {
+          return createEvent({
+            partial: true,
+            content: {
+              role: event.content?.role,
+              parts: [{text: 'Marked partial by callback'}],
+            },
+          });
+        }
+      })();
+      const sourceAgent = new (class extends BaseAgent {
+        protected override async *runAsyncImpl(
+          context: InvocationContext,
+        ): AsyncGenerator<Event, void, void> {
+          yield createEvent({
+            invocationId: context.invocationId,
+            author: this.name,
+            content: {role: 'model', parts: [{text: 'Agent source'}]},
+          });
+        }
+        protected override async *runLiveImpl(): AsyncGenerator<
+          Event,
+          void,
+          void
+        > {}
+      })({name: 'sourceAgent'});
+      const localRunner = new Runner({
+        appName: 'partialApp',
+        agent: sourceAgent,
+        sessionService: localSessionService,
+        plugins: [markPartialPlugin],
+      });
+      const created = await localSessionService.createSession({
+        appName: 'partialApp',
+        userId: 'user-1',
+        sessionId: 'session-mark-partial',
+      });
+
+      try {
+        const emitted: Event[] = [];
+        for await (const event of localRunner.runAsync({
+          userId: 'user-1',
+          sessionId: created.id,
+          newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+        })) {
+          emitted.push(event);
+        }
+
+        expect(emitted).toHaveLength(1);
+        expect(emitted[0].partial).toBe(true);
+        expect(emitted[0].content).toEqual({
+          role: 'model',
+          parts: [{text: 'Marked partial by callback'}],
+        });
+        expect(appendSpy.mock.calls.map(([req]) => req.event.author)).toEqual([
+          'user',
+        ]);
+        const stored = await localSessionService.getSession({
+          appName: 'partialApp',
+          userId: 'user-1',
+          sessionId: created.id,
+        });
+        expect(stored?.events.map((e) => e.author)).toEqual(['user']);
+      } finally {
+        appendSpy.mockRestore();
+      }
+    }
+
+    // (b) When an agent yields a partial: true event and onEventCallback
+    // returns a replacement Event omitting partial, outputEvent.partial stays
+    // true and is not persisted; non-partial replacements omit partial cleanly.
+    const streamingSessionService = new InMemorySessionService();
+    const streamingAppendSpy = vi.spyOn(streamingSessionService, 'appendEvent');
+    const replaceContentPlugin = new (class extends BasePlugin {
+      constructor() {
+        super('replaceContentPlugin');
+      }
+      override async onEventCallback({
+        event,
+      }: {
+        invocationContext: InvocationContext;
+        event: Event;
+      }): Promise<Event | undefined> {
+        const sourceText = event.content?.parts?.[0]?.text ?? '';
+        return createEvent({
+          content: {
+            role: 'model',
+            parts: [{text: `replaced:${sourceText}`}],
+          },
+        });
+      }
+    })();
+    const streamingAgent = new (class extends BaseAgent {
+      protected override async *runAsyncImpl(
+        context: InvocationContext,
+      ): AsyncGenerator<Event, void, void> {
+        yield createEvent({
+          invocationId: context.invocationId,
+          author: this.name,
+          partial: true,
+          content: {role: 'model', parts: [{text: 'chunk'}]},
+        });
+        yield createEvent({
+          invocationId: context.invocationId,
+          author: this.name,
+          content: {role: 'model', parts: [{text: 'complete'}]},
+        });
+      }
+      protected override async *runLiveImpl(): AsyncGenerator<
+        Event,
+        void,
+        void
+      > {}
+    })({name: 'streamingAgent'});
+    const streamingRunner = new Runner({
+      appName: 'partialApp',
+      agent: streamingAgent,
+      sessionService: streamingSessionService,
+      plugins: [replaceContentPlugin],
+    });
+    const streamingSession = await streamingSessionService.createSession({
+      appName: 'partialApp',
+      userId: 'user-1',
+      sessionId: 'session-preserve-partial',
+    });
+
+    try {
+      const streamedEvents: Event[] = [];
+      for await (const event of streamingRunner.runAsync({
+        userId: 'user-1',
+        sessionId: streamingSession.id,
+        newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+      })) {
+        streamedEvents.push(event);
+      }
+
+      expect(streamedEvents).toHaveLength(2);
+      expect(streamedEvents[0].partial).toBe(true);
+      expect(streamedEvents[0].content).toEqual({
+        role: 'model',
+        parts: [{text: 'replaced:chunk'}],
+      });
+      expect('partial' in streamedEvents[1]).toBe(false);
+      expect(streamedEvents[1].content).toEqual({
+        role: 'model',
+        parts: [{text: 'replaced:complete'}],
+      });
+      expect(
+        streamingAppendSpy.mock.calls.map(([req]) => req.event.author),
+      ).toEqual(['user', 'streamingAgent']);
+
+      const storedStreaming = await streamingSessionService.getSession({
+        appName: 'partialApp',
+        userId: 'user-1',
+        sessionId: streamingSession.id,
+      });
+      expect(storedStreaming?.events).toHaveLength(2);
+      expect(storedStreaming?.events[1]).toEqual(streamedEvents[1]);
+    } finally {
+      streamingAppendSpy.mockRestore();
+    }
   });
 });
 
