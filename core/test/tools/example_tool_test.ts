@@ -131,7 +131,7 @@ describe('ExampleTool', () => {
     expect(llmRequest.config?.systemInstruction).toBeUndefined();
   });
 
-  it('is a no-op when the first part has no text', async () => {
+  it('is a no-op when no user part has text', async () => {
     const tool = new ExampleTool([SIMPLE_EXAMPLE]);
     const toolContext = makeToolContext({role: 'user', parts: [{}]});
     const llmRequest = makeLlmRequest('gemini-2.0-flash');
@@ -239,6 +239,28 @@ describe('ExampleTool (end-to-end with real framework objects)', () => {
     expect(instruction).toContain('<EXAMPLES>');
     expect(instruction).toContain('What is 2+2?');
     expect(instruction).toContain('4');
+  });
+
+  it('uses the text of a multipart user prompt as the example query', async () => {
+    const provider = new FixedExampleProvider([SIMPLE_EXAMPLE]);
+    const getExamples = vi.spyOn(provider, 'getExamples');
+    const tool = new ExampleTool(provider);
+    const toolContext = makeRealContext({
+      role: 'user',
+      parts: [
+        {inlineData: {mimeType: 'image/png', data: 'aW1hZ2U='}},
+        {text: 'What is 2+2?'},
+        {text: 'Answer with a number.'},
+      ],
+    });
+    const llmRequest = makeLlmRequest('gemini-2.0-flash');
+
+    await tool.processLlmRequest({toolContext, llmRequest});
+
+    expect(getExamples).toHaveBeenCalledWith(
+      'What is 2+2? Answer with a number.',
+    );
+    expect(llmRequest.config?.systemInstruction).toContain('<EXAMPLES>');
   });
 
   it('is a no-op when the real invocation has no user content', async () => {
