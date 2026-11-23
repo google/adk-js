@@ -59,7 +59,7 @@ describe('OAuth2BearerExchanger ported reference tests', () => {
 
   it('test_check_scheme_credential_type_missing_credential', () => {
     expect(() => checkSchemeCredentialType(authScheme, undefined)).toThrow(
-      'auth_credential is empty',
+      'authCredential is empty',
     );
   });
 
@@ -103,7 +103,7 @@ describe('OAuth2BearerExchanger ported reference tests', () => {
     };
 
     expect(() => checkSchemeCredentialType(authScheme, authCredential)).toThrow(
-      'auth_credential is not configured with oauth2',
+      'authCredential is not configured with oauth2',
     );
   });
 
@@ -161,7 +161,7 @@ describe('OAuth2BearerExchanger ported reference tests', () => {
 
   it('test_exchange_credential_auth_missing', () => {
     expect(() => exchangeCredential(authScheme, undefined)).toThrow(
-      'auth_credential is empty. Please create AuthCredential using',
+      'authCredential is empty. Please create AuthCredential using',
     );
   });
 });

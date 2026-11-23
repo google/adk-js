@@ -14,6 +14,7 @@ import {afterAll, beforeAll, describe, expect, it, vi} from 'vitest';
 import {
   createTask,
   createTaskArtifactUpdateEvent,
+  createTaskAuthRequiredEvent,
   createTaskCompletedEvent,
   createTaskFailedEvent,
   createTaskInputRequiredEvent,
@@ -21,6 +22,7 @@ import {
   createTaskWorkingEvent,
   getEventMetadata,
   getFailedTaskStatusUpdateEventError,
+  isAuthRequiredTaskStatusUpdateEvent,
   isFailedTaskStatusUpdateEvent,
   isInputRequiredTaskStatusUpdateEvent,
   isMessage,
@@ -138,6 +140,27 @@ describe('a2a_event', () => {
         isInputRequiredTaskStatusUpdateEvent({
           kind: 'status-update',
           status: {state: 'working'},
+        }),
+      ).toBe(false);
+    });
+
+    it('isAuthRequiredTaskStatusUpdateEvent', () => {
+      expect(
+        isAuthRequiredTaskStatusUpdateEvent({
+          kind: 'status-update',
+          status: {state: 'auth-required'},
+        }),
+      ).toBe(true);
+      expect(
+        isAuthRequiredTaskStatusUpdateEvent({
+          kind: 'task',
+          status: {state: 'auth-required'},
+        }),
+      ).toBe(true);
+      expect(
+        isAuthRequiredTaskStatusUpdateEvent({
+          kind: 'status-update',
+          status: {state: 'input-required'},
         }),
       ).toBe(false);
     });
@@ -520,6 +543,35 @@ describe('a2a_event', () => {
                 metadata: {validation_error: true},
               },
             ],
+          },
+          timestamp: '2024-01-01T00:00:00.000Z',
+        },
+      });
+    });
+
+    it('createTaskAuthRequiredEvent', () => {
+      const event = createTaskAuthRequiredEvent({
+        taskId: 't1',
+        contextId: 'c1',
+        parts: [{kind: 'text', text: 'sign in first'}],
+        metadata: {key: 'value'},
+      });
+
+      expect(event).toEqual({
+        kind: 'status-update',
+        taskId: 't1',
+        contextId: 'c1',
+        final: true,
+        metadata: {key: 'value'},
+        status: {
+          state: 'auth-required',
+          message: {
+            kind: 'message',
+            messageId: 'mock-uuid',
+            role: 'agent',
+            taskId: 't1',
+            contextId: 'c1',
+            parts: [{kind: 'text', text: 'sign in first'}],
           },
           timestamp: '2024-01-01T00:00:00.000Z',
         },

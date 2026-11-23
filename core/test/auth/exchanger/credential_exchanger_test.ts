@@ -114,4 +114,44 @@ describe('CredentialExchangerRegistry', () => {
     );
     expect(registry2.getExchanger(AuthCredentialTypes.API_KEY)).toBeUndefined();
   });
+
+  it('should overwrite an existing exchanger when registered for the same credential type', () => {
+    const registry = new CredentialExchangerRegistry();
+    const firstExchanger = new MockCredentialExchanger();
+    const secondExchanger = new MockCredentialExchanger();
+
+    registry.register(AuthCredentialTypes.API_KEY, firstExchanger);
+    expect(registry.getExchanger(AuthCredentialTypes.API_KEY)).toBe(
+      firstExchanger,
+    );
+
+    registry.register(AuthCredentialTypes.API_KEY, secondExchanger);
+    expect(registry.getExchanger(AuthCredentialTypes.API_KEY)).toBe(
+      secondExchanger,
+    );
+  });
+
+  it('should execute exchange through a retrieved exchanger instance', async () => {
+    const registry = new CredentialExchangerRegistry();
+    const expectedCredential: AuthCredential = {
+      authType: AuthCredentialTypes.HTTP,
+      http: {scheme: 'bearer', credentials: {token: 'exchanged-token'}},
+    };
+    const customExchanger: BaseCredentialExchanger = {
+      async exchange() {
+        return {credential: expectedCredential, wasExchanged: true};
+      },
+    };
+
+    registry.register(AuthCredentialTypes.API_KEY, customExchanger);
+    const retrieved = registry.getExchanger(AuthCredentialTypes.API_KEY);
+    const result = await retrieved?.exchange({
+      authCredential: {authType: AuthCredentialTypes.API_KEY, apiKey: 'raw'},
+    });
+
+    expect(result).toEqual({
+      credential: expectedCredential,
+      wasExchanged: true,
+    });
+  });
 });

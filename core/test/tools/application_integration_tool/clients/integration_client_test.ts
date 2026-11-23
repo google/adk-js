@@ -44,6 +44,7 @@ const CLOUD_PLATFORM_SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
 const GENERATE_SPEC_URL = `https://${LOCATION}-integrations.googleapis.com/v1/projects/${PROJECT}/locations/${LOCATION}:generateOpenApiSpec`;
 const CONNECTION_URL = `https://connectors.googleapis.com/v1/projects/${PROJECT}/locations/${LOCATION}/connections/${CONNECTION}`;
 const PATH_PREFIX = `/v2/projects/${PROJECT}/locations/${LOCATION}/integrations/ExecuteConnection:execute?triggerId=api_trigger/ExecuteConnection`;
+const WITH_DYNAMIC_AUTH = {includeDynamicAuthConfig: true};
 const MISSING_CREDENTIALS_MESSAGE =
   'Please provide a service account that has the required permissions to access the connection.';
 
@@ -200,7 +201,7 @@ describe('IntegrationClient', () => {
       });
     });
 
-    it('sends null triggerId when triggers is omitted', async () => {
+    it('omits triggerId when triggers is omitted', async () => {
       const expectedSpec = {
         openapi: '3.0.0',
         info: {title: 'Test Integration'},
@@ -219,12 +220,12 @@ describe('IntegrationClient', () => {
       );
       expect(fetchMock).toHaveBeenCalledOnce();
       const [, init] = fetchMock.mock.calls[0];
-      expect(JSON.parse(String(init?.body))).toEqual({
-        apiTriggerResources: [
-          {integrationResource: INTEGRATION, triggerId: null},
-        ],
+      const body = JSON.parse(String(init?.body));
+      expect(body).toEqual({
+        apiTriggerResources: [{integrationResource: INTEGRATION}],
         fileFormat: 'JSON',
       });
+      expect(body.apiTriggerResources[0]).not.toHaveProperty('triggerId');
     });
 
     it.each([
@@ -344,8 +345,8 @@ describe('IntegrationClient', () => {
           type: 'object',
           properties: {id: {type: 'string'}},
         },
-        list_entity1_Request: listOperationRequest(),
-        get_entity1_Request: getOperationRequest(),
+        list_entity1_Request: listOperationRequest(WITH_DYNAMIC_AUTH),
+        get_entity1_Request: getOperationRequest(WITH_DYNAMIC_AUTH),
       });
       expect(CONNECTOR_BASE_SPEC.paths).toEqual({});
     });
@@ -365,14 +366,55 @@ describe('IntegrationClient', () => {
         [`${PATH_PREFIX}#delete_entity1`]: deleteOperation({entity: 'entity1'}),
       });
       expect(spec.components.schemas['create_entity1_Request']).toEqual(
-        createOperationRequest('entity1'),
+        createOperationRequest('entity1', WITH_DYNAMIC_AUTH),
       );
       expect(spec.components.schemas['update_entity1_Request']).toEqual(
-        updateOperationRequest('entity1'),
+        updateOperationRequest('entity1', WITH_DYNAMIC_AUTH),
       );
       expect(spec.components.schemas['delete_entity1_Request']).toEqual(
-        deleteOperationRequest(),
+        deleteOperationRequest(WITH_DYNAMIC_AUTH),
       );
+    });
+
+    it('adds dynamicAuthConfig to every request schema', async () => {
+      routeFetch({
+        ...entityRoutes({entity: 'entity1', jsonSchema: {}, operations: []}),
+        ...actionRoutes('TestAction', {
+          inputJsonSchema: {type: 'object'},
+          outputJsonSchema: {type: 'object'},
+          displayName: 'Test Action',
+        }),
+        ...actionRoutes('ExecuteCustomQuery', {
+          inputJsonSchema: {type: 'object'},
+          outputJsonSchema: {type: 'object'},
+          displayName: 'Execute Custom Query',
+        }),
+      });
+
+      const spec = await connectionClient(
+        {entity1: ['CREATE', 'UPDATE', 'DELETE', 'LIST', 'GET']},
+        ['TestAction', 'ExecuteCustomQuery'],
+      ).getOpenApiSpecForConnection();
+
+      const requestSchemaNames = Object.keys(spec.components.schemas).filter(
+        (name) => name.endsWith('_Request'),
+      );
+      expect(requestSchemaNames).toEqual([
+        'create_entity1_Request',
+        'update_entity1_Request',
+        'delete_entity1_Request',
+        'list_entity1_Request',
+        'get_entity1_Request',
+        'TestAction_Request',
+        'ExecuteCustomQuery_Request',
+      ]);
+      for (const name of requestSchemaNames) {
+        expect(spec.components.schemas[name]).toMatchObject({
+          properties: {
+            dynamicAuthConfig: {$ref: '#/components/schemas/dynamicAuthConfig'},
+          },
+        });
+      }
     });
 
     it('uses the supported operations when the list is empty', async () => {
@@ -425,7 +467,7 @@ describe('IntegrationClient', () => {
       const baseSchemas = CONNECTOR_BASE_SPEC.components.schemas;
       expect(spec.components.schemas).toEqual({
         ...baseSchemas,
-        TestAction_Request: actionRequest('TestAction'),
+        TestAction_Request: actionRequest('TestAction', WITH_DYNAMIC_AUTH),
         connectorInputPayload_TestAction: {
           type: 'object',
           properties: {input: {type: 'string'}},
@@ -461,7 +503,8 @@ describe('IntegrationClient', () => {
       const baseSchemas = CONNECTOR_BASE_SPEC.components.schemas;
       expect(spec.components.schemas).toEqual({
         ...baseSchemas,
-        ExecuteCustomQuery_Request: executeCustomQueryRequest(),
+        ExecuteCustomQuery_Request:
+          executeCustomQueryRequest(WITH_DYNAMIC_AUTH),
         connectorOutputPayload_ExecuteCustomQuery: {type: 'object'},
         ExecuteCustomQuery_Response: actionResponse('ExecuteCustomQuery'),
       });
@@ -488,7 +531,7 @@ describe('IntegrationClient', () => {
         }),
       });
       expect(spec.components.schemas['RunCustomSQLQuery_Request']).toEqual(
-        executeCustomQueryRequest(),
+        executeCustomQueryRequest(WITH_DYNAMIC_AUTH),
       );
       expect(spec.components.schemas['RunCustomSQLQuery_Response']).toEqual(
         actionResponse('RunCustomSQLQuery'),

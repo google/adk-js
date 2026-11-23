@@ -26,6 +26,7 @@ import {AuthConfig} from '../auth/auth_tool.js';
 import {Event, NodeInfo, Route} from '../events/event.js';
 import {EventActions} from '../events/event_actions.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
+import {formatError} from '../utils/error_utils.js';
 import {logger} from '../utils/logger.js';
 import {
   EXPRESS_MODE_UNSUPPORTED_MESSAGE,
@@ -86,17 +87,10 @@ export function quoteFilterLiteral(value: string): string {
 /**
  * Copies an API-returned state map into a null-prototype map.
  *
- * Session state is read with the `in` operator by instruction placeholder
- * resolution in `agents/instructions.ts`, so on a map that inherits from
- * `Object.prototype`, `{toString}` resolves to the inherited member and lands
- * in the prompt instead of raising "Context variable not found". The other
- * session services get this from `trimTempState`; state on an API response is
- * plain `JSON.parse` output and has to be re-homed here.
- *
  * Copying onto a null-prototype target also keeps an own `__proto__` key as an
  * own data property instead of invoking the inherited `__proto__` setter.
  *
- * Shallow, like `trimTempState`: only the top level is read with `in`.
+ * Shallow, like `trimTempState`.
  */
 function toStateMap(
   state: Record<string, unknown> | undefined,
@@ -487,9 +481,16 @@ export class VertexAiSessionService extends BaseSessionService {
       return;
     }
 
-    await this.sessions.delete({
-      name: `reasoningEngines/${reasoningEngineId}/sessions/${sessionId}`,
-    });
+    try {
+      await this.sessions.delete({
+        name: `reasoningEngines/${reasoningEngineId}/sessions/${sessionId}`,
+      });
+    } catch (error: unknown) {
+      logger.error(
+        `Error deleting session ${sessionId}: ${formatError(error)}`,
+      );
+      throw error;
+    }
   }
 
   override async appendEvent({

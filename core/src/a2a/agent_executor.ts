@@ -37,6 +37,9 @@ import {getA2aRequestMetadata} from './request_metadata.js';
 
 /**
  * Represents a runner or a configuration for a runner.
+ *
+ * The executor resolves it one time, on the first request, and reuses the
+ * resulting runner: a function is called one time, not one time per request.
  */
 export type RunnerOrRunnerConfig =
   | Runner
@@ -86,6 +89,7 @@ export interface AgentExecutorConfig {
  */
 export class A2AAgentExecutor implements AgentExecutor {
   private agentPartialArtifactIdsMap: Record<string, string> = {};
+  private runnerPromise?: Promise<Runner>;
 
   constructor(private readonly config: AgentExecutorConfig) {}
 
@@ -98,10 +102,10 @@ export class A2AAgentExecutor implements AgentExecutor {
       throw new Error('message not provided');
     }
 
-    const userId = `A2A_USER_${ctx.contextId}`;
+    const userId = resolveA2aUserId(ctx);
     const sessionId = ctx.contextId;
     const genAIUserMessage = toGenAIContent(a2aUserMessage);
-    const adkRunner = await getAdkRunner(this.config.runner);
+    const adkRunner = await this.resolveRunner();
     const session = await getAdkSession(
       userId,
       sessionId,
@@ -220,6 +224,25 @@ export class A2AAgentExecutor implements AgentExecutor {
     throw new Error('Task cancellation is not supported yet.');
   }
 
+  /**
+   * Resolves the configured runner one time and shares it between requests,
+   * concurrent ones included. A failed resolution is not kept, so the next
+   * request tries again.
+   */
+  private resolveRunner(): Promise<Runner> {
+    if (!this.runnerPromise) {
+      const runnerPromise = getAdkRunner(this.config.runner);
+      this.runnerPromise = runnerPromise;
+      runnerPromise.catch(() => {
+        if (this.runnerPromise === runnerPromise) {
+          this.runnerPromise = undefined;
+        }
+      });
+    }
+
+    return this.runnerPromise;
+  }
+
   private convertAdkEventToA2AEvent(
     adkEvent: AdkEvent,
     executorContext: ExecutorContext,
@@ -276,6 +299,49 @@ export class A2AAgentExecutor implements AgentExecutor {
 
     eventBus.publish(event);
   }
+}
+
+let warnedUnauthenticatedUserName = false;
+
+/**
+ * Resets the one-time warning state for unauthenticated A2A user names.
+ */
+export function resetUnauthenticatedUserNameWarning(): void {
+  warnedUnauthenticatedUserName = false;
+}
+
+function warnUnauthenticatedUserNameOnce(): void {
+  if (warnedUnauthenticatedUserName) {
+    return;
+  }
+  warnedUnauthenticatedUserName = true;
+  logger.warn(
+    'Ignoring the user name of an unauthenticated A2A caller. Requests ' +
+      'without an authenticated user run as A2A_USER_<contextId>, so ' +
+      'sessions, state, artifacts and memory stored under an unverified name ' +
+      'are no longer used.',
+  );
+}
+
+/**
+ * Returns the ADK user ID to run this request as.
+ *
+ * The user ID scopes the session, `user:`-prefixed state, artifacts and
+ * memory, so it is taken only from a principal the A2A server authenticated.
+ * The name on an unauthenticated principal is a claim the caller made rather
+ * than one the server checked, so it is ignored and the conversation is used as
+ * an anonymous identity instead.
+ */
+export function resolveA2aUserId(ctx: RequestContext): string {
+  const user = ctx.context?.user;
+  if (user && user.userName) {
+    if (user.isAuthenticated) {
+      return user.userName;
+    }
+    warnUnauthenticatedUserNameOnce();
+  }
+
+  return `A2A_USER_${ctx.contextId}`;
 }
 
 /**

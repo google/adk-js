@@ -18,12 +18,14 @@ import {
   InvocationContext,
   isAuthCredential,
   LlmAgent,
+  OAuth2BearerExchanger,
+  OAuth2CredentialRefresher,
   OpenIdConnectWithConfig,
   PluginManager,
   ToolAuthHandler,
   ToolContextCredentialStore,
 } from '@google/adk';
-import {describe, expect, it, vi} from 'vitest';
+import {afterEach, describe, expect, it, vi} from 'vitest';
 import {State} from '../../../src/sessions/state.js';
 import {AutoAuthCredentialExchanger} from '../../../src/tools/openapi_tool/auth/credential_exchangers/auto_auth_credential_exchanger.js';
 import {logger} from '../../../src/utils/logger.js';
@@ -886,18 +888,11 @@ describe('isAuthCredential', () => {
 });
 
 /**
- * The three cases below are ported from `google/adk-python` at tag `v0.1.0`,
- * `src/google/adk/tests/unittests/tools/openapi_tool/openapi_spec_parser/test_tool_auth_handler.py`.
- * That file has three test functions and all three are here, keeping their
- * names verbatim so a reviewer can grep the original.
- */
-
-/**
- * Stands in for `MockOpenIdConnectCredentialExchanger` in the reference test.
+ * Exchanges an OpenID Connect auth response into an HTTP bearer credential.
  *
- * adk-python returns `None` to mean "cannot exchange yet". `ExchangeResult`
- * makes `credential` non-nullable, so this signals the same thing by throwing
- * `CredentialExchangeError`, which `prepareAuthCredentials` maps to `pending`.
+ * `ExchangeResult` makes `credential` non-nullable, so this signals "cannot
+ * exchange yet" by throwing `CredentialExchangeError`, which
+ * `prepareAuthCredentials` maps to `pending`.
  */
 class MockOpenIdConnectCredentialExchanger {
   constructor(private readonly expectedAccessToken: string | undefined) {}
@@ -925,15 +920,9 @@ class MockOpenIdConnectCredentialExchanger {
 }
 
 /**
- * The reference builds these with `openid_dict_to_scheme_credential` and
- * `token_to_scheme_credential` from `auth_helpers.py`. adk-js has neither
- * helper, so the equivalent literals are built here.
- *
- * The endpoints are absolute URLs where the reference writes the bare host
- * `test.com`. `AuthHandler.generateAuthUri` parses the endpoint with `new URL`
- * and rejects a relative one, while adk-python concatenates the query string
- * onto whatever string it is given. That difference belongs to `AuthHandler`,
- * not to `ToolAuthHandler`, so the fixture accommodates it.
+ * Builds an OpenID Connect scheme and credential pair with absolute URLs,
+ * since `AuthHandler.generateAuthUri` parses the endpoint with `new URL` and
+ * rejects a relative one.
  */
 function getMockOpenidSchemeCredential(): {
   scheme: OpenIdConnectWithConfig;
@@ -958,8 +947,8 @@ function getMockOpenidSchemeCredential(): {
   };
 }
 
-describe('ToolAuthHandler (adk-python v0.1.0 parity)', () => {
-  it('test_openid_connect_no_auth_response', async () => {
+describe('ToolAuthHandler OpenID Connect', () => {
+  it('returns pending when there is no OpenID Connect auth response', async () => {
     const {scheme, credential} = getMockOpenidSchemeCredential();
     const mockExchanger = new MockOpenIdConnectCredentialExchanger(undefined);
     const context = createToolContext();
@@ -973,20 +962,19 @@ describe('ToolAuthHandler (adk-python v0.1.0 parity)', () => {
     expect(result.authCredential).toEqual(credential);
   });
 
-  it('test_openid_connect_with_auth_response', async () => {
+  it('exchanges the OpenID Connect auth response and caches the HTTP credential', async () => {
     const {scheme, credential} = getMockOpenidSchemeCredential();
     const mockExchanger = new MockOpenIdConnectCredentialExchanger(
-      'test_access_token',
+      'test-access-token',
     );
     const context = createToolContext();
-    // adk-python monkeypatches `google.adk.tools.tool_context.AuthHandler`.
-    // The adk-js equivalent is stubbing the method that reads the response.
+    const returnedCredential: AuthCredential = {
+      authType: AuthCredentialTypes.OPEN_ID_CONNECT,
+      oauth2: {authResponseUri: 'https://test.com/callback?code=123'},
+    };
     const getAuthResponse = vi
       .spyOn(context, 'getAuthResponse')
-      .mockReturnValue({
-        authType: AuthCredentialTypes.OPEN_ID_CONNECT,
-        oauth2: {authResponseUri: 'test_auth_response_uri'},
-      });
+      .mockReturnValue(returnedCredential);
     const credentialStore = new ToolContextCredentialStore(context);
 
     const handler = new ToolAuthHandler(context, scheme, credential, {
@@ -997,7 +985,7 @@ describe('ToolAuthHandler (adk-python v0.1.0 parity)', () => {
     expect(result.state).toBe('done');
     expect(result.authCredential?.authType).toBe(AuthCredentialTypes.HTTP);
     expect(result.authCredential?.http?.credentials.token).toContain(
-      'test_access_token',
+      'test-access-token',
     );
     expect(credentialStore.getCredential(scheme, credential)).toEqual(
       result.authCredential,
@@ -1005,7 +993,7 @@ describe('ToolAuthHandler (adk-python v0.1.0 parity)', () => {
     expect(getAuthResponse).toHaveBeenCalledOnce();
   });
 
-  it('test_openid_connect_existing_token', async () => {
+  it('returns an existing HTTP bearer credential from the store', async () => {
     const {scheme, credential} = getMockOpenidSchemeCredential();
     const existingCredential: AuthCredential = {
       authType: AuthCredentialTypes.HTTP,
@@ -1021,5 +1009,377 @@ describe('ToolAuthHandler (adk-python v0.1.0 parity)', () => {
 
     expect(result.state).toBe('done');
     expect(result.authCredential).toEqual(existingCredential);
+  });
+
+  it('refreshes an existing OAuth2 credential when refresh is needed', async () => {
+    const {scheme, credential} = getMockOpenidSchemeCredential();
+    const existingCredential: AuthCredential = {
+      authType: AuthCredentialTypes.OPEN_ID_CONNECT,
+      oauth2: {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        accessToken: 'existing-token',
+        refreshToken: 'refresh-token',
+      },
+    };
+    const refreshedCredential: AuthCredential = {
+      authType: AuthCredentialTypes.OPEN_ID_CONNECT,
+      oauth2: {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        accessToken: 'refreshed-token',
+        refreshToken: 'new-refresh-token',
+      },
+    };
+    const isRefreshNeededSpy = vi
+      .spyOn(OAuth2CredentialRefresher.prototype, 'isRefreshNeeded')
+      .mockResolvedValue(true);
+    const refreshSpy = vi
+      .spyOn(OAuth2CredentialRefresher.prototype, 'refresh')
+      .mockResolvedValue(refreshedCredential);
+
+    const context = createToolContext();
+    const credentialStore = new ToolContextCredentialStore(context);
+    const key = credentialStore.getCredentialKey(scheme, credential);
+    credentialStore.storeCredential(key, existingCredential);
+
+    const handler = new ToolAuthHandler(context, scheme, credential, {
+      credentialStore,
+      credentialExchanger: new OAuth2BearerExchanger(),
+    });
+    const result = await handler.prepareAuthCredentials();
+
+    expect(isRefreshNeededSpy).toHaveBeenCalledExactlyOnceWith(
+      existingCredential,
+    );
+    expect(refreshSpy).toHaveBeenCalledExactlyOnceWith(
+      existingCredential,
+      scheme,
+    );
+    expect(result.state).toBe('done');
+    expect(result.authCredential).toEqual({
+      authType: AuthCredentialTypes.HTTP,
+      http: {scheme: 'bearer', credentials: {token: 'refreshed-token'}},
+    });
+
+    isRefreshNeededSpy.mockRestore();
+    refreshSpy.mockRestore();
+  });
+
+  it('persists the refreshed OAuth2 credential back to the store', async () => {
+    const {scheme, credential} = getMockOpenidSchemeCredential();
+    const existingCredential: AuthCredential = {
+      authType: AuthCredentialTypes.OPEN_ID_CONNECT,
+      oauth2: {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        accessToken: 'old-access-token',
+        refreshToken: 'old-refresh-token',
+      },
+    };
+    const refreshedCredential: AuthCredential = {
+      authType: AuthCredentialTypes.OPEN_ID_CONNECT,
+      oauth2: {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        accessToken: 'new-access-token',
+        refreshToken: 'new-refresh-token',
+      },
+    };
+    const isRefreshNeededSpy = vi
+      .spyOn(OAuth2CredentialRefresher.prototype, 'isRefreshNeeded')
+      .mockResolvedValue(true);
+    const refreshSpy = vi
+      .spyOn(OAuth2CredentialRefresher.prototype, 'refresh')
+      .mockResolvedValue(refreshedCredential);
+
+    const context = createToolContext();
+    const credentialStore = new ToolContextCredentialStore(context);
+    const key = credentialStore.getCredentialKey(scheme, credential);
+    credentialStore.storeCredential(key, existingCredential);
+
+    const handler = new ToolAuthHandler(context, scheme, credential, {
+      credentialStore,
+      credentialExchanger: new OAuth2BearerExchanger(),
+    });
+    const result = await handler.prepareAuthCredentials();
+
+    const persisted = credentialStore.getCredential(scheme, credential);
+    expect(persisted?.oauth2?.accessToken).toBe('new-access-token');
+    expect(persisted?.oauth2?.refreshToken).toBe('new-refresh-token');
+    expect(result.state).toBe('done');
+    expect(result.authCredential).toEqual({
+      authType: AuthCredentialTypes.HTTP,
+      http: {
+        scheme: 'bearer',
+        credentials: {token: 'new-access-token'},
+      },
+    });
+
+    isRefreshNeededSpy.mockRestore();
+    refreshSpy.mockRestore();
+  });
+
+  it('preserves the existing refresh token when refresh omits one and logs a warning if refresh throws', async () => {
+    const {scheme, credential} = getMockOpenidSchemeCredential();
+    const existingCredential: AuthCredential = {
+      authType: AuthCredentialTypes.OPEN_ID_CONNECT,
+      oauth2: {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        accessToken: 'old-access-token',
+        refreshToken: 'kept-refresh-token',
+      },
+    };
+    const isRefreshNeededSpy = vi
+      .spyOn(OAuth2CredentialRefresher.prototype, 'isRefreshNeeded')
+      .mockResolvedValue(true);
+    const refreshSpy = vi
+      .spyOn(OAuth2CredentialRefresher.prototype, 'refresh')
+      .mockRejectedValueOnce(new Error('token endpoint down'))
+      .mockResolvedValueOnce({
+        authType: AuthCredentialTypes.OPEN_ID_CONNECT,
+        oauth2: {
+          clientId: 'client-id',
+          clientSecret: 'client-secret',
+          accessToken: 'new-access-token',
+        },
+      });
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    const context = createToolContext();
+    const credentialStore = new ToolContextCredentialStore(context);
+    const key = credentialStore.getCredentialKey(scheme, credential);
+    credentialStore.storeCredential(key, existingCredential);
+
+    const handler = new ToolAuthHandler(context, scheme, credential, {
+      credentialStore,
+      credentialExchanger: new OAuth2BearerExchanger(),
+    });
+
+    const firstResult = await handler.prepareAuthCredentials();
+    expect(warnSpy).toHaveBeenCalledWith(
+      'OAuth2 token refresh failed: token endpoint down',
+    );
+    expect(firstResult.authCredential?.http?.credentials.token).toBe(
+      'old-access-token',
+    );
+
+    const secondResult = await handler.prepareAuthCredentials();
+    expect(secondResult.authCredential?.http?.credentials.token).toBe(
+      'new-access-token',
+    );
+    const persisted = credentialStore.getCredential(scheme, credential);
+    expect(persisted?.oauth2?.accessToken).toBe('new-access-token');
+    expect(persisted?.oauth2?.refreshToken).toBe('kept-refresh-token');
+
+    warnSpy.mockRestore();
+    isRefreshNeededSpy.mockRestore();
+    refreshSpy.mockRestore();
+  });
+});
+
+const AUTH_CODE_SCHEME: AuthScheme = {
+  type: 'oauth2',
+  flows: {
+    authorizationCode: {
+      authorizationUrl: 'https://example.com/authorize',
+      tokenUrl: 'https://example.com/token',
+      scopes: {},
+    },
+  },
+};
+
+const AUTH_CODE_CREDENTIAL: AuthCredential = {
+  authType: AuthCredentialTypes.OAUTH2,
+  oauth2: {
+    clientId: 'client-id',
+    clientSecret: 'client-secret',
+    redirectUri: 'https://example.com/callback',
+  },
+};
+
+/** Builds the real exchanger, which this file otherwise replaces with a mock. */
+async function createRealAutoAuthCredentialExchanger(): Promise<BaseCredentialExchanger> {
+  const actual = await vi.importActual<
+    typeof import('../../../src/tools/openapi_tool/auth/credential_exchangers/auto_auth_credential_exchanger.js')
+  >(
+    '../../../src/tools/openapi_tool/auth/credential_exchangers/auto_auth_credential_exchanger.js',
+  );
+  return new actual.AutoAuthCredentialExchanger();
+}
+
+/** A token endpoint that answers each request with the next token response. */
+function stubTokenEndpoint(responses: Array<Record<string, unknown>>) {
+  const fetchMock = vi.fn(async () => {
+    const body = responses.shift();
+    if (!body) {
+      return new Response('no more tokens', {status: 400});
+    }
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: {'Content-Type': 'application/json'},
+    });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
+/** Reads the form body of the token request at `index`. */
+function tokenRequestBody(
+  fetchMock: ReturnType<typeof stubTokenEndpoint>,
+  index: number,
+): URLSearchParams {
+  const [, init] = fetchMock.mock.calls[index] as unknown as [
+    string,
+    {body: string},
+  ];
+  return new URLSearchParams(init.body);
+}
+
+describe('ToolAuthHandler OAuth2 across turns', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('does not redeem a spent authorization code again on the next turn', async () => {
+    const fetchMock = stubTokenEndpoint([
+      {access_token: 'first-access-token', expires_in: 3600},
+    ]);
+    const context = createToolContext();
+    vi.spyOn(context, 'getAuthResponse').mockReturnValue({
+      authType: AuthCredentialTypes.OAUTH2,
+      oauth2: {
+        ...AUTH_CODE_CREDENTIAL.oauth2,
+        authResponseUri: 'https://example.com/callback?code=single-use',
+      },
+    });
+    const credentialStore = new ToolContextCredentialStore(context);
+    const exchanger = await createRealAutoAuthCredentialExchanger();
+    const newHandler = () =>
+      new ToolAuthHandler(context, AUTH_CODE_SCHEME, AUTH_CODE_CREDENTIAL, {
+        credentialStore,
+        credentialExchanger: exchanger,
+      });
+
+    const first = await newHandler().prepareAuthCredentials();
+    const second = await newHandler().prepareAuthCredentials();
+
+    const bearer: AuthCredential = {
+      authType: AuthCredentialTypes.HTTP,
+      http: {scheme: 'bearer', credentials: {token: 'first-access-token'}},
+    };
+    expect(first).toEqual({
+      state: 'done',
+      authScheme: AUTH_CODE_SCHEME,
+      authCredential: bearer,
+    });
+    expect(second.authCredential).toEqual(bearer);
+    expect(
+      credentialStore.getCredential(AUTH_CODE_SCHEME, AUTH_CODE_CREDENTIAL),
+    ).toEqual(bearer);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(tokenRequestBody(fetchMock, 0).get('code')).toBe('single-use');
+  });
+
+  it('keeps a redeemed auth response and refreshes its token after it expires', async () => {
+    vi.useFakeTimers({toFake: ['Date']});
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const fetchMock = stubTokenEndpoint([
+      {access_token: 'second-access-token', expires_in: 3600},
+    ]);
+    const redeemed: AuthCredential = {
+      authType: AuthCredentialTypes.OAUTH2,
+      oauth2: {
+        ...AUTH_CODE_CREDENTIAL.oauth2,
+        accessToken: 'first-access-token',
+        refreshToken: 'refresh-token',
+        expiresAt: Date.now() + 3_600_000,
+      },
+    };
+    const context = createToolContext();
+    vi.spyOn(context, 'getAuthResponse').mockReturnValue(redeemed);
+    const credentialStore = new ToolContextCredentialStore(context);
+    const exchanger = await createRealAutoAuthCredentialExchanger();
+    const newHandler = () =>
+      new ToolAuthHandler(context, AUTH_CODE_SCHEME, AUTH_CODE_CREDENTIAL, {
+        credentialStore,
+        credentialExchanger: exchanger,
+      });
+
+    const first = await newHandler().prepareAuthCredentials();
+    expect(first.authCredential?.http?.credentials.token).toBe(
+      'first-access-token',
+    );
+    expect(
+      credentialStore.getCredential(AUTH_CODE_SCHEME, AUTH_CODE_CREDENTIAL),
+    ).toEqual(redeemed);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    vi.setSystemTime(new Date('2026-01-01T02:00:00Z'));
+    const second = await newHandler().prepareAuthCredentials();
+
+    expect(second.authCredential).toEqual({
+      authType: AuthCredentialTypes.HTTP,
+      http: {scheme: 'bearer', credentials: {token: 'second-access-token'}},
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const body = tokenRequestBody(fetchMock, 0);
+    expect(body.get('grant_type')).toBe('refresh_token');
+    expect(body.get('refresh_token')).toBe('refresh-token');
+    const stored = credentialStore.getCredential(
+      AUTH_CODE_SCHEME,
+      AUTH_CODE_CREDENTIAL,
+    );
+    expect(stored?.oauth2?.accessToken).toBe('second-access-token');
+    expect(stored?.oauth2?.refreshToken).toBe('refresh-token');
+    expect(stored?.oauth2?.expiresAt).toBe(Date.now() + 3_600_000);
+  });
+
+  it('refreshes with the configured client credentials when the store omits them', async () => {
+    vi.useFakeTimers({toFake: ['Date']});
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const fetchMock = stubTokenEndpoint([
+      {access_token: 'refreshed-access-token', expires_in: 3600},
+    ]);
+    const context = createToolContext();
+    const credentialStore = new ToolContextCredentialStore(context);
+    credentialStore.storeCredential(
+      credentialStore.getCredentialKey(AUTH_CODE_SCHEME, AUTH_CODE_CREDENTIAL),
+      {
+        authType: AuthCredentialTypes.OAUTH2,
+        oauth2: {
+          accessToken: 'expired-access-token',
+          refreshToken: 'refresh-token',
+          expiresAt: Date.now() - 1000,
+        },
+      },
+    );
+
+    const handler = new ToolAuthHandler(
+      context,
+      AUTH_CODE_SCHEME,
+      AUTH_CODE_CREDENTIAL,
+      {
+        credentialStore,
+        credentialExchanger: await createRealAutoAuthCredentialExchanger(),
+      },
+    );
+    const result = await handler.prepareAuthCredentials();
+
+    expect(result.authCredential?.http?.credentials.token).toBe(
+      'refreshed-access-token',
+    );
+    const body = tokenRequestBody(fetchMock, 0);
+    expect(body.get('client_id')).toBe('client-id');
+    expect(body.get('client_secret')).toBe('client-secret');
+    const stored = credentialStore.getCredential(
+      AUTH_CODE_SCHEME,
+      AUTH_CODE_CREDENTIAL,
+    );
+    expect(stored?.oauth2?.accessToken).toBe('refreshed-access-token');
+    expect(stored?.oauth2?.clientSecret).toBeUndefined();
   });
 });

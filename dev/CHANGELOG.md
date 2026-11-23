@@ -1,5 +1,40 @@
 # Changelog
 
+## [2.5.0](https://github.com/google/adk-js/compare/devtools-v2.4.0...devtools-v2.5.0) (2026-11-12)
+
+
+### Features
+
+* **cli:** port adk-python v1.1.1 changes to cli ([#1194](https://github.com/google/adk-js/issues/1194)) ([7abc99d](https://github.com/google/adk-js/commit/7abc99def41d3f17f23826313a7243a08e5bd6a5))
+* **cli:** port adk-python v1.2.1 changes to cli ([#1236](https://github.com/google/adk-js/issues/1236)) ([2ae8efb](https://github.com/google/adk-js/commit/2ae8efbbab942d05cdd43940d72046ef03076cdf))
+* **cli:** port adk-python v1.3.0 changes to cli ([#1276](https://github.com/google/adk-js/issues/1276)) ([e7ad559](https://github.com/google/adk-js/commit/e7ad5591e61d19874fe34f3357c6071b01af63cb))
+* **dev:** add --otel_to_cloud to deploy agent_engine ([#1162](https://github.com/google/adk-js/issues/1162)) ([0942574](https://github.com/google/adk-js/commit/09425745de3c2bd40267a3bd46c11da2ab4f852d))
+* **dev:** support kebab-case CLI flags and command aliases ([#1290](https://github.com/google/adk-js/issues/1290)) ([875f5d9](https://github.com/google/adk-js/commit/875f5d9d3ff5e9feb3d309e24228a886560b2541))
+* **telemetry:** continue Agent Engine request traces and record the support id ([#1224](https://github.com/google/adk-js/issues/1224)) ([4e79ff2](https://github.com/google/adk-js/commit/4e79ff212cc48af729acad4496f577d393428f00))
+* **telemetry:** emit the v2 span tree and GenAI log records ([#1168](https://github.com/google/adk-js/issues/1168)) ([e8ef65b](https://github.com/google/adk-js/commit/e8ef65b77afeb69bcfee2d09c92de973d287a391))
+* **telemetry:** export on the request path on Agent Runtime ([#1222](https://github.com/google/adk-js/issues/1222)) ([7234f6c](https://github.com/google/adk-js/commit/7234f6cda2f556fdcbacc6095d6ed9b7adabf462))
+* **telemetry:** export traces, metrics and logs to telemetry.googleapis.com ([#1172](https://github.com/google/adk-js/issues/1172)) ([eedc561](https://github.com/google/adk-js/commit/eedc561304baedf4ff3587117df705dd0606eba1))
+
+
+### Bug Fixes
+
+* **agents:** fix AgentEngineClient wire protocol, SSE parsing, and optional aiplatform peer ([#1271](https://github.com/google/adk-js/issues/1271)) ([13912a9](https://github.com/google/adk-js/commit/13912a986c61294d712cf9a8360974bd978fbe38))
+* **build:** map @google/adk-devtools in tsconfig and await test server port ([#1277](https://github.com/google/adk-js/issues/1277)) ([e705a2b](https://github.com/google/adk-js/commit/e705a2b33bbf38856c05a52410f74f5852f31143))
+* **cli:** harden tmp log setup, honor otel_to_cloud, and set failure exit codes ([#1269](https://github.com/google/adk-js/issues/1269)) ([f35fb46](https://github.com/google/adk-js/commit/f35fb467f4a29af9a5b4014f7d92076f7182e109))
+* **cli:** pin adk-devtools in deploy images to the CLI's version, overridable with --adk_version ([#1215](https://github.com/google/adk-js/issues/1215)) ([1604bda](https://github.com/google/adk-js/commit/1604bda845639b1f81c1cd183b69b042fa3d4e7e))
+* **cli:** preserve Agent Engine scaling on update and fix agent staging in deploy_utils ([#1266](https://github.com/google/adk-js/issues/1266)) ([25be897](https://github.com/google/adk-js/commit/25be897502425a14e1bdc0e2f1ba578181c531ed))
+* **dev:** retain agent bundles while in use during watch invalidation ([#1008](https://github.com/google/adk-js/issues/1008)) ([25359ab](https://github.com/google/adk-js/commit/25359ab1ac2ad7cef665b5493c673806f72a43ab))
+* **server:** prevent path traversal in loadDotenvForAgent and eval set routes ([#1264](https://github.com/google/adk-js/issues/1264)) ([f6723b8](https://github.com/google/adk-js/commit/f6723b8c141398e22a5b9af280907267b59e64c7))
+* **server:** reject non-object JSON and handle stream errors on reasoning_engine ([#1285](https://github.com/google/adk-js/issues/1285)) ([cdcaf15](https://github.com/google/adk-js/commit/cdcaf15e95bbb775957a78cb56a21a176b46a20d))
+* **workflow:** wait for the runner to store node events (adk-python parity) ([#978](https://github.com/google/adk-js/issues/978)) ([a25cd30](https://github.com/google/adk-js/commit/a25cd300fd85b59ee02be0515ea8ef888f8cdebc))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^2.4.0 to ^2.5.0
+
 ## [2.4.0](https://github.com/google/adk-js/compare/devtools-v2.3.0...devtools-v2.4.0) (2026-10-28)
 
 ### Features

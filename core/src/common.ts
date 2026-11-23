@@ -143,6 +143,7 @@ export {
 export type {AuthScheme, OpenIdConnectWithConfig} from './auth/auth_schemes.js';
 export type {AuthConfig} from './auth/auth_tool.js';
 export type {BaseAuthProvider} from './auth/base_auth_provider.js';
+export {CredentialManager} from './auth/credential_manager.js';
 export type {BaseCredentialService} from './auth/credential_service/base_credential_service.js';
 export {InMemoryCredentialService} from './auth/credential_service/in_memory_credential_service.js';
 export {SessionStateCredentialService} from './auth/credential_service/session_state_credential_service.js';
@@ -151,8 +152,11 @@ export type {
   BaseCredentialExchanger,
   ExchangeResult,
 } from './auth/exchanger/base_credential_exchanger.js';
+export {CredentialExchangerRegistry} from './auth/exchanger/credential_exchanger_registry.js';
 export {OAuth2CredentialExchanger} from './auth/oauth2/oauth2_credential_exchanger.js';
+export {OAuth2CredentialRefresher} from './auth/oauth2/oauth2_credential_refresher.js';
 export {OAuth2DiscoveryManager} from './auth/oauth2/oauth2_discovery.js';
+export {CredentialRefresherError} from './auth/refresher/base_credential_refresher.js';
 export type {BaseCredentialRefresher} from './auth/refresher/base_credential_refresher.js';
 export {CredentialRefresherRegistry} from './auth/refresher/credential_refresher_registry.js';
 export {BaseCodeExecutor} from './code_executors/base_code_executor.js';
@@ -290,6 +294,11 @@ export {BasePlanner, isBasePlanner} from './planners/base_planner.js';
 export {BuiltInPlanner, isBuiltInPlanner} from './planners/built_in_planner.js';
 export {PlanReActPlanner} from './planners/plan_re_act_planner.js';
 export {
+  toolResultClassification,
+  type ToolResultClassification,
+  type ToolResultClassifier,
+} from './plugins/_callback_helpers.js';
+export {
   GLOBAL_SCOPE_KEY,
   REFLECT_AND_RETRY_RESPONSE_TYPE,
   ScopedFailureTracker,
@@ -306,7 +315,9 @@ export type {
 } from './plugins/debug_logging_plugin.js';
 export {GlobalInstructionPlugin} from './plugins/global_instruction_plugin.js';
 export {LoggingPlugin} from './plugins/logging_plugin.js';
+export type {LoggingPluginOptions} from './plugins/logging_plugin.js';
 export {PluginManager} from './plugins/plugin_manager.js';
+export type {PluginCallbackName} from './plugins/plugin_manager.js';
 export {
   ADK_HANDLE_MODEL_ERROR_TOOL_NAME,
   RESERVED_TOOL_CALL_ERROR_TYPE,
@@ -355,6 +366,10 @@ export type {
 export {InMemorySessionService} from './sessions/in_memory_session_service.js';
 export {createSession} from './sessions/session.js';
 export type {CompositeSessionKey, Session} from './sessions/session.js';
+export {
+  StaleSessionError,
+  isStaleSessionError,
+} from './sessions/stale_session_error.js';
 export {State, StateSchemaError, isStateSchemaError} from './sessions/state.js';
 export type {
   ContentCapturingMode,
@@ -363,6 +378,22 @@ export type {
 } from './telemetry/api/instrumentation.js';
 export {AgentTool, isAgentTool} from './tools/agent_tool.js';
 export type {AgentToolConfig} from './tools/agent_tool.js';
+export {
+  AuthenticatedFunctionTool,
+  isAuthenticatedFunctionTool,
+} from './tools/authenticated_function_tool.js';
+export type {
+  AuthenticatedFunctionToolOptions,
+  AuthenticatedToolExecuteFunction,
+} from './tools/authenticated_function_tool.js';
+export {
+  BaseAuthenticatedTool,
+  isBaseAuthenticatedTool,
+} from './tools/base_authenticated_tool.js';
+export type {
+  BaseAuthenticatedToolParams,
+  RunAsyncAuthenticatedToolRequest,
+} from './tools/base_authenticated_tool.js';
 export {BaseTool, isBaseTool} from './tools/base_tool.js';
 export type {
   BaseToolParams,
@@ -404,7 +435,7 @@ export {
   ENTERPRISE_WEB_SEARCH,
   EnterpriseWebSearchTool,
 } from './tools/enterprise_web_search_tool.js';
-export {ExampleTool} from './tools/example_tool.js';
+export {ExampleTool, isExampleTool} from './tools/example_tool.js';
 export {EXIT_LOOP, ExitLoopTool} from './tools/exit_loop_tool.js';
 export {
   FINISH_TASK_SUCCESS_RESULT,
@@ -524,7 +555,11 @@ export {SearchSkillsTool} from './tools/skill/search_skills_tool.js';
 export * from './artifacts/base_artifact_service.js';
 export * from './features/feature_registry.js';
 export * from './memory/base_memory_service.js';
-export * from './sessions/base_session_service.js';
+export {
+  mergeStates,
+  trimTempDeltaState,
+  trimTempState,
+} from './sessions/base_session_service.js';
 export * from './tools/base_tool.js';
 
 // Workflow (parity port of google/adk-python `google/adk/workflow`). Named
@@ -602,17 +637,19 @@ export type {
 
 export {App, isApp, validateAppName} from './apps/app.js';
 export type {AppOptions} from './apps/app.js';
-export * from './artifacts/base_artifact_service.js';
-export * from './features/feature_registry.js';
-export * from './memory/base_memory_service.js';
-export * from './sessions/base_session_service.js';
-export * from './tools/base_tool.js';
 
+export {RUNNER_CLEANUP_TIMEOUT_MS, closeRunners} from './cli/utils/cleanup.js';
 export {
   convertSessionToEvalFormat,
+  convertSessionToEvalInvocations,
   createEmptyState,
 } from './cli/utils/evals.js';
 export type {
+  EvalCase,
+  EvalIntermediateData,
+  EvalInvocation,
+  EvalSessionInput,
+  EvalSet,
   EvaluationItem,
   IntermediateAgentResponseItem,
   ToolUseItem,

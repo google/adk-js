@@ -261,8 +261,6 @@ export function trimTempDeltaState(event: Event): Event {
  * and `JSON.parse` makes `__proto__` an own key, so copying it into a plain
  * object literal would invoke the inherited `__proto__` setter: the entry is
  * dropped and the new state object is re-parented onto the attacker's object.
- * `State.get`/`State.has` use the `in` operator, so every key on that object
- * would then read back as session state.
  */
 export function trimTempState(
   state: Record<string, unknown>,

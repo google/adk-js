@@ -151,9 +151,9 @@ export abstract class BasePlugin {
    *
    * @param _params.invocationContext The context for the entire invocation, containing
    *     session information, the root agent, etc.
-   * @returns An optional `Event` to be returned to the ADK. Returning a value
-   *     to halt execution of the runner and ends the runner with that event.
-   *     Return `undefined` to proceed normally.
+   * @returns An optional `Content` to be returned to the ADK. Returning a value
+   *     halts execution of the runner and ends the run with an event containing
+   *     that content. Return `undefined` to proceed normally.
    */
   async beforeRunCallback(_params: {
     invocationContext: InvocationContext;
@@ -183,10 +183,12 @@ export abstract class BasePlugin {
   }
 
   /**
-   * Callback executed after an ADK runner run has completed.
+   * Callback executed after successful completion, abort, or early iterator close.
    *
    * This is the final callback in the ADK lifecycle, suitable for cleanup,
-   * final logging, or reporting tasks.
+   * final logging, or reporting tasks. It is skipped when execution fails;
+   * {@link onRunErrorCallback} is called instead. Receiving this callback does
+   * not imply success: recognized cancellation still propagates to the caller.
    *
    * @param _params.invocationContext The context for the entire invocation.
    * @returns undefined
@@ -196,6 +198,30 @@ export abstract class BasePlugin {
   }): Promise<void> {
     return;
   }
+
+  /**
+   * Observes an error escaping an agent's execution or lifecycle callbacks.
+   *
+   * Notification-only: return values are ignored and callback failures are
+   * logged. The original execution error always propagates.
+   */
+  async onAgentErrorCallback(_params: {
+    agent: BaseAgent;
+    callbackContext: Context;
+    error: Error;
+  }): Promise<void> {}
+
+  /**
+   * Observes an error in the run lifecycle, including before/after-run callbacks.
+   *
+   * Notification-only: return values are ignored and callback failures are
+   * logged. The original execution error always propagates. A completion-hook
+   * failure during early iterator close is reported but does not prevent closing.
+   */
+  async onRunErrorCallback(_params: {
+    invocationContext: InvocationContext;
+    error: Error;
+  }): Promise<void> {}
 
   /**
    * Callback executed before an agent's primary logic is invoked.
@@ -219,14 +245,14 @@ export abstract class BasePlugin {
   /**
    * Callback executed after an agent's primary logic has completed.
    *
-   * This callback can be used to inspect, log, or modify the agent's final
-   * result before it is returned.
+   * This callback can be used to inspect, log, or append an additional event
+   * after the agent's execution completes.
    *
    * @param _params.agent The agent that has just run.
    * @param _params.callbackContext The context for the agent invocation.
-   * @returns An optional `Content` object. If a value is returned, it will
-   *     replace the agent's original result. Returning `undefined` uses the
-   *     original, unmodified result.
+   * @returns An optional `Content` object. If a value is returned, it will be
+   *     emitted as an additional event appended after the agent's execution.
+   *     Returning `undefined` emits no additional content event.
    */
   async afterAgentCallback(_params: {
     agent: BaseAgent;
@@ -285,8 +311,8 @@ export abstract class BasePlugin {
    *
    * @param _params.callbackContext The context for the current agent call.
    * @param _params.llmRequest The prepared request object to be sent to the model.
-   * @returns An optional value. The interpretation of a non-`undefined`
-   *     trigger an early exit and returns the response immediately. Returning
+   * @returns An optional `LlmResponse`. Returning a non-`undefined` value
+   *     triggers an early exit and returns that response immediately. Returning
    *     `undefined` allows the LLM request to proceed normally.
    */
   async beforeModelCallback(_params: {
@@ -316,7 +342,7 @@ export abstract class BasePlugin {
   }
 
   /**
-   * Callback executed when a model call encounters an error.
+   * Callback executed when a model call encounters an `Error`.
    *
    * This callback provides an opportunity to handle model errors gracefully,
    * potentially providing alternative responses or recovery mechanisms.
@@ -324,10 +350,11 @@ export abstract class BasePlugin {
    * @param _params.callbackContext The context for the current agent call.
    * @param _params.llmRequest The request that was sent to the model when the error
    *     occurred.
-   * @param _params.error The exception that was raised during model execution.
-   * @returns An optional LlmResponse. If an LlmResponse is returned, it will be
-   *     used instead of propagating the error. Returning `undefined` allows
-   *     the original error to be raised.
+   * @param _params.error The `Error` instance thrown during model execution.
+   * @returns An optional `LlmResponse`. If an `LlmResponse` is returned, it
+   *     will be used instead of the default error response. Returning
+   *     `undefined` causes an error response/event with `errorCode` and
+   *     `errorMessage` derived from `error` to be yielded.
    */
   async onModelErrorCallback(_params: {
     callbackContext: Context;
@@ -438,7 +465,8 @@ export abstract class BasePlugin {
   }
 
   /**
-   * Callback executed when a tool call encounters an error.
+   * Callback executed when a tool call encounters an `Error` or cannot be
+   * resolved.
    *
    * This callback provides an opportunity to handle tool errors gracefully,
    * potentially providing alternative responses or recovery mechanisms.
@@ -446,10 +474,13 @@ export abstract class BasePlugin {
    * @param _params.tool The tool instance that encountered an error.
    * @param _params.toolArgs The arguments that were passed to the tool.
    * @param _params.toolContext The context specific to the tool execution.
-   * @param _params.error The exception that was raised during tool execution.
+   * @param _params.error The `Error` that was raised during tool resolution or
+   *     execution.
    * @returns An optional dictionary. If a dictionary is returned, it will be
-   *     used as the tool response instead of propagating the error. Returning
-   *     `undefined` allows the original error to be raised.
+   *     used as the tool response instead of the default error response.
+   *     Returning `undefined` causes `{error: error.message}` to be returned as
+   *     the tool response (unlike adk-python, which re-raises). Non-`Error`
+   *     throwables bypass this callback and become `{error: thrownValue}`.
    */
   async onToolErrorCallback(_params: {
     tool: BaseTool;

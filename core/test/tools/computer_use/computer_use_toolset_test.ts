@@ -336,13 +336,17 @@ describe('ComputerUseToolset', () => {
       const initialize = vi
         .spyOn(computer, 'initialize')
         .mockRejectedValueOnce(new Error('Initialization failed'));
-
-      await expect(toolset.getTools()).rejects.toThrow('Initialization failed');
-      await expect(toolset.getTools()).resolves.toHaveLength(
-        LEGACY_TOOLS.length + MODERN_TOOLS.length,
-      );
-      expect(initialize).toHaveBeenCalledTimes(2);
-      initialize.mockRestore();
+      try {
+        await expect(toolset.getTools()).rejects.toThrow(
+          'Initialization failed',
+        );
+        await expect(toolset.getTools()).resolves.toHaveLength(
+          LEGACY_TOOLS.length + MODERN_TOOLS.length,
+        );
+        expect(initialize).toHaveBeenCalledTimes(2);
+      } finally {
+        initialize.mockRestore();
+      }
     });
 
     it('scales coordinates to the computer screen size', async () => {
@@ -561,6 +565,23 @@ describe('ComputerUseToolset', () => {
         'mouse_up',
         'key_up',
       ]);
+    });
+
+    it('propagates an error when computer.environment rejects', async () => {
+      const {toolset, computer} = makeToolset();
+      const environmentSpy = vi
+        .spyOn(computer, 'environment')
+        .mockRejectedValueOnce(new Error('Environment failed'));
+      try {
+        await expect(
+          toolset.processLlmRequest(
+            makeContext(),
+            makeRequest('gemini-2.5-flash'),
+          ),
+        ).rejects.toThrow('Environment failed');
+      } finally {
+        environmentSpy.mockRestore();
+      }
     });
   });
 

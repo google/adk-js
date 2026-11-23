@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import esbuild from 'esbuild';
+import {watch, WatchListener} from 'node:fs';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -37,6 +38,11 @@ vi.mock('../../src/utils/file_utils.js', () => ({
   isFolderExists: vi.fn(),
   removeFolder: vi.fn(),
   tryToFindFileRecursively: vi.fn(),
+}));
+
+vi.mock('node:fs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:fs')>()),
+  watch: vi.fn(() => ({on: vi.fn(), close: vi.fn()})),
 }));
 
 vi.mock('esbuild', async (importOriginal) => {
@@ -137,6 +143,19 @@ class FakeAgent3 extends BaseAgent {
   }
 }
 exports.rootAgent = new FakeAgent3('agent3');`;
+
+/** Source of a CommonJS agent file whose root agent has the given name. */
+function namedAgentJsContent(agentName: string): string {
+  return `
+const {BaseAgent} = require('@google/adk');
+
+class NamedFakeAgent extends BaseAgent {
+  constructor(name) {
+    super({ name });
+  }
+}
+exports.rootAgent = new NamedFakeAgent('${agentName}');`;
+}
 
 const agentDefaultExportContent = `;
 import {BaseAgent} from '@google/adk';
@@ -1031,6 +1050,18 @@ describe('AgentLoader', () => {
         );
         await loader.disposeAll();
       });
+
+      it.each(['constructor', 'toString', 'hasOwnProperty', 'valueOf'])(
+        'rejects %s instead of returning an Object.prototype member',
+        async (agentName) => {
+          const loader = new AgentLoader(tempAgentsDir);
+
+          await expect(loader.getAgentFile(agentName)).rejects.toThrow(
+            `Agent '${agentName}' not found`,
+          );
+          await loader.disposeAll();
+        },
+      );
     });
 
     it('disposes all agent files', async () => {
@@ -1201,6 +1232,888 @@ describe('AgentLoader', () => {
       expect(agents).not.toContain('.hidden');
 
       await loader.disposeAll();
+    });
+
+    describe('reloading one agent', () => {
+      interface BuildOptions {
+        entryPoints: string[];
+        outfile: string;
+      }
+
+      /**
+       * Compiles a JavaScript agent by copying its current source, so a test
+       * that rewrites the file sees the new agent after a reload.
+       */
+      async function compileFromSource(options: BuildOptions): Promise<void> {
+        claimCompiledFixture(options.outfile);
+        const entryPoint = options.entryPoints[0];
+        await fs.writeFile(
+          options.outfile,
+          entryPoint.endsWith('.ts')
+            ? agent2CjsContentMocked
+            : await fs.readFile(entryPoint, 'utf8'),
+        );
+      }
+
+      function buildCount(entryFileName?: string): number {
+        const calls = (esbuild.build as Mock).mock.calls as [BuildOptions][];
+        return entryFileName === undefined
+          ? calls.length
+          : calls.filter(([options]) =>
+              options.entryPoints[0].endsWith(entryFileName),
+            ).length;
+      }
+
+      async function getFixtureAgentFiles(loader: AgentLoader) {
+        return {
+          agent1: await loader.getAgentFile('agent1'),
+          agent2: await loader.getAgentFile('agent2'),
+          agent3: await loader.getAgentFile('agent3'),
+        };
+      }
+
+      beforeEach(() => {
+        (esbuild.build as Mock).mockImplementation(compileFromSource);
+      });
+
+      describe('removeAgentFromCache', () => {
+        it('reloads only the removed agent from its changed source', async () => {
+          const loader = new AgentLoader(tempAgentsDir);
+          const cached = await getFixtureAgentFiles(loader);
+          const buildsBeforeRemoval = buildCount();
+          await fs.writeFile(
+            path.join(tempAgentsDir, 'agent1.js'),
+            namedAgentJsContent('agent1_edited'),
+          );
+
+          loader.removeAgentFromCache('agent1');
+
+          const reloaded = await loader.getAgentFile('agent1');
+          expect(reloaded).not.toBe(cached.agent1);
+          expect((await reloaded.load()).name).toBe('agent1_edited');
+          expect(await loader.getAgentFile('agent2')).toBe(cached.agent2);
+          expect(await loader.getAgentFile('agent3')).toBe(cached.agent3);
+          expect(buildCount()).toBe(buildsBeforeRemoval + 1);
+          await loader.disposeAll();
+        });
+
+        it('keeps the bundles of top-level file agents when a directory agent is removed', async () => {
+          const loader = new AgentLoader(tempAgentsDir);
+          const cached = await getFixtureAgentFiles(loader);
+          const agent1BundlePath = cached.agent1.getFilePath();
+          const agent2BundlePath = cached.agent2.getFilePath();
+
+          loader.removeAgentFromCache('agent3');
+
+          expect(await loader.getAgentFile('agent3')).not.toBe(cached.agent3);
+          expect(await loader.getAgentFile('agent1')).toBe(cached.agent1);
+          expect(await loader.getAgentFile('agent2')).toBe(cached.agent2);
+          await expect(fs.access(agent1BundlePath)).resolves.toBeUndefined();
+          await expect(fs.access(agent2BundlePath)).resolves.toBeUndefined();
+          expect(buildCount('agent1.js')).toBe(1);
+          expect(buildCount('agent2.ts')).toBe(1);
+          await loader.disposeAll();
+        });
+
+        it('keeps a leased bundle on disk until the lease is released', async () => {
+          const loader = new AgentLoader(tempAgentsDir);
+          const leasedFile = await loader.getAgentFile('agent2');
+          const leasedBundlePath = leasedFile.getFilePath();
+          const lease = leasedFile.retain();
+
+          loader.removeAgentFromCache('agent2');
+
+          await expect(fs.access(leasedBundlePath)).resolves.toBeUndefined();
+          const reloadedBundlePath = (
+            await loader.getAgentFile('agent2')
+          ).getFilePath();
+          expect(reloadedBundlePath).not.toBe(leasedBundlePath);
+
+          await lease[Symbol.asyncDispose]();
+
+          await expect(fs.access(leasedBundlePath)).rejects.toThrow();
+          await expect(fs.access(reloadedBundlePath)).resolves.toBeUndefined();
+          await loader.disposeAll();
+        });
+
+        it('clears a recorded load failure so the repaired agent loads', async () => {
+          const brokenAgentPath = path.join(
+            tempAgentsDir,
+            'broken',
+            'agent.js',
+          );
+          await fs.mkdir(path.dirname(brokenAgentPath));
+          await fs.writeFile(brokenAgentPath, `throw new Error('boom');`);
+          const loader = new AgentLoader(tempAgentsDir);
+          expect(
+            (await loader.listLoadFailures()).map((failure) => failure.name),
+          ).toEqual(['broken']);
+          await fs.writeFile(brokenAgentPath, namedAgentJsContent('repaired'));
+
+          await expect(loader.getAgentFile('broken')).rejects.toThrow(
+            /Agent 'broken' failed to load/,
+          );
+
+          loader.removeAgentFromCache('broken');
+
+          const repaired = await loader.getAgentFile('broken');
+          expect((await repaired.load()).name).toBe('repaired');
+          expect(await loader.listLoadFailures()).toEqual([]);
+          await loader.disposeAll();
+        });
+
+        it.each(['unknown', 'constructor'])(
+          'ignores the name %s, which is not cached',
+          async (agentName) => {
+            await fs.writeFile(
+              path.join(tempAgentsDir, 'helper.js'),
+              'exports.value = 1;',
+            );
+            const loader = new AgentLoader(tempAgentsDir);
+            const cached = await getFixtureAgentFiles(loader);
+            const buildsBeforeRemoval = buildCount();
+
+            loader.removeAgentFromCache(agentName);
+
+            expect(await loader.listAgents()).toEqual([
+              'agent1',
+              'agent2',
+              'agent3',
+            ]);
+            expect(await loader.getAgentFile('agent1')).toBe(cached.agent1);
+            expect(await loader.getAgentFile('agent2')).toBe(cached.agent2);
+            expect(await loader.getAgentFile('agent3')).toBe(cached.agent3);
+            expect(buildCount()).toBe(buildsBeforeRemoval);
+            await loader.disposeAll();
+          },
+        );
+
+        it('loads the agent again when it is removed while a preload pass is in flight', async () => {
+          let reportAgent3BuildStarted = () => {};
+          const agent3BuildStarted = new Promise<void>((resolve) => {
+            reportAgent3BuildStarted = resolve;
+          });
+          let releaseAgent3Build = () => {};
+          const agent3BuildReleased = new Promise<void>((resolve) => {
+            releaseAgent3Build = resolve;
+          });
+          (esbuild.build as Mock).mockImplementation(
+            async (options: BuildOptions) => {
+              if (options.entryPoints[0].includes('agent3')) {
+                reportAgent3BuildStarted();
+                await agent3BuildReleased;
+              }
+              await compileFromSource(options);
+            },
+          );
+          const loader = new AgentLoader(tempAgentsDir);
+
+          // Directories load after top-level files, so agent1 is cached by the
+          // time the pass waits on agent3.
+          const listing = loader.listAgents();
+          await agent3BuildStarted;
+          loader.removeAgentFromCache('agent1');
+          releaseAgent3Build();
+
+          expect(await listing).toEqual(['agent1', 'agent2', 'agent3']);
+          expect(buildCount('agent1.js')).toBe(2);
+          await loader.disposeAll();
+        });
+      });
+
+      describe('when a watched file changes', () => {
+        let notifyFileChanged: WatchListener<string>;
+
+        beforeEach(() => {
+          (watch as Mock).mockImplementation(
+            (
+              _dir: string,
+              _options: object,
+              listener: WatchListener<string>,
+            ) => {
+              notifyFileChanged = listener;
+              return {on: vi.fn(), close: vi.fn()};
+            },
+          );
+        });
+
+        it('reloads only the directory agent that owns the changed file', async () => {
+          const loader = new AgentLoader(tempAgentsDir, undefined, true);
+          const cached = await getFixtureAgentFiles(loader);
+          const buildsBeforeChange = buildCount();
+          await fs.writeFile(
+            path.join(tempAgentsDir, 'agent3', 'agent.js'),
+            namedAgentJsContent('agent3_edited'),
+          );
+
+          notifyFileChanged('change', path.join('agent3', 'agent.js'));
+
+          const reloaded = await loader.getAgentFile('agent3');
+          expect((await reloaded.load()).name).toBe('agent3_edited');
+          expect(await loader.getAgentFile('agent1')).toBe(cached.agent1);
+          expect(await loader.getAgentFile('agent2')).toBe(cached.agent2);
+          expect(buildCount()).toBe(buildsBeforeChange + 1);
+          await loader.disposeAll();
+        });
+
+        it('reloads only the agent defined by the changed top-level file', async () => {
+          const loader = new AgentLoader(tempAgentsDir, undefined, true);
+          const cached = await getFixtureAgentFiles(loader);
+          const buildsBeforeChange = buildCount();
+
+          notifyFileChanged('change', 'agent2.ts');
+
+          expect(await loader.getAgentFile('agent2')).not.toBe(cached.agent2);
+          expect(await loader.getAgentFile('agent1')).toBe(cached.agent1);
+          expect(await loader.getAgentFile('agent3')).toBe(cached.agent3);
+          expect(buildCount()).toBe(buildsBeforeChange + 1);
+          await loader.disposeAll();
+        });
+
+        it.each<{
+          agentName: 'agent1' | 'agent3';
+          filename: string;
+          events: Array<'change' | 'rename'>;
+        }>([
+          {
+            agentName: 'agent3',
+            filename: path.join('agent3', 'agent.js'),
+            events: ['change', 'change'],
+          },
+          {
+            agentName: 'agent3',
+            filename: path.join('agent3', 'agent.js'),
+            events: ['rename', 'change'],
+          },
+          {
+            agentName: 'agent1',
+            filename: 'agent1.js',
+            events: ['change', 'change'],
+          },
+          {
+            agentName: 'agent1',
+            filename: 'agent1.js',
+            events: ['rename', 'change'],
+          },
+        ])(
+          'reloads only $agentName when one save of $filename reports $events',
+          async ({agentName, filename, events}) => {
+            const loader = new AgentLoader(tempAgentsDir, undefined, true);
+            const cached = await getFixtureAgentFiles(loader);
+            const buildsBeforeChange = buildCount();
+
+            for (const event of events) {
+              notifyFileChanged(event, filename);
+            }
+
+            const reloaded = await getFixtureAgentFiles(loader);
+            for (const name of ['agent1', 'agent2', 'agent3'] as const) {
+              if (name === agentName) {
+                expect(reloaded[name]).not.toBe(cached[name]);
+              } else {
+                expect(reloaded[name]).toBe(cached[name]);
+              }
+            }
+            expect(buildCount()).toBe(buildsBeforeChange + 1);
+            await loader.disposeAll();
+          },
+        );
+
+        it('reloads only the changed agent when a second event arrives while it loads again', async () => {
+          const loader = new AgentLoader(tempAgentsDir, undefined, true);
+          const cached = await getFixtureAgentFiles(loader);
+          const buildsBeforeChange = buildCount();
+          let reportReloadStarted = () => {};
+          const reloadStarted = new Promise<void>((resolve) => {
+            reportReloadStarted = resolve;
+          });
+          let releaseReload = () => {};
+          const reloadReleased = new Promise<void>((resolve) => {
+            releaseReload = resolve;
+          });
+          (esbuild.build as Mock).mockImplementationOnce(
+            async (options: BuildOptions) => {
+              reportReloadStarted();
+              await reloadReleased;
+              await compileFromSource(options);
+            },
+          );
+
+          notifyFileChanged('change', 'agent1.js');
+          const listing = loader.listAgents();
+          await reloadStarted;
+          notifyFileChanged('change', 'agent1.js');
+          releaseReload();
+
+          expect(await listing).toEqual(['agent1', 'agent2', 'agent3']);
+          expect(await loader.getAgentFile('agent1')).not.toBe(cached.agent1);
+          expect(await loader.getAgentFile('agent2')).toBe(cached.agent2);
+          expect(await loader.getAgentFile('agent3')).toBe(cached.agent3);
+          expect(buildCount('agent1.js')).toBe(3);
+          expect(buildCount()).toBe(buildsBeforeChange + 2);
+          await loader.disposeAll();
+        });
+
+        it('reloads every agent when the changed file belonged to an agent that was deleted', async () => {
+          const loader = new AgentLoader(tempAgentsDir, undefined, true);
+          const cached = await getFixtureAgentFiles(loader);
+          notifyFileChanged('change', 'agent1.js');
+          await loader.listAgents();
+          await fs.rm(path.join(tempAgentsDir, 'agent1.js'));
+          notifyFileChanged('rename', 'agent1.js');
+          await loader.listAgents();
+
+          // agent1 is gone, so a later event for its path maps to no known
+          // agent.
+          notifyFileChanged('rename', 'agent1.js');
+
+          expect(await loader.listAgents()).toEqual(['agent2', 'agent3']);
+          expect(await loader.getAgentFile('agent2')).not.toBe(cached.agent2);
+          expect(await loader.getAgentFile('agent3')).not.toBe(cached.agent3);
+          await loader.disposeAll();
+        });
+
+        it('retries only the agent that failed to load when its file changes', async () => {
+          const brokenAgentPath = path.join(
+            tempAgentsDir,
+            'broken',
+            'agent.js',
+          );
+          await fs.mkdir(path.dirname(brokenAgentPath));
+          await fs.writeFile(brokenAgentPath, `throw new Error('boom');`);
+          const loader = new AgentLoader(tempAgentsDir, undefined, true);
+          const cached = await getFixtureAgentFiles(loader);
+          const buildsBeforeChange = buildCount();
+          await fs.writeFile(brokenAgentPath, namedAgentJsContent('repaired'));
+
+          notifyFileChanged('change', path.join('broken', 'agent.js'));
+
+          const repaired = await loader.getAgentFile('broken');
+          expect((await repaired.load()).name).toBe('repaired');
+          expect(await loader.getAgentFile('agent1')).toBe(cached.agent1);
+          expect(await loader.getAgentFile('agent2')).toBe(cached.agent2);
+          expect(await loader.getAgentFile('agent3')).toBe(cached.agent3);
+          expect(buildCount()).toBe(buildsBeforeChange + 1);
+          await loader.disposeAll();
+        });
+
+        it('reloads every agent and lists the new one when a new agent file appears', async () => {
+          const loader = new AgentLoader(tempAgentsDir, undefined, true);
+          const cached = await getFixtureAgentFiles(loader);
+          await fs.writeFile(
+            path.join(tempAgentsDir, 'agent4.js'),
+            namedAgentJsContent('agent4'),
+          );
+
+          notifyFileChanged('rename', 'agent4.js');
+
+          expect(await loader.listAgents()).toEqual([
+            'agent1',
+            'agent2',
+            'agent3',
+            'agent4',
+          ]);
+          const reloaded = await getFixtureAgentFiles(loader);
+          expect(reloaded.agent1).not.toBe(cached.agent1);
+          expect(reloaded.agent2).not.toBe(cached.agent2);
+          expect(reloaded.agent3).not.toBe(cached.agent3);
+          await loader.disposeAll();
+        });
+
+        it('reloads every agent when a file in a shared helper directory changes', async () => {
+          const loader = new AgentLoader(tempAgentsDir, undefined, true);
+          const cached = await getFixtureAgentFiles(loader);
+          const buildsBeforeChange = buildCount();
+
+          notifyFileChanged('change', path.join('shared', 'util.ts'));
+
+          const reloaded = await getFixtureAgentFiles(loader);
+          expect(reloaded.agent1).not.toBe(cached.agent1);
+          expect(reloaded.agent2).not.toBe(cached.agent2);
+          expect(reloaded.agent3).not.toBe(cached.agent3);
+          expect(buildCount()).toBe(buildsBeforeChange + 3);
+          await loader.disposeAll();
+        });
+
+        it.each([path.join('agent3', 'README.md'), null])(
+          'keeps every agent when the changed file name is %s',
+          async (filename) => {
+            const loader = new AgentLoader(tempAgentsDir, undefined, true);
+            const cached = await getFixtureAgentFiles(loader);
+            const buildsBeforeChange = buildCount();
+
+            notifyFileChanged('change', filename);
+
+            expect(await loader.getAgentFile('agent1')).toBe(cached.agent1);
+            expect(await loader.getAgentFile('agent2')).toBe(cached.agent2);
+            expect(await loader.getAgentFile('agent3')).toBe(cached.agent3);
+            expect(buildCount()).toBe(buildsBeforeChange);
+            await loader.disposeAll();
+          },
+        );
+      });
+    });
+
+    describe('package and module discovery', () => {
+      /**
+       * Compiles agent files by copying their source, and claims a unique
+       * fixture name for entries under `entryDirName` so package entry files
+       * such as `index.js` do not collide with other tests.
+       */
+      function mockCompiledPackageFixture(
+        entryDirName: string,
+        fixtureName: string,
+      ): void {
+        (esbuild.build as Mock).mockImplementation(
+          async (options: {entryPoints: string[]; outfile: string}) => {
+            const entryPoint = options.entryPoints[0];
+            claimCompiledFixture(
+              entryPoint.includes(entryDirName)
+                ? path.join(path.dirname(options.outfile), fixtureName)
+                : options.outfile,
+            );
+            if (entryPoint.includes('agent1.js')) {
+              await fs.writeFile(options.outfile, agent1JsContent);
+            } else if (entryPoint.includes('agent2.ts')) {
+              await fs.writeFile(options.outfile, agent2CjsContentMocked);
+            } else if (entryPoint.includes('agent3')) {
+              await fs.writeFile(options.outfile, agent3JsContent);
+            } else {
+              const content = await fs.readFile(entryPoint, 'utf8');
+              await fs.writeFile(options.outfile, content);
+            }
+          },
+        );
+      }
+
+      it('loads a root agent exported from a single module file', async () => {
+        const moduleCode = `
+          const {BaseAgent} = require('@google/adk');
+          class ModuleAgent extends BaseAgent {
+            constructor() {
+              super({name: 'module_agent'});
+            }
+          }
+          exports.rootAgent = new ModuleAgent();
+        `;
+        await fs.writeFile(
+          path.join(tempAgentsDir, 'module_agent.js'),
+          moduleCode,
+        );
+
+        const loader = new AgentLoader(tempAgentsDir);
+        await using agentFile = await loader.getAgentFile('module_agent');
+        const agent = await agentFile.load();
+
+        expect(agent.name).toBe('module_agent');
+        await loader.disposeAll();
+      });
+
+      it('loads a package whose index file exports rootAgent', async () => {
+        const packageDir = path.join(tempAgentsDir, 'package_agent');
+        await fs.mkdir(packageDir, {recursive: true});
+        const indexCode = `
+          const {BaseAgent} = require('@google/adk');
+          class PackageAgent extends BaseAgent {
+            constructor() {
+              super({name: 'package_agent'});
+            }
+          }
+          exports.rootAgent = new PackageAgent();
+        `;
+        await fs.writeFile(path.join(packageDir, 'index.js'), indexCode);
+        mockCompiledPackageFixture('package_agent', 'package_agent_index.cjs');
+
+        const loader = new AgentLoader(tempAgentsDir);
+        await using agentFile = await loader.getAgentFile('package_agent');
+        const agent = await agentFile.load();
+
+        expect(agent.name).toBe('package_agent');
+        await loader.disposeAll();
+      });
+
+      it('loads a package whose agent file exports rootAgent', async () => {
+        const modDir = path.join(tempAgentsDir, 'modular_agent');
+        await fs.mkdir(modDir, {recursive: true});
+        const modCode = `
+          const {BaseAgent} = require('@google/adk');
+          class ModularAgent extends BaseAgent {
+            constructor() {
+              super({name: 'modular_agent'});
+            }
+          }
+          exports.rootAgent = new ModularAgent();
+        `;
+        await fs.writeFile(path.join(modDir, 'agent.js'), modCode);
+        mockCompiledPackageFixture('modular_agent', 'modular_agent_file.cjs');
+
+        const loader = new AgentLoader(tempAgentsDir);
+        await using agentFile = await loader.getAgentFile('modular_agent');
+        const agent = await agentFile.load();
+
+        expect(agent.name).toBe('modular_agent');
+        await loader.disposeAll();
+      });
+
+      it('returns the same agent instance when loading an agent twice', async () => {
+        const cachedCode = `
+          const {BaseAgent} = require('@google/adk');
+          class CachedAgent extends BaseAgent {
+            constructor() {
+              super({name: 'cached_agent'});
+            }
+          }
+          exports.rootAgent = new CachedAgent();
+        `;
+        await fs.writeFile(
+          path.join(tempAgentsDir, 'cached_agent.js'),
+          cachedCode,
+        );
+
+        const loader = new AgentLoader(tempAgentsDir);
+        const firstFile = await loader.getAgentFile('cached_agent');
+        const first = await firstFile.load();
+        const secondFile = await loader.getAgentFile('cached_agent');
+        const second = await secondFile.load();
+
+        expect(first).toBe(second);
+        await loader.disposeAll();
+      });
+
+      it('loads the agent .env file before evaluating the agent module', async () => {
+        const envDir = path.join(tempAgentsDir, 'env_agent');
+        await fs.mkdir(envDir, {recursive: true});
+        await fs.writeFile(
+          path.join(envDir, '.env'),
+          'AGENT_LOADER_ENV_CONFIG=production\nAGENT_LOADER_ENV_SECRET=secret_123\n',
+        );
+        const envAgentCode = `
+          const {BaseAgent} = require('@google/adk');
+          class EnvAgent extends BaseAgent {
+            constructor() {
+              super({
+                name: 'env_agent',
+                description: process.env.AGENT_LOADER_ENV_CONFIG || 'default',
+              });
+            }
+          }
+          exports.rootAgent = new EnvAgent();
+        `;
+        await fs.writeFile(path.join(envDir, 'index.js'), envAgentCode);
+        mockCompiledPackageFixture('env_agent', 'env_agent_index.cjs');
+
+        try {
+          const loader = new AgentLoader(tempAgentsDir);
+          await using agentFile = await loader.getAgentFile('env_agent');
+          const agent = await agentFile.load();
+
+          expect(agent.name).toBe('env_agent');
+          expect((agent as {description?: string}).description).toBe(
+            'production',
+          );
+          expect(process.env['AGENT_LOADER_ENV_SECRET']).toBe('secret_123');
+          await loader.disposeAll();
+        } finally {
+          delete process.env['AGENT_LOADER_ENV_CONFIG'];
+          delete process.env['AGENT_LOADER_ENV_SECRET'];
+        }
+      });
+
+      it('serializes .env loading and module evaluation across agents', async () => {
+        const firstDir = path.join(tempAgentsDir, 'env_first');
+        const secondDir = path.join(tempAgentsDir, 'env_second');
+        await fs.mkdir(firstDir, {recursive: true});
+        await fs.mkdir(secondDir, {recursive: true});
+        await fs.writeFile(
+          path.join(firstDir, '.env'),
+          'SHARED_AGENT_KEY=from_first\n',
+        );
+        await fs.writeFile(
+          path.join(secondDir, '.env'),
+          'SHARED_AGENT_KEY=from_second\n',
+        );
+        const makeEnvReadingAgent = (name: string) => `
+          const {BaseAgent} = require('@google/adk');
+          class ScopedEnvAgent extends BaseAgent {
+            constructor() {
+              super({
+                name: '${name}',
+                description: process.env.SHARED_AGENT_KEY || 'missing',
+              });
+            }
+          }
+          exports.rootAgent = new ScopedEnvAgent();
+        `;
+        await fs.writeFile(
+          path.join(firstDir, 'agent.js'),
+          makeEnvReadingAgent('env_first'),
+        );
+        await fs.writeFile(
+          path.join(secondDir, 'agent.js'),
+          makeEnvReadingAgent('env_second'),
+        );
+        (esbuild.build as Mock).mockImplementation(
+          async (options: {entryPoints: string[]; outfile: string}) => {
+            const entryPoint = options.entryPoints[0];
+            const tag = entryPoint.includes('env_first')
+              ? 'env_first_agent.cjs'
+              : entryPoint.includes('env_second')
+                ? 'env_second_agent.cjs'
+                : path.basename(options.outfile);
+            claimCompiledFixture(path.join(path.dirname(options.outfile), tag));
+            if (entryPoint.includes('agent1.js')) {
+              await fs.writeFile(options.outfile, agent1JsContent);
+            } else if (entryPoint.includes('agent2.ts')) {
+              await fs.writeFile(options.outfile, agent2CjsContentMocked);
+            } else if (entryPoint.includes('agent3')) {
+              await fs.writeFile(options.outfile, agent3JsContent);
+            } else {
+              const content = await fs.readFile(entryPoint, 'utf8');
+              await fs.writeFile(options.outfile, content);
+            }
+          },
+        );
+
+        try {
+          const loader = new AgentLoader(tempAgentsDir);
+          await using firstFile = await loader.getAgentFile('env_first');
+          await using secondFile = await loader.getAgentFile('env_second');
+          const first = await firstFile.load();
+          const second = await secondFile.load();
+
+          expect((first as {description?: string}).description).toBe(
+            'from_first',
+          );
+          expect((second as {description?: string}).description).toBe(
+            'from_second',
+          );
+          await loader.disposeAll();
+        } finally {
+          delete process.env['SHARED_AGENT_KEY'];
+        }
+      });
+
+      it('loads several different agents from one loader', async () => {
+        const makeAgentCode = (name: string) => `
+          const {BaseAgent} = require('@google/adk');
+          class MultiAgent extends BaseAgent {
+            constructor() {
+              super({name: '${name}'});
+            }
+          }
+          exports.rootAgent = new MultiAgent();
+        `;
+        await fs.writeFile(
+          path.join(tempAgentsDir, 'agent_one.js'),
+          makeAgentCode('agent_one'),
+        );
+        await fs.writeFile(
+          path.join(tempAgentsDir, 'agent_two.js'),
+          makeAgentCode('agent_two'),
+        );
+
+        const loader = new AgentLoader(tempAgentsDir);
+        await using firstFile = await loader.getAgentFile('agent_one');
+        await using secondFile = await loader.getAgentFile('agent_two');
+        const first = await firstFile.load();
+        const second = await secondFile.load();
+
+        expect(first.name).toBe('agent_one');
+        expect(second.name).toBe('agent_two');
+        expect(first).not.toBe(second);
+        await loader.disposeAll();
+      });
+
+      it('rejects with a not found error for an unknown agent', async () => {
+        const loader = new AgentLoader(tempAgentsDir);
+
+        await expect(loader.getAgentFile('nonexistent_agent')).rejects.toThrow(
+          /Agent 'nonexistent_agent' not found/,
+        );
+        await loader.disposeAll();
+      });
+
+      it('rejects when the agent file exports no root agent', async () => {
+        await fs.writeFile(
+          path.join(tempAgentsDir, 'no_root_agent.js'),
+          'exports.unrelated = 42;',
+        );
+        mockCompiledOutput('exports.unrelated = 42;');
+
+        const agentFile = new AgentFile(
+          path.join(tempAgentsDir, 'no_root_agent.js'),
+        );
+        await expect(agentFile.load()).rejects.toThrow(
+          /No @google\/adk BaseAgent or Workflow instance found/,
+        );
+
+        const loader = new AgentLoader(tempAgentsDir);
+        await expect(loader.getAgentFile('no_root_agent')).rejects.toThrow(
+          /Agent 'no_root_agent' not found/,
+        );
+        await loader.disposeAll();
+      });
+
+      it('prefers a top-level module file over a subdirectory with the same name', async () => {
+        const agentName = 'order_test_agent';
+        const moduleCode = `
+          const {BaseAgent} = require('@google/adk');
+          class ModuleAgent extends BaseAgent {
+            constructor() {
+              super({name: '${agentName}_module_version'});
+            }
+          }
+          exports.rootAgent = new ModuleAgent();
+        `;
+        const submoduleCode = `
+          const {BaseAgent} = require('@google/adk');
+          class SubmoduleAgent extends BaseAgent {
+            constructor() {
+              super({name: '${agentName}_submodule_version'});
+            }
+          }
+          exports.rootAgent = new SubmoduleAgent();
+        `;
+
+        const subDir = path.join(tempAgentsDir, agentName);
+        await fs.mkdir(subDir, {recursive: true});
+        await fs.writeFile(path.join(subDir, 'agent.js'), submoduleCode);
+        await fs.writeFile(
+          path.join(tempAgentsDir, `${agentName}.js`),
+          moduleCode,
+        );
+        mockCompiledPackageFixture(
+          subDir,
+          'order_test_agent_submodule_file.cjs',
+        );
+
+        const loader = new AgentLoader(tempAgentsDir);
+        const agentFile = await loader.getAgentFile(agentName);
+        await using _lease = agentFile.retain();
+        const agent = await agentFile.load();
+
+        expect(agent.name).toBe(`${agentName}_module_version`);
+        await loader.disposeAll();
+      });
+
+      it('falls back to the subdirectory when a same-named top-level file exports no root agent', async () => {
+        const agentName = 'fallback_order_agent';
+        const helperFileCode = `exports.helperValue = 123;`;
+        const submoduleCode = `
+          const {BaseAgent} = require('@google/adk');
+          class FallbackSubmoduleAgent extends BaseAgent {
+            constructor() {
+              super({name: '${agentName}_from_subdir'});
+            }
+          }
+          exports.rootAgent = new FallbackSubmoduleAgent();
+        `;
+
+        await fs.writeFile(
+          path.join(tempAgentsDir, `${agentName}.js`),
+          helperFileCode,
+        );
+        const subDir = path.join(tempAgentsDir, agentName);
+        await fs.mkdir(subDir, {recursive: true});
+        await fs.writeFile(path.join(subDir, 'agent.js'), submoduleCode);
+        mockCompiledPackageFixture(subDir, 'fallback_order_agent_subdir.cjs');
+
+        const loader = new AgentLoader(tempAgentsDir);
+        const agentFile = await loader.getAgentFile(agentName);
+        await using _lease = agentFile.retain();
+        const agent = await agentFile.load();
+
+        expect(agent.name).toBe(`${agentName}_from_subdir`);
+        await loader.disposeAll();
+      });
+
+      it('surfaces an internal module not found error when an agent imports a missing dependency', async () => {
+        const agentName = 'importer_agent';
+        const importerCode = `
+          require('non_existent_internal_module_xyz');
+        `;
+        await fs.writeFile(
+          path.join(tempAgentsDir, `${agentName}.js`),
+          importerCode,
+        );
+
+        const loader = new AgentLoader(tempAgentsDir);
+        await expect(loader.getAgentFile(agentName)).rejects.toThrow(
+          /Agent 'importer_agent' failed to load[\s\S]*Cannot find module 'non_existent_internal_module_xyz'/,
+        );
+        await loader.disposeAll();
+      });
+
+      it('surfaces a syntax error thrown while evaluating an agent module', async () => {
+        const agentName = 'syntax_error_agent';
+        const badSyntaxCode = `
+          this is not valid javascript syntax {{{
+        `;
+        await fs.writeFile(
+          path.join(tempAgentsDir, `${agentName}.js`),
+          badSyntaxCode,
+        );
+
+        const loader = new AgentLoader(tempAgentsDir);
+        await expect(loader.getAgentFile(agentName)).rejects.toThrow(
+          /Agent 'syntax_error_agent' failed to load/,
+        );
+        await loader.disposeAll();
+      });
+
+      // reference: test_agent_internal_name_error
+      it('surfaces a runtime reference error thrown while evaluating an agent module', async () => {
+        const agentName = 'name_error_agent';
+        const badReferenceCode = `
+          export const rootAgent = non_existing_variable_name;
+        `;
+        await fs.writeFile(
+          path.join(tempAgentsDir, `${agentName}.js`),
+          badReferenceCode,
+        );
+
+        const loader = new AgentLoader(tempAgentsDir);
+        await expect(loader.getAgentFile(agentName)).rejects.toThrow(
+          /Agent 'name_error_agent' failed to load[\s\S]*non_existing_variable_name is not defined/,
+        );
+        await loader.disposeAll();
+      });
+
+      it('surfaces descriptive error message when evaluating an agent throws a non-Error object', async () => {
+        const agentName = 'custom_thrown_agent';
+        const throwObjectCode = `
+          throw {code: 'CUSTOM_FAIL', reason: 'failed initialization'};
+        `;
+        await fs.writeFile(
+          path.join(tempAgentsDir, `${agentName}.js`),
+          throwObjectCode,
+        );
+
+        const loader = new AgentLoader(tempAgentsDir);
+        await expect(loader.getAgentFile(agentName)).rejects.toThrow(
+          /Agent 'custom_thrown_agent' failed to load[\s\S]*CUSTOM_FAIL/,
+        );
+        await loader.disposeAll();
+      });
+
+      it('surfaces error message when evaluating an agent throws a circular non-serializable object', async () => {
+        const agentName = 'circular_thrown_agent';
+        const throwCircularCode = `
+          const circular = {name: 'circular'};
+          circular.self = circular;
+          throw circular;
+        `;
+        await fs.writeFile(
+          path.join(tempAgentsDir, `${agentName}.js`),
+          throwCircularCode,
+        );
+
+        const loader = new AgentLoader(tempAgentsDir);
+        await expect(loader.getAgentFile(agentName)).rejects.toThrow(
+          /Agent 'circular_thrown_agent' failed to load/,
+        );
+        await loader.disposeAll();
+      });
     });
   });
 

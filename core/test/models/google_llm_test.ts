@@ -11,6 +11,7 @@ import {
   GeminiParams,
   GoogleLLMVariant,
   InvocationContext,
+  LLMRegistry,
   LlmAgent,
   LlmRequest,
   LlmResponse,
@@ -21,6 +22,7 @@ import {
 } from '@google/adk';
 import {
   Environment,
+  FinishReason,
   GenerateContentResponse,
   GoogleGenAI,
   HttpOptions,
@@ -532,6 +534,324 @@ describe('GoogleLlm', () => {
 
       await expect(generator.next()).rejects.toThrow('Aborted');
     });
+
+    it('should strip config.labels when calling the Gemini API backend', async () => {
+      const llm = new TestGemini({apiKey: 'test-key'});
+      const generateContentMock = vi.fn().mockResolvedValue({
+        candidates: [{content: {parts: [{text: 'response'}]}}],
+      });
+      llm.apiClient.models.generateContent = generateContentMock;
+
+      const llmRequest: LlmRequest = {
+        contents: [{role: 'user', parts: [{text: 'hello'}]}],
+        config: {labels: {env: 'prod'}},
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      for await (const _ of llm.generateContentAsync(llmRequest, false)) {
+        // consume response
+      }
+
+      expect(llm.apiBackend).toBe(GoogleLLMVariant.GEMINI_API);
+      expect(llmRequest.config?.labels).toBeUndefined();
+      expect(generateContentMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            labels: undefined,
+          }),
+        }),
+      );
+    });
+
+    it('should preserve config.labels when calling the Vertex AI backend', async () => {
+      const llm = new TestGemini({
+        vertexai: true,
+        project: 'test-project',
+        location: 'us-central1',
+      });
+      const generateContentMock = vi.fn().mockResolvedValue({
+        candidates: [{content: {parts: [{text: 'response'}]}}],
+      });
+      llm.apiClient.models.generateContent = generateContentMock;
+
+      const llmRequest: LlmRequest = {
+        contents: [{role: 'user', parts: [{text: 'hello'}]}],
+        config: {labels: {env: 'prod'}},
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      for await (const _ of llm.generateContentAsync(llmRequest, false)) {
+        // consume response
+      }
+
+      expect(llm.apiBackend).toBe(GoogleLLMVariant.VERTEX_AI);
+      expect(llmRequest.config?.labels).toEqual({env: 'prod'});
+      expect(generateContentMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            labels: {env: 'prod'},
+          }),
+        }),
+      );
+    });
+
+    it('should strip displayName from fileData and inlineData when calling the Gemini API backend', async () => {
+      const llm = new TestGemini({apiKey: 'test-key'});
+      const generateContentMock = vi.fn().mockResolvedValue({
+        candidates: [{content: {parts: [{text: 'response'}]}}],
+      });
+      llm.apiClient.models.generateContent = generateContentMock;
+
+      const originalFileData = {
+        fileUri: 'gs://bucket/file.pdf',
+        mimeType: 'application/pdf',
+        displayName: 'My Test PDF',
+      };
+      const originalInlineData = {
+        data: 'c29tZV9ieXRlcw==',
+        mimeType: 'image/png',
+        displayName: 'My Test Image',
+      };
+
+      const llmRequest: LlmRequest = {
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                fileData: originalFileData,
+              },
+              {
+                inlineData: originalInlineData,
+              },
+            ],
+          },
+        ],
+        config: {labels: {env: 'prod'}},
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      for await (const _ of llm.generateContentAsync(llmRequest, false)) {
+        // consume response
+      }
+
+      expect(llm.apiBackend).toBe(GoogleLLMVariant.GEMINI_API);
+      const parts = llmRequest.contents?.[0]?.parts;
+      expect(parts?.[0]?.fileData?.displayName).toBeUndefined();
+      expect(parts?.[1]?.inlineData?.displayName).toBeUndefined();
+      expect(originalFileData.displayName).toBe('My Test PDF');
+      expect(originalInlineData.displayName).toBe('My Test Image');
+      expect(parts?.[0]?.fileData).not.toBe(originalFileData);
+      expect(parts?.[1]?.inlineData).not.toBe(originalInlineData);
+      expect(llmRequest.config?.labels).toBeUndefined();
+      expect(generateContentMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          contents: expect.arrayContaining([
+            expect.objectContaining({
+              parts: expect.arrayContaining([
+                expect.objectContaining({
+                  fileData: expect.objectContaining({
+                    fileUri: 'gs://bucket/file.pdf',
+                    mimeType: 'application/pdf',
+                    displayName: undefined,
+                  }),
+                }),
+                expect.objectContaining({
+                  inlineData: expect.objectContaining({
+                    data: 'c29tZV9ieXRlcw==',
+                    mimeType: 'image/png',
+                    displayName: undefined,
+                  }),
+                }),
+              ]),
+            }),
+          ]),
+        }),
+      );
+    });
+
+    it('should preserve displayName on fileData and inlineData when calling the Vertex AI backend', async () => {
+      const llm = new TestGemini({
+        vertexai: true,
+        project: 'test-project',
+        location: 'us-central1',
+      });
+      const generateContentMock = vi.fn().mockResolvedValue({
+        candidates: [{content: {parts: [{text: 'response'}]}}],
+      });
+      llm.apiClient.models.generateContent = generateContentMock;
+
+      const llmRequest: LlmRequest = {
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                fileData: {
+                  fileUri: 'gs://bucket/file.pdf',
+                  mimeType: 'application/pdf',
+                  displayName: 'My Test PDF',
+                },
+              },
+              {
+                inlineData: {
+                  data: 'c29tZV9ieXRlcw==',
+                  mimeType: 'image/png',
+                  displayName: 'My Test Image',
+                },
+              },
+            ],
+          },
+        ],
+        config: {labels: {env: 'prod'}},
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      for await (const _ of llm.generateContentAsync(llmRequest, false)) {
+        // consume response
+      }
+
+      expect(llm.apiBackend).toBe(GoogleLLMVariant.VERTEX_AI);
+      const parts = llmRequest.contents?.[0]?.parts;
+      expect(parts?.[0]?.fileData?.displayName).toBe('My Test PDF');
+      expect(parts?.[1]?.inlineData?.displayName).toBe('My Test Image');
+      expect(llmRequest.config?.labels).toEqual({env: 'prod'});
+      expect(generateContentMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          contents: expect.arrayContaining([
+            expect.objectContaining({
+              parts: expect.arrayContaining([
+                expect.objectContaining({
+                  fileData: expect.objectContaining({
+                    displayName: 'My Test PDF',
+                  }),
+                }),
+                expect.objectContaining({
+                  inlineData: expect.objectContaining({
+                    displayName: 'My Test Image',
+                  }),
+                }),
+              ]),
+            }),
+          ]),
+        }),
+      );
+    });
+
+    it('should merge tracking headers into custom httpOptions headers in non-streaming requests', async () => {
+      const llm = new TestGemini({apiKey: 'test-key'});
+      const trackingHeaders = llm.getTrackingHeaders();
+      const customHeaders: Record<string, string> = {
+        'custom-header': 'custom-value',
+      };
+      for (const [key, value] of Object.entries(trackingHeaders)) {
+        customHeaders[key] = `custom ${value}`;
+      }
+      const generateContentMock = vi.fn().mockResolvedValue({
+        candidates: [{content: {parts: [{text: 'response'}]}}],
+      });
+      llm.apiClient.models.generateContent = generateContentMock;
+
+      const llmRequest: LlmRequest = {
+        contents: [{role: 'user', parts: [{text: 'hello'}]}],
+        config: {httpOptions: {headers: {...customHeaders}}},
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      const responses: LlmResponse[] = [];
+      for await (const response of llm.generateContentAsync(
+        llmRequest,
+        false,
+      )) {
+        responses.push(response);
+      }
+
+      expect(responses).toHaveLength(1);
+      expect(generateContentMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            httpOptions: {
+              headers: {
+                'custom-header': 'custom-value',
+                ...trackingHeaders,
+              },
+            },
+          }),
+        }),
+      );
+    });
+
+    it('should merge tracking headers into custom httpOptions headers in streaming requests', async () => {
+      const llm = new TestGemini({apiKey: 'test-key'});
+      const trackingHeaders = llm.getTrackingHeaders();
+      const generateContentStreamMock = vi
+        .fn()
+        .mockResolvedValue([
+          {candidates: [{content: {parts: [{text: 'Hello'}]}}]},
+        ]);
+      llm.apiClient.models.generateContentStream = generateContentStreamMock;
+
+      const llmRequest: LlmRequest = {
+        contents: [{role: 'user', parts: [{text: 'hello'}]}],
+        config: {httpOptions: {headers: {'custom-header': 'custom-value'}}},
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      const responses: LlmResponse[] = [];
+      for await (const response of llm.generateContentAsync(llmRequest, true)) {
+        responses.push(response);
+      }
+
+      expect(responses).toHaveLength(2);
+      expect(generateContentStreamMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            httpOptions: {
+              headers: {
+                'custom-header': 'custom-value',
+                ...trackingHeaders,
+              },
+            },
+          }),
+        }),
+      );
+    });
+
+    it('should leave config.httpOptions undefined when no custom headers are provided', async () => {
+      const llm = new TestGemini({apiKey: 'test-key'});
+      const generateContentMock = vi.fn().mockResolvedValue({
+        candidates: [{content: {parts: [{text: 'response'}]}}],
+      });
+      llm.apiClient.models.generateContent = generateContentMock;
+
+      const llmRequest: LlmRequest = {
+        contents: [{role: 'user', parts: [{text: 'hello'}]}],
+        config: {},
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      const responses: LlmResponse[] = [];
+      for await (const response of llm.generateContentAsync(
+        llmRequest,
+        false,
+      )) {
+        responses.push(response);
+      }
+
+      expect(responses).toHaveLength(1);
+      expect(llmRequest.config?.httpOptions).toBeUndefined();
+      expect(generateContentMock).toHaveBeenCalledTimes(1);
+      expect(
+        generateContentMock.mock.calls[0]?.[0]?.config?.httpOptions,
+      ).toBeUndefined();
+    });
   });
 
   describe('generateContentAsync streaming', () => {
@@ -889,6 +1209,273 @@ describe('GoogleLlm', () => {
       expect(responses[3].content).toBeUndefined();
       expect(responses[3].usageMetadata).toEqual(usageMetadata);
     });
+
+    it('preserves separate thinking and text parts on the aggregated LlmResponse', async () => {
+      const gemini = createStreamingGemini([
+        {
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: [{text: 'Think1', thought: true}],
+              },
+            },
+          ],
+        },
+        {
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: [{text: 'Think2', thought: true}],
+              },
+            },
+          ],
+        },
+        {
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: [{text: 'Answer.'}],
+              },
+              finishReason: 'STOP',
+            },
+          ],
+        },
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      expect(responses).toHaveLength(4);
+      expect(responses[0].partial).toBe(true);
+      expect(responses[1].partial).toBe(true);
+      expect(responses[2].partial).toBe(true);
+      expect(responses[3].partial).toBe(false);
+      expect(responses[3].content?.parts).toEqual([
+        {text: 'Think1Think2', thought: true},
+        {text: 'Answer.'},
+      ]);
+    });
+
+    function textChunk(
+      text: string,
+      candidate: {finishReason?: FinishReason; finishMessage?: string} = {},
+    ) {
+      return {
+        candidates: [{content: {role: 'model', parts: [{text}]}, ...candidate}],
+      };
+    }
+
+    function thoughtChunk(text: string) {
+      return {
+        candidates: [
+          {content: {role: 'model', parts: [{text, thought: true}]}},
+        ],
+      };
+    }
+
+    function functionCallChunk(
+      name: string,
+      candidate: {finishReason?: FinishReason} = {},
+    ) {
+      return {
+        candidates: [
+          {
+            content: {role: 'model', parts: [{functionCall: {name, args: {}}}]},
+            ...candidate,
+          },
+        ],
+      };
+    }
+
+    it.each([
+      FinishReason.MAX_TOKENS,
+      FinishReason.SAFETY,
+      FinishReason.RECITATION,
+      FinishReason.OTHER,
+    ])(
+      'aggregates the text and reports finish reason %s as the error',
+      async (finishReason) => {
+        const gemini = createStreamingGemini([
+          textChunk('Hello'),
+          textChunk(' world', {
+            finishReason,
+            finishMessage: `Finished with ${finishReason}`,
+          }),
+        ]);
+
+        const responses = await collectResponses(gemini, true);
+
+        expect(responses).toHaveLength(3);
+        expect(responses[0].partial).toBe(true);
+        expect(responses[1].partial).toBe(true);
+        expect(responses[2].partial).toBe(false);
+        expect(responses[2].content?.parts).toEqual([{text: 'Hello world'}]);
+        expect(responses[2].errorCode).toBe(finishReason);
+        expect(responses[2].errorMessage).toBe(`Finished with ${finishReason}`);
+      },
+    );
+
+    it('keeps thought and text parts apart when the stream stops at MAX_TOKENS', async () => {
+      const gemini = createStreamingGemini([
+        thoughtChunk('Think1'),
+        textChunk('Answer', {
+          finishReason: FinishReason.MAX_TOKENS,
+          finishMessage: 'Maximum tokens reached',
+        }),
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      expect(responses).toHaveLength(3);
+      expect(responses[0].partial).toBe(true);
+      expect(responses[1].partial).toBe(true);
+      expect(responses[2].content?.parts).toEqual([
+        {text: 'Think1', thought: true},
+        {text: 'Answer'},
+      ]);
+      expect(responses[2].errorCode).toBe(FinishReason.MAX_TOKENS);
+      expect(responses[2].errorMessage).toBe('Maximum tokens reached');
+    });
+
+    it('leaves errorCode and errorMessage unset when the stream stops normally', async () => {
+      const gemini = createStreamingGemini([
+        textChunk('Hello'),
+        textChunk(' world', {
+          finishReason: FinishReason.STOP,
+          finishMessage: 'Successfully completed',
+        }),
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      expect(responses).toHaveLength(3);
+      expect(responses[0].partial).toBe(true);
+      expect(responses[1].partial).toBe(true);
+      expect(responses[2].content?.parts).toEqual([{text: 'Hello world'}]);
+      expect(responses[2].finishReason).toBe(FinishReason.STOP);
+      expect(responses[2].errorCode).toBeUndefined();
+      expect(responses[2].errorMessage).toBeUndefined();
+    });
+
+    it('yields only the function call when the stream has no text', async () => {
+      const gemini = createStreamingGemini([
+        functionCallChunk('lookup', {finishReason: FinishReason.STOP}),
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      expect(responses).toHaveLength(1);
+      expect(responses[0].content?.parts?.[0]?.functionCall?.name).toBe(
+        'lookup',
+      );
+    });
+
+    it('aggregates text before and after a function call separately', async () => {
+      const gemini = createStreamingGemini([
+        textChunk('First text'),
+        functionCallChunk('lookup'),
+        textChunk(' second text', {finishReason: FinishReason.STOP}),
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      expect(responses).toHaveLength(5);
+      expect(responses[0].partial).toBe(true);
+      expect(responses[0].content?.parts).toEqual([{text: 'First text'}]);
+      expect(responses[1].partial).toBe(false);
+      expect(responses[1].content?.parts).toEqual([{text: 'First text'}]);
+      expect(responses[2].content?.parts?.[0]?.functionCall?.name).toBe(
+        'lookup',
+      );
+      expect(responses[3].partial).toBe(true);
+      expect(responses[3].content?.parts).toEqual([{text: ' second text'}]);
+      expect(responses[4].partial).toBe(false);
+      expect(responses[4].content?.parts).toEqual([{text: ' second text'}]);
+      expect(responses[4].errorCode).toBeUndefined();
+    });
+
+    it('aggregates several text parts of one chunk', async () => {
+      const gemini = createStreamingGemini([
+        {
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: [{text: 'First part'}, {text: ' second part'}],
+              },
+              finishReason: FinishReason.STOP,
+            },
+          ],
+        },
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      expect(responses).toHaveLength(2);
+      expect(responses[0].partial).toBe(true);
+      expect(responses[0].content?.parts?.[0]?.text).toBe('First part');
+      expect(responses[1].partial).toBe(false);
+      expect(responses[1].content?.parts).toEqual([
+        {text: 'First part second part'},
+      ]);
+    });
+
+    it('aggregates thought and text on each side of a function call', async () => {
+      const gemini = createStreamingGemini([
+        thoughtChunk('Thinking...'),
+        textChunk("Here's my answer"),
+        functionCallChunk('lookup'),
+        thoughtChunk('More thinking...'),
+        textChunk(' and conclusion', {finishReason: FinishReason.STOP}),
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      expect(responses).toHaveLength(7);
+      expect(responses[2].partial).toBe(false);
+      expect(responses[2].content?.parts).toEqual([
+        {text: 'Thinking...', thought: true},
+        {text: "Here's my answer"},
+      ]);
+      expect(responses[6].partial).toBe(false);
+      expect(responses[6].content?.parts).toEqual([
+        {text: 'More thinking...', thought: true},
+        {text: ' and conclusion'},
+      ]);
+      expect(responses[6].errorCode).toBeUndefined();
+    });
+
+    it('produces one aggregate for each run of text around a function call', async () => {
+      const gemini = createStreamingGemini([
+        textChunk('First'),
+        textChunk(' chunk'),
+        functionCallChunk('divide'),
+        textChunk('Second'),
+        textChunk(' chunk', {finishReason: FinishReason.STOP}),
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      const aggregatedTexts = responses
+        .filter(
+          (response) => !response.partial && response.content?.parts?.[0]?.text,
+        )
+        .map((response) => response.content?.parts);
+      expect(aggregatedTexts).toEqual([
+        [{text: 'First chunk'}],
+        [{text: 'Second chunk'}],
+      ]);
+      expect(responses.at(-1)?.errorCode).toBeUndefined();
+      expect(
+        responses.flatMap((response) =>
+          (response.content?.parts ?? []).flatMap(
+            (part) => part.functionCall?.name ?? [],
+          ),
+        ),
+      ).toEqual(['divide']);
+    });
   });
 
   describe('connect', () => {
@@ -954,6 +1541,83 @@ describe('GoogleLlm', () => {
         }),
       );
     });
+
+    it('merges tracking headers and sets apiVersion when liveConnectConfig.httpOptions is provided', async () => {
+      const llm = new TestGemini({apiKey: 'test-key'});
+      const trackingHeaders = llm.getTrackingHeaders();
+      const request: LlmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [],
+        liveConnectConfig: {
+          httpOptions: {
+            headers: {'custom-live-header': 'live-value'},
+          },
+        },
+        config: {
+          systemInstruction: 'You are a helpful assistant.',
+          tools: [{googleSearch: {}}],
+        },
+        toolsDict: {},
+      };
+
+      const connection = await llm.connect(request);
+      expect(connection).toBeDefined();
+
+      expect(llm.liveApiClient.live.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'gemini-2.5-flash',
+          config: expect.objectContaining({
+            httpOptions: {
+              headers: {
+                'custom-live-header': 'live-value',
+                ...trackingHeaders,
+              },
+              apiVersion: llm.liveApiVersion,
+            },
+            systemInstruction: {
+              role: 'system',
+              parts: [{text: 'You are a helpful assistant.'}],
+            },
+            tools: [{googleSearch: {}}],
+          }),
+        }),
+      );
+    });
+
+    it('leaves liveConnectConfig.httpOptions undefined when no custom headers are provided', async () => {
+      const llm = new TestGemini({apiKey: 'test-key'});
+      const request: LlmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [],
+        liveConnectConfig: {},
+        config: {
+          systemInstruction: 'You are a helpful assistant.',
+          tools: [{googleSearch: {}}],
+        },
+        toolsDict: {},
+      };
+
+      const connection = await llm.connect(request);
+      expect(connection).toBeDefined();
+      expect(request.liveConnectConfig.httpOptions).toBeUndefined();
+      expect(
+        vi.mocked(llm.liveApiClient.live.connect).mock.calls[0]?.[0]?.config
+          ?.httpOptions,
+      ).toBeUndefined();
+
+      expect(llm.liveApiClient.live.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'gemini-2.5-flash',
+          config: expect.objectContaining({
+            systemInstruction: {
+              role: 'system',
+              parts: [{text: 'You are a helpful assistant.'}],
+            },
+            tools: [{googleSearch: {}}],
+          }),
+        }),
+      );
+    });
   });
 
   describe('liveApiVersion', () => {
@@ -973,6 +1637,37 @@ describe('GoogleLlm', () => {
         model: 'gemini-3.1-flash-live-preview',
       });
       expect(llm.liveApiVersion).toBe('v1alpha');
+    });
+  });
+
+  describe('supportedModels', () => {
+    it('defines regex patterns matching supported Gemini model names and Vertex endpoints', () => {
+      expect(Gemini.supportedModels).toEqual(
+        expect.arrayContaining([
+          /gemini-.*/,
+          /^model-optimizer-.*/,
+          /projects\/.+\/locations\/.+\/endpoints\/.+/,
+          /projects\/.+\/locations\/.+\/publishers\/google\/models\/gemini.+/,
+        ]),
+      );
+
+      const isSupported = (model: string) =>
+        Gemini.supportedModels.some((pattern) =>
+          typeof pattern === 'string' ? pattern === model : pattern.test(model),
+        );
+
+      expect(isSupported('gemini-1.5-flash')).toBe(true);
+      expect(isSupported('gemini-1.5-pro')).toBe(true);
+      expect(isSupported('model-optimizer-exp-04-09')).toBe(true);
+      expect(isSupported('custom-model-optimizer-foo')).toBe(false);
+      expect(LLMRegistry.resolve('model-optimizer-exp-04-09')).toBe(Gemini);
+      expect(isSupported('projects/p/locations/l/endpoints/e')).toBe(true);
+      expect(
+        isSupported(
+          'projects/p/locations/l/publishers/google/models/gemini-1.5-pro',
+        ),
+      ).toBe(true);
+      expect(isSupported('unsupported-model')).toBe(false);
     });
   });
 });
@@ -1056,5 +1751,25 @@ describe('Gemini computer use requests', () => {
       'You are a browser agent.',
     );
     expect(llmRequest.toolsDict).toEqual({wait: waitTool});
+  });
+
+  it('handles a request when config is omitted', async () => {
+    const {llmRequest, waitTool} = makeComputerUseRequest('gemini-2.5-flash');
+    llmRequest.config = undefined;
+
+    await send(llmRequest);
+
+    expect(llmRequest.config).toEqual({});
+    expect(llmRequest.toolsDict).toEqual({wait: waitTool});
+  });
+
+  it('does not add wait_5_seconds when wait is absent from toolsDict', async () => {
+    const {llmRequest} = makeComputerUseRequest('gemini-2.5-flash');
+    llmRequest.toolsDict = {};
+
+    await send(llmRequest);
+
+    expect(llmRequest.config?.systemInstruction).toBeUndefined();
+    expect(llmRequest.toolsDict).toEqual({});
   });
 });

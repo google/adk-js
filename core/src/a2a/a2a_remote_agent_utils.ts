@@ -12,7 +12,10 @@ import {Event as AdkEvent, createEvent} from '../events/event.js';
 import {Session} from '../sessions/session.js';
 import {camelCaseKeys} from '../utils/case_utils.js';
 import {logger} from '../utils/logger.js';
-import {AdkMetadataKeys} from './metadata_converter_utils.js';
+import {
+  A2A_METADATA_KEY_PREFIX,
+  AdkMetadataKeys,
+} from './metadata_converter_utils.js';
 import {toA2AParts} from './part_converter_utils.js';
 
 export interface UserFunctionCall {
@@ -304,6 +307,17 @@ export function toForwardableA2AParts(
 }
 
 /**
+ * Reports whether the remote agent wrapper raised this error event itself,
+ * so the peer never saw it: it has an error message and no relayed response.
+ */
+function isLocalErrorEvent(event: AdkEvent): boolean {
+  return (
+    !!event.errorMessage &&
+    event.customMetadata?.[`${A2A_METADATA_KEY_PREFIX}response`] === undefined
+  );
+}
+
+/**
  * Returns A2A content parts for all events not yet seen by the remote agent,
  * along with the A2A context ID found in the most recent remote agent event.
  *
@@ -323,7 +337,7 @@ export function toMissingRemoteSessionParts(
 
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
-    if (event.author === peerName) {
+    if (event.author === peerName && !isLocalErrorEvent(event)) {
       lastRemoteResponseIndex = i;
       const metadata = event.customMetadata || {};
       contextId = metadata[AdkMetadataKeys.CONTEXT_ID] as string;

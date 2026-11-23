@@ -8,7 +8,6 @@ import {
   buildFunctionDeclarationForParamsForCrewai,
   Context,
   FunctionTool,
-  GoogleLLMVariant,
   isZodObject,
   isZodSchema,
   type SchemaLike,
@@ -22,6 +21,7 @@ import type {FunctionDeclaration} from '@google/genai';
  */
 export type CrewaiSchemaLike =
   | SchemaLike
+  | {toJsonSchema: () => Record<string, unknown>}
   | {jsonSchema: () => Record<string, unknown>}
   | {modelJsonSchema: () => Record<string, unknown>}
   | Record<string, unknown>;
@@ -48,10 +48,8 @@ export interface CrewaiToolLike {
   /**
    * Executes the CrewAI tool with the given arguments.
    */
-  run(
-    args: Record<string, unknown>,
-    toolContext?: Context,
-  ): unknown | Promise<unknown>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Accepts any typed tool input; unknown breaks untyped destructuring callbacks.
+  run(args: any, toolContext?: Context): unknown | Promise<unknown>;
 }
 
 /**
@@ -103,58 +101,111 @@ function isCrewaiToolConfig(
   );
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Converts a schema source to a JSON Schema object that the caller owns.
+ */
+function readRawSchema(argsSchema: CrewaiSchemaLike): Record<string, unknown> {
+  if (
+    typeof (argsSchema as {toJsonSchema?: unknown}).toJsonSchema === 'function'
+  ) {
+    return structuredClone(
+      (
+        argsSchema as {toJsonSchema: () => Record<string, unknown>}
+      ).toJsonSchema(),
+    );
+  }
+  if (typeof (argsSchema as {jsonSchema?: unknown}).jsonSchema === 'function') {
+    return structuredClone(
+      (argsSchema as {jsonSchema: () => Record<string, unknown>}).jsonSchema(),
+    );
+  }
+  if (
+    typeof (argsSchema as {modelJsonSchema?: unknown}).modelJsonSchema ===
+    'function'
+  ) {
+    return structuredClone(
+      (
+        argsSchema as {modelJsonSchema: () => Record<string, unknown>}
+      ).modelJsonSchema(),
+    );
+  }
+  if (isZodSchema(argsSchema)) {
+    return structuredClone(toJsonSchema(argsSchema));
+  }
+  return structuredClone(argsSchema as Record<string, unknown>);
+}
+
+/**
+ * Adds a `null` branch to a property schema so that the declaration builder
+ * does not mark the property as required.
+ */
+function markOptional(prop: Record<string, unknown>): void {
+  if (!('anyOf' in prop) && typeof prop['type'] === 'string') {
+    const propType = prop['type'];
+    delete prop['type'];
+    prop['anyOf'] = [{type: propType}, {type: 'null'}];
+    return;
+  }
+  const anyOf = prop['anyOf'];
+  if (
+    Array.isArray(anyOf) &&
+    !anyOf.some((branch) => isPlainRecord(branch) && branch['type'] === 'null')
+  ) {
+    anyOf.push({type: 'null'});
+  }
+}
+
 function normalizeCrewaiSchemaJson(
   argsSchema?: CrewaiSchemaLike,
 ): Record<string, unknown> {
   if (!argsSchema) {
     return {};
   }
-  if (
-    typeof (argsSchema as {modelJsonSchema?: unknown}).modelJsonSchema ===
-    'function'
-  ) {
-    return (
-      argsSchema as {modelJsonSchema: () => Record<string, unknown>}
-    ).modelJsonSchema();
+  const rawSchema = readRawSchema(argsSchema);
+  const properties = rawSchema['properties'];
+
+  // A JSON Schema with a string `type` or a `$schema` key but no `properties`
+  // (for example `{type: 'object'}`) has no parameters.
+  if (!isPlainRecord(properties)) {
+    return typeof rawSchema['type'] === 'string' ||
+      typeof rawSchema['$schema'] === 'string'
+      ? {}
+      : rawSchema;
   }
-  if (typeof (argsSchema as {jsonSchema?: unknown}).jsonSchema === 'function') {
-    return (
-      argsSchema as {jsonSchema: () => Record<string, unknown>}
-    ).jsonSchema();
-  }
-  if (isZodSchema(argsSchema)) {
-    const raw = structuredClone(toJsonSchema(argsSchema));
-    const requiredSet = new Set<string>(
-      Array.isArray(raw['required']) ? (raw['required'] as string[]) : [],
-    );
-    const properties = raw['properties'] as
-      Record<string, Record<string, unknown>> | undefined;
-    if (properties && typeof properties === 'object') {
-      for (const entry of Object.entries(properties)) {
-        const key = entry[0];
-        const prop = entry[1];
-        if (!prop || typeof prop !== 'object') {
-          continue;
-        }
-        if (Array.isArray(prop['type'])) {
-          const types = prop['type'] as string[];
-          delete prop['type'];
-          prop['anyOf'] = types.map((t) => ({type: t}));
-        } else if (
-          !requiredSet.has(key) &&
-          !('default' in prop) &&
-          !('anyOf' in prop) &&
-          typeof prop['type'] === 'string'
-        ) {
-          const propType = prop['type'];
-          delete prop['type'];
-          prop['anyOf'] = [{type: propType}, {type: 'null'}];
-        }
-      }
+
+  // In JSON Schema, an object schema without `required` requires no
+  // properties. A bare `{properties}` fragment has no such list, so its fields
+  // stay required unless they allow null or carry a default.
+  const isJsonObjectSchema =
+    rawSchema['type'] === 'object' || typeof rawSchema['$schema'] === 'string';
+  const requiredSet = Array.isArray(rawSchema['required'])
+    ? new Set<string>(rawSchema['required'] as string[])
+    : isJsonObjectSchema
+      ? new Set<string>()
+      : undefined;
+
+  for (const [key, prop] of Object.entries(properties)) {
+    if (!isPlainRecord(prop)) {
+      continue;
     }
-    return raw;
+    if (Array.isArray(prop['type'])) {
+      const types = prop['type'] as string[];
+      delete prop['type'];
+      prop['anyOf'] = types.map((t) => ({type: t}));
+    }
+    if (
+      requiredSet !== undefined &&
+      !requiredSet.has(key) &&
+      !('default' in prop)
+    ) {
+      markOptional(prop);
+    }
   }
-  return structuredClone(argsSchema as Record<string, unknown>);
+  return rawSchema;
 }
 
 /**
@@ -214,8 +265,11 @@ export class CrewaiTool extends FunctionTool<ToolInputParameters> {
    */
   override _getDeclaration(): FunctionDeclaration {
     const schemaJson = normalizeCrewaiSchemaJson(this.tool.argsSchema);
+    // Third-party schemas are always normalized to the non-Vertex form, which
+    // removes single-branch `anyOf`, `nullable`, `default` and `title` from
+    // each property.
     return buildFunctionDeclarationForParamsForCrewai(
-      this.apiVariant === GoogleLLMVariant.VERTEX_AI,
+      false,
       this.name,
       this.description,
       this.tool.run,

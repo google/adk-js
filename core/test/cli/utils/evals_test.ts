@@ -6,6 +6,7 @@
 
 import {
   convertSessionToEvalFormat,
+  convertSessionToEvalInvocations,
   createEmptyState,
   createEvent,
   createSession,
@@ -379,6 +380,386 @@ describe('cli/utils/evals', () => {
           reference: 'Response 2',
         },
       ]);
+    });
+
+    it('extracts both intermediate text and tool call when an agent event has multiple parts', () => {
+      const session = createSession({
+        id: 's1',
+        appName: 'app',
+        userId: 'u1',
+        events: [
+          createEvent({
+            author: 'user',
+            content: {role: 'user', parts: [{text: 'Do something complex'}]},
+          }),
+          createEvent({
+            author: 'agent',
+            content: {
+              role: 'model',
+              parts: [
+                {text: 'Okay, doing it.'},
+                {
+                  functionCall: {
+                    name: 'complex_tool',
+                    args: {value: true},
+                  },
+                },
+              ],
+            },
+          }),
+          createEvent({
+            author: 'agent',
+            content: {role: 'model', parts: [{text: 'Finished.'}]},
+          }),
+        ],
+      });
+
+      expect(convertSessionToEvalFormat(session)).toEqual([
+        {
+          query: 'Do something complex',
+          expected_tool_use: [
+            {tool_name: 'complex_tool', tool_input: {value: true}},
+          ],
+          expected_intermediate_agent_responses: [
+            ['agent', [{text: 'Okay, doing it.'}]],
+          ],
+          reference: 'Finished.',
+        },
+      ]);
+    });
+
+    it('skips user and agent events that have missing content or empty parts', () => {
+      const session = createSession({
+        id: 's1',
+        appName: 'app',
+        userId: 'u1',
+        events: [
+          createEvent({
+            author: 'user',
+            content: {role: 'user', parts: [{text: 'Query 1'}]},
+          }),
+          createEvent({
+            author: 'agent',
+            content: undefined,
+          }),
+          createEvent({
+            author: 'agent',
+            content: {role: 'model', parts: [{text: 'Response 1'}]},
+          }),
+          createEvent({
+            author: 'user',
+            content: undefined,
+          }),
+          createEvent({
+            author: 'user',
+            content: {role: 'user', parts: [{text: 'Query 2'}]},
+          }),
+          createEvent({
+            author: 'agent',
+            content: {role: 'model', parts: []},
+          }),
+          createEvent({
+            author: 'agent',
+            content: {role: 'model', parts: [{text: 'Response 2'}]},
+          }),
+          createEvent({
+            author: 'user',
+            content: {role: 'user', parts: undefined},
+          }),
+          createEvent({
+            author: 'user',
+            content: {role: 'user', parts: []},
+          }),
+          createEvent({
+            author: 'user',
+            content: {role: 'user', parts: [{text: 'Query 3'}]},
+          }),
+          createEvent({
+            author: 'agent',
+            content: {role: 'model', parts: [{text: 'Response 3'}]},
+          }),
+        ],
+      });
+
+      expect(convertSessionToEvalFormat(session)).toEqual([
+        {
+          query: 'Query 1',
+          expected_tool_use: [],
+          expected_intermediate_agent_responses: [],
+          reference: 'Response 1',
+        },
+        {
+          query: 'Query 2',
+          expected_tool_use: [],
+          expected_intermediate_agent_responses: [],
+          reference: 'Response 2',
+        },
+        {
+          query: 'Query 3',
+          expected_tool_use: [],
+          expected_intermediate_agent_responses: [],
+          reference: 'Response 3',
+        },
+      ]);
+    });
+
+    it('ignores agent text parts that have an empty string', () => {
+      const session = createSession({
+        id: 's1',
+        appName: 'app',
+        userId: 'u1',
+        events: [
+          createEvent({
+            author: 'user',
+            content: {role: 'user', parts: [{text: 'Query'}]},
+          }),
+          createEvent({
+            author: 'agent',
+            content: {role: 'model', parts: [{text: 'Okay'}]},
+          }),
+          createEvent({
+            author: 'agent',
+            content: {role: 'model', parts: [{text: ''}]},
+          }),
+          createEvent({
+            author: 'agent',
+            content: {role: 'model', parts: [{text: 'Done'}]},
+          }),
+          createEvent({
+            author: 'agent',
+            content: {role: 'model', parts: [{text: ''}]},
+          }),
+        ],
+      });
+
+      expect(convertSessionToEvalFormat(session)).toEqual([
+        {
+          query: 'Query',
+          expected_tool_use: [],
+          expected_intermediate_agent_responses: [['agent', [{text: 'Okay'}]]],
+          reference: 'Done',
+        },
+      ]);
+    });
+
+    it('converts a multi-agent sample session with combined text and transfer tool calls', () => {
+      const session = createSession({
+        id: 'some_id',
+        appName: 'hello_world_ma',
+        userId: 'user',
+        events: [
+          createEvent({
+            author: 'user',
+            content: {role: 'user', parts: [{text: 'What can you do?'}]},
+          }),
+          createEvent({
+            author: 'root_agent',
+            content: {
+              role: 'model',
+              parts: [
+                {text: 'I can roll dice and check if numbers are prime. \n'},
+              ],
+            },
+          }),
+          createEvent({
+            author: 'user',
+            content: {
+              role: 'user',
+              parts: [
+                {
+                  text: 'Roll a 8 sided dice and then check if 90 is a prime number or not.',
+                },
+              ],
+            },
+          }),
+          createEvent({
+            author: 'root_agent',
+            content: {
+              role: 'model',
+              parts: [
+                {
+                  functionCall: {
+                    name: 'transfer_to_agent',
+                    args: {agent_name: 'roll_agent'},
+                  },
+                },
+              ],
+            },
+          }),
+          createEvent({
+            author: 'roll_agent',
+            content: {
+              role: 'model',
+              parts: [{functionCall: {name: 'roll_die', args: {sides: 8}}}],
+            },
+          }),
+          createEvent({
+            author: 'roll_agent',
+            content: {
+              role: 'model',
+              parts: [
+                {text: "I rolled a 2. Now, I'll check if 90 is prime. \n\n"},
+                {
+                  functionCall: {
+                    name: 'transfer_to_agent',
+                    args: {agent_name: 'prime_agent'},
+                  },
+                },
+              ],
+            },
+          }),
+          createEvent({
+            author: 'prime_agent',
+            content: {
+              role: 'model',
+              parts: [
+                {functionCall: {name: 'check_prime', args: {nums: [90]}}},
+              ],
+            },
+          }),
+          createEvent({
+            author: 'prime_agent',
+            content: {
+              role: 'model',
+              parts: [{text: '90 is not a prime number. \n'}],
+            },
+          }),
+        ],
+      });
+
+      expect(convertSessionToEvalFormat(session)).toEqual([
+        {
+          query: 'What can you do?',
+          expected_tool_use: [],
+          expected_intermediate_agent_responses: [],
+          reference: 'I can roll dice and check if numbers are prime. \n',
+        },
+        {
+          query:
+            'Roll a 8 sided dice and then check if 90 is a prime number or not.',
+          expected_tool_use: [
+            {
+              tool_name: 'transfer_to_agent',
+              tool_input: {agent_name: 'roll_agent'},
+            },
+            {tool_name: 'roll_die', tool_input: {sides: 8}},
+            {
+              tool_name: 'transfer_to_agent',
+              tool_input: {agent_name: 'prime_agent'},
+            },
+            {tool_name: 'check_prime', tool_input: {nums: [90]}},
+          ],
+          expected_intermediate_agent_responses: [
+            [
+              'roll_agent',
+              [{text: "I rolled a 2. Now, I'll check if 90 is prime. \n\n"}],
+            ],
+          ],
+          reference: '90 is not a prime number. \n',
+        },
+      ]);
+    });
+  });
+
+  describe('convertSessionToEvalInvocations', () => {
+    it('groups events by user turn into structured EvalInvocation objects', () => {
+      const session = createSession({
+        id: 's1',
+        appName: 'app',
+        userId: 'u1',
+        events: [
+          createEvent({
+            author: 'user',
+            invocationId: 'inv-1',
+            timestamp: 100,
+            content: {role: 'user', parts: [{text: 'first question'}]},
+          }),
+          createEvent({
+            author: 'agent',
+            invocationId: 'inv-1',
+            content: {
+              role: 'model',
+              parts: [
+                {text: 'thinking...'},
+                {functionCall: {name: 'lookup', args: {q: 'first'}}},
+              ],
+            },
+          }),
+          createEvent({
+            author: 'agent',
+            invocationId: 'inv-1',
+            content: {role: 'model', parts: [{text: 'first answer'}]},
+          }),
+          createEvent({
+            author: 'user',
+            invocationId: 'inv-2',
+            timestamp: 200,
+            content: {role: 'user', parts: [{text: 'second question'}]},
+          }),
+          createEvent({
+            author: 'agent',
+            invocationId: 'inv-2',
+            content: {role: 'model', parts: [{text: 'second answer'}]},
+          }),
+        ],
+      });
+
+      const invocations = convertSessionToEvalInvocations(session);
+
+      expect(invocations.map((i) => i.invocationId)).toEqual([
+        'inv-1',
+        'inv-2',
+      ]);
+      expect(invocations.map((i) => i.userContent.parts?.[0]?.text)).toEqual([
+        'first question',
+        'second question',
+      ]);
+      expect(invocations.map((i) => i.finalResponse?.parts?.[0]?.text)).toEqual(
+        ['first answer', 'second answer'],
+      );
+      expect(invocations[0].intermediateData).toEqual({
+        toolUses: [{name: 'lookup', args: {q: 'first'}}],
+        intermediateResponses: [['agent', [{text: 'thinking...'}]]],
+      });
+      expect(invocations[1].intermediateData).toEqual({
+        toolUses: [],
+        intermediateResponses: [],
+      });
+    });
+
+    it('stores creationTimestamp in seconds and leaves out an empty invocationId', () => {
+      const session = createSession({
+        id: 's1',
+        appName: 'app',
+        userId: 'u1',
+        events: [
+          createEvent({
+            author: 'user',
+            invocationId: 'inv-1',
+            timestamp: 1_700_000_000_500,
+            content: {role: 'user', parts: [{text: 'with id'}]},
+          }),
+          createEvent({
+            author: 'user',
+            invocationId: '',
+            content: {role: 'user', parts: [{text: 'without id'}]},
+          }),
+        ],
+      });
+
+      const invocations = convertSessionToEvalInvocations(session);
+
+      expect(invocations[0].creationTimestamp).toBe(1_700_000_000.5);
+      expect(invocations[1]).not.toHaveProperty('invocationId');
+    });
+
+    it('returns an empty list when session has no events or is undefined', () => {
+      expect(
+        convertSessionToEvalInvocations(
+          createSession({id: 's1', appName: 'app', userId: 'u1', events: []}),
+        ),
+      ).toEqual([]);
+      expect(convertSessionToEvalInvocations(undefined)).toEqual([]);
     });
   });
 });

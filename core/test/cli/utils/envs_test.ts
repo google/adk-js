@@ -4,7 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {loadDotenvForAgent, walkToRootUntilFound} from '@google/adk';
+import {
+  InputValidationError,
+  loadDotenvForAgent,
+  walkToRootUntilFound,
+} from '@google/adk';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -24,6 +28,7 @@ describe('cli/utils/envs', () => {
     delete process.env['ADK_TEST_ENV_KEY_2'];
     delete process.env['ADK_TEST_ENV_QUOTED'];
     delete process.env['ADK_TEST_ENV_SINGLE'];
+    delete process.env['ADK_TEST_OUTSIDE_SECRET'];
   });
 
   describe('walkToRootUntilFound', () => {
@@ -160,6 +165,90 @@ describe('cli/utils/envs', () => {
       expect(infoMessages).toEqual([
         ['No .nonexistent_adk_env_file_xyz file found for missing_agent'],
       ]);
+    });
+  });
+
+  describe('loadDotenvForAgent input validation', () => {
+    let parentDir: string;
+
+    beforeEach(() => {
+      parentDir = path.join(tempDir, 'parent');
+      fs.mkdirSync(path.join(parentDir, 'valid_agent'), {recursive: true});
+      fs.mkdirSync(path.join(tempDir, 'outside'), {recursive: true});
+      fs.writeFileSync(
+        path.join(tempDir, '.env'),
+        'ADK_TEST_OUTSIDE_SECRET=root\n',
+      );
+      fs.writeFileSync(
+        path.join(tempDir, 'outside', '.env'),
+        'ADK_TEST_OUTSIDE_SECRET=outside\n',
+      );
+    });
+
+    it.each([
+      '',
+      '.',
+      '..',
+      '../outside',
+      '../../etc',
+      'sub/nested',
+      'sub\\nested',
+      'C:evil',
+      'bad\x00name',
+    ])('rejects agentName %j when agentParentFolder is given', (agentName) => {
+      expect(() => loadDotenvForAgent(agentName, parentDir)).toThrow(
+        InputValidationError,
+      );
+      expect(process.env['ADK_TEST_OUTSIDE_SECRET']).toBeUndefined();
+    });
+
+    it.each([
+      '',
+      '.',
+      '..',
+      '../outside/agent.ts',
+      'foo/../../outside',
+      'bad\x00name',
+    ])(
+      'rejects agentName %j when agentParentFolder is omitted',
+      (agentName) => {
+        expect(() => loadDotenvForAgent(agentName)).toThrow(
+          InputValidationError,
+        );
+        expect(process.env['ADK_TEST_OUTSIDE_SECRET']).toBeUndefined();
+      },
+    );
+
+    it.each(['', '.', '..', '../.env', 'sub/.env', 'sub\\.env', '.env\x00'])(
+      'rejects filename %j',
+      (filename) => {
+        expect(() =>
+          loadDotenvForAgent('valid_agent', parentDir, filename),
+        ).toThrow(InputValidationError);
+        expect(process.env['ADK_TEST_OUTSIDE_SECRET']).toBeUndefined();
+      },
+    );
+
+    it.each(['', 'bad\x00dir'])(
+      'rejects agentParentFolder %j',
+      (agentParentFolder) => {
+        expect(() =>
+          loadDotenvForAgent('valid_agent', agentParentFolder),
+        ).toThrow(InputValidationError);
+        expect(process.env['ADK_TEST_OUTSIDE_SECRET']).toBeUndefined();
+      },
+    );
+
+    it('accepts an agentName that starts with two dots', () => {
+      fs.mkdirSync(path.join(parentDir, '..hidden_agent'));
+      fs.writeFileSync(
+        path.join(parentDir, '..hidden_agent', '.env'),
+        'ADK_TEST_ENV_KEY_1=hidden\n',
+      );
+
+      loadDotenvForAgent('..hidden_agent', parentDir);
+
+      expect(process.env['ADK_TEST_ENV_KEY_1']).toBe('hidden');
     });
   });
 });

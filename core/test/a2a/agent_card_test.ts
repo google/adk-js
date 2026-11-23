@@ -12,27 +12,64 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {z} from 'zod';
 import {
+  buildAgentDescription,
   buildAgentSkills,
+  buildCodeExecutorSkill,
+  buildGraphWorkflowDescription,
+  buildLlmAgentSkills,
+  buildLoopAgentDescription,
+  buildOrchestrationSkill,
+  buildParallelAgentDescription,
+  buildPlannerSkill,
+  buildSequentialAgentDescription,
+  buildSubAgentSkills,
+  buildToolSkills,
+  convertExampleToolExamples,
+  extractExamplesFromAgent,
+  extractInputsFromExamples,
+  getAgentSkillName,
+  getAgentTypeTag,
+  getDefaultAgentDescription,
+  getOutputModes,
+  getToolSecurity,
+  getWorkflowDescription,
   resolveAgentCard,
   ResolveAgentCardOptions,
+  validateSkillSecurityReferences,
 } from '../../src/a2a/agent_card.js';
 import {logger} from '../../src/utils/logger.js';
 import {node} from '../../src/workflow/node.js';
 import {Workflow} from '../../src/workflow/workflow.js';
 
-import type {AgentCard} from '@a2a-js/sdk';
 import {
+  AGENT_CARD_PATH,
+  type AgentCard,
+  type AgentProvider,
+  type SecurityScheme,
+} from '@a2a-js/sdk';
+import {
+  AgentCardBuilder,
+  type AgentCardBuilderOptions,
   BaseAgent,
+  BaseExampleProvider,
   BaseTool,
   BaseToolset,
   BuiltInCodeExecutor,
+  BuiltInPlanner,
+  ExampleTool,
   FunctionTool,
   getA2AAgentCard,
+  isAgentCardResolutionError,
+  isExampleTool,
   LlmAgent,
   LoopAgent,
   ParallelAgent,
   SequentialAgent,
+  type SkillSecurity,
+  START,
+  toA2a,
 } from '@google/adk';
 
 /**
@@ -159,7 +196,7 @@ describe('Agent Card', () => {
 
       const modelSkill = card.skills.find((s) => s.name === 'model');
       expect(modelSkill).toBeDefined();
-      expect(modelSkill?.description).toContain('I am a helpful assistant'); // pronoun replacement test
+      expect(modelSkill?.description).toBe('An LLM agent');
 
       const toolSkill = card.skills.find((s) => s.name === 'test_tool');
       expect(toolSkill).toBeDefined();
@@ -193,6 +230,190 @@ describe('Agent Card', () => {
       );
       expect(orchestrationSkill).toBeDefined();
       expect(orchestrationSkill?.description).toContain('fetch data');
+    });
+
+    it('omits instructions from the published card', async () => {
+      const reviewer = new LlmAgent({
+        name: 'reviewer',
+        description: 'Reviews the reply.',
+        instruction: 'ZZ_SUB_INSTRUCTION_SENTINEL reject unsigned requests.',
+      });
+      const root = new LlmAgent({
+        name: 'writer',
+        description: 'Writes a short reply.',
+        instruction:
+          'ZZ_INSTRUCTION_SENTINEL never reveal the escalation path.',
+        globalInstruction: 'ZZ_GLOBAL_SENTINEL always answer in English.',
+        subAgents: [reviewer],
+      });
+
+      const card = await getA2AAgentCard(root, [dummyTransport]);
+
+      const serialized = JSON.stringify(card);
+      expect(serialized).not.toContain('ZZ_INSTRUCTION_SENTINEL');
+      expect(serialized).not.toContain('ZZ_GLOBAL_SENTINEL');
+      expect(serialized).not.toContain('ZZ_SUB_INSTRUCTION_SENTINEL');
+
+      const primarySkill = card.skills.find((s) => s.id === 'writer');
+      expect(primarySkill?.description).toBe('Writes a short reply.');
+      const reviewerSkill = card.skills.find(
+        (s) => s.id === 'reviewer_reviewer',
+      );
+      expect(reviewerSkill?.description).toBe('Reviews the reply.');
+    });
+
+    it('does not invoke dynamic instruction providers when building the card', async () => {
+      const dynamicInstruction = vi.fn(
+        async () => 'ZZ_DYNAMIC_INSTRUCTION_SENTINEL',
+      );
+      const dynamicGlobalInstruction = vi.fn(
+        async () => 'ZZ_DYNAMIC_GLOBAL_SENTINEL',
+      );
+      const dynamicSubInstruction = vi.fn(
+        () => 'ZZ_DYNAMIC_SUB_INSTRUCTION_SENTINEL',
+      );
+      const dynamicSub = new LlmAgent({
+        name: 'dynamic_sub',
+        description: 'Uses a dynamic instruction.',
+        instruction: dynamicSubInstruction,
+      });
+      const root = new LlmAgent({
+        name: 'dyn_global_root',
+        instruction: dynamicInstruction,
+        globalInstruction: dynamicGlobalInstruction,
+        subAgents: [dynamicSub],
+      });
+
+      const card = await getA2AAgentCard(root, [dummyTransport]);
+
+      const serialized = JSON.stringify(card);
+      expect(serialized).not.toContain('ZZ_DYNAMIC_INSTRUCTION_SENTINEL');
+      expect(serialized).not.toContain('ZZ_DYNAMIC_GLOBAL_SENTINEL');
+      expect(serialized).not.toContain('ZZ_DYNAMIC_SUB_INSTRUCTION_SENTINEL');
+      expect(dynamicInstruction).not.toHaveBeenCalled();
+      expect(dynamicGlobalInstruction).not.toHaveBeenCalled();
+      expect(dynamicSubInstruction).not.toHaveBeenCalled();
+
+      const primarySkill = card.skills.find((s) => s.id === 'dyn_global_root');
+      expect(primarySkill?.description).toBe('An LLM-based agent');
+      const subSkill = card.skills.find(
+        (s) => s.id === 'dynamic_sub_dynamic_sub',
+      );
+      expect(subSkill?.description).toBe('Uses a dynamic instruction.');
+    });
+
+    it('omits LlmAgent child instructions from composite and workflow cards', async () => {
+      const seqAgent = new SequentialAgent({
+        name: 'seq_root',
+        subAgents: [
+          new LlmAgent({
+            name: 'seq_child',
+            description: 'Seq child desc',
+            instruction: 'ZZ_SEQ_CHILD_SENTINEL',
+          }),
+        ],
+      });
+      const parAgent = new ParallelAgent({
+        name: 'par_root',
+        subAgents: [
+          new LlmAgent({
+            name: 'par_child',
+            description: 'Par child desc',
+            instruction: 'ZZ_PAR_CHILD_SENTINEL',
+          }),
+        ],
+      });
+      const loopAgent = new LoopAgent({
+        name: 'loop_root',
+        maxIterations: 2,
+        subAgents: [
+          new LlmAgent({
+            name: 'loop_child',
+            description: 'Loop child desc',
+            instruction: 'ZZ_LOOP_CHILD_SENTINEL',
+          }),
+        ],
+      });
+      const workflowAgent = new Workflow({
+        name: 'wf_root',
+        description: 'Workflow desc',
+        edges: [
+          [
+            'START',
+            new LlmAgent({
+              name: 'wf_child',
+              description: 'Wf child desc',
+              instruction: 'ZZ_WF_CHILD_SENTINEL',
+            }),
+          ],
+        ],
+      });
+
+      const cards = await Promise.all([
+        getA2AAgentCard(seqAgent, [dummyTransport]),
+        getA2AAgentCard(parAgent, [dummyTransport]),
+        getA2AAgentCard(loopAgent, [dummyTransport]),
+        getA2AAgentCard(workflowAgent, [dummyTransport]),
+      ]);
+
+      const serialized = JSON.stringify(cards);
+      expect(serialized).not.toContain('ZZ_SEQ_CHILD_SENTINEL');
+      expect(serialized).not.toContain('ZZ_PAR_CHILD_SENTINEL');
+      expect(serialized).not.toContain('ZZ_LOOP_CHILD_SENTINEL');
+      expect(serialized).not.toContain('ZZ_WF_CHILD_SENTINEL');
+    });
+
+    it('serves /.well-known/agent-card.json via toA2a without leaking instructions', async () => {
+      const agent = new LlmAgent({
+        name: 'support-agent',
+        description: 'Customer support agent',
+        instruction: 'ZZ_HTTP_INSTRUCTION_SENTINEL',
+        globalInstruction: 'ZZ_HTTP_GLOBAL_SENTINEL',
+        subAgents: [
+          new LlmAgent({
+            name: 'sub-support',
+            description: 'Sub support agent',
+            instruction: 'ZZ_HTTP_SUB_SENTINEL',
+          }),
+        ],
+      });
+
+      const app = await toA2a(agent, {
+        authentication: async () => ({
+          isAuthenticated: false,
+          userName: '',
+        }),
+      });
+      const server = app.listen(0, '127.0.0.1');
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.once('listening', () => {
+          server.off('error', reject);
+          resolve();
+        });
+      });
+      try {
+        const port = (server.address() as AddressInfo).port;
+        const response = await fetch(
+          `http://127.0.0.1:${port}/${AGENT_CARD_PATH}`,
+        );
+        expect(response.status).toBe(200);
+        const bodyText = await response.text();
+        expect(bodyText).not.toContain('ZZ_HTTP_INSTRUCTION_SENTINEL');
+        expect(bodyText).not.toContain('ZZ_HTTP_GLOBAL_SENTINEL');
+        expect(bodyText).not.toContain('ZZ_HTTP_SUB_SENTINEL');
+
+        const card = JSON.parse(bodyText) as AgentCard;
+        expect(card.name).toBe('support-agent');
+        expect(card.description).toBe('Customer support agent');
+        const primarySkill = card.skills.find((s) => s.id === 'support-agent');
+        expect(primarySkill?.description).toBe('Customer support agent');
+      } finally {
+        server.closeAllConnections();
+        await new Promise<void>((resolve, reject) => {
+          server.close((err) => (err ? reject(err) : resolve()));
+        });
+      }
     });
   });
 
@@ -498,41 +719,43 @@ describe('Agent Card', () => {
   });
 
   describe('buildAgentSkills', () => {
-    it('handles dynamic instructions safely', async () => {
+    it('excludes instructions and global instructions from LlmAgent skill descriptions', async () => {
+      const agent = new LlmAgent({
+        name: 'test_agent',
+        description: 'Test agent',
+        instruction: 'You should help users.',
+        globalInstruction: 'Your role is to assist.',
+      });
+
+      const skills = await buildAgentSkills(agent);
+      const modelSkill = skills.find((s) => s.name === 'model');
+      expect(modelSkill?.description).toBe('Test agent');
+    });
+
+    it('falls back to the default description when an LlmAgent has instructions but no description', async () => {
       const mockProvider = vi
         .fn()
         .mockResolvedValue('You are dynamically created');
       const agent = new LlmAgent({
         name: 'dyn_agent',
         instruction: mockProvider,
+        globalInstruction: 'You are global',
       });
 
       const skills = await buildAgentSkills(agent);
       const modelSkill = skills.find((s) => s.name === 'model');
-      expect(modelSkill?.description).toContain('I am dynamically created');
+      expect(modelSkill?.description).toBe('An LLM-based agent');
+      expect(mockProvider).not.toHaveBeenCalled();
     });
 
-    it('handles dynamic instruction failure safely', async () => {
-      const mockProvider = vi.fn().mockRejectedValue(new Error('fail'));
-      const agent = new LlmAgent({
-        name: 'dyn_agent_fail',
-        description: 'Fallback desc',
-        instruction: mockProvider,
-      });
-
-      const skills = await buildAgentSkills(agent);
-      const modelSkill = skills.find((s) => s.name === 'model');
-      // If instruction fails, it falls back to empty, but still uses description
-      expect(modelSkill?.description).toContain('Fallback desc');
-    });
-
-    it('handles global instructions', async () => {
+    it('excludes root globalInstruction when building skills for a sub-agent', async () => {
       const properRoot = new LlmAgent({
         name: 'root',
         globalInstruction: 'You are global',
         subAgents: [
           new LlmAgent({
             name: 'sub',
+            description: 'Sub agent description',
             instruction: 'You are sub',
           }),
         ],
@@ -543,8 +766,7 @@ describe('Agent Card', () => {
       const skills = await buildAgentSkills(properlyWiredSub);
       const modelSkill = skills.find((s) => s.name === 'model');
 
-      expect(modelSkill?.description).toContain('I am sub');
-      expect(modelSkill?.description).toContain('I am global');
+      expect(modelSkill?.description).toBe('Sub agent description');
     });
 
     it('supports parallel agent description', async () => {
@@ -838,6 +1060,1006 @@ describe('Agent Card', () => {
       ).rejects.toThrow(
         /^Failed to read agent card from file \.\/no-such-agent-card\.json: ENOENT/,
       );
+    });
+
+    describe('failure of a URL or file source', () => {
+      /** Returns the value `resolveAgentCard(source)` rejects with. */
+      async function rejectionOf(source: string): Promise<unknown> {
+        try {
+          await resolveAgentCard(source);
+        } catch (e: unknown) {
+          return e;
+        }
+        return expect.fail(`Resolving ${source} did not reject.`);
+      }
+
+      it('wraps a refused link-local address and keeps the cause', async () => {
+        const error = await rejectionOf('http://169.254.169.254/');
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.name).toBe('AgentCardResolutionError');
+        expect(error.message).toBe(
+          'Refusing to fetch agent card from a link-local address: 169.254.169.254',
+        );
+        expect(error.cause).toEqual(new Error(error.message));
+        expect(isAgentCardResolutionError(error.cause)).toBe(false);
+      });
+
+      it('wraps a failed card fetch', async () => {
+        const failure = new TypeError('fetch failed');
+        fetchMock.mockRejectedValue(failure);
+
+        const error = await rejectionOf('https://10.0.0.5/');
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.message).toBe('fetch failed');
+        expect(error.cause).toBe(failure);
+      });
+
+      it('wraps a refused RPC url of a fetched card', async () => {
+        fetchMock.mockResolvedValue(cardResponse());
+
+        const error = await rejectionOf('https://10.0.0.5/');
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.message).toMatch(/must have the same origin/);
+      });
+
+      it('wraps an unsupported URL scheme', async () => {
+        const error = await rejectionOf('ftp://cards.example.com/card.json');
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.message).toMatch(/^Unsupported agent card URL scheme/);
+      });
+
+      it('wraps a missing card file and keeps the file system error', async () => {
+        const error = await rejectionOf(join(tempDir, 'missing-card.json'));
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.cause).toMatchObject({
+          message: error.message,
+          cause: {code: 'ENOENT'},
+        });
+      });
+
+      it('wraps a card file that is not valid JSON', async () => {
+        await writeFile(cardPath, '{"name": ', 'utf-8');
+
+        const error = await rejectionOf(cardPath);
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.message).toMatch(
+          /^Failed to read agent card from file .*card\.json: /,
+        );
+        expect(error.cause).toMatchObject({cause: {name: 'SyntaxError'}});
+      });
+    });
+
+    describe('trimming and card URL validation', () => {
+      async function rejectionOfCard(
+        source: AgentCard | string,
+      ): Promise<unknown> {
+        try {
+          await resolveAgentCard(source);
+        } catch (e: unknown) {
+          return e;
+        }
+        return expect.fail('Resolving the agent card did not reject.');
+      }
+
+      it('trims padded URL and file path sources before resolving', async () => {
+        fetchMock.mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              ...STUB_CARD,
+              url: 'https://10.0.0.5/a2a/peer_agent/',
+            }),
+            {headers: {'content-type': 'application/json'}},
+          ),
+        );
+
+        const fromUrl = await resolveAgentCard('  https://10.0.0.5/  ');
+        const fromFile = await resolveAgentCard(`  ${cardPath}  `);
+
+        expect(fromUrl.name).toBe('peer_agent');
+        expect(fromFile.name).toBe('peer_agent');
+      });
+
+      it.each(['', '   '])(
+        'rejects an empty or whitespace-only source string %j',
+        async (source) => {
+          const error = await rejectionOfCard(source);
+
+          expect(isAgentCardResolutionError(error)).toBe(true);
+        },
+      );
+
+      it.each([
+        {name: 'missing url', card: {...STUB_CARD, url: undefined}},
+        {name: 'empty url', card: {...STUB_CARD, url: ''}},
+        {name: 'whitespace url', card: {...STUB_CARD, url: '   '}},
+        {name: 'invalid url', card: {...STUB_CARD, url: 'invalid-url'}},
+        {
+          name: 'scheme without host',
+          card: {...STUB_CARD, url: 'mailto:agent@example.com'},
+        },
+      ])('rejects a direct card object with $name', async ({card}) => {
+        const error = await rejectionOfCard(card as unknown as AgentCard);
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.message).toMatch(/Invalid RPC URL/);
+      });
+
+      it.each([
+        {name: 'missing url', payload: {...STUB_CARD, url: undefined}},
+        {name: 'empty url', payload: {...STUB_CARD, url: ''}},
+        {name: 'invalid url', payload: {...STUB_CARD, url: 'invalid-url'}},
+        {
+          name: 'scheme without host',
+          payload: {...STUB_CARD, url: 'mailto:agent@example.com'},
+        },
+      ])('rejects a card file with $name', async ({payload}) => {
+        await writeFile(cardPath, JSON.stringify(payload), 'utf-8');
+
+        const error = await rejectionOfCard(cardPath);
+
+        if (!isAgentCardResolutionError(error)) {
+          return expect.fail('The error is not an AgentCardResolutionError.');
+        }
+        expect(error.message).toMatch(/Invalid RPC URL/);
+      });
+
+      it.each([null, []])(
+        'rejects a non-object card payload %j from object and file sources',
+        async (payload) => {
+          await writeFile(cardPath, JSON.stringify(payload), 'utf-8');
+
+          const directError = await rejectionOfCard(
+            payload as unknown as AgentCard,
+          );
+          const fileError = await rejectionOfCard(cardPath);
+
+          expect(isAgentCardResolutionError(directError)).toBe(true);
+          expect(isAgentCardResolutionError(fileError)).toBe(true);
+        },
+      );
+    });
+  });
+
+  describe('AgentCardBuilder', () => {
+    const apiKeyScheme: SecurityScheme = {
+      type: 'apiKey',
+      in: 'header',
+      name: 'X-API-Key',
+    };
+
+    it('builds an agent card with default parameters', async () => {
+      const agent = new CustomAgent('test_agent', 'Test agent description');
+      const builder = new AgentCardBuilder({agent});
+
+      const card = await builder.build();
+
+      expect(card.name).toBe('test_agent');
+      expect(card.description).toBe('Test agent description');
+      expect(card.documentationUrl).toBeUndefined();
+      expect(card.url).toBe('http://localhost:80/a2a');
+      expect(card.version).toBe('0.0.1');
+      expect(card.protocolVersion).toBe('0.3.0');
+      expect(card.preferredTransport).toBe('JSONRPC');
+      expect(card.capabilities).toEqual({streaming: true});
+      expect(card.defaultInputModes).toEqual(['text/plain']);
+      expect(card.defaultOutputModes).toEqual(['text/plain']);
+      expect(card.supportsAuthenticatedExtendedCard).toBe(false);
+      expect(card.provider).toBeUndefined();
+      expect(card.securitySchemes).toBeUndefined();
+      expect(card.skills).toHaveLength(1);
+    });
+
+    it('builds an agent card with custom parameters and strips trailing slashes on rpcUrl', async () => {
+      const agent = new CustomAgent('test_agent');
+      const provider: AgentProvider = {
+        organization: 'ACME',
+        url: 'https://acme.example.com',
+      };
+      const securitySchemes: Record<string, SecurityScheme> = {
+        apiKey: apiKeyScheme,
+      };
+      const options: AgentCardBuilderOptions = {
+        agent,
+        rpcUrl: 'https://example.com/a2a/',
+        capabilities: {streaming: true, pushNotifications: true},
+        docUrl: 'https://docs.example.com',
+        provider,
+        agentVersion: '2.0.0',
+        securitySchemes,
+      };
+
+      const card = await new AgentCardBuilder(options).build();
+
+      expect(card.name).toBe('test_agent');
+      expect(card.description).toBe('An ADK Agent');
+      expect(card.documentationUrl).toBe('https://docs.example.com');
+      expect(card.url).toBe('https://example.com/a2a');
+      expect(card.version).toBe('2.0.0');
+      expect(card.capabilities).toEqual({
+        streaming: true,
+        pushNotifications: true,
+      });
+      expect(card.provider).toEqual(provider);
+      expect(card.securitySchemes).toEqual(securitySchemes);
+    });
+
+    it.each([undefined, null])(
+      'throws when agent is %s',
+      (invalidAgent: unknown) => {
+        expect(
+          () =>
+            new AgentCardBuilder({
+              agent: invalidAgent as BaseAgent,
+            }),
+        ).toThrow('Agent cannot be null or undefined.');
+      },
+    );
+
+    it('throws TypeError when agent is a bare FunctionNode', () => {
+      const fnNode = node(async (input: unknown) => `echo: ${String(input)}`, {
+        name: 'echo_fn',
+      });
+
+      expect(
+        () =>
+          new AgentCardBuilder({
+            agent: fnNode as unknown as BaseAgent,
+          }),
+      ).toThrow(/requires a BaseAgent or Workflow, got FunctionNode/);
+    });
+
+    it('throws TypeError when agent is not a BaseAgent or Workflow', () => {
+      expect(
+        () =>
+          new AgentCardBuilder({
+            agent: 'not an agent' as unknown as BaseAgent,
+          }),
+      ).toThrow(/requires a BaseAgent or Workflow, got string/);
+    });
+
+    it.each([
+      {label: 'an object instead of an array', value: {oauth2: ['agent.read']}},
+      {label: 'an array of strings', value: ['oauth2']},
+      {
+        label: 'a scope value that is a string',
+        value: [{oauth2: 'agent.read'}],
+      },
+      {
+        label: 'a scope array with a non-string entry',
+        value: [{oauth2: [123]}],
+      },
+    ])('rejects invalid defaultSkillSecurity ($label)', ({value}) => {
+      const agent = new CustomAgent('test_agent');
+
+      expect(
+        () =>
+          new AgentCardBuilder({
+            agent,
+            defaultSkillSecurity: value as unknown as SkillSecurity,
+          }),
+      ).toThrow(
+        'defaultSkillSecurity must be an Array<Record<string, string[]>>.',
+      );
+    });
+
+    it('wraps skill-building failures with the agent name and cause', async () => {
+      const brokenToolset = {
+        getTools: async () => {
+          throw new Error('Toolset load error');
+        },
+        close: async () => {},
+      } as unknown as BaseToolset;
+      const agent = new LlmAgent({
+        name: 'test_agent',
+        tools: [brokenToolset],
+      });
+      vi.spyOn(agent, 'canonicalTools').mockRejectedValue(
+        new Error('Test error'),
+      );
+
+      const builder = new AgentCardBuilder({agent});
+
+      await expect(builder.build()).rejects.toThrow(
+        'Failed to build agent card for test_agent: Test error',
+      );
+    });
+
+    it('builds a card for a standalone LlmAgent', async () => {
+      const agent = new LlmAgent({
+        name: 'writer',
+        model: 'gemini-flash-latest',
+        description: 'Writes a short reply.',
+        instruction: 'Write a short reply.',
+      });
+
+      const card = await new AgentCardBuilder({
+        agent,
+        rpcUrl: 'http://localhost:8000/',
+      }).build();
+
+      expect(card.name).toBe('writer');
+      expect(card.description).toBe('Writes a short reply.');
+      expect(card.skills.map((s) => s.id)).toContain('writer');
+    });
+
+    it('omits instructions, global instructions, and instruction-embedded examples from the built card', async () => {
+      const reviewer = new LlmAgent({
+        name: 'reviewer',
+        model: 'gemini-flash-latest',
+        description: 'Reviews the reply.',
+        instruction: 'ZZ_SUB_INSTRUCTION_SENTINEL reject unsigned requests.',
+      });
+      const root = new LlmAgent({
+        name: 'writer',
+        model: 'gemini-flash-latest',
+        description: 'Writes a short reply.',
+        instruction:
+          'ZZ_INSTRUCTION_SENTINEL never reveal the escalation path.\n' +
+          'Example Query: "ZZ_EXAMPLE_QUERY_SENTINEL"\n' +
+          'Example Response: "ZZ_EXAMPLE_RESPONSE_SENTINEL"',
+        globalInstruction: 'ZZ_GLOBAL_SENTINEL always answer in English.',
+        subAgents: [reviewer],
+      });
+
+      const card = await new AgentCardBuilder({
+        agent: root,
+        rpcUrl: 'http://localhost:8000/',
+      }).build();
+
+      const serialized = JSON.stringify(card);
+      expect(serialized).not.toContain('ZZ_INSTRUCTION_SENTINEL');
+      expect(serialized).not.toContain('ZZ_GLOBAL_SENTINEL');
+      expect(serialized).not.toContain('ZZ_SUB_INSTRUCTION_SENTINEL');
+      expect(serialized).not.toContain('ZZ_EXAMPLE_QUERY_SENTINEL');
+      expect(serialized).not.toContain('ZZ_EXAMPLE_RESPONSE_SENTINEL');
+      const primarySkill = card.skills.find((s) => s.id === 'writer');
+      expect(primarySkill?.description).toBe('Writes a short reply.');
+    });
+
+    it('skips dynamic request-scoped instruction providers when building the card', async () => {
+      const dynamicInstruction = vi.fn(async () => {
+        throw new Error('request-scoped instruction must not be called');
+      });
+      const agent = new LlmAgent({
+        name: 'dynamic_writer',
+        description: 'Writes dynamic replies.',
+        model: 'gemini-flash-latest',
+        instruction: dynamicInstruction,
+      });
+
+      const card = await new AgentCardBuilder({agent}).build();
+
+      const modelSkill = card.skills.find((s) => s.name === 'model');
+      expect(modelSkill?.description).toBe('Writes dynamic replies.');
+      expect(dynamicInstruction).not.toHaveBeenCalled();
+    });
+
+    it('builds a card for a Workflow with an LlmAgent node', async () => {
+      const writer = new LlmAgent({
+        name: 'writer',
+        model: 'gemini-flash-latest',
+        description: 'Writes the reply.',
+        instruction: 'Write a short reply.',
+      });
+      const workflow = new Workflow({
+        name: 'pipe',
+        description: 'A simple pipeline.',
+        edges: [[START, writer]],
+      });
+
+      const card = await new AgentCardBuilder({
+        agent: workflow,
+        rpcUrl: 'http://localhost:8000/',
+      }).build();
+
+      expect(card.name).toBe('pipe');
+      const skillIds = card.skills.map((s) => s.id);
+      expect(skillIds).toContain('pipe');
+      expect(skillIds.some((id) => id.includes('writer'))).toBe(true);
+    });
+
+    it('builds a card for a Workflow whose LlmAgent node has an outputSchema', async () => {
+      const writer = new LlmAgent({
+        name: 'writer',
+        model: 'gemini-flash-latest',
+        instruction: 'Write a short reply.',
+        outputSchema: z.object({text: z.string()}),
+      });
+      const workflow = new Workflow({
+        name: 'pipe',
+        edges: [[START, writer]],
+      });
+
+      const card = await new AgentCardBuilder({
+        agent: workflow,
+        rpcUrl: 'http://localhost:8000/',
+      }).build();
+
+      expect(card.name).toBe('pipe');
+      const primarySkill = card.skills.find((s) => s.id === 'pipe');
+      expect(primarySkill?.tags).toContain('graph_workflow');
+    });
+
+    it('builds a card for a Workflow with no static graph nodes', async () => {
+      const workflow = new Workflow({
+        name: 'empty_wf',
+        description: 'An empty workflow.',
+        dynamicEntry: async () => undefined,
+      });
+
+      const card = await new AgentCardBuilder({
+        agent: workflow,
+        rpcUrl: 'http://localhost:8000/',
+      }).build();
+
+      expect(card.name).toBe('empty_wf');
+      expect(card.description).toBe('An empty workflow.');
+      expect(card.skills).toHaveLength(1);
+      expect(card.skills[0]?.tags).toContain('graph_workflow');
+    });
+  });
+
+  describe('agent card helper functions', () => {
+    it('returns the expected agent type tag for each agent and workflow class', () => {
+      const llm = new LlmAgent({name: 'llm'});
+      const seq = new SequentialAgent({name: 'seq', subAgents: []});
+      const par = new ParallelAgent({name: 'par', subAgents: []});
+      const loop = new LoopAgent({name: 'loop', subAgents: []});
+      const wf = new Workflow({
+        name: 'wf',
+        dynamicEntry: async () => undefined,
+      });
+      const custom = new CustomAgent('custom');
+
+      expect(getAgentTypeTag(llm)).toBe('llm');
+      expect(getAgentTypeTag(seq)).toBe('sequential_workflow');
+      expect(getAgentTypeTag(par)).toBe('parallel_workflow');
+      expect(getAgentTypeTag(loop)).toBe('loop_workflow');
+      expect(getAgentTypeTag(wf)).toBe('graph_workflow');
+      expect(getAgentTypeTag(custom)).toBe('custom_agent');
+    });
+
+    it('returns the expected skill name for each agent and workflow class', () => {
+      const llm = new LlmAgent({name: 'llm'});
+      const seq = new SequentialAgent({name: 'seq', subAgents: []});
+      const par = new ParallelAgent({name: 'par', subAgents: []});
+      const loop = new LoopAgent({name: 'loop', subAgents: []});
+      const wf = new Workflow({
+        name: 'wf',
+        dynamicEntry: async () => undefined,
+      });
+      const custom = new CustomAgent('custom');
+
+      expect(getAgentSkillName(llm)).toBe('model');
+      expect(getAgentSkillName(seq)).toBe('workflow');
+      expect(getAgentSkillName(par)).toBe('workflow');
+      expect(getAgentSkillName(loop)).toBe('workflow');
+      expect(getAgentSkillName(wf)).toBe('workflow');
+      expect(getAgentSkillName(custom)).toBe('custom');
+    });
+
+    it('returns the expected default description for each agent and workflow class', () => {
+      const llm = new LlmAgent({name: 'llm'});
+      const seq = new SequentialAgent({name: 'seq', subAgents: []});
+      const par = new ParallelAgent({name: 'par', subAgents: []});
+      const loop = new LoopAgent({name: 'loop', subAgents: []});
+      const wf = new Workflow({
+        name: 'wf',
+        dynamicEntry: async () => undefined,
+      });
+      const custom = new CustomAgent('custom');
+
+      expect(getDefaultAgentDescription(llm)).toBe('An LLM-based agent');
+      expect(getDefaultAgentDescription(seq)).toBe(
+        'A sequential workflow agent',
+      );
+      expect(getDefaultAgentDescription(par)).toBe('A parallel workflow agent');
+      expect(getDefaultAgentDescription(loop)).toBe('A loop workflow agent');
+      expect(getDefaultAgentDescription(wf)).toBe(
+        'A graph-based workflow agent',
+      );
+      expect(getDefaultAgentDescription(custom)).toBe('A custom agent');
+    });
+
+    it('returns responseModalities from LlmAgent generateContentConfig when configured', () => {
+      const withModalities = new LlmAgent({
+        name: 'llm_with_modalities',
+        generateContentConfig: {
+          responseModalities: ['text/plain', 'application/json'],
+        },
+      });
+      const withoutModalities = new LlmAgent({
+        name: 'llm_without_modalities',
+        generateContentConfig: {},
+      });
+      const withoutConfig = new LlmAgent({name: 'llm_default'});
+      withoutConfig.generateContentConfig = undefined;
+      const custom = new CustomAgent('custom');
+
+      expect(getOutputModes(withModalities)).toEqual([
+        'text/plain',
+        'application/json',
+      ]);
+      expect(getOutputModes(withoutModalities)).toBeUndefined();
+      expect(getOutputModes(withoutConfig)).toBeUndefined();
+      expect(getOutputModes(custom)).toBeUndefined();
+    });
+
+    it('builds agent descriptions with and without explicit descriptions', () => {
+      const withDesc = new CustomAgent('a1', 'Test agent description');
+      const withoutDesc = new CustomAgent('a2');
+
+      expect(buildAgentDescription(withDesc)).toBe('Test agent description');
+      expect(buildAgentDescription(withoutDesc)).toBe('A custom agent');
+    });
+
+    it('builds workflow descriptions for SequentialAgent, ParallelAgent, LoopAgent, and Workflow', () => {
+      const makeSub = (name: string, description?: string) =>
+        new CustomAgent(name, description);
+
+      const seqSingle = new SequentialAgent({
+        name: 'seq1',
+        subAgents: [makeSub('agent1', 'First agent')],
+      });
+      const seqMulti = new SequentialAgent({
+        name: 'seq3',
+        subAgents: [
+          makeSub('agent1', 'First agent'),
+          makeSub('agent2', 'Second agent'),
+          makeSub('agent3', 'Third agent'),
+        ],
+      });
+      const seqUnnamed = new SequentialAgent({
+        name: 'seq_unnamed',
+        subAgents: [makeSub('agent1'), makeSub('agent2')],
+      });
+      const seqEmpty = new SequentialAgent({name: 'seq_empty', subAgents: []});
+
+      expect(buildSequentialAgentDescription(seqSingle)).toBe(
+        'First, this agent will First agent.',
+      );
+      expect(buildSequentialAgentDescription(seqMulti)).toBe(
+        'First, this agent will First agent. Then, this agent will Second agent. Finally, this agent will Third agent.',
+      );
+      expect(buildSequentialAgentDescription(seqUnnamed)).toBe(
+        'First, this agent will execute the agent1 agent. Finally, this agent will execute the agent2 agent.',
+      );
+      expect(getWorkflowDescription(seqEmpty)).toBeUndefined();
+
+      const parSingle = new ParallelAgent({
+        name: 'par1',
+        subAgents: [makeSub('agent1', 'First agent')],
+      });
+      const parMulti = new ParallelAgent({
+        name: 'par3',
+        subAgents: [
+          makeSub('agent1', 'First agent'),
+          makeSub('agent2', 'Second agent'),
+          makeSub('agent3', 'Third agent'),
+        ],
+      });
+      expect(buildParallelAgentDescription(parSingle)).toBe(
+        'This agent will First agent simultaneously.',
+      );
+      expect(buildParallelAgentDescription(parMulti)).toBe(
+        'This agent will First agent , Second agent and Third agent simultaneously.',
+      );
+
+      const loopSingle = new LoopAgent({
+        name: 'loop1',
+        subAgents: [makeSub('agent1', 'First agent')],
+        maxIterations: 3,
+      });
+      const loopUnlimited = new LoopAgent({
+        name: 'loop_unlimited',
+        subAgents: [makeSub('agent1', 'First agent')],
+      });
+      const loopZero = new LoopAgent({
+        name: 'loop_zero',
+        subAgents: [makeSub('agent1', 'First agent')],
+        maxIterations: 0,
+      });
+      expect(buildLoopAgentDescription(loopSingle)).toBe(
+        'This agent will First agent in a loop (max 3 iterations).',
+      );
+      expect(getWorkflowDescription(loopUnlimited)).toBe(
+        'This agent will First agent in a loop (max unlimited iterations).',
+      );
+      expect(getWorkflowDescription(loopZero)).toBe(
+        'This agent will First agent in a loop (max 0 iterations).',
+      );
+
+      const customWithSub = new CustomAgent('custom', undefined, [
+        makeSub('agent1', 'First agent'),
+      ]);
+      expect(getWorkflowDescription(customWithSub)).toBeUndefined();
+
+      const writer = new LlmAgent({
+        name: 'writer',
+        model: 'gemini-flash-latest',
+        description: 'Writes the reply.',
+      });
+      const reviewer = new LlmAgent({
+        name: 'reviewer',
+        model: 'gemini-flash-latest',
+        description: 'Reviews the reply',
+      });
+      const wfWithNodes = new Workflow({
+        name: 'pipe',
+        edges: [
+          [START, writer],
+          [writer, reviewer],
+        ],
+      });
+      const wfEmpty = new Workflow({
+        name: 'empty_wf',
+        dynamicEntry: async () => undefined,
+      });
+
+      expect(buildGraphWorkflowDescription(wfWithNodes)).toBe(
+        'This workflow orchestrates the following nodes: writer: Writes the reply; reviewer: Reviews the reply.',
+      );
+      expect(getWorkflowDescription(wfWithNodes)).toContain(
+        'writer: Writes the reply',
+      );
+      expect(getWorkflowDescription(wfEmpty)).toBeUndefined();
+    });
+
+    it('builds orchestration skills for agents with and without sub-agent descriptions', () => {
+      const sub1 = new CustomAgent('agent1', 'First agent description');
+      const sub2 = new CustomAgent('agent2', 'Second agent description');
+      const mainAgent = new CustomAgent('main_agent', undefined, [sub1, sub2]);
+
+      const skill = buildOrchestrationSkill(mainAgent, 'sequential_workflow');
+      expect(skill).toEqual({
+        id: 'main_agent-sub-agents',
+        name: 'sub-agents',
+        description:
+          'Orchestrates: agent1: First agent description; agent2: Second agent description',
+        tags: ['sequential_workflow', 'orchestration'],
+      });
+
+      const unnamedAgent = new CustomAgent('main_agent', undefined, [
+        new CustomAgent('agent1'),
+        new CustomAgent('agent2'),
+      ]);
+      const fallbackSkill = buildOrchestrationSkill(
+        unnamedAgent,
+        'parallel_workflow',
+      );
+      expect(fallbackSkill?.description).toBe(
+        'Orchestrates: agent1: No description; agent2: No description',
+      );
+
+      const emptyAgent = new CustomAgent('empty_agent');
+      expect(
+        buildOrchestrationSkill(emptyAgent, 'custom_agent'),
+      ).toBeUndefined();
+    });
+
+    it('extracts examples from static ExampleTool and skips dynamic BaseExampleProvider', async () => {
+      const exampleTool = new ExampleTool([
+        {
+          input: {role: 'user', parts: [{text: 'What is the weather?'}]},
+          output: [{role: 'model', parts: [{text: 'The weather is sunny.'}]}],
+        },
+        {
+          input: {role: 'user', parts: [{text: 'What time is it?'}]},
+          output: [{role: 'model', parts: [{text: 'It is 3 PM.'}]}],
+        },
+      ]);
+      expect(isExampleTool(exampleTool)).toBe(true);
+      expect(isExampleTool({})).toBe(false);
+
+      const converted = convertExampleToolExamples(exampleTool);
+      expect(converted).toHaveLength(2);
+      expect(extractInputsFromExamples(converted)).toEqual([
+        'What is the weather?',
+        'What time is it?',
+      ]);
+      expect(
+        extractInputsFromExamples([
+          {
+            input: {text: 'Plain text input'},
+            output: [{text: 'Plain text output'}],
+          },
+        ]),
+      ).toEqual(['Plain text input']);
+      expect(extractInputsFromExamples(undefined)).toEqual([]);
+
+      const emptyTool = new ExampleTool([]);
+      expect(convertExampleToolExamples(emptyTool)).toEqual([]);
+
+      class DynamicProvider extends BaseExampleProvider {
+        async getExamples() {
+          return [];
+        }
+      }
+      const dynamicTool = new ExampleTool(new DynamicProvider());
+      expect(convertExampleToolExamples(dynamicTool)).toBeUndefined();
+
+      const agentWithExamples = new LlmAgent({
+        name: 'weather_agent',
+        description: 'Answers weather questions',
+        tools: [
+          exampleTool,
+          new FunctionTool({
+            name: 'get_forecast',
+            description: 'Gets forecast',
+            execute: async () => 'sunny',
+          }),
+        ],
+        planner: new BuiltInPlanner({thinkingConfig: {includeThoughts: true}}),
+      });
+
+      const extracted = await extractExamplesFromAgent(agentWithExamples);
+      expect(extracted).toHaveLength(2);
+
+      const skills = await buildLlmAgentSkills(agentWithExamples);
+      const modelSkill = skills.find((s) => s.id === 'weather_agent');
+      expect(modelSkill?.examples).toEqual([
+        'What is the weather?',
+        'What time is it?',
+      ]);
+      expect(skills.find((s) => s.name === 'example_tool')).toBeUndefined();
+      const plannerSkill = skills.find((s) => s.id === 'weather_agent-planner');
+      expect(plannerSkill).toEqual({
+        id: 'weather_agent-planner',
+        name: 'planning',
+        description: 'Can think about the tasks to do and make plans',
+        tags: ['llm', 'planning'],
+      });
+    });
+
+    it('logs a warning and continues when building skills for one sub-agent fails', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        const brokenSub = new LlmAgent({name: 'broken_sub'});
+        vi.spyOn(brokenSub, 'canonicalTools').mockRejectedValue(
+          new Error('tool failure'),
+        );
+        brokenSub.tools = [
+          new FunctionTool({
+            name: 't',
+            description: 'd',
+            execute: async () => 'ok',
+          }),
+        ];
+        const healthySub = new CustomAgent('healthy_sub', 'Healthy sub-agent');
+        const parent = new CustomAgent('parent', 'Parent', [
+          brokenSub,
+          healthySub,
+        ]);
+
+        const subSkills = await buildSubAgentSkills(parent);
+
+        expect(subSkills).toHaveLength(1);
+        expect(subSkills[0]?.id).toBe('healthy_sub_healthy_sub');
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'Failed to build skills for sub-agent broken_sub',
+          ),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+  });
+
+  describe('skill security support', () => {
+    const apiKeyScheme: SecurityScheme = {
+      type: 'apiKey',
+      in: 'header',
+      name: 'X-Api-Key',
+    };
+
+    it('applies defaultSkillSecurity and per-tool customMetadata security overrides end to end', async () => {
+      const readTool = new FunctionTool({
+        name: 'read_item',
+        description: 'Read an item.',
+        execute: async () => 'item',
+      });
+      const deleteTool = new FunctionTool({
+        name: 'delete_item',
+        description: 'Delete an item.',
+        execute: async () => 'deleted',
+        customMetadata: {security: [{oauth2: ['items.delete']}]},
+      });
+      const agent = new LlmAgent({
+        name: 'inventory_agent',
+        description: 'Manages inventory items.',
+        model: 'gemini-flash-latest',
+        tools: [readTool, deleteTool],
+      });
+      const defaultSecurity: SkillSecurity = [{oauth2: ['items.read']}];
+
+      const card = await new AgentCardBuilder({
+        agent,
+        securitySchemes: {oauth2: apiKeyScheme},
+        defaultSkillSecurity: defaultSecurity,
+      }).build();
+
+      const securityById = Object.fromEntries(
+        card.skills.map((skill) => [skill.id, skill.security]),
+      );
+      expect(securityById).toEqual({
+        'inventory_agent': defaultSecurity,
+        'inventory_agent-read_item': defaultSecurity,
+        'inventory_agent-delete_item': [{oauth2: ['items.delete']}],
+      });
+    });
+
+    it('attaches defaultSkillSecurity to LlmAgent, planner, code-executor, orchestration, and sub-agent skills', async () => {
+      const defaultSecurity: SkillSecurity = [{bearer: []}];
+      const subAgent = new LlmAgent({
+        name: 'sub_agent',
+        description: 'Sub agent',
+      });
+      const parent = new LlmAgent({
+        name: 'test_llm_agent',
+        description: 'A test LLM agent',
+        subAgents: [subAgent],
+      });
+
+      const llmSkills = await buildLlmAgentSkills(parent, defaultSecurity);
+      expect(llmSkills).toHaveLength(1);
+      expect(llmSkills[0]?.security).toEqual(defaultSecurity);
+
+      const plannerSkill = buildPlannerSkill(parent, defaultSecurity);
+      expect(plannerSkill.security).toEqual(defaultSecurity);
+
+      const codeSkill = buildCodeExecutorSkill(parent, [{oauth2: ['execute']}]);
+      expect(codeSkill.security).toEqual([{oauth2: ['execute']}]);
+
+      const orchSkill = buildOrchestrationSkill(
+        parent,
+        'sequential_workflow',
+        defaultSecurity,
+      );
+      expect(orchSkill?.security).toEqual(defaultSecurity);
+
+      const subSkills = await buildSubAgentSkills(parent, defaultSecurity);
+      expect(subSkills).toHaveLength(1);
+      expect(subSkills[0]?.security).toEqual(defaultSecurity);
+    });
+
+    it('resolves tool security from customMetadata or falls back to defaultSkillSecurity', async () => {
+      const defaultSecurity: SkillSecurity = [{apiKey: []}];
+      const toolSecurity: SkillSecurity = [
+        {oauth2: ['calendar.read', 'calendar.write']},
+      ];
+
+      const plainTool = new FunctionTool({
+        name: 'my_tool',
+        description: 'A test tool',
+        execute: async () => 'ok',
+      });
+      const overriddenTool = new FunctionTool({
+        name: 'calendar_tool',
+        description: 'Calendar tool',
+        execute: async () => 'ok',
+        customMetadata: {security: toolSecurity},
+      });
+      const unrelatedMetaTool = new FunctionTool({
+        name: 'other_tool',
+        description: 'Other tool',
+        execute: async () => 'ok',
+        customMetadata: {otherKey: 'value'},
+      });
+
+      expect(getToolSecurity(plainTool, defaultSecurity)).toEqual(
+        defaultSecurity,
+      );
+      expect(getToolSecurity(overriddenTool, defaultSecurity)).toEqual(
+        toolSecurity,
+      );
+      expect(getToolSecurity(unrelatedMetaTool, defaultSecurity)).toEqual(
+        defaultSecurity,
+      );
+      expect(getToolSecurity(plainTool)).toBeUndefined();
+
+      const agentWithDefault = new LlmAgent({
+        name: 'test_agent',
+        tools: [plainTool, overriddenTool],
+      });
+      const skillsWithDefault = await buildToolSkills(
+        agentWithDefault,
+        defaultSecurity,
+      );
+      expect(skillsWithDefault.map((s) => s.security)).toEqual([
+        defaultSecurity,
+        toolSecurity,
+      ]);
+
+      const skillsWithoutDefault = await buildToolSkills(
+        new LlmAgent({name: 'test_agent', tools: [plainTool]}),
+      );
+      expect(skillsWithoutDefault[0]?.security).toBeUndefined();
+    });
+
+    it('logs a warning and falls back to defaultSkillSecurity when tool security metadata is malformed', () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        const defaultSecurity: SkillSecurity = [{bearer: []}];
+        const malformedTool = new FunctionTool({
+          name: 'classified_tool',
+          description: 'Classified tool',
+          execute: async () => 'ok',
+          customMetadata: {security: {classification: 'internal'}},
+        });
+
+        const result = getToolSecurity(malformedTool, defaultSecurity);
+
+        expect(result).toEqual(defaultSecurity);
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('classified_tool'),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('validates skill security scheme references and warns on undeclared schemes', () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        validateSkillSecurityReferences(
+          [
+            {
+              id: 's1',
+              name: 'skill1',
+              description: 'test',
+              tags: ['test'],
+              security: [{oauth2: ['read']}],
+            },
+            {
+              id: 's2',
+              name: 'skill2',
+              description: 'test',
+              tags: ['test'],
+            },
+          ],
+          {oauth2: apiKeyScheme},
+        );
+        expect(warnSpy).not.toHaveBeenCalled();
+
+        validateSkillSecurityReferences(
+          [
+            {
+              id: 's1',
+              name: 'skill1',
+              description: 'test',
+              tags: ['test'],
+              security: [{nonexistentScheme: ['read']}],
+            },
+          ],
+          {oauth2: apiKeyScheme},
+        );
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        expect(warnSpy.mock.calls[0]?.[0]).toContain('nonexistentScheme');
+        expect(warnSpy.mock.calls[0]?.[0]).toContain('not declared');
+      } finally {
+        warnSpy.mockRestore();
+      }
     });
   });
 });

@@ -575,5 +575,77 @@ describe('remote_agent_utils', () => {
       expect(dumped).toContain('get_weather');
       expect(dumped).toContain('Pimpri');
     });
+
+    it('skips an error event that the agent raised itself', () => {
+      const remoteResponse = createEvent({
+        author: 'test-agent',
+        content: {role: 'model', parts: [{text: 'response'}]},
+        customMetadata: {
+          [AdkMetadataKeys.CONTEXT_ID]: 'ctx-remote',
+          'a2a:response': {kind: 'message'},
+        },
+      });
+      const unsentMessage = createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'unsent message'}]},
+      });
+      const localError = createEvent({
+        author: 'test-agent',
+        errorMessage: 'A2A request failed: Connection refused.',
+      });
+      const newUserMessage = createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'new message'}]},
+      });
+      const session = {
+        events: [remoteResponse, unsentMessage, localError, newUserMessage],
+      } as unknown as Session;
+
+      const result = toMissingRemoteSessionParts(mockCtx, session);
+
+      expect(result.parts.map((part) => (part as TextPart).text)).toEqual([
+        'unsent message',
+        'new message',
+      ]);
+      expect(result.contextId).toBe('ctx-remote');
+    });
+
+    it('stops at an error event that the remote agent sent', () => {
+      const oldUserMessage = createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'old message'}]},
+      });
+      const remoteError = createEvent({
+        author: 'test-agent',
+        errorMessage: 'The task failed.',
+        customMetadata: {
+          [AdkMetadataKeys.CONTEXT_ID]: 'ctx-remote',
+          'a2a:response': {kind: 'task'},
+        },
+      });
+      const newUserMessage = createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'new message'}]},
+      });
+      const session = {
+        events: [oldUserMessage, remoteError, newUserMessage],
+      } as unknown as Session;
+
+      const result = toMissingRemoteSessionParts(mockCtx, session);
+
+      expect(result.parts.map((part) => (part as TextPart).text)).toEqual([
+        'new message',
+      ]);
+      expect(result.contextId).toBe('ctx-remote');
+    });
+
+    it('returns empty parts and no contextId when session events are empty', () => {
+      const session = {events: []} as unknown as Session;
+
+      const result = toMissingRemoteSessionParts(mockCtx, session);
+
+      expect(result.parts).toEqual([]);
+      expect(result.contextId).toBeUndefined();
+    });
   });
 });

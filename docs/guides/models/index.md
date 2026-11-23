@@ -4,7 +4,7 @@ A model in the Agent Development Kit (ADK) is a `BaseLlm` subclass that turns an
 
 All models extend `BaseLlm`. The package exports these implementations:
 
-- `Gemini` - Calls Gemini through the Gemini API or Vertex AI. It is registered by default, so a `gemini-…` name resolves to it.
+- `Gemini` - Calls Gemini through the Gemini API or Vertex AI. It is registered by default, so a `gemini-…` or `model-optimizer-…` name (as well as Vertex AI endpoint and publisher model paths) resolves to it.
 - `ApigeeLlm` - A `Gemini` subclass that reaches the provider through an Apigee proxy. It is registered by default, so an `apigee/…` name resolves to it.
 - `ChromeBuiltInLlm` - Calls Chrome's built-in on-device model through the Prompt API. It is registered by default, so a `chrome-on-device` or `chrome/…` name resolves to it.
 - `RoutedLlm` - Delegates each request to one of several models that a router function selects. You create it directly; it has no name pattern.
@@ -68,7 +68,7 @@ export const rootAgent = new LlmAgent({
 
 `LlmRequest` is a plain object. `appendInstructions(llmRequest, instructions)` joins the instructions with a blank line and adds them to `config.systemInstruction`. You set the other request fields, such as `config.tools` and `config.responseSchema`, directly on the object.
 
-`LlmResponse` is a plain object too. A model sets `partial: true` on a streamed chunk, `turnComplete: true` at the end of a turn, and `errorCode` and `errorMessage` when the model returns no content. `createLlmResponse(response)` makes an `LlmResponse` from a `GenerateContentResponse` of the `@google/genai` SDK. It copies the first candidate, or it sets the error fields when there is no candidate content.
+`LlmResponse` is a plain object too. A model sets `partial: true` on a streamed chunk, `turnComplete: true` at the end of a turn, and `errorCode` and `errorMessage` when the model returns no content. `createLlmResponse(response)` makes an `LlmResponse` from a `GenerateContentResponse` of the `@google/genai` SDK. It copies the first candidate, or it sets the error fields when there is no candidate content. When `Gemini` streams, the final aggregated response carries `errorCode` and `errorMessage` only when the finish reason is not `STOP`.
 
 ### Model resolution
 

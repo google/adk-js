@@ -95,6 +95,7 @@ export type ToolOptions<TParameters extends ToolInputParameters> = {
   response?: SchemaLike;
   execute: ToolExecuteFunction<TParameters>;
   isLongRunning?: boolean;
+  customMetadata?: Record<string, unknown>;
   /**
    * Whether this tool requires user confirmation before it runs. A boolean, or
    * a predicate over the (validated) call arguments and tool context returning
@@ -243,6 +244,7 @@ export class FunctionTool<
       name,
       description: options.description,
       isLongRunning: options.isLongRunning,
+      customMetadata: options.customMetadata,
     });
     this.execute = options.execute;
     this.parameters = options.parameters;
@@ -292,12 +294,30 @@ export class FunctionTool<
         return pending;
       }
 
-      return await this.execute(validatedArgs, req.toolContext);
+      return await this.invokeExecute(validatedArgs, req);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       throw new Error(`Error in tool '${this.name}': ${errorMessage}`);
     }
+  }
+
+  /**
+   * Calls the user-defined `execute` function for one {@link runAsync} call,
+   * after argument validation and the confirmation gate.
+   *
+   * A subclass overrides this to pass values that belong to one call, carried
+   * on `req`, to its own callback without storing them on the instance.
+   *
+   * @param input The validated arguments.
+   * @param req The request passed to {@link runAsync}.
+   * @returns The return value of the `execute` function.
+   */
+  protected invokeExecute(
+    input: ToolExecuteArgument<TParameters>,
+    req: RunAsyncToolRequest,
+  ): Promise<unknown> | unknown {
+    return this.execute(input, req.toolContext);
   }
 
   /**
@@ -446,6 +466,7 @@ const SCHEMA_TYPE_MAP: Readonly<Record<string, Type>> = {
   OBJECT: Type.OBJECT,
   NULL: Type.NULL,
   null: Type.NULL,
+  void: Type.NULL,
   TYPE_UNSPECIFIED: Type.TYPE_UNSPECIFIED,
 };
 
@@ -627,19 +648,25 @@ function resolveReturnSchema(
 ): Schema | undefined {
   const funcObj =
     typeof func === 'function' || isPlainRecord(func)
-      ? (func as {response?: SchemaLike; returnType?: string})
+      ? (func as {response?: SchemaLike | null; returnType?: string | null})
       : undefined;
   const responseCandidate =
-    funcObj?.response ??
-    (beforeParamSchema['response'] as SchemaLike | undefined);
+    funcObj?.response !== undefined
+      ? funcObj.response
+      : beforeParamSchema['response'];
+  if (responseCandidate === null) {
+    return {type: Type.NULL};
+  }
   if (responseCandidate !== undefined) {
-    return toResponseSchema(responseCandidate);
+    return toResponseSchema(responseCandidate as SchemaLike);
   }
   const returnTypeCandidate =
-    funcObj?.returnType ??
-    (typeof beforeParamSchema['returnType'] === 'string'
-      ? beforeParamSchema['returnType']
-      : undefined);
+    funcObj?.returnType !== undefined
+      ? funcObj.returnType
+      : beforeParamSchema['returnType'];
+  if (returnTypeCandidate === null) {
+    return {type: Type.NULL};
+  }
   if (typeof returnTypeCandidate === 'string') {
     return {
       type: SCHEMA_TYPE_MAP[returnTypeCandidate] ?? Type.TYPE_UNSPECIFIED,
@@ -661,7 +688,8 @@ export function buildFunctionDeclarationUtil(
   func: unknown,
   beforeParamSchema: Record<string, unknown>,
 ): FunctionDeclaration {
-  const schemaCopy = structuredClone(beforeParamSchema);
+  const {response: _response, ...clonableSchema} = beforeParamSchema;
+  const schemaCopy = structuredClone(clonableSchema);
   mapSchemaTypes(schemaCopy);
   const properties = isPlainRecord(schemaCopy['properties'])
     ? (schemaCopy['properties'] as Record<string, Schema>)
@@ -685,7 +713,7 @@ export function buildFunctionDeclarationUtil(
     declaration.parameters = parameters;
   }
   if (vertexai) {
-    const responseSchema = resolveReturnSchema(func, schemaCopy);
+    const responseSchema = resolveReturnSchema(func, beforeParamSchema);
     if (responseSchema !== undefined) {
       declaration.response = responseSchema;
     }

@@ -138,6 +138,8 @@ export class Gemini extends BaseLlm {
    */
   static override readonly supportedModels: Array<string | RegExp> = [
     /gemini-.*/,
+    // model optimizer pattern
+    /^model-optimizer-.*/,
     // fine-tuned vertex endpoint pattern
     /projects\/.+\/locations\/.+\/endpoints\/.+/,
     // vertex gemini long name
@@ -365,8 +367,14 @@ export class Gemini extends BaseLlm {
         for (const content of llmRequest.contents) {
           if (!content.parts) continue;
           for (const part of content.parts) {
-            removeDisplayNameIfPresent(part.inlineData);
-            removeDisplayNameIfPresent(part.fileData);
+            if (part.inlineData) {
+              part.inlineData = {...part.inlineData};
+              removeDisplayNameIfPresent(part.inlineData);
+            }
+            if (part.fileData) {
+              part.fileData = {...part.fileData};
+              removeDisplayNameIfPresent(part.fileData);
+            }
           }
         }
       }

@@ -5,7 +5,12 @@
  */
 
 import {Task, TaskStatusUpdateEvent, TextPart} from '@a2a-js/sdk';
-import {ExecutionEventBus, RequestContext} from '@a2a-js/sdk/server';
+import {
+  ExecutionEventBus,
+  RequestContext,
+  ServerCallContext,
+  User,
+} from '@a2a-js/sdk/server';
 import {
   A2AAgentExecutor,
   Event as AdkEvent,
@@ -18,6 +23,11 @@ import {
   Session,
 } from '@google/adk';
 import {beforeEach, describe, expect, it, Mocked, vi} from 'vitest';
+import {
+  resetUnauthenticatedUserNameWarning,
+  resolveA2aUserId,
+} from '../../src/a2a/agent_executor.js';
+import {logger} from '../../src/utils/logger.js';
 
 // Mock the Runner to control its async generator
 vi.mock('../../src/runner/runner.js', async (importOriginal) => {
@@ -398,6 +408,59 @@ describe('A2AAgentExecutor', () => {
     );
   });
 
+  it('keys the session by the A2A context id and derives the user from it', async () => {
+    mockSessionService.getSession.mockResolvedValue(undefined);
+    mockSessionService.createSession.mockResolvedValue(
+      createSession({
+        id: 'test-context',
+        userId: 'A2A_USER_test-context',
+        appName: 'test-app',
+      }),
+    );
+
+    const mockRunAsync = vi.fn(async function* () {
+      yield createEvent({
+        author: 'model',
+        content: {role: 'model', parts: [{text: 'response'}]},
+        partial: false,
+        actions: createEventActions(),
+      });
+    });
+
+    vi.mocked(Runner).mockImplementation(function (config: RunnerConfig) {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: mockRunAsync,
+      } as unknown as Runner;
+    });
+
+    const executor = new A2AAgentExecutor({
+      runner: {appName: 'test-app', sessionService: mockSessionService},
+    });
+
+    await executor.execute(createRequestContext(), mockEventBus);
+
+    const expectedSessionKey = {
+      appName: 'test-app',
+      userId: 'A2A_USER_test-context',
+      sessionId: 'test-context',
+    };
+    expect(mockSessionService.getSession).toHaveBeenCalledWith(
+      expectedSessionKey,
+    );
+    expect(mockSessionService.createSession).toHaveBeenCalledWith(
+      expectedSessionKey,
+    );
+    expect(mockRunAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'A2A_USER_test-context',
+        sessionId: 'test-context',
+        newMessage: {role: 'user', parts: [{text: 'hello', thought: false}]},
+      }),
+    );
+  });
+
   it('should fail cancelTask because it is not implemented', async () => {
     const executor = new A2AAgentExecutor({
       runner: {
@@ -409,5 +472,334 @@ describe('A2AAgentExecutor', () => {
     await expect(executor.cancelTask('any-task-id')).rejects.toThrow(
       'Task cancellation is not supported yet.',
     );
+  });
+
+  describe('runner resolution', () => {
+    const runnerConfig = (): RunnerConfig =>
+      ({
+        appName: 'test-app',
+        sessionService: mockSessionService,
+      }) as unknown as RunnerConfig;
+
+    beforeEach(() => {
+      mockSessionService.getSession.mockResolvedValue(
+        createSession({
+          id: 'test-context',
+          userId: 'A2A_USER_test-context',
+          appName: 'test-app',
+        }),
+      );
+      vi.mocked(Runner).mockImplementation(function (config: RunnerConfig) {
+        return {
+          appName: config?.appName,
+          sessionService: config?.sessionService,
+          runAsync: async function* () {},
+        } as unknown as Runner;
+      });
+    });
+
+    const finalStates = (): string[] =>
+      mockEventBus.publish.mock.calls
+        .map(([event]) => event)
+        .filter(
+          (event): event is TaskStatusUpdateEvent =>
+            event.kind === 'status-update' && event.final,
+        )
+        .map((event) => event.status.state);
+
+    it.each([
+      {kind: 'a sync', factory: () => vi.fn(runnerConfig)},
+      {kind: 'an async', factory: () => vi.fn(async () => runnerConfig())},
+    ])(
+      'calls $kind runner factory one time across requests',
+      async ({factory}) => {
+        const runnerFactory = factory();
+        const executor = new A2AAgentExecutor({runner: runnerFactory});
+
+        await executor.execute(createRequestContext(), mockEventBus);
+        await executor.execute(createRequestContext(), mockEventBus);
+
+        expect(runnerFactory).toHaveBeenCalledTimes(1);
+        expect(Runner).toHaveBeenCalledTimes(1);
+        expect(finalStates()).toEqual(['completed', 'completed']);
+      },
+    );
+
+    it('builds one runner from a runner config across requests', async () => {
+      const executor = new A2AAgentExecutor({runner: runnerConfig()});
+
+      await executor.execute(createRequestContext(), mockEventBus);
+      await executor.execute(createRequestContext(), mockEventBus);
+
+      expect(Runner).toHaveBeenCalledTimes(1);
+    });
+
+    it('shares one resolution between concurrent first requests', async () => {
+      const runnerFactory = vi.fn(async () => runnerConfig());
+      const executor = new A2AAgentExecutor({runner: runnerFactory});
+
+      await Promise.all([
+        executor.execute(createRequestContext(), mockEventBus),
+        executor.execute(createRequestContext(), mockEventBus),
+      ]);
+
+      expect(runnerFactory).toHaveBeenCalledTimes(1);
+      expect(Runner).toHaveBeenCalledTimes(1);
+    });
+
+    it('resolves the runner again after a failed resolution', async () => {
+      const runnerFactory = vi
+        .fn<() => Promise<RunnerConfig>>()
+        .mockRejectedValueOnce(new Error('The runner is not ready.'))
+        .mockResolvedValue(runnerConfig());
+      const executor = new A2AAgentExecutor({runner: runnerFactory});
+
+      await expect(
+        executor.execute(createRequestContext(), mockEventBus),
+      ).rejects.toThrow('The runner is not ready.');
+      await executor.execute(createRequestContext(), mockEventBus);
+
+      expect(runnerFactory).toHaveBeenCalledTimes(2);
+      expect(finalStates()).toEqual(['completed']);
+    });
+  });
+
+  it('publishes an auth-required final status when the run ends on a credential request', async () => {
+    mockSessionService.getSession.mockResolvedValue(
+      createSession({
+        id: 'test-context',
+        userId: 'A2A_USER_test-context',
+        appName: 'test-app',
+      }),
+    );
+    vi.mocked(Runner).mockImplementation(function (config: RunnerConfig) {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: async function* () {
+          yield createEvent({
+            author: 'model',
+            longRunningToolIds: ['credential-call'],
+            content: {
+              role: 'model',
+              parts: [
+                {
+                  functionCall: {
+                    id: 'credential-call',
+                    name: 'adk_request_credential',
+                    args: {},
+                  },
+                },
+              ],
+            },
+            actions: createEventActions(),
+          });
+        },
+      } as unknown as Runner;
+    });
+    const executor = new A2AAgentExecutor({
+      runner: {
+        appName: 'test-app',
+        sessionService: mockSessionService,
+      } as unknown as RunnerConfig,
+    });
+
+    await executor.execute(createRequestContext(), mockEventBus);
+
+    expect(mockEventBus.publish).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        kind: 'status-update',
+        final: true,
+        status: expect.objectContaining({state: 'auth-required'}),
+      }),
+    );
+  });
+
+  describe('resolveA2aUserId and authenticated call context', () => {
+    beforeEach(() => {
+      resetUnauthenticatedUserNameWarning();
+    });
+
+    it('returns userName when RequestContext user is authenticated', () => {
+      const user: User = {
+        isAuthenticated: true,
+        userName: 'authenticated_user',
+      };
+      const ctx = createRequestContext({
+        contextId: 'test_context',
+        context: new ServerCallContext(undefined, user),
+      });
+
+      expect(resolveA2aUserId(ctx)).toBe('authenticated_user');
+    });
+
+    it('falls back to A2A_USER_<contextId> when context is missing', () => {
+      const ctx = createRequestContext({
+        contextId: 'test_context',
+        context: undefined,
+      });
+
+      expect(resolveA2aUserId(ctx)).toBe('A2A_USER_test_context');
+    });
+
+    it('falls back to A2A_USER_<contextId> when context has no user', () => {
+      const ctx = createRequestContext({
+        contextId: 'test_context',
+        context: new ServerCallContext(),
+      });
+
+      expect(resolveA2aUserId(ctx)).toBe('A2A_USER_test_context');
+    });
+
+    it('falls back to A2A_USER_<contextId> when userName is empty', () => {
+      const user: User = {
+        isAuthenticated: true,
+        userName: '',
+      };
+      const ctx = createRequestContext({
+        contextId: 'test_context',
+        context: new ServerCallContext(undefined, user),
+      });
+
+      expect(resolveA2aUserId(ctx)).toBe('A2A_USER_test_context');
+    });
+
+    it('falls back to A2A_USER_<contextId> when userName is undefined', () => {
+      const user = {
+        isAuthenticated: true,
+        userName: undefined,
+      } as unknown as User;
+      const ctx = createRequestContext({
+        contextId: 'test_context',
+        context: new ServerCallContext(undefined, user),
+      });
+
+      expect(resolveA2aUserId(ctx)).toBe('A2A_USER_test_context');
+    });
+
+    it('formats A2A_USER_undefined when contextId is undefined', () => {
+      const ctx = createRequestContext({
+        contextId: undefined,
+        context: undefined,
+      });
+
+      expect(resolveA2aUserId(ctx)).toBe('A2A_USER_undefined');
+    });
+
+    it('ignores userName when user is not authenticated', () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        const unverifiedUser: User = {
+          isAuthenticated: false,
+          userName: 'victim@example.com',
+        };
+        const ctx = createRequestContext({
+          contextId: 'test_context',
+          context: new ServerCallContext(undefined, unverifiedUser),
+        });
+
+        expect(resolveA2aUserId(ctx)).toBe('A2A_USER_test_context');
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('logs a warning once without leaking the unauthenticated userName', () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        const unverifiedUser: User = {
+          isAuthenticated: false,
+          userName: 'victim@example.com',
+        };
+        const ctx = createRequestContext({
+          contextId: 'test_context',
+          context: new ServerCallContext(undefined, unverifiedUser),
+        });
+
+        resolveA2aUserId(ctx);
+        resolveA2aUserId(ctx);
+
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        expect(warnSpy.mock.calls[0]?.[0]).toContain(
+          'unauthenticated A2A caller',
+        );
+        expect(warnSpy.mock.calls[0]?.[0]).not.toContain('victim@example.com');
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('does not log a warning for an authenticated user', () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        const user: User = {
+          isAuthenticated: true,
+          userName: 'authenticated_user',
+        };
+        const ctx = createRequestContext({
+          contextId: 'test_context',
+          context: new ServerCallContext(undefined, user),
+        });
+
+        expect(resolveA2aUserId(ctx)).toBe('authenticated_user');
+        expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('runs A2AAgentExecutor with the authenticated userName from RequestContext', async () => {
+      mockSessionService.getSession.mockResolvedValue(undefined);
+      mockSessionService.createSession.mockResolvedValue(
+        createSession({
+          id: 'mysession',
+          userId: 'auth_user',
+          appName: 'test-app',
+        }),
+      );
+
+      const mockRunAsync = vi.fn(async function* () {
+        yield createEvent({
+          author: 'model',
+          content: {role: 'model', parts: [{text: 'response'}]},
+          partial: false,
+          actions: createEventActions(),
+        });
+      });
+
+      vi.mocked(Runner).mockImplementation(function (config: RunnerConfig) {
+        return {
+          appName: config?.appName,
+          sessionService: config?.sessionService,
+          runAsync: mockRunAsync,
+        } as unknown as Runner;
+      });
+
+      const executor = new A2AAgentExecutor({
+        runner: {appName: 'test-app', sessionService: mockSessionService},
+      });
+      const user: User = {
+        isAuthenticated: true,
+        userName: 'auth_user',
+      };
+      const ctx = createRequestContext({
+        contextId: 'mysession',
+        context: new ServerCallContext(undefined, user),
+      });
+
+      await executor.execute(ctx, mockEventBus);
+
+      expect(mockSessionService.getSession).toHaveBeenCalledWith({
+        appName: 'test-app',
+        userId: 'auth_user',
+        sessionId: 'mysession',
+      });
+      expect(mockRunAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'auth_user',
+          sessionId: 'mysession',
+        }),
+      );
+    });
   });
 });

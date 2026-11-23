@@ -17,9 +17,10 @@ import {
   ToolConfirmation,
   createSession,
   isComputerUseTool,
+  logger,
   withTemporaryFeatureOverride,
 } from '@google/adk';
-import {describe, expect, it} from 'vitest';
+import {describe, expect, it, vi} from 'vitest';
 
 const SCREENSHOT = new Uint8Array([1, 2, 3]);
 const SCREENSHOT_BASE64 = 'AQID';
@@ -212,6 +213,22 @@ describe('ComputerUseTool', () => {
       await tool.runAsync({args, toolContext: makeContext()});
 
       expect(args).toEqual({x: 500, y: 500});
+    });
+
+    it('logs normalized coordinates at debug level', async () => {
+      const {tool} = makeTool();
+      const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+      try {
+        await tool.runAsync({
+          args: {x: 500, y: 300},
+          toolContext: makeContext(),
+        });
+
+        expect(debugSpy).toHaveBeenCalledWith('Normalized x: 500 -> 960');
+        expect(debugSpy).toHaveBeenCalledWith('Normalized y: 300 -> 324');
+      } finally {
+        debugSpy.mockRestore();
+      }
     });
   });
 

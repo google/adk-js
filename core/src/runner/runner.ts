@@ -48,7 +48,11 @@ import {BaseSessionService} from '../sessions/base_session_service.js';
 import {Session} from '../sessions/session.js';
 import {recordInvocation} from '../telemetry/api/instrumentation.js';
 import {BaseToolset, isBaseToolset} from '../tools/base_toolset.js';
-import {formatError} from '../utils/error_utils.js';
+import {
+  formatError,
+  isInvocationCancellation,
+  toError,
+} from '../utils/error_utils.js';
 import {logger} from '../utils/logger.js';
 import {isGemini2OrAbove} from '../utils/model_name.js';
 import {stringifyWithRedactedInlineData} from '../utils/redact_inline_data.js';
@@ -449,88 +453,9 @@ export class Runner {
             // =========================================================================
             // Run the agent with the plugins (aka hooks to apply in the lifecycle)
             // =========================================================================
-            // Step 1: Run the before_run callbacks to see if we should early exit.
-            const beforeRunCallbackResponse =
-              await runnerCtx.pluginManager.runBeforeRunCallback({
-                invocationContext,
-              });
-            if (params.abortSignal?.aborted) {
-              return;
-            }
-
-            if (beforeRunCallbackResponse) {
-              const earlyExitEvent = createEvent({
-                invocationId: invocationContext.invocationId,
-                author: 'model',
-                content: beforeRunCallbackResponse,
-              });
-              // TODO: b/447446338 - In the future, do *not* save live call
-              // audio content to the session.
-              await runnerCtx.sessionService.appendEvent({
-                session,
-                event: earlyExitEvent,
-              });
-              if (params.abortSignal?.aborted) {
-                return;
-              }
-
-              yield earlyExitEvent;
-            } else {
-              // Step 2: Otherwise continue with normal execution
-              let abortSealed = false;
-              const sealAbortedInvocation = () => {
-                abortSealed = true;
-                return runnerCtx.synthesizeAbortEvents(invocationContext);
-              };
-              try {
-                for await (const event of runnerCtx.runRoot(
-                  invocationContext,
-                )) {
-                  if (params.abortSignal?.aborted) {
-                    break;
-                  }
-
-                  // Step 3: Run the on_event callbacks before persisting so
-                  // callback changes are stored in the session and match the
-                  // streamed event.
-                  const outputEvent = await runnerCtx.processAndAppendEvent(
-                    invocationContext,
-                    event,
-                  );
-                  if (params.abortSignal?.aborted) {
-                    break;
-                  }
-
-                  yield outputEvent;
-                }
-                if (params.abortSignal?.aborted) {
-                  for (const abortEvent of await sealAbortedInvocation()) {
-                    yield abortEvent;
-                  }
-                  return;
-                }
-              } finally {
-                if (params.abortSignal?.aborted && !abortSealed) {
-                  // Best-effort: only reached on early close or error, where
-                  // throwing would mask the in-flight exception.
-                  try {
-                    await sealAbortedInvocation();
-                  } catch (e) {
-                    logger.error(
-                      `Failed to seal aborted invocation ${invocationContext.invocationId}.`,
-                      e,
-                    );
-                  }
-                }
-              }
-              // Step 4: Run the after_run callbacks to optionally modify the context.
-              await runnerCtx.pluginManager.runAfterRunCallback({
-                invocationContext,
-              });
-              if (params.abortSignal?.aborted) {
-                return;
-              }
-            }
+            yield* runnerCtx.runWithPluginLifecycle(invocationContext, () =>
+              runnerCtx.runAsyncWithPlugins(invocationContext),
+            );
           }
         },
       );
@@ -545,6 +470,144 @@ export class Runner {
    */
   async close(): Promise<void> {
     await cleanupToolsets(collectToolsets(this.agent));
+  }
+
+  private async *runAsyncWithPlugins(
+    invocationContext: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
+    // Step 1: Run the before_run callbacks to see if we should early exit.
+    const beforeRunCallbackResponse =
+      await this.pluginManager.runBeforeRunCallback({
+        invocationContext,
+      });
+    if (invocationContext.abortSignal?.aborted) {
+      return;
+    }
+
+    if (beforeRunCallbackResponse) {
+      const earlyExitEvent = createEvent({
+        invocationId: invocationContext.invocationId,
+        author: 'model',
+        content: beforeRunCallbackResponse,
+      });
+      // TODO: b/447446338 - In the future, do *not* save live call
+      // audio content to the session.
+      await this.sessionService.appendEvent({
+        session: invocationContext.session,
+        event: earlyExitEvent,
+      });
+      if (invocationContext.abortSignal?.aborted) {
+        return;
+      }
+
+      yield earlyExitEvent;
+    } else {
+      // Step 2: Otherwise continue with normal execution
+      let abortSealed = false;
+      const sealAbortedInvocation = () => {
+        abortSealed = true;
+        return this.synthesizeAbortEvents(invocationContext);
+      };
+      try {
+        for await (const event of this.runRoot(invocationContext)) {
+          if (invocationContext.abortSignal?.aborted) {
+            break;
+          }
+
+          // Step 3: Run the on_event callbacks before persisting so
+          // callback changes are stored in the session and match the
+          // streamed event.
+          const outputEvent = await this.processAndAppendEvent(
+            invocationContext,
+            event,
+          );
+          if (invocationContext.abortSignal?.aborted) {
+            break;
+          }
+
+          yield outputEvent;
+        }
+        if (invocationContext.abortSignal?.aborted) {
+          for (const abortEvent of await sealAbortedInvocation()) {
+            yield abortEvent;
+          }
+          return;
+        }
+      } finally {
+        if (invocationContext.abortSignal?.aborted && !abortSealed) {
+          // Best-effort: only reached on early close or error, where
+          // throwing would mask the in-flight exception.
+          try {
+            await sealAbortedInvocation();
+          } catch (e) {
+            logger.error(
+              `Failed to seal aborted invocation ${invocationContext.invocationId}.`,
+              e,
+            );
+          }
+        }
+      }
+    }
+  }
+
+  /** Finalizes a started run, including when its consumer closes the iterator. */
+  private async *runWithPluginLifecycle(
+    invocationContext: InvocationContext,
+    execute: () => AsyncGenerator<Event, void, void>,
+  ): AsyncGenerator<Event, void, void> {
+    let failed = false;
+    let completed = false;
+    try {
+      yield* execute();
+      completed = true;
+    } catch (error) {
+      if (!isInvocationCancellation(error, invocationContext.abortSignal)) {
+        failed = true;
+        await this.notifyRunError(invocationContext, error);
+      }
+      throw error;
+    } finally {
+      if (!failed) {
+        await this.finishRun(invocationContext, !completed);
+      }
+    }
+  }
+
+  private async finishRun(
+    invocationContext: InvocationContext,
+    closingEarly: boolean,
+  ): Promise<void> {
+    try {
+      await this.pluginManager.runAfterRunCallback({invocationContext});
+    } catch (error) {
+      await this.notifyRunError(invocationContext, error);
+      // Caller return() and thrown cancellation both skip the assignment after
+      // yield*. Preserve that close or cancellation if completion fails.
+      if (!closingEarly) {
+        throw error;
+      }
+      logger.error(
+        `afterRunCallback failed while closing invocation ${invocationContext.invocationId}.`,
+        error,
+      );
+    }
+  }
+
+  private async notifyRunError(
+    invocationContext: InvocationContext,
+    error: unknown,
+  ): Promise<void> {
+    try {
+      await this.pluginManager.runOnRunErrorCallback({
+        invocationContext,
+        error: toError(error),
+      });
+    } catch (callbackError) {
+      logger.error(
+        'Run error notification failed; preserving the original error.',
+        callbackError,
+      );
+    }
   }
 
   /**
@@ -833,66 +896,70 @@ export class Runner {
           agent,
         );
 
-        // Step 1: before-run plugin hook (early exit if it returns content).
-        const beforeRunCallbackResponse =
-          await runnerCtx.pluginManager.runBeforeRunCallback({
-            invocationContext,
-          });
-        if (params.abortSignal?.aborted) {
-          return;
-        }
-        if (beforeRunCallbackResponse) {
-          const earlyExitEvent = createEvent({
-            invocationId: invocationContext.invocationId,
-            author: 'model',
-            content: beforeRunCallbackResponse,
-          });
-          await runnerCtx.sessionService.appendEvent({
-            session,
-            event: earlyExitEvent,
-          });
-          yield earlyExitEvent;
-          return;
-        }
-
-        // Step 2: drive the agent's runLive and propagate events.
-        for await (const event of requireAgent(invocationContext).runLive(
-          invocationContext,
-        )) {
-          if (params.abortSignal?.aborted) {
-            return;
-          }
-
-          const modifiedEvent =
-            await runnerCtx.pluginManager.runOnEventCallback({
-              invocationContext,
-              event,
-            });
-          if (params.abortSignal?.aborted) {
-            return;
-          }
-
-          const eventToProcess = modifiedEvent
-            ? withInternalMetadataOf(event, modifiedEvent)
-            : event;
-
-          if (
-            !eventToProcess.partial &&
-            !isLiveModelMediaEventWithInlineData(eventToProcess)
-          ) {
-            await runnerCtx.sessionService.appendEvent({
-              session,
-              event: eventToProcess,
-            });
-          }
-
-          yield eventToProcess;
-        }
-
-        // Step 3: after-run plugin hook for cleanup/metrics.
-        await runnerCtx.pluginManager.runAfterRunCallback({invocationContext});
+        yield* runnerCtx.runWithPluginLifecycle(invocationContext, () =>
+          runnerCtx.runLiveWithPlugins(invocationContext),
+        );
       },
     );
+  }
+
+  private async *runLiveWithPlugins(
+    invocationContext: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
+    // Step 1: before-run plugin hook (early exit if it returns content).
+    const beforeRunCallbackResponse =
+      await this.pluginManager.runBeforeRunCallback({
+        invocationContext,
+      });
+    if (invocationContext.abortSignal?.aborted) {
+      return;
+    }
+    if (beforeRunCallbackResponse) {
+      const earlyExitEvent = createEvent({
+        invocationId: invocationContext.invocationId,
+        author: 'model',
+        content: beforeRunCallbackResponse,
+      });
+      await this.sessionService.appendEvent({
+        session: invocationContext.session,
+        event: earlyExitEvent,
+      });
+      yield earlyExitEvent;
+      return;
+    }
+
+    // Step 2: drive the agent's runLive and propagate events.
+    for await (const event of requireAgent(invocationContext).runLive(
+      invocationContext,
+    )) {
+      if (invocationContext.abortSignal?.aborted) {
+        return;
+      }
+
+      const modifiedEvent = await this.pluginManager.runOnEventCallback({
+        invocationContext,
+        event,
+      });
+      if (invocationContext.abortSignal?.aborted) {
+        return;
+      }
+
+      const eventToProcess = modifiedEvent
+        ? withInternalMetadataOf(event, modifiedEvent)
+        : event;
+
+      if (
+        !eventToProcess.partial &&
+        !isLiveModelMediaEventWithInlineData(eventToProcess)
+      ) {
+        await this.sessionService.appendEvent({
+          session: invocationContext.session,
+          event: eventToProcess,
+        });
+      }
+
+      yield eventToProcess;
+    }
   }
 }
 
@@ -947,31 +1014,33 @@ export function determineAgentForResumption(
   resumabilityConfig?: ResumabilityConfig,
 ): BaseAgent {
   // =========================================================================
-  // Case 1: If the last event is a function response and resumability is enabled,
-  // this returns the agent that made the original function call.
+  // Case 1: If the last event is a function response, this returns the agent
+  // that made the original function call. A response the user sends always
+  // routes there, because the agent that asked (for example for a credential
+  // or a long-running result) is the one waiting for the answer. A response
+  // written by an agent routes there only when resumability is enabled.
   // =========================================================================
-  // A synthetic abort response seals a cancelled call; it must not route the
-  // next turn back to the agent that issued the call.
-  const lastEvent = session.events[session.events.length - 1];
+  // A synthetic abort response seals a cancelled call; neither it nor a later
+  // user answer to that call may route the next turn back to the agent that
+  // issued the call.
+  const lastEvent = session.events.at(-1);
+  const lastNonUserEvent = findLastNonUserEvent(session.events);
   const event =
-    lastEvent && !isAbortEvent(lastEvent)
+    lastEvent &&
+    !isAbortEvent(lastEvent) &&
+    !(lastNonUserEvent && isAbortEvent(lastNonUserEvent))
       ? findEventByLastFunctionResponseId(session.events)
       : null;
   const isResumable = Boolean(resumabilityConfig?.isResumable);
-  if (event && event.author && isResumable) {
-    // Checked here, not inside findEventByLastFunctionResponseId /
-    // findMatchingFunctionCall: those run unconditionally above, on every
-    // runAsync for an agent root, not only when resumption is requested.
-    // Throwing there would abort a run whose result is thrown away
-    // whenever resumabilityConfig is unset, for a session whose last
-    // event merely happens to answer two agents' calls at once -- Cases
-    // 2 and 3 below would never get a chance to run. Gating the throw on
-    // isResumable, which is what actually decides whether this event
-    // matters, keeps that from happening.
+  if (event?.author && (isResumable || lastEvent?.author === 'user')) {
+    // The conflict check lives here rather than in findMatchingFunctionCall,
+    // which is a pure lookup. A last event that answers calls from two agents
+    // has no single agent to resume. With resumability enabled that is an
+    // error; without it, Case 2 picks the agent instead.
     const conflictingAuthors = getConflictingFunctionResponseAuthors(
       session.events,
     );
-    if (conflictingAuthors) {
+    if (conflictingAuthors && isResumable) {
       throw new Error(
         'Function responses in the last event resolve to function calls ' +
           `from more than one agent (at least "${conflictingAuthors[0]}" ` +
@@ -979,14 +1048,16 @@ export function determineAgentForResumption(
           'agent to resume.',
       );
     }
-    const resumedAgent = rootAgent.findAgent(event.author);
-    if (resumedAgent) {
-      return resumedAgent;
-    }
-    if (!isWorkflowNodeEvent(event)) {
-      logger.warn(
-        `Function response from an unknown agent: ${event.author}, event id: ${event.id}`,
-      );
+    if (!conflictingAuthors) {
+      const resumedAgent = rootAgent.findAgent(event.author);
+      if (resumedAgent) {
+        return resumedAgent;
+      }
+      if (!isWorkflowNodeEvent(event)) {
+        logger.warn(
+          `Function response from an unknown agent: ${event.author}, event id: ${event.id}`,
+        );
+      }
     }
   }
 
@@ -1025,6 +1096,18 @@ export function determineAgentForResumption(
   // Case 3: default to root agent.
   // =========================================================================
   return rootAgent;
+}
+
+/**
+ * Returns the newest event in `events` not authored by the user, if any.
+ */
+function findLastNonUserEvent(events: Event[]): Event | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].author !== 'user') {
+      return events[i];
+    }
+  }
+  return undefined;
 }
 
 /**

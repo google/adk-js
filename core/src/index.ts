@@ -46,11 +46,7 @@ export {
   DebugLoggingPlugin,
   isDebugLoggingPlugin,
 } from './plugins/debug_logging_plugin.js';
-export {
-  DatabaseSessionService,
-  isStaleSessionError,
-  StaleSessionError,
-} from './sessions/database_session_service.js';
+export {DatabaseSessionService} from './sessions/database_session_service.js';
 export type {DatabaseSessionServiceOptions} from './sessions/database_session_service.js';
 export {getSessionServiceFromUri} from './sessions/registry.js';
 export {VertexAiSessionService} from './sessions/vertex_ai_session_service.js';
@@ -189,18 +185,28 @@ export {SkillToolset} from './tools/skill/skill_toolset.js';
 export type {JsonObject} from './utils/json_utils.js';
 
 export * from './integrations/agent_registry/agent_registry.js';
+export {runWithAgentEngineContext} from './telemetry/export/agent_engine.js';
+export {
+  agentRuntimeRequestHooks,
+  type AgentRuntimeRequestHooks,
+} from './telemetry/export/agent_runtime.js';
 export * from './telemetry/export/google_cloud.js';
 export * from './telemetry/export/setup.js';
 export * from './tools/google_api_tool/index.js';
 // Also available as `@google/adk/tools/mcp`, which does not evaluate the rest
 // of this barrel.
 export {
+  convertEvalSetToSchema,
   DEFAULT_CRITERIA,
   EVAL_SESSION_ID_PREFIX,
   EvalStatus,
   getEvaluationCriteriaOrDefault,
   getRootAgent,
+  loadEvalSetFromFile,
+  LocalEvalSetResultsManager,
+  LocalEvalSetsManager,
   MISSING_EVAL_DEPENDENCIES_MESSAGE,
+  normalizeEvalCase,
   parseAndGetEvalsToRun,
   RESPONSE_EVALUATION_SCORE_KEY,
   RESPONSE_MATCH_SCORE_KEY,
@@ -210,17 +216,28 @@ export {
 } from './cli/cli_eval.js';
 export type {
   AddSessionToEvalSetRequest,
+  EvalCaseResult,
   EvalEntry,
   EvalInitialSession,
   EvalMetric,
   EvalMetricResult,
   EvalResult,
   EvalSetItem,
+  EvalSetResult,
+  EvalSetResultsManager,
+  EvalSetsManager,
   InvocationEvalMetricResult,
   RunEvalRequest,
   RunEvalResult,
   RunEvalsOptions,
+  SaveEvalSetResultParams,
 } from './cli/cli_eval.js';
+export {
+  createGcsEvalManagersFromUri,
+  GcsEvalSetResultsManager,
+  GcsEvalSetsManager,
+} from './cli/gcs_eval_managers.js';
+export type {GcsEvalManagers} from './cli/gcs_eval_managers.js';
 export {loadDotenvForAgent, walkToRootUntilFound} from './cli/utils/envs.js';
 export {
   LOGGING_FORMAT,
@@ -228,4 +245,5 @@ export {
   setupAdkLogger,
 } from './cli/utils/logs.js';
 export type {LogToTmpFolderOptions} from './cli/utils/logs.js';
+export {validatePathSegment} from './cli/utils/path_validation.js';
 export * from './tools/mcp/index.js';

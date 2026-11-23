@@ -4,23 +4,37 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {AGENT_CARD_PATH, AgentCard} from '@a2a-js/sdk';
-import {InMemoryTaskStore} from '@a2a-js/sdk/server';
+import {AGENT_CARD_PATH, AgentCard, SecurityScheme} from '@a2a-js/sdk';
+import {
+  InMemoryTaskStore,
+  PushNotificationSender,
+  PushNotificationStore,
+  TaskStore,
+} from '@a2a-js/sdk/server';
 import type {UserBuilder} from '@a2a-js/sdk/server/express';
 import type express from 'express';
 import {StreamingMode} from '../agents/run_config.js';
 import {BaseArtifactService} from '../artifacts/base_artifact_service.js';
+import {InMemoryArtifactService} from '../artifacts/in_memory_artifact_service.js';
+import {BaseCredentialService} from '../auth/credential_service/base_credential_service.js';
+import {InMemoryCredentialService} from '../auth/credential_service/in_memory_credential_service.js';
 import {BaseMemoryService} from '../memory/base_memory_service.js';
-import {Runner} from '../runner/runner.js';
+import {InMemoryMemoryService} from '../memory/in_memory_memory_service.js';
+import {Runner, RunnerConfig} from '../runner/runner.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {InMemorySessionService} from '../sessions/in_memory_session_service.js';
+import {runWithRemoteTraceContext} from '../telemetry/api/instrumentation.js';
 import {logger} from '../utils/logger.js';
 import {loadOptionalPeer} from '../utils/optional_peer.js';
-import {RunnableRoot} from '../workflow/run_node_as_invocation.js';
+import {
+  isRunnableRoot,
+  RunnableRoot,
+} from '../workflow/run_node_as_invocation.js';
 import {
   getA2AAgentCard,
   resolveAgentCard,
   ResolveAgentCardOptions,
+  SkillSecurity,
 } from './agent_card.js';
 import {A2AAgentExecutor} from './agent_executor.js';
 import {
@@ -56,6 +70,19 @@ async function loadExpressBindings(): Promise<{
 }
 
 /**
+ * Express middleware that runs the rest of an A2A request in the trace
+ * context its headers carry, so the agent invocation continues the caller's
+ * trace.
+ */
+function continueRemoteTrace(
+  req: express.Request,
+  _res: express.Response,
+  next: express.NextFunction,
+): void {
+  runWithRemoteTraceContext(req.headers, () => next());
+}
+
+/**
  * A request authenticator for the A2A surface.
  *
  * This is the `UserBuilder` hook from `@a2a-js/sdk`: an async function that
@@ -78,8 +105,15 @@ export interface ToA2aOptions {
   port?: number;
   /** The protocol for the A2A RPC URL (default: "http") */
   protocol?: string;
-  /** The base path for the A2A RPC URL (default: "a2a") */
+  /** The base path for the A2A RPC URL (default: "") */
   basePath?: string;
+  /**
+   * Optional path prefix to serve the agent under (for example,
+   * `"analysis-agent"`). Leading and trailing slashes are normalized so
+   * `"analysis-agent"`, `"/analysis-agent"`, and `"/analysis-agent/"` all
+   * mount at `"/analysis-agent"`.
+   */
+  rpcPath?: string;
   /** Optional pre-built AgentCard object or path to agent card JSON */
   agentCard?: AgentCard | string;
   /**
@@ -90,6 +124,25 @@ export interface ToA2aOptions {
    * what each option relaxes and why both default to failing closed.
    */
   resolveAgentCardOptions?: ResolveAgentCardOptions;
+  /** Optional A2A task store for persisting task state. */
+  taskStore?: TaskStore;
+  /** Optional A2A push notification configuration store. */
+  pushConfigStore?: PushNotificationStore;
+  /** Optional A2A push notification sender. */
+  pushNotificationSender?: PushNotificationSender;
+  /** Optional factory function that creates an {@link A2AAgentExecutor} from a {@link Runner}. */
+  agentExecutorFactory?: (runner: Runner) => A2AAgentExecutor;
+  /**
+   * Optional security scheme definitions included on the generated `AgentCard`.
+   * Ignored with a warning when {@link ToA2aOptions.agentCard} is provided.
+   */
+  securitySchemes?: Record<string, SecurityScheme>;
+  /**
+   * Optional default security requirements applied to all generated skills on
+   * the card unless overridden per tool via `BaseTool.customMetadata['security']`.
+   * Ignored with a warning when {@link ToA2aOptions.agentCard} is provided.
+   */
+  defaultSkillSecurity?: SkillSecurity;
   /** Optional pre-built Runner object */
   runner?: Runner;
   /** Optional session service */
@@ -98,6 +151,8 @@ export interface ToA2aOptions {
   memoryService?: BaseMemoryService;
   /** Optional artifact service */
   artifactService?: BaseArtifactService;
+  /** Optional credential service */
+  credentialService?: BaseCredentialService;
   /** Optional existing express application */
   app?: express.Application;
   /**
@@ -169,10 +224,19 @@ function resolveA2aUserBuilder(
   );
 }
 
+function describeRootType(value: unknown): string {
+  if (typeof value === 'object' && value !== null) {
+    return (
+      (value as {constructor?: {name?: string}}).constructor?.name ?? 'object'
+    );
+  }
+  return typeof value;
+}
+
 /**
  * Converts an ADK agent to an Express application with A2A handlers.
  *
- * @param agent The ADK agent to convert
+ * @param agent The ADK agent or workflow to convert
  * @param options Configuration options
  * @returns An Express application
  */
@@ -180,6 +244,15 @@ export async function toA2a(
   agent: RunnableRoot,
   options: ToA2aOptions = {},
 ): Promise<express.Application> {
+  if (!agent) {
+    throw new Error('Agent cannot be null or undefined.');
+  }
+  if (!isRunnableRoot(agent)) {
+    throw new TypeError(
+      `toA2a requires a BaseAgent or Workflow, got ${describeRootType(agent)}.`,
+    );
+  }
+
   const {express: expressFactory, a2aExpress} = await loadExpressBindings();
 
   // Fail closed before doing any work: the A2A surface must be authenticated
@@ -189,39 +262,97 @@ export async function toA2a(
   const host = options.host ?? 'localhost';
   const port = options.port ?? 8000;
   const protocol = options.protocol ?? 'http';
-  const basePath = options.basePath || '';
+  const normalizedRpcPath =
+    options.rpcPath !== undefined
+      ? options.rpcPath.replace(/^\/+|\/+$/g, '')
+      : undefined;
+  const basePath =
+    normalizedRpcPath !== undefined
+      ? normalizedRpcPath
+        ? `/${normalizedRpcPath}`
+        : ''
+      : options.basePath || '';
   const rpcUrl = `${protocol}://${host}:${port}${basePath}`;
+
+  if (
+    options.agentCard &&
+    (normalizedRpcPath || options.basePath?.replace(/^\/+|\/+$/g, ''))
+  ) {
+    logger.warn(
+      `Both agentCard and rpcPath were provided; routes are mounted under "${basePath}" ` +
+        "but the provided agentCard's advertised url is left unchanged, so " +
+        'clients reading the card may not reach the served location.',
+    );
+  }
+
+  let securitySchemes = options.securitySchemes;
+  let defaultSkillSecurity = options.defaultSkillSecurity;
+  if (
+    options.agentCard &&
+    (securitySchemes !== undefined || defaultSkillSecurity !== undefined)
+  ) {
+    logger.warn(
+      'Both agentCard and securitySchemes/defaultSkillSecurity were provided; ' +
+        'the provided agentCard is used as-is, so securitySchemes and ' +
+        'defaultSkillSecurity are ignored.',
+    );
+    securitySchemes = undefined;
+    defaultSkillSecurity = undefined;
+  }
+
+  const transports = [
+    {
+      url: `${rpcUrl}/jsonrpc`,
+      transport: 'JSONRPC',
+    },
+    {
+      url: `${rpcUrl}/rest`,
+      transport: 'HTTP+JSON',
+    },
+  ];
   const agentCard = options.agentCard
     ? await resolveAgentCard(options.agentCard, options.resolveAgentCardOptions)
-    : await getA2AAgentCard(agent, [
-        {
-          url: `${rpcUrl}/jsonrpc`,
-          transport: 'JSONRPC',
-        },
-        {
-          url: `${rpcUrl}/rest`,
-          transport: 'HTTP+JSON',
-        },
-      ]);
+    : securitySchemes !== undefined || defaultSkillSecurity !== undefined
+      ? await getA2AAgentCard(agent, transports, {
+          securitySchemes,
+          defaultSkillSecurity,
+        })
+      : await getA2AAgentCard(agent, transports);
 
-  const agentExecutor = new A2AAgentExecutor({
-    runner: options.runner || {
-      agent,
-      appName: agent.name,
-      sessionService: options.sessionService || new InMemorySessionService(),
-      memoryService: options.memoryService,
-      artifactService: options.artifactService,
-    },
-    runConfig: {
-      streamingMode: StreamingMode.SSE,
-    },
-  });
+  const defaultRunnerConfig: RunnerConfig = {
+    agent,
+    appName: agent.name || 'adk_agent',
+    sessionService: options.sessionService ?? new InMemorySessionService(),
+    memoryService: options.memoryService ?? new InMemoryMemoryService(),
+    artifactService: options.artifactService ?? new InMemoryArtifactService(),
+    credentialService:
+      options.credentialService ?? new InMemoryCredentialService(),
+  };
 
-  const requestHandler = new AdkDefaultRequestHandler(
-    agentCard,
-    new InMemoryTaskStore(),
-    agentExecutor,
-  );
+  const agentExecutor = options.agentExecutorFactory
+    ? options.agentExecutorFactory(
+        options.runner ?? new Runner(defaultRunnerConfig),
+      )
+    : new A2AAgentExecutor({
+        runner: options.runner ?? defaultRunnerConfig,
+        runConfig: {
+          streamingMode: StreamingMode.SSE,
+        },
+      });
+
+  const taskStore = options.taskStore ?? new InMemoryTaskStore();
+  const requestHandler =
+    options.pushConfigStore !== undefined ||
+    options.pushNotificationSender !== undefined
+      ? new AdkDefaultRequestHandler(
+          agentCard,
+          taskStore,
+          agentExecutor,
+          undefined,
+          options.pushConfigStore,
+          options.pushNotificationSender,
+        )
+      : new AdkDefaultRequestHandler(agentCard, taskStore, agentExecutor);
 
   const app = options.app ?? expressFactory();
   if (!options.app) {
@@ -239,6 +370,7 @@ export async function toA2a(
   );
   app.use(
     `${basePath}/rest`,
+    continueRemoteTrace,
     a2aExpress.restHandler({
       requestHandler,
       userBuilder,
@@ -246,6 +378,7 @@ export async function toA2a(
   );
   app.use(
     `${basePath}/jsonrpc`,
+    continueRemoteTrace,
     a2aExpress.jsonRpcHandler({
       requestHandler,
       userBuilder,

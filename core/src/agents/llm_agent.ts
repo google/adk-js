@@ -29,7 +29,10 @@ import {
   isFinalResponse,
   populateClientFunctionCallId,
 } from '../events/event.js';
-import {isDefaultEventActions} from '../events/event_actions.js';
+import {
+  createEventActions,
+  isDefaultEventActions,
+} from '../events/event_actions.js';
 
 import {BaseExampleProvider} from '../examples/base_example_provider.js';
 import {Example} from '../examples/example.js';
@@ -140,6 +143,17 @@ function isRecoverableLiveError(err: unknown): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Whether a function response event answers a call that is not waiting for
+ * confirmation, i.e. a parallel call that already ran.
+ */
+function hasSettledResponses(functionResponseEvent: Event): boolean {
+  const awaiting = functionResponseEvent.actions.requestedToolConfirmations;
+  return getFunctionResponses(functionResponseEvent).some(
+    (response) => !response.id || !Object.hasOwn(awaiting, response.id),
+  );
 }
 
 /**
@@ -1674,7 +1688,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
 
         if (invocationContext.runConfig?.supportCfc && isEvent(llmResponse)) {
           modelResponseEvent.id = createNewEventId();
-          modelResponseEvent.timestamp = new Date().getTime();
+          modelResponseEvent.timestamp = Date.now();
           yield llmResponse;
           continue;
         }
@@ -1697,7 +1711,6 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
           // responses differ.
           if (!event.partial) {
             modelResponseEvent.id = createNewEventId();
-            modelResponseEvent.timestamp = new Date().getTime();
           }
           yield event;
         }
@@ -1763,6 +1776,9 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       return;
     }
 
+    // Stamp at build time so each streamed chunk gets its own timestamp and
+    // timestamp order matches append order.
+    modelResponseEvent.timestamp = Date.now();
     // Merge llm response with model response event.
     const mergedEvent = createEvent({
       ...modelResponseEvent,
@@ -1866,6 +1882,25 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       functionResponseEvent: functionResponseEvent,
     });
     if (toolConfirmationEvent) {
+      // Parallel calls that needed no confirmation have already run. Their
+      // responses are stored before the pause, or the resumed request carries
+      // those calls without responses, which the model rejects. Each action is
+      // stored once: the responses keep the state and artifact changes, and
+      // the gate keeps the confirmation request and stays the final event.
+      if (hasSettledResponses(functionResponseEvent)) {
+        // Only requestedToolConfirmations and skipSummarization move to the
+        // gate. Every other field (stateDelta, artifactDelta,
+        // requestedAuthConfigs, transferToAgent, escalate, agentState, ...)
+        // intentionally stays on functionResponseEvent.
+        const {requestedToolConfirmations, skipSummarization, ...settled} =
+          functionResponseEvent.actions;
+        functionResponseEvent.actions = createEventActions(settled);
+        toolConfirmationEvent.actions = createEventActions({
+          requestedToolConfirmations,
+          skipSummarization,
+        });
+        yield functionResponseEvent;
+      }
       yield toolConfirmationEvent;
       invocationContext.endInvocation = true;
       return;
@@ -2069,6 +2104,10 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         callbackContext,
         llmResponse,
       });
+    if (invocationContext.abortSignal?.aborted) {
+      return undefined;
+    }
+
     if (afterModelCallbackResponse) {
       return afterModelCallbackResponse;
     }

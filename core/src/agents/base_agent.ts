@@ -9,6 +9,8 @@ import {Content} from '@google/genai';
 import {createEvent, Event} from '../events/event.js';
 
 import {recordAgentInvocation} from '../telemetry/api/instrumentation.js';
+import {isInvocationCancellation, toError} from '../utils/error_utils.js';
+import {logger} from '../utils/logger.js';
 import {BaseNode, BaseNodeConfig} from '../workflow/base_node.js';
 import type {NodeContext} from '../workflow/node_context.js';
 import {Context} from './context.js';
@@ -255,28 +257,35 @@ export abstract class BaseAgent<
       async function* () {
         const context = agentCtx.createInvocationContext(parentContext);
 
-        const beforeAgentCallbackEvent =
-          await agentCtx.handleBeforeAgentCallback(context);
-        if (beforeAgentCallbackEvent) {
-          yield beforeAgentCallbackEvent;
-        }
+        try {
+          const beforeAgentCallbackEvent =
+            await agentCtx.handleBeforeAgentCallback(context);
+          if (beforeAgentCallbackEvent) {
+            yield beforeAgentCallbackEvent;
+          }
 
-        if (context.endInvocation || parentContext.abortSignal?.aborted) {
-          return;
-        }
+          if (context.endInvocation || parentContext.abortSignal?.aborted) {
+            return;
+          }
 
-        for await (const event of agentCtx.runAsyncImpl(context)) {
-          yield event;
-        }
+          for await (const event of agentCtx.runAsyncImpl(context)) {
+            yield event;
+          }
 
-        if (context.endInvocation || parentContext.abortSignal?.aborted) {
-          return;
-        }
+          if (context.endInvocation || parentContext.abortSignal?.aborted) {
+            return;
+          }
 
-        const afterAgentCallbackEvent =
-          await agentCtx.handleAfterAgentCallback(context);
-        if (afterAgentCallbackEvent) {
-          yield afterAgentCallbackEvent;
+          const afterAgentCallbackEvent =
+            await agentCtx.handleAfterAgentCallback(context);
+          if (afterAgentCallbackEvent) {
+            yield afterAgentCallbackEvent;
+          }
+        } catch (error) {
+          if (!isInvocationCancellation(error, context.abortSignal)) {
+            await agentCtx.handleAgentErrorCallback(context, error);
+          }
+          throw error;
         }
       },
     );
@@ -327,31 +336,57 @@ export abstract class BaseAgent<
       async function* () {
         const context = agentCtx.createInvocationContext(parentContext);
 
-        const beforeAgentCallbackEvent =
-          await agentCtx.handleBeforeAgentCallback(context);
-        if (beforeAgentCallbackEvent) {
-          yield beforeAgentCallbackEvent;
-        }
+        try {
+          const beforeAgentCallbackEvent =
+            await agentCtx.handleBeforeAgentCallback(context);
+          if (beforeAgentCallbackEvent) {
+            yield beforeAgentCallbackEvent;
+          }
 
-        if (context.endInvocation || parentContext.abortSignal?.aborted) {
-          return;
-        }
+          if (context.endInvocation || parentContext.abortSignal?.aborted) {
+            return;
+          }
 
-        for await (const event of agentCtx.runLiveImpl(context)) {
-          yield event;
-        }
+          for await (const event of agentCtx.runLiveImpl(context)) {
+            yield event;
+          }
 
-        if (context.endInvocation || parentContext.abortSignal?.aborted) {
-          return;
-        }
+          if (context.endInvocation || parentContext.abortSignal?.aborted) {
+            return;
+          }
 
-        const afterAgentCallbackEvent =
-          await agentCtx.handleAfterAgentCallback(context);
-        if (afterAgentCallbackEvent) {
-          yield afterAgentCallbackEvent;
+          const afterAgentCallbackEvent =
+            await agentCtx.handleAfterAgentCallback(context);
+          if (afterAgentCallbackEvent) {
+            yield afterAgentCallbackEvent;
+          }
+        } catch (error) {
+          if (!isInvocationCancellation(error, context.abortSignal)) {
+            await agentCtx.handleAgentErrorCallback(context, error);
+          }
+          throw error;
         }
       },
     );
+  }
+
+  /** Reports execution failures without replacing the original thrown value. */
+  private async handleAgentErrorCallback(
+    invocationContext: InvocationContext,
+    error: unknown,
+  ): Promise<void> {
+    try {
+      await invocationContext.pluginManager.runOnAgentErrorCallback({
+        agent: this,
+        callbackContext: new Context({invocationContext}),
+        error: toError(error),
+      });
+    } catch (callbackError) {
+      logger.error(
+        'Agent error notification failed; preserving the original error.',
+        callbackError,
+      );
+    }
   }
 
   /**
@@ -450,29 +485,47 @@ export abstract class BaseAgent<
   protected async handleBeforeAgentCallback(
     invocationContext: InvocationContext,
   ): Promise<Event | undefined> {
-    if (this.canonicalBeforeAgentCallbacks.length === 0) {
+    const hasPlugins = Boolean(invocationContext.pluginManager?.hasPlugins);
+    if (!hasPlugins && this.canonicalBeforeAgentCallbacks.length === 0) {
       return undefined;
     }
 
     const callbackContext = new Context({invocationContext});
-    for (const callback of this.canonicalBeforeAgentCallbacks) {
-      const content = await callback(callbackContext);
+    let content = hasPlugins
+      ? await invocationContext.pluginManager.runBeforeAgentCallback({
+          agent: this,
+          callbackContext,
+        })
+      : undefined;
 
-      if (invocationContext.abortSignal?.aborted) {
-        return;
+    if (invocationContext.abortSignal?.aborted) {
+      return;
+    }
+
+    if (!content) {
+      for (const callback of this.canonicalBeforeAgentCallbacks) {
+        content = await callback(callbackContext);
+
+        if (invocationContext.abortSignal?.aborted) {
+          return;
+        }
+
+        if (content) {
+          break;
+        }
       }
+    }
 
-      if (content) {
-        invocationContext.endInvocation = true;
+    if (content) {
+      invocationContext.endInvocation = true;
 
-        return createEvent({
-          invocationId: invocationContext.invocationId,
-          author: this.name,
-          branch: invocationContext.branch,
-          content,
-          actions: callbackContext.eventActions,
-        });
-      }
+      return createEvent({
+        invocationId: invocationContext.invocationId,
+        author: this.name,
+        branch: invocationContext.branch,
+        content,
+        actions: callbackContext.eventActions,
+      });
     }
 
     if (callbackContext.state.hasDelta()) {
@@ -497,27 +550,45 @@ export abstract class BaseAgent<
   protected async handleAfterAgentCallback(
     invocationContext: InvocationContext,
   ): Promise<Event | undefined> {
-    if (this.canonicalAfterAgentCallbacks.length === 0) {
+    const hasPlugins = Boolean(invocationContext.pluginManager?.hasPlugins);
+    if (!hasPlugins && this.canonicalAfterAgentCallbacks.length === 0) {
       return undefined;
     }
 
     const callbackContext = new Context({invocationContext});
-    for (const callback of this.canonicalAfterAgentCallbacks) {
-      const content = await callback(callbackContext);
+    let content = hasPlugins
+      ? await invocationContext.pluginManager.runAfterAgentCallback({
+          agent: this,
+          callbackContext,
+        })
+      : undefined;
 
-      if (invocationContext.abortSignal?.aborted) {
-        return;
-      }
+    if (invocationContext.abortSignal?.aborted) {
+      return;
+    }
 
-      if (content) {
-        return createEvent({
-          invocationId: invocationContext.invocationId,
-          author: this.name,
-          branch: invocationContext.branch,
-          content,
-          actions: callbackContext.eventActions,
-        });
+    if (!content) {
+      for (const callback of this.canonicalAfterAgentCallbacks) {
+        content = await callback(callbackContext);
+
+        if (invocationContext.abortSignal?.aborted) {
+          return;
+        }
+
+        if (content) {
+          break;
+        }
       }
+    }
+
+    if (content) {
+      return createEvent({
+        invocationId: invocationContext.invocationId,
+        author: this.name,
+        branch: invocationContext.branch,
+        content,
+        actions: callbackContext.eventActions,
+      });
     }
 
     if (callbackContext.state.hasDelta()) {

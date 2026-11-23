@@ -15,11 +15,20 @@ import {
   TaskArtifactUpdateEvent,
   TaskStatusUpdateEvent,
 } from '@a2a-js/sdk';
-import {Client, ClientFactory} from '@a2a-js/sdk/client';
+import {
+  Client,
+  ClientFactory,
+  ClientFactoryOptions,
+  JsonRpcTransportFactory,
+  RestTransportFactory,
+} from '@a2a-js/sdk/client';
 import {BaseAgent, BaseAgentConfig} from '../agents/base_agent.js';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {Event as AdkEvent, createEvent} from '../events/event.js';
+import {propagateTraceContext} from '../telemetry/api/instrumentation.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
+import {getErrorMessage} from '../utils/error_utils.js';
+import {fetchWithTimeout} from '../utils/fetch_utils.js';
 import {logger} from '../utils/logger.js';
 import {MessageRole} from './a2a_event.js';
 import {A2ARemoteAgentRunProcessor} from './a2a_remote_agent_run_processor.js';
@@ -31,7 +40,11 @@ import {
 } from './a2a_remote_agent_utils.js';
 import {resolveAgentCard, ResolveAgentCardOptions} from './agent_card.js';
 import {toAdkEvent} from './event_converter_utils.js';
-import {getA2ASessionMetadata} from './metadata_converter_utils.js';
+import {buildA2ARequestLog, buildA2AResponseLog} from './log_utils.js';
+import {
+  A2A_METADATA_KEY_PREFIX,
+  getA2ASessionMetadata,
+} from './metadata_converter_utils.js';
 
 export {AGENT_CARD_PATH};
 
@@ -93,11 +106,17 @@ export interface RemoteA2AAgentConfig extends BaseAgentConfig {
 
   /**
    * Optional pre-initialized Client for connection pooling.
+   *
+   * A provided client sends requests as it is configured, so the default
+   * trace context propagation does not apply to it.
    */
   client?: Client;
 
   /**
    * Optional ClientFactory for creating the A2A Client.
+   *
+   * Clients from a provided factory send requests as it is configured, so the
+   * default trace context propagation does not apply to them.
    */
   clientFactory?: ClientFactory;
   /**
@@ -117,6 +136,71 @@ export interface RemoteA2AAgentConfig extends BaseAgentConfig {
    * If omitted, defaults to `context.a2aMetadata` from the current invocation context.
    */
   metadata?: Record<string, unknown>;
+  /**
+   * Maximum time to wait for the response headers of each HTTP request the
+   * agent sends with its own transports, in milliseconds. Defaults to 600000
+   * (10 minutes).
+   *
+   * It bounds the agent card fetch from an `http(s)` URL and each message
+   * request of the default client factory. A request that exceeds it is
+   * aborted and the run yields an error event. A response stream that has
+   * started is not bounded. A provided
+   * {@link RemoteA2AAgentConfig.client} or
+   * {@link RemoteA2AAgentConfig.clientFactory} sends requests as it is
+   * configured, so the timeout does not apply to its message requests.
+   */
+  timeoutMs?: number;
+}
+
+/** Default of {@link RemoteA2AAgentConfig.timeoutMs}. */
+const DEFAULT_TIMEOUT_MS = 600_000;
+
+const MAX_CARD_DESCRIPTION_CHARS = 1024;
+const CARD_DESCRIPTION_TRUNCATION_SUFFIX = '... [truncated]';
+const QUOTED_CONTENT_BEGIN = '<<<BEGIN_QUOTED_AGENT_CONTENT>>>';
+const QUOTED_CONTENT_END = '<<<END_QUOTED_AGENT_CONTENT>>>';
+const QUOTED_CONTENT_ELIDED = '<<<ELIDED_MARKER>>>';
+
+/**
+ * Quotes a fetched remote agent card description so it is treated as
+ * untrusted data rather than instructions when embedded in a parent prompt.
+ */
+function adoptCardDescription(
+  description: string,
+  agentCardSource?: string,
+): string {
+  if (
+    !agentCardSource ||
+    (!agentCardSource.startsWith('http://') &&
+      !agentCardSource.startsWith('https://'))
+  ) {
+    return description;
+  }
+  let capped = description.slice(0, MAX_CARD_DESCRIPTION_CHARS);
+  if (capped.length < description.length) {
+    capped += CARD_DESCRIPTION_TRUNCATION_SUFFIX;
+  }
+  const elided = capped
+    .replaceAll(QUOTED_CONTENT_BEGIN, QUOTED_CONTENT_ELIDED)
+    .replaceAll(QUOTED_CONTENT_END, QUOTED_CONTENT_ELIDED);
+  return `${QUOTED_CONTENT_BEGIN}\n${elided}\n${QUOTED_CONTENT_END}`;
+}
+
+/**
+ * Creates the default client factory, whose JSON-RPC and REST transports send
+ * the active trace context with each request, streaming ones included, and
+ * abort a request whose response headers do not arrive within `timeoutMs`.
+ */
+function createTracePropagatingClientFactory(timeoutMs: number): ClientFactory {
+  const fetchImpl = propagateTraceContext(fetchWithTimeout({timeoutMs}));
+  return new ClientFactory(
+    ClientFactoryOptions.createFrom(ClientFactoryOptions.default, {
+      transports: [
+        new JsonRpcTransportFactory({fetchImpl}),
+        new RestTransportFactory({fetchImpl}),
+      ],
+    }),
+  );
 }
 
 /**
@@ -127,14 +211,46 @@ export interface RemoteA2AAgentConfig extends BaseAgentConfig {
  * uninitialized instance that re-resolves its client and card on first use.
  */
 export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
+  /**
+   * Description of the remote agent, auto-populated from the resolved
+   * `AgentCard` when omitted in config.
+   */
+  override description: string;
   private client?: Client;
   private card?: AgentCard;
+  private readonly agentCardSource?: string;
   private isInitialized = false;
+  private readonly timeoutMs: number;
 
   constructor(private readonly a2aConfig: RemoteA2AAgentConfig) {
     super(a2aConfig);
-    if (!a2aConfig.agentCard && !a2aConfig.client) {
+    let description = a2aConfig.description ?? '';
+    if (typeof a2aConfig.agentCard === 'string') {
+      const trimmed = a2aConfig.agentCard.trim();
+      if (!trimmed) {
+        throw new Error(
+          a2aConfig.client
+            ? 'Agent card source string cannot be empty.'
+            : 'Either AgentCard or Client must be provided',
+        );
+      }
+      this.agentCardSource = trimmed;
+    } else if (!a2aConfig.agentCard && !a2aConfig.client) {
       throw new Error('Either AgentCard or Client must be provided');
+    } else if (
+      !description &&
+      a2aConfig.agentCard !== null &&
+      typeof a2aConfig.agentCard === 'object' &&
+      a2aConfig.agentCard.description
+    ) {
+      description = a2aConfig.agentCard.description;
+    }
+    this.description = description;
+    this.timeoutMs = a2aConfig.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    if (!Number.isFinite(this.timeoutMs) || this.timeoutMs <= 0) {
+      throw new Error(
+        `The timeoutMs of remote A2A agent ${this.name} must be a positive finite number, but it is ${this.timeoutMs}.`,
+      );
     }
   }
 
@@ -147,14 +263,24 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
       this.client = this.a2aConfig.client;
     }
 
-    if (this.a2aConfig.agentCard) {
-      this.card = await resolveAgentCard(
-        this.a2aConfig.agentCard,
-        this.a2aConfig.resolveAgentCardOptions,
-      );
+    const cardInput = this.agentCardSource ?? this.a2aConfig.agentCard;
+    if (cardInput) {
+      this.card = await resolveAgentCard(cardInput, {
+        ...this.a2aConfig.resolveAgentCardOptions,
+        timeoutMs: this.timeoutMs,
+      });
+
+      if (!this.description && this.card.description) {
+        this.description = adoptCardDescription(
+          this.card.description,
+          this.agentCardSource,
+        );
+      }
 
       if (!this.client) {
-        const factory = this.a2aConfig.clientFactory || new ClientFactory();
+        const factory =
+          this.a2aConfig.clientFactory ??
+          createTracePropagatingClientFactory(this.timeoutMs);
         this.client = await factory.createFromAgentCard(this.card);
       }
     }
@@ -165,8 +291,22 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
   protected async *runAsyncImpl(
     context: InvocationContext,
   ): AsyncGenerator<AdkEvent, void, void> {
-    await this.init();
+    try {
+      await this.init();
+    } catch (e: unknown) {
+      logger.error(`A2ARemoteAgent ${this.name} failed to initialize:`, e);
 
+      yield createEvent({
+        author: this.name,
+        invocationId: context.invocationId,
+        branch: context.branch,
+        errorMessage: `Failed to initialize remote A2A agent ${this.name}: ${getErrorMessage(e)}`,
+        turnComplete: true,
+      });
+      return;
+    }
+
+    let params: MessageSendParams | undefined;
     try {
       // 1. Convert current ADK state to A2A Message
       const events = context.session.events;
@@ -221,7 +361,7 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
       if (contextId) message.contextId = contextId;
 
       const metadata = this.a2aConfig.metadata ?? context.a2aMetadata;
-      const params: MessageSendParams = {
+      params = {
         message,
         configuration: this.a2aConfig.messageSendConfig,
         ...(metadata ? {metadata} : {}),
@@ -235,11 +375,15 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
         }
       }
 
+      logger.debug(buildA2ARequestLog(params));
+
       const useStreaming = this.card
         ? this.card.capabilities?.streaming !== false
         : true;
       if (useStreaming) {
         for await (const chunk of this.client!.sendMessageStream(params)) {
+          logger.debug(buildA2AResponseLog(chunk));
+
           if (this.a2aConfig.afterRequestCallbacks) {
             for (const callback of this.a2aConfig.afterRequestCallbacks) {
               await callback(context, chunk);
@@ -269,6 +413,8 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
         }
       } else {
         const result = await this.client!.sendMessage(params);
+        logger.debug(buildA2AResponseLog(result));
+
         if (this.a2aConfig.afterRequestCallbacks) {
           for (const callback of this.a2aConfig.afterRequestCallbacks) {
             await callback(context, result);
@@ -286,13 +432,18 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
         }
       }
     } catch (e: unknown) {
-      const error = e as Error;
-      logger.error(`A2ARemoteAgent ${this.name} failed:`, error);
+      logger.error(`A2ARemoteAgent ${this.name} failed:`, e);
 
+      const errorMessage = `A2A request failed: ${getErrorMessage(e)}`;
       yield createEvent({
         author: this.name,
         invocationId: context.invocationId,
-        errorMessage: error.message,
+        branch: context.branch,
+        errorMessage,
+        customMetadata: {
+          [`${A2A_METADATA_KEY_PREFIX}error`]: errorMessage,
+          ...(params ? {[`${A2A_METADATA_KEY_PREFIX}request`]: params} : {}),
+        },
         turnComplete: true,
       });
     }
