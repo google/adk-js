@@ -291,7 +291,15 @@ export class FileArtifactService implements BaseArtifactService {
         sessionId,
         filename,
       );
-      await fs.rm(artifactDir, {recursive: true, force: true});
+      // Only this artifact's own versions go. Its directory is also the parent
+      // of any artifact nested under its name ('doc' and 'doc/nested'), so it
+      // is removed only once it is empty.
+      await fs.rm(getVersionsDir(artifactDir), {recursive: true, force: true});
+      try {
+        await fs.rmdir(artifactDir);
+      } catch {
+        // Still holds nested artifacts, or was never created.
+      }
     } catch (e) {
       logger.warn(
         `[FileArtifactService] deleteArtifact: Failed to delete artifact ${filename}`,

@@ -299,6 +299,71 @@ export function runArtifactServiceTests(
         filename: 'non-existent',
       });
     });
+
+    it('keeps an artifact nested under the deleted one', async () => {
+      for (const filename of ['doc', 'doc/nested', 'doc/nested/deep']) {
+        await service.saveArtifact({
+          appName,
+          userId,
+          sessionId,
+          filename,
+          artifact: {text: filename},
+        });
+      }
+
+      await service.deleteArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename: 'doc',
+      });
+
+      expect(
+        await service.loadArtifact({
+          appName,
+          userId,
+          sessionId,
+          filename: 'doc',
+        }),
+      ).toBeUndefined();
+      expect(
+        await service.listArtifactKeys({appName, userId, sessionId}),
+      ).toEqual(['doc/nested', 'doc/nested/deep']);
+      const nested = await service.loadArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename: 'doc/nested',
+      });
+      expect(nested?.text).toBe('doc/nested');
+    });
+
+    it('lets a deleted artifact be saved again from version 0', async () => {
+      const filename = 'again.txt';
+      for (const text of ['1', '2']) {
+        await service.saveArtifact({
+          appName,
+          userId,
+          sessionId,
+          filename,
+          artifact: {text},
+        });
+      }
+      await service.deleteArtifact({appName, userId, sessionId, filename});
+
+      const version = await service.saveArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename,
+        artifact: {text: '3'},
+      });
+
+      expect(version).toBe(0);
+      expect(
+        await service.listVersions({appName, userId, sessionId, filename}),
+      ).toEqual([0]);
+    });
   });
 
   describe('listVersions', () => {
