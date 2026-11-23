@@ -14,15 +14,17 @@ import {
   StaleSessionError,
   State,
 } from '@google/adk';
-import {MikroORM} from '@mikro-orm/core';
+import {LockMode, MikroORM} from '@mikro-orm/core';
 import {SqliteDriver} from '@mikro-orm/sqlite';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {isDatabaseConnectionString} from '../../src/sessions/database_session_service.js';
 import {validateDatabaseSchemaVersion} from '../../src/sessions/db/operations.js';
 import {
+  StorageAppState,
   StorageEvent,
   StorageMetadata,
   StorageSession,
+  StorageUserState,
 } from '../../src/sessions/db/schema.js';
 
 describe('DatabaseSessionService', () => {
@@ -1976,5 +1978,544 @@ describe('StaleSessionError exports', () => {
         entry.isStaleSessionError(new entry.StaleSessionError('stale')),
       ).toBe(true);
     }
+  });
+});
+
+describe('DatabaseSessionService shared state locking and concurrency', () => {
+  let service: DatabaseSessionService;
+
+  function entityLabel(entityName: unknown): string {
+    if (typeof entityName === 'string') {
+      return entityName;
+    }
+    if (typeof entityName === 'function') {
+      return entityName.name;
+    }
+    if (entityName && typeof entityName === 'object' && 'name' in entityName) {
+      const inner = (entityName as {name: unknown}).name;
+      return typeof inner === 'function' ? inner.name : String(inner);
+    }
+    return String(entityName);
+  }
+
+  beforeEach(async () => {
+    service = new DatabaseSessionService({
+      dbName: ':memory:',
+      driver: SqliteDriver,
+      allowGlobalContext: true,
+    });
+    await service.init();
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    const orm = (service as unknown as {orm?: MikroORM}).orm;
+    if (orm) {
+      await orm.close();
+    }
+  });
+
+  it.each([
+    {
+      label: 'no state delta',
+      stateDelta: undefined,
+      expectedLocks: ['StorageSession'],
+    },
+    {
+      label: 'session state only',
+      stateDelta: {step: 1},
+      expectedLocks: ['StorageSession'],
+    },
+    {
+      label: 'temp state only',
+      stateDelta: {'temp:scratch': 'val'},
+      expectedLocks: ['StorageSession'],
+    },
+    {
+      label: 'app state only',
+      stateDelta: {'app:theme': 'dark'},
+      expectedLocks: ['StorageSession', 'StorageAppState'],
+    },
+    {
+      label: 'user state only',
+      stateDelta: {'user:language': 'cs'},
+      expectedLocks: ['StorageSession', 'StorageUserState'],
+    },
+    {
+      label: 'app, user, and session state together',
+      stateDelta: {
+        'app:theme': 'dark',
+        'user:language': 'cs',
+        step: 2,
+      },
+      expectedLocks: ['StorageSession', 'StorageAppState', 'StorageUserState'],
+    },
+  ])(
+    'locks only the mutated state rows in fixed order during appendEvent ($label)',
+    async ({stateDelta, expectedLocks}) => {
+      const session = await service.createSession({
+        appName: 'lock-app',
+        userId: 'u1',
+        sessionId: 's1',
+      });
+
+      const orm = (service as unknown as {orm: MikroORM}).orm;
+      const lockedEntities: string[] = [];
+      const originalFindOne = orm.driver.findOne.bind(orm.driver);
+      vi.spyOn(orm.driver, 'findOne').mockImplementation(
+        async (entityName, where, options) => {
+          if (options?.lockMode === LockMode.PESSIMISTIC_WRITE) {
+            lockedEntities.push(entityLabel(entityName));
+          }
+          return originalFindOne(entityName, where, options);
+        },
+      );
+
+      await service.appendEvent({
+        session,
+        event: createEvent({
+          invocationId: 'inv-1',
+          author: 'agent',
+          actions: createEventActions({stateDelta}),
+        }),
+      });
+
+      expect(lockedEntities).toEqual(expectedLocks);
+    },
+  );
+
+  it.each([
+    {
+      label: 'no initial state',
+      state: undefined,
+      expectedLocks: [],
+    },
+    {
+      label: 'session state only',
+      state: {topic: 'billing'},
+      expectedLocks: [],
+    },
+    {
+      label: 'temp state only',
+      state: {'temp:ephemeral': 'skip'},
+      expectedLocks: [],
+    },
+    {
+      label: 'app state only',
+      state: {'app:theme': 'dark'},
+      expectedLocks: ['StorageAppState'],
+    },
+    {
+      label: 'user state only',
+      state: {'user:language': 'cs'},
+      expectedLocks: ['StorageUserState'],
+    },
+    {
+      label: 'app and user state together',
+      state: {'app:theme': 'dark', 'user:language': 'cs', topic: 'billing'},
+      expectedLocks: ['StorageAppState', 'StorageUserState'],
+    },
+  ])(
+    'locks only mutated existing shared state rows in fixed order during createSession ($label)',
+    async ({state, expectedLocks}) => {
+      // Seed the app and user state rows so createSession hits the existing-row locking path.
+      await service.createSession({
+        appName: 'lock-app',
+        userId: 'u1',
+        sessionId: 'seed',
+      });
+
+      const orm = (service as unknown as {orm: MikroORM}).orm;
+      const lockCalls: Array<{entity: string; refresh?: boolean}> = [];
+      const originalFindOne = orm.driver.findOne.bind(orm.driver);
+      vi.spyOn(orm.driver, 'findOne').mockImplementation(
+        async (entityName, where, options) => {
+          if (options?.lockMode === LockMode.PESSIMISTIC_WRITE) {
+            lockCalls.push({
+              entity: entityLabel(entityName),
+              refresh: options.refresh,
+            });
+          }
+          return originalFindOne(entityName, where, options);
+        },
+      );
+
+      const created = await service.createSession({
+        appName: 'lock-app',
+        userId: 'u1',
+        sessionId: 's2',
+        state,
+      });
+
+      expect(lockCalls.map((call) => call.entity)).toEqual(expectedLocks);
+      for (const call of lockCalls) {
+        expect(call.refresh).toBe(true);
+      }
+
+      if (state) {
+        for (const [key, value] of Object.entries(state)) {
+          if (!key.startsWith(State.TEMP_PREFIX)) {
+            expect(created.state[key]).toBe(value);
+          }
+        }
+      }
+    },
+  );
+
+  it('does not issue a pessimistic write lock on missing rows during first createSession', async () => {
+    const orm = (service as unknown as {orm: MikroORM}).orm;
+    const lockedEntities: string[] = [];
+    const originalFindOne = orm.driver.findOne.bind(orm.driver);
+    vi.spyOn(orm.driver, 'findOne').mockImplementation(
+      async (entityName, where, options) => {
+        if (options?.lockMode === LockMode.PESSIMISTIC_WRITE) {
+          lockedEntities.push(entityLabel(entityName));
+        }
+        return originalFindOne(entityName, where, options);
+      },
+    );
+
+    const created = await service.createSession({
+      appName: 'brand-new-app',
+      userId: 'brand-new-user',
+      sessionId: 'first',
+      state: {'app:a': 1, 'user:u': 2, s: 3},
+    });
+
+    expect(lockedEntities).toEqual([]);
+    expect(created.state).toEqual({'app:a': 1, 'user:u': 2, s: 3});
+  });
+
+  it('preserves every app: and user: key across concurrent createSession and appendEvent calls', async () => {
+    const existing = await service.createSession({
+      appName: 'concurrent-app',
+      userId: 'u1',
+      sessionId: 'existing',
+    });
+
+    await Promise.all([
+      service.appendEvent({
+        session: existing,
+        event: createEvent({
+          invocationId: 'inv-existing',
+          author: 'agent',
+          actions: createEventActions({
+            stateDelta: {
+              'app:from_existing': true,
+              'user:from_existing': true,
+            },
+          }),
+        }),
+      }),
+      ...['new0', 'new1', 'new2'].map((sessionId) =>
+        service.createSession({
+          appName: 'concurrent-app',
+          userId: 'u1',
+          sessionId,
+          state: {
+            [`app:from_${sessionId}`]: true,
+            [`user:from_${sessionId}`]: true,
+          },
+        }),
+      ),
+    ]);
+
+    const reloaded = await service.getSession({
+      appName: 'concurrent-app',
+      userId: 'u1',
+      sessionId: 'existing',
+    });
+    expect(reloaded?.state).toEqual({
+      'app:from_existing': true,
+      'app:from_new0': true,
+      'app:from_new1': true,
+      'app:from_new2': true,
+      'user:from_existing': true,
+      'user:from_new0': true,
+      'user:from_new1': true,
+      'user:from_new2': true,
+    });
+  });
+
+  it('preserves all user: and app: keys across concurrent appendEvent calls on different sessions', async () => {
+    const userSessions = await Promise.all(
+      [0, 1, 2].map((i) =>
+        service.createSession({
+          appName: 'multi-session-app',
+          userId: 'u1',
+          sessionId: `tab-${i}`,
+        }),
+      ),
+    );
+    const otherUserSessions = await Promise.all(
+      [0, 1, 2].map((i) =>
+        service.createSession({
+          appName: 'multi-session-app',
+          userId: `other-${i}`,
+          sessionId: `other-${i}`,
+        }),
+      ),
+    );
+    const allSessions = [...userSessions, ...otherUserSessions];
+
+    await Promise.all(
+      allSessions.map((session) =>
+        service.appendEvent({
+          session,
+          event: createEvent({
+            invocationId: `inv-${session.id}`,
+            author: 'agent',
+            actions: createEventActions({
+              stateDelta: {
+                [`app:seen_${session.id}`]: true,
+                [`user:seen_${session.id}`]: true,
+              },
+            }),
+          }),
+        }),
+      ),
+    );
+
+    const reloaded = await service.getSession({
+      appName: 'multi-session-app',
+      userId: 'u1',
+      sessionId: 'tab-0',
+    });
+    const appKeys = Object.keys(reloaded?.state ?? {})
+      .filter((k) => k.startsWith(State.APP_PREFIX))
+      .sort();
+    const userKeys = Object.keys(reloaded?.state ?? {})
+      .filter((k) => k.startsWith(State.USER_PREFIX))
+      .sort();
+
+    expect(appKeys).toEqual(
+      allSessions.map((s) => `${State.APP_PREFIX}seen_${s.id}`).sort(),
+    );
+    expect(userKeys).toEqual(
+      userSessions.map((s) => `${State.USER_PREFIX}seen_${s.id}`).sort(),
+    );
+  });
+
+  it('recovers from a concurrent insert race on StorageAppState and StorageUserState via savepoint', async () => {
+    // Pre-seed both rows in the database, then force the first findOne for each
+    // state table to return null so createSession enters the savepoint insert
+    // path and collides with the existing primary key.
+    const orm = (service as unknown as {orm: MikroORM}).orm;
+    const seedEm = orm.em.fork();
+    seedEm.persist(
+      seedEm.create(StorageAppState, {
+        appName: 'race-app',
+        state: {fromWinner: 'app-v1'},
+        updateTime: new Date(),
+      }),
+    );
+    seedEm.persist(
+      seedEm.create(StorageUserState, {
+        appName: 'race-app',
+        userId: 'u1',
+        state: {fromWinner: 'user-v1'},
+      }),
+    );
+    await seedEm.flush();
+
+    const simulatedMisses = new Set(['StorageAppState', 'StorageUserState']);
+    const fallbackLockModes: Array<{entity: string; lockMode?: LockMode}> = [];
+    const originalFindOne = orm.driver.findOne.bind(orm.driver);
+    vi.spyOn(orm.driver, 'findOne').mockImplementation(
+      async (entityName, where, options) => {
+        const name = entityLabel(entityName);
+        if (simulatedMisses.delete(name)) {
+          return null;
+        }
+        if (name === 'StorageAppState' || name === 'StorageUserState') {
+          fallbackLockModes.push({entity: name, lockMode: options?.lockMode});
+        }
+        return originalFindOne(entityName, where, options);
+      },
+    );
+
+    const created = await service.createSession({
+      appName: 'race-app',
+      userId: 'u1',
+      sessionId: 's1',
+      state: {'app:fromLoser': 'app-v2', 'user:fromLoser': 'user-v2'},
+    });
+
+    expect(created.state).toEqual({
+      'app:fromWinner': 'app-v1',
+      'app:fromLoser': 'app-v2',
+      'user:fromWinner': 'user-v1',
+      'user:fromLoser': 'user-v2',
+    });
+    expect(fallbackLockModes).toEqual([
+      {entity: 'StorageAppState', lockMode: LockMode.PESSIMISTIC_WRITE},
+      {entity: 'StorageUserState', lockMode: LockMode.PESSIMISTIC_WRITE},
+    ]);
+
+    const reloaded = await service.getSession({
+      appName: 'race-app',
+      userId: 'u1',
+      sessionId: 's1',
+    });
+    expect(reloaded?.state).toEqual(created.state);
+  });
+
+  it('uses a shared read lock after a concurrent insert race when the caller is not mutating state', async () => {
+    const orm = (service as unknown as {orm: MikroORM}).orm;
+    const seedEm = orm.em.fork();
+    seedEm.persist(
+      seedEm.create(StorageAppState, {
+        appName: 'race-read-app',
+        state: {existingAppKey: 'kept'},
+        updateTime: new Date(),
+      }),
+    );
+    seedEm.persist(
+      seedEm.create(StorageUserState, {
+        appName: 'race-read-app',
+        userId: 'u1',
+        state: {existingUserKey: 'kept'},
+      }),
+    );
+    await seedEm.flush();
+
+    const simulatedMisses = new Set(['StorageAppState', 'StorageUserState']);
+    const fallbackLockModes: Array<{entity: string; lockMode?: LockMode}> = [];
+    const originalFindOne = orm.driver.findOne.bind(orm.driver);
+    vi.spyOn(orm.driver, 'findOne').mockImplementation(
+      async (entityName, where, options) => {
+        const name = entityLabel(entityName);
+        if (simulatedMisses.delete(name)) {
+          return null;
+        }
+        if (name === 'StorageAppState' || name === 'StorageUserState') {
+          fallbackLockModes.push({entity: name, lockMode: options?.lockMode});
+        }
+        return originalFindOne(entityName, where, options);
+      },
+    );
+
+    const created = await service.createSession({
+      appName: 'race-read-app',
+      userId: 'u1',
+      sessionId: 's1',
+    });
+
+    expect(created.state).toEqual({
+      'app:existingAppKey': 'kept',
+      'user:existingUserKey': 'kept',
+    });
+    expect(fallbackLockModes).toEqual([
+      {entity: 'StorageAppState', lockMode: LockMode.PESSIMISTIC_READ},
+      {entity: 'StorageUserState', lockMode: LockMode.PESSIMISTIC_READ},
+    ]);
+  });
+
+  it('rethrows non-unique errors during state row creation', async () => {
+    const orm = (service as unknown as {orm: MikroORM}).orm;
+    vi.spyOn(orm.driver, 'nativeInsertMany').mockRejectedValueOnce(
+      new Error('disk full'),
+    );
+
+    await expect(
+      service.createSession({
+        appName: 'fail-app',
+        userId: 'u1',
+        sessionId: 's1',
+        state: {'app:k': 'v'},
+      }),
+    ).rejects.toThrow('disk full');
+  });
+
+  it('recovers from a concurrent insert race on shared state rows during appendEvent', async () => {
+    const session = await service.createSession({
+      appName: 'append-race-app',
+      userId: 'u1',
+      sessionId: 's1',
+      state: {'app:existing': 'a1', 'user:existing': 'u1'},
+    });
+
+    const orm = (service as unknown as {orm: MikroORM}).orm;
+    const simulatedMisses = new Set(['StorageAppState', 'StorageUserState']);
+    const originalFindOne = orm.driver.findOne.bind(orm.driver);
+    vi.spyOn(orm.driver, 'findOne').mockImplementation(
+      async (entityName, where, options) => {
+        const name = entityLabel(entityName);
+        if (simulatedMisses.delete(name)) {
+          return null;
+        }
+        return originalFindOne(entityName, where, options);
+      },
+    );
+
+    await service.appendEvent({
+      session,
+      event: createEvent({
+        invocationId: 'inv-race',
+        author: 'agent',
+        actions: createEventActions({
+          stateDelta: {'app:added': 'a2', 'user:added': 'u2'},
+        }),
+      }),
+    });
+
+    expect(session.state).toEqual({
+      'app:existing': 'a1',
+      'app:added': 'a2',
+      'user:existing': 'u1',
+      'user:added': 'u2',
+    });
+
+    const reloaded = await service.getSession({
+      appName: 'append-race-app',
+      userId: 'u1',
+      sessionId: 's1',
+    });
+    expect(reloaded?.state).toEqual(session.state);
+  });
+
+  it('rejects a stale session before querying or locking shared state rows', async () => {
+    const session = await service.createSession({
+      appName: 'stale-lock-app',
+      userId: 'u1',
+      sessionId: 's1',
+    });
+    const otherHandle = (await service.getSession({
+      appName: 'stale-lock-app',
+      userId: 'u1',
+      sessionId: 's1',
+    }))!;
+    await service.appendEvent({
+      session: otherHandle,
+      event: createEvent({timestamp: Date.now() + 100}),
+    });
+
+    const orm = (service as unknown as {orm: MikroORM}).orm;
+    const queriedEntities: string[] = [];
+    const originalFindOne = orm.driver.findOne.bind(orm.driver);
+    vi.spyOn(orm.driver, 'findOne').mockImplementation(
+      async (entityName, where, options) => {
+        queriedEntities.push(entityLabel(entityName));
+        return originalFindOne(entityName, where, options);
+      },
+    );
+
+    await expect(
+      service.appendEvent({
+        session,
+        event: createEvent({
+          timestamp: Date.now() + 200,
+          actions: createEventActions({
+            stateDelta: {
+              'app:shouldNotWrite': true,
+              'user:shouldNotWrite': true,
+            },
+          }),
+        }),
+      }),
+    ).rejects.toThrow(StaleSessionError);
+
+    expect(queriedEntities).not.toContain('StorageAppState');
+    expect(queriedEntities).not.toContain('StorageUserState');
   });
 });
