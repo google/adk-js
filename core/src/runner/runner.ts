@@ -318,6 +318,7 @@ export class Runner {
     // Setup the session and invocation context
     // =========================================================================
     const runnerCtx = this;
+    const retainedToolsets = retainToolsets(collectToolsets(this.agent));
     try {
       yield* recordInvocation(
         {entrypoint: this.agent, sessionId, runConfig},
@@ -460,7 +461,8 @@ export class Runner {
         },
       );
     } finally {
-      await this.close();
+      releaseToolsets(retainedToolsets);
+      await this.closeIdleToolsets();
     }
   }
 
@@ -470,6 +472,27 @@ export class Runner {
    */
   async close(): Promise<void> {
     await cleanupToolsets(collectToolsets(this.agent));
+  }
+
+  /**
+   * Closes toolsets reachable from the root agent or workflow that are not
+   * currently retained by another active run.
+   */
+  private async closeIdleToolsets(): Promise<void> {
+    const allToolsets = collectToolsets(this.agent);
+    const idleToolsets = new Set<BaseToolset>();
+    for (const toolset of allToolsets) {
+      if (!isToolsetInUse(toolset)) {
+        idleToolsets.add(toolset);
+      }
+    }
+    if (idleToolsets.size === allToolsets.size) {
+      await this.close();
+      return;
+    }
+    if (idleToolsets.size > 0) {
+      await cleanupToolsets(idleToolsets);
+    }
   }
 
   private async *runAsyncWithPlugins(
@@ -853,54 +876,59 @@ export class Runner {
     }
 
     const runnerCtx = this;
-    yield* recordInvocation(
-      {entrypoint: agent, sessionId, runConfig},
-      async function* () {
-        const session = await runnerCtx.sessionService.getOrCreateSession({
-          appName: runnerCtx.appName,
-          userId: params.userId,
-          sessionId: params.sessionId,
-        });
+    const retainedToolsets = retainToolsets(collectToolsets(agent));
+    try {
+      yield* recordInvocation(
+        {entrypoint: agent, sessionId, runConfig},
+        async function* () {
+          const session = await runnerCtx.sessionService.getOrCreateSession({
+            appName: runnerCtx.appName,
+            userId: params.userId,
+            sessionId: params.sessionId,
+          });
 
-        if (params.abortSignal?.aborted) {
-          return;
-        }
+          if (params.abortSignal?.aborted) {
+            return;
+          }
 
-        const invocationContext = new InvocationContext({
-          artifactService: runnerCtx.artifactService
-            ? isSessionArtifactService(runnerCtx.artifactService)
-              ? runnerCtx.artifactService
-              : new ScopedArtifactService(
-                  runnerCtx.artifactService,
-                  runnerCtx.appName,
-                  params.userId,
-                  params.sessionId,
-                )
-            : undefined,
-          sessionService: runnerCtx.sessionService,
-          memoryService: runnerCtx.memoryService,
-          credentialService: runnerCtx.credentialService,
-          invocationId: newInvocationContextId(),
-          agent,
-          session,
-          runConfig,
-          a2aMetadata: runConfig.a2aMetadata,
-          pluginManager: runnerCtx.pluginManager,
-          liveRequestQueue: params.liveRequestQueue,
-          abortSignal: params.abortSignal,
-          liveSessionResumptionHandle: params.liveSessionResumptionHandle,
-        });
+          const invocationContext = new InvocationContext({
+            artifactService: runnerCtx.artifactService
+              ? isSessionArtifactService(runnerCtx.artifactService)
+                ? runnerCtx.artifactService
+                : new ScopedArtifactService(
+                    runnerCtx.artifactService,
+                    runnerCtx.appName,
+                    params.userId,
+                    params.sessionId,
+                  )
+              : undefined,
+            sessionService: runnerCtx.sessionService,
+            memoryService: runnerCtx.memoryService,
+            credentialService: runnerCtx.credentialService,
+            invocationId: newInvocationContextId(),
+            agent,
+            session,
+            runConfig,
+            a2aMetadata: runConfig.a2aMetadata,
+            pluginManager: runnerCtx.pluginManager,
+            liveRequestQueue: params.liveRequestQueue,
+            abortSignal: params.abortSignal,
+            liveSessionResumptionHandle: params.liveSessionResumptionHandle,
+          });
 
-        invocationContext.agent = runnerCtx.determineAgentForResumption(
-          session,
-          agent,
-        );
+          invocationContext.agent = runnerCtx.determineAgentForResumption(
+            session,
+            agent,
+          );
 
-        yield* runnerCtx.runWithPluginLifecycle(invocationContext, () =>
-          runnerCtx.runLiveWithPlugins(invocationContext),
-        );
-      },
-    );
+          yield* runnerCtx.runWithPluginLifecycle(invocationContext, () =>
+            runnerCtx.runLiveWithPlugins(invocationContext),
+          );
+        },
+      );
+    } finally {
+      releaseToolsets(retainedToolsets);
+    }
   }
 
   private async *runLiveWithPlugins(
@@ -1164,6 +1192,33 @@ export function findEventByLastFunctionResponseId(
   events: Event[],
 ): Event | null {
   return findMatchingFunctionCall(events) ?? null;
+}
+
+const activeToolsetRunCounts = new WeakMap<BaseToolset, number>();
+
+function retainToolsets(toolsets: Set<BaseToolset>): Set<BaseToolset> {
+  for (const toolset of toolsets) {
+    activeToolsetRunCounts.set(
+      toolset,
+      (activeToolsetRunCounts.get(toolset) ?? 0) + 1,
+    );
+  }
+  return toolsets;
+}
+
+function releaseToolsets(toolsets: Set<BaseToolset>): void {
+  for (const toolset of toolsets) {
+    const nextCount = (activeToolsetRunCounts.get(toolset) ?? 1) - 1;
+    if (nextCount > 0) {
+      activeToolsetRunCounts.set(toolset, nextCount);
+    } else {
+      activeToolsetRunCounts.delete(toolset);
+    }
+  }
+}
+
+function isToolsetInUse(toolset: BaseToolset): boolean {
+  return (activeToolsetRunCounts.get(toolset) ?? 0) > 0;
 }
 
 function collectToolsets(root: BaseNode): Set<BaseToolset> {

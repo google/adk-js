@@ -101,9 +101,10 @@ the same sentence repeatedly, so only the completed event reaches the session.
 The invocation runs inside an OpenTelemetry span named
 `invoke_workflow <entrypoint name>`. Plugin callbacks run within this telemetry
 scope. When the `runAsync` generator finishes, including when the caller closes
-it early, the runner calls `await this.close()` to close every `BaseToolset`
-reachable across the root agent, sub-agents, and workflow nodes with a
-10-second per-toolset timeout. `afterRunCallback` finishes before this cleanup.
+it early, the runner closes every `BaseToolset` reachable across the root agent,
+sub-agents, and workflow nodes that is not still in use by another active run,
+with a 10-second per-toolset timeout. `afterRunCallback` finishes before this
+cleanup.
 
 ### Plugin completion and errors
 
