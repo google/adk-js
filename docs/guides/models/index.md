@@ -66,9 +66,11 @@ export const rootAgent = new LlmAgent({
 
 ### Requests and responses
 
-`LlmRequest` is a plain object. `appendInstructions(llmRequest, instructions)` joins the instructions with a blank line and adds them to `config.systemInstruction`. You set the other request fields, such as `config.tools` and `config.responseSchema`, directly on the object.
+`LlmRequest` is a plain object. `appendInstructions(llmRequest, instructions)` initializes `llmRequest.config` when `config` is absent. It joins the instructions with a blank line and adds them to `config.systemInstruction`. You set the other request fields, such as `config.tools` and `config.responseSchema`, directly on the object. `LlmRequest` also carries `liveConnectConfig` for bidirectional live settings such as `sessionResumption`.
 
 `LlmResponse` is a plain object too. A model sets `partial: true` on a streamed chunk, `turnComplete: true` at the end of a turn, and `errorCode` and `errorMessage` when the model returns no content. `createLlmResponse(response)` makes an `LlmResponse` from a `GenerateContentResponse` of the `@google/genai` SDK. It copies the first candidate, or it sets the error fields when there is no candidate content. When `Gemini` streams, the final aggregated response carries `errorCode` and `errorMessage` only when the finish reason is not `STOP`.
+
+On live connections, an `LlmResponse` can also carry `liveSessionResumptionUpdate` and `goAway`.
 
 ### Model resolution
 
@@ -100,6 +102,8 @@ With streaming on, `Gemini` yields each text chunk as a partial response, and th
 `connect` returns a `BaseLlmConnection` for bidirectional streaming. `receive()` on a `Gemini` connection yields the messages of one turn and ends after the message that completes the turn. Call `receive()` again for the next turn. `LlmAgent` does this for you in `runLive`: it calls `receive()` again until a call yields nothing.
 
 When the model is interrupted, the connection yields the text it has so far, and then always yields a response with `interrupted: true`.
+
+`Gemini.connect` forwards `llmRequest.liveConnectConfig`, including `sessionResumption`, to the live session. On the Gemini API backend, `Gemini.connect` removes `sessionResumption.transparent` because only Vertex AI supports transparent resumption. Whenever the server sends `sessionResumptionUpdate`, `receive()` on the returned `BaseLlmConnection` yields an `LlmResponse` with `liveSessionResumptionUpdate`. Pass `newHandle` in `liveConnectConfig.sessionResumption.handle` on the next `connect` call to resume a live session. When the server plans to close the connection, `receive()` yields an `LlmResponse` with `goAway` so the caller can reconnect.
 
 ## Related samples
 
