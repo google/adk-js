@@ -6193,4 +6193,111 @@ describe('AdkApiServer custom BaseAgentLoader and reload support', () => {
       await apiServer.stop();
     }
   });
+
+  it('invokes the loaded agent module resetData hook between run_eval cases', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'adk-run-eval-reset-'),
+    );
+    tempDirs.push(tempDir);
+
+    fs.writeFileSync(
+      path.join(tempDir, 'package.json'),
+      JSON.stringify({name: 'run-eval-reset-fixture', type: 'module'}),
+      'utf-8',
+    );
+    fs.symlinkSync(
+      path.resolve(process.cwd(), 'node_modules'),
+      path.join(tempDir, 'node_modules'),
+      'dir',
+    );
+
+    const appDir = path.join(tempDir, 'statefulApp');
+    fs.mkdirSync(appDir, {recursive: true});
+    fs.writeFileSync(
+      path.join(appDir, 'agent.ts'),
+      [
+        `import {BaseAgent, createEvent, type Event, type InvocationContext} from '@google/adk';`,
+        `let turnCount = 0;`,
+        `class StatefulEvalAgent extends BaseAgent {`,
+        `  constructor() { super({name: 'statefulEvalAgent'}); }`,
+        `  protected override async *runAsyncImpl(ctx: InvocationContext): AsyncGenerator<Event, void, void> {`,
+        `    turnCount += 1;`,
+        `    yield createEvent({`,
+        `      invocationId: ctx.invocationId,`,
+        `      author: this.name,`,
+        `      content: {role: 'model', parts: [{text: 'Turn ' + turnCount}]},`,
+        `    });`,
+        `  }`,
+        `  protected override async *runLiveImpl(ctx: InvocationContext): AsyncGenerator<Event, void, void> {`,
+        `    yield* this.runAsyncImpl(ctx);`,
+        `  }`,
+        `}`,
+        `export const rootAgent = new StatefulEvalAgent();`,
+        `export function resetData(): void { turnCount = 0; }`,
+      ].join('\n'),
+      'utf-8',
+    );
+    fs.writeFileSync(
+      path.join(appDir, 'resetSet.evalset.json'),
+      JSON.stringify({
+        evalSetId: 'resetSet',
+        evalCases: [
+          {
+            evalId: 'firstCase',
+            conversation: [
+              {
+                invocationId: 'inv-1',
+                userContent: {role: 'user', parts: [{text: 'ping'}]},
+                finalResponse: {role: 'model', parts: [{text: 'Turn 1'}]},
+              },
+            ],
+          },
+          {
+            evalId: 'secondCase',
+            conversation: [
+              {
+                invocationId: 'inv-2',
+                userContent: {role: 'user', parts: [{text: 'pong'}]},
+                finalResponse: {role: 'model', parts: [{text: 'Turn 1'}]},
+              },
+            ],
+          },
+        ],
+      }),
+      'utf-8',
+    );
+
+    const apiServer = new AdkApiServer({
+      agentsDir: tempDir,
+      agentFileLoadOptions: {
+        compile: true,
+        bundle: false,
+        minify: false,
+      },
+    });
+    await apiServer.start();
+    const client = new HttpClient(apiServer.url);
+
+    try {
+      const evalRes = await client.post<
+        Array<{evalId: string; finalEvalStatus: EvalStatus}>
+      >('/apps/statefulApp/eval_sets/resetSet/run_eval', {
+        evalMetrics: [{metric_name: 'response_match_score', threshold: 1.0}],
+      });
+
+      expect(evalRes.status).toBe(200);
+      expect(evalRes.data).toEqual([
+        expect.objectContaining({
+          evalId: 'firstCase',
+          finalEvalStatus: EvalStatus.PASSED,
+        }),
+        expect.objectContaining({
+          evalId: 'secondCase',
+          finalEvalStatus: EvalStatus.PASSED,
+        }),
+      ]);
+    } finally {
+      await apiServer.stop();
+    }
+  });
 });

@@ -21,9 +21,10 @@ import {
   GcsEvalManagers,
   getArtifactServiceFromUri,
   getEvaluationCriteriaOrDefault,
-  getRootAgent,
   getSessionServiceFromUri,
   InMemoryMemoryService,
+  isApp,
+  isBaseAgent,
   loadDotenvForAgent,
   loadEvalSetFromFile,
   LocalEvalSetResultsManager,
@@ -34,7 +35,6 @@ import {
   runEvals,
   setLogLevel as setAdkCoreLogLevel,
   setupAdkLogger,
-  tryGetResetFunc,
   VertexAiMemoryBankService,
   VertexAiRagMemoryService,
   VertexAiSessionService,
@@ -46,7 +46,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {runIntegrationTests} from '../integration/run_integration_tests.js';
 import {AdkApiServer} from '../server/adk_api_server.js';
-import {FileModuleType} from '../utils/agent_loader.js';
+import {AgentFile, FileModuleType} from '../utils/agent_loader.js';
 import {getAbsolutePath} from '../utils/file_utils.js';
 import {AdkLogger} from '../utils/logger.js';
 import {redactUriPassword} from '../utils/redact_uri.js';
@@ -319,8 +319,35 @@ async function getStoredEvalSet({
   return evalSet;
 }
 
+const EVAL_AGENT_ENTRY_STEMS = ['app', 'agent', 'index'] as const;
+const EVAL_AGENT_ENTRY_EXTENSIONS = [
+  '.js',
+  '.ts',
+  '.mjs',
+  '.cjs',
+  '.mts',
+  '.cts',
+] as const;
+
 function isExistingFile(filePath: string): boolean {
   return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+}
+
+function resolveEvalAgentFilePath(absAgentPath: string): string {
+  if (fs.existsSync(absAgentPath) && fs.statSync(absAgentPath).isDirectory()) {
+    for (const stem of EVAL_AGENT_ENTRY_STEMS) {
+      for (const ext of EVAL_AGENT_ENTRY_EXTENSIONS) {
+        const candidate = path.join(absAgentPath, `${stem}${ext}`);
+        if (isExistingFile(candidate)) {
+          return candidate;
+        }
+      }
+    }
+    throw new Error(
+      `No agent entry file (app, agent, or index) found in directory ${absAgentPath}.`,
+    );
+  }
+  return absAgentPath;
 }
 
 /**
@@ -378,7 +405,7 @@ function getAgentFileOptions(options: {
   file_type?: string;
   // Minification destroys stack traces, so it is opt-in and reserved for
   // deployment bundles where the artifact size matters more than a readable
-  // trace. Local commands (run/web/api_server) keep readable output.
+  // trace. Local commands (run/eval/web/api_server) keep readable output.
   minify?: boolean;
 }) {
   return {
@@ -884,8 +911,19 @@ export function createProgram(): Command {
             threshold,
           }));
 
-          const rootAgent = await getRootAgent(absAgentPath);
-          const resetFunc = await tryGetResetFunc(absAgentPath);
+          const resolvedAgentFilePath = resolveEvalAgentFilePath(absAgentPath);
+          await using agentFile = new AgentFile(
+            resolvedAgentFilePath,
+            getAgentFileOptions(options),
+          );
+          const loaded = await agentFile.load();
+          const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
+          if (!isBaseAgent(rootAgent)) {
+            throw new Error(
+              `Evaluation requires a BaseAgent rootAgent in ${agentModuleFilePath}.`,
+            );
+          }
+          const resetFunc = agentFile.getResetFunc();
 
           const isAgentFile = isExistingFile(absAgentPath);
           const appName = isAgentFile

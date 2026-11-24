@@ -27,6 +27,11 @@ export interface AgentFileHandle extends AsyncDisposable {
    * `undefined` when none is available.
    */
   readReadme?(): Promise<string | undefined>;
+  /**
+   * Returns the optional reset hook exported by the loaded agent module, or
+   * `undefined` when none was exported.
+   */
+  getResetFunc?(): (() => void | Promise<void>) | undefined;
 }
 
 /**

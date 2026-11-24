@@ -53,7 +53,6 @@ import {
   runWithAgentEngineContext,
   StreamingMode,
   toA2a,
-  tryGetResetFunc,
   validatePathSegment,
 } from '@google/adk';
 import {Content} from '@google/genai';
@@ -1144,29 +1143,6 @@ export class AdkApiServer {
     );
 
     // --------------------- Eval Sets related endpoints -----------------------
-    const getEvalBaseDir = (): string => {
-      const configured = this.agentsDir ?? process.cwd();
-      return fs.existsSync(configured) && fs.statSync(configured).isFile()
-        ? path.dirname(path.resolve(configured))
-        : path.resolve(configured);
-    };
-    // These checks are lexical. They keep request-supplied names from leaving
-    // the eval base directory, but they do not follow symlinks.
-    const resolveAppEvalDir = (appName: string): string => {
-      validatePathSegment(appName, 'appName');
-      const baseDir = getEvalBaseDir();
-      const appDir = path.resolve(baseDir, appName);
-      const rel = path.relative(baseDir, appDir);
-      if (
-        !rel ||
-        rel.startsWith('..') ||
-        path.isAbsolute(rel) ||
-        path.dirname(appDir) !== baseDir
-      ) {
-        throw new InputValidationError(`Invalid appName '${appName}'.`);
-      }
-      return appDir;
-    };
     app.post(
       [
         '/apps/:appName/eval_sets/:evalSetId',
@@ -1493,14 +1469,7 @@ export class AdkApiServer {
             });
           }
 
-          const resetFunc = this.agentsDir
-            ? await tryGetResetFunc(
-                fs.existsSync(this.agentsDir) &&
-                  fs.statSync(this.agentsDir).isFile()
-                  ? this.agentsDir
-                  : resolveAppEvalDir(appName),
-              )
-            : undefined;
+          const resetFunc = agentFile.getResetFunc?.();
 
           const runEvalResults: RunEvalResult[] = [];
           const evalCaseResults: EvalCaseResult[] = [];
