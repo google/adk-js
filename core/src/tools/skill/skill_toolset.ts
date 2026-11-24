@@ -122,7 +122,7 @@ export class SkillToolset extends BaseToolset {
   }
 
   getSkill(name: string): Skill | undefined {
-    return this.skills[name];
+    return Object.hasOwn(this.skills, name) ? this.skills[name] : undefined;
   }
 
   /**
@@ -154,7 +154,7 @@ export class SkillToolset extends BaseToolset {
     name: string,
     invocationId?: string,
   ): Promise<Skill | undefined> {
-    if (this.skills[name]) {
+    if (Object.hasOwn(this.skills, name)) {
       return this.skills[name];
     }
     if (!this.registry) {
@@ -235,23 +235,23 @@ export class SkillToolset extends BaseToolset {
       return [];
     }
 
-    const candidateTools: Record<string, BaseTool> = {};
+    const candidateTools = new Map<string, BaseTool>();
     for (const toolUnion of this.additionalTools) {
       if (toolUnion instanceof BaseTool) {
-        if (candidateTools[toolUnion.name]) {
+        if (candidateTools.has(toolUnion.name)) {
           throw new Error(`Duplicate tool name: ${toolUnion.name}`);
         }
 
-        candidateTools[toolUnion.name] = toolUnion;
+        candidateTools.set(toolUnion.name, toolUnion);
       } else if (toolUnion instanceof BaseToolset) {
         const tsTools = await toolUnion.getTools(context);
 
         for (const t of tsTools) {
-          if (candidateTools[t.name]) {
+          if (candidateTools.has(t.name)) {
             throw new Error(`Duplicate tool name: ${t.name}`);
           }
 
-          candidateTools[t.name] = t;
+          candidateTools.set(t.name, t);
         }
       }
     }
@@ -260,8 +260,8 @@ export class SkillToolset extends BaseToolset {
     const existingNames = new Set(this.tools.map((t) => t.name));
 
     for (const name of additionalToolNames) {
-      if (candidateTools[name]) {
-        const tool = candidateTools[name];
+      const tool = candidateTools.get(name);
+      if (tool) {
         if (!existingNames.has(tool.name)) {
           resolvedTools.push(tool);
           existingNames.add(tool.name);

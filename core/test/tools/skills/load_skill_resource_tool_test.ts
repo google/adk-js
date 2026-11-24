@@ -248,4 +248,39 @@ describe('LoadSkillResourceTool', () => {
       'application/octet-stream',
     );
   });
+
+  it.each(['constructor', 'toString', '__proto__', 'hasOwnProperty'])(
+    'returns SKILL_NOT_FOUND for skill name %s',
+    async (name) => {
+      const toolset = new SkillToolset([mockSkill]);
+      const tool = new LoadSkillResourceTool(toolset);
+      const result = await tool.runAsync({
+        args: {skill_name: name, path: 'references/doc.md'},
+        toolContext: createMockContext(),
+      });
+      expect(result).toEqual({
+        error: `Skill '${name}' not found.`,
+        error_code: 'SKILL_NOT_FOUND',
+      });
+    },
+  );
+
+  it.each(
+    ['references', 'assets', 'scripts'].flatMap((dir) =>
+      ['constructor', 'toString', '__proto__', 'hasOwnProperty'].map(
+        (name) => `${dir}/${name}`,
+      ),
+    ),
+  )('returns RESOURCE_NOT_FOUND for %s', async (path) => {
+    const toolset = new SkillToolset([mockSkill]);
+    const tool = new LoadSkillResourceTool(toolset);
+    const result = await tool.runAsync({
+      args: {skill_name: 'test-skill', path},
+      toolContext: createMockContext(),
+    });
+    expect(result).toEqual({
+      error: `Resource '${path}' not found in skill 'test-skill'.`,
+      error_code: 'RESOURCE_NOT_FOUND',
+    });
+  });
 });
