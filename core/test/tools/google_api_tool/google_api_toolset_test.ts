@@ -328,7 +328,10 @@ describe('GoogleApiToolset', () => {
       status: 200,
       json: async () => MOCK_DISCOVERY_SPEC,
     } as Response);
-    const configureSaSpy = vi.spyOn(GoogleApiTool.prototype, 'configureSaAuth');
+    const configureSaSpy = vi.spyOn(
+      GoogleApiTool.prototype,
+      'configureServiceAccountAuth',
+    );
     const serviceAccount = createTestServiceAccount();
 
     const toolset = new GoogleApiToolset({
@@ -350,7 +353,10 @@ describe('GoogleApiToolset', () => {
       json: async () => MOCK_DISCOVERY_SPEC,
     } as Response);
     const configureAuthSpy = vi.spyOn(GoogleApiTool.prototype, 'configureAuth');
-    const configureSaSpy = vi.spyOn(GoogleApiTool.prototype, 'configureSaAuth');
+    const configureSaSpy = vi.spyOn(
+      GoogleApiTool.prototype,
+      'configureServiceAccountAuth',
+    );
     const serviceAccount = createTestServiceAccount();
 
     const toolset = new GoogleApiToolset({
@@ -374,7 +380,10 @@ describe('GoogleApiToolset', () => {
       status: 200,
       json: async () => MOCK_DISCOVERY_SPEC,
     } as Response);
-    const configureSaSpy = vi.spyOn(GoogleApiTool.prototype, 'configureSaAuth');
+    const configureSaSpy = vi.spyOn(
+      GoogleApiTool.prototype,
+      'configureServiceAccountAuth',
+    );
     const initialServiceAccount = createTestServiceAccount(['scope1']);
     const updatedServiceAccount = createTestServiceAccount(['scope2']);
 
@@ -382,7 +391,7 @@ describe('GoogleApiToolset', () => {
       apiName: 'calendar',
       apiVersion: 'v3',
     });
-    toolset.configureSaAuth(initialServiceAccount);
+    toolset.configureServiceAccountAuth(initialServiceAccount);
 
     const tools = await toolset.getTools();
     expect(tools).toHaveLength(2);
@@ -390,7 +399,7 @@ describe('GoogleApiToolset', () => {
     expect(configureSaSpy).toHaveBeenCalledWith(initialServiceAccount);
 
     configureSaSpy.mockClear();
-    toolset.configureSaAuth(updatedServiceAccount);
+    toolset.configureServiceAccountAuth(updatedServiceAccount);
     expect(configureSaSpy).toHaveBeenCalledTimes(2);
     expect(configureSaSpy).toHaveBeenCalledWith(updatedServiceAccount);
   });
@@ -458,7 +467,7 @@ describe('GoogleApiToolset', () => {
     expect(context.eventActions.requestedAuthConfigs).toEqual({});
   });
 
-  it('uses OpenID Connect auth when configureAuth follows configureSaAuth before getTools', async () => {
+  it('uses OpenID Connect auth when configureAuth follows configureServiceAccountAuth before getTools', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
       status: 200,
@@ -469,7 +478,7 @@ describe('GoogleApiToolset', () => {
       apiName: 'calendar',
       apiVersion: 'v3',
     });
-    toolset.configureSaAuth(createTestServiceAccount());
+    toolset.configureServiceAccountAuth(createTestServiceAccount());
     toolset.configureAuth('oidc-client-id', 'oidc-client-secret');
 
     const tools = await toolset.getTools();
@@ -508,7 +517,7 @@ describe('GoogleApiToolset', () => {
     });
   });
 
-  it('restores the OpenID Connect auth scheme when configureAuth follows configureSaAuth after getTools', async () => {
+  it('restores the OpenID Connect auth scheme when configureAuth follows configureServiceAccountAuth after getTools', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
       status: 200,
@@ -521,7 +530,7 @@ describe('GoogleApiToolset', () => {
     });
 
     const tools = await toolset.getTools();
-    toolset.configureSaAuth(createTestServiceAccount());
+    toolset.configureServiceAccountAuth(createTestServiceAccount());
     toolset.configureAuth('updated-client-id', 'updated-client-secret');
 
     const context = new Context({
@@ -559,7 +568,7 @@ describe('GoogleApiToolset', () => {
     });
   });
 
-  it('uses serviceAccount auth when configureSaAuth follows configureAuth before getTools', async () => {
+  it('uses serviceAccount auth when configureServiceAccountAuth follows configureAuth before getTools', async () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce({
@@ -592,7 +601,7 @@ describe('GoogleApiToolset', () => {
       clientId: 'initial-client-id',
       clientSecret: 'initial-client-secret',
     });
-    toolset.configureSaAuth(createTestServiceAccount());
+    toolset.configureServiceAccountAuth(createTestServiceAccount());
 
     const tools = await toolset.getTools();
     const context = new Context({

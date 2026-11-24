@@ -191,12 +191,12 @@ export class GoogleApiToolset extends BaseToolset {
    * toolset and clears any previously configured OAuth2 client credentials.
    */
   @experimental
-  configureSaAuth(serviceAccount: ServiceAccount): void {
+  configureServiceAccountAuth(serviceAccount: ServiceAccount): void {
     this.serviceAccount = serviceAccount;
     this.clientId = undefined;
     this.clientSecret = undefined;
     for (const tool of this.tools) {
-      tool.configureSaAuth(serviceAccount);
+      tool.configureServiceAccountAuth(serviceAccount);
     }
   }
 

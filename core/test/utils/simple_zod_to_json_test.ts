@@ -321,6 +321,20 @@ describe('zodObjectToSchema', () => {
       });
     });
 
+    it('handles optional void and undefined fields without throwing', () => {
+      const schema = z.object({
+        ok: z.boolean(),
+        empty: z.void().optional(),
+        unset: z.undefined().optional(),
+      });
+
+      const jsonSchema = zodObjectToSchema(schema);
+
+      expect(jsonSchema.type).toBe(Type.OBJECT);
+      expect(jsonSchema.properties?.['ok']).toEqual({type: Type.BOOLEAN});
+      expect(jsonSchema.required).toEqual(['ok']);
+    });
+
     it('handles branded types', () => {
       const schema = z.object({
         brandedString: (z.string() as z3.ZodString).brand<'MyBrand'>(),

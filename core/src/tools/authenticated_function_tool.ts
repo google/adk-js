@@ -144,7 +144,7 @@ export class AuthenticatedFunctionTool<
   readonly [AUTHENTICATED_FUNCTION_TOOL_SIGNATURE_SYMBOL] = true;
 
   protected readonly authConfig?: AuthConfig;
-  protected readonly credentialsManager?: CredentialManager;
+  protected readonly credentialManager?: CredentialManager;
   protected readonly responseForAuthRequired?: Record<string, unknown> | string;
   private readonly executeWithCredential: AuthenticatedToolExecuteFunction<TParameters>;
 
@@ -171,7 +171,7 @@ export class AuthenticatedFunctionTool<
 
     this.authConfig = options.authConfig;
     if (options.authConfig?.authScheme) {
-      this.credentialsManager = new CredentialManager(options.authConfig);
+      this.credentialManager = new CredentialManager(options.authConfig);
     } else {
       logger.debug(
         'authConfig or authConfig.authScheme is missing, so authentication will be skipped.',
@@ -193,10 +193,10 @@ export class AuthenticatedFunctionTool<
     toolContext,
   }: RunAsyncToolRequest): Promise<unknown> {
     let credential: AuthCredential | undefined;
-    if (this.credentialsManager) {
-      credential = await this.credentialsManager.getAuthCredential(toolContext);
+    if (this.credentialManager) {
+      credential = await this.credentialManager.getAuthCredential(toolContext);
       if (!credential) {
-        await this.credentialsManager.requestCredential(toolContext);
+        await this.credentialManager.requestCredential(toolContext);
         return (
           this.responseForAuthRequired ?? DEFAULT_RESPONSE_FOR_AUTH_REQUIRED
         );

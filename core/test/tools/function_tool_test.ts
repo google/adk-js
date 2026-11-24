@@ -544,6 +544,179 @@ describe('FunctionTool', () => {
       expect(toolWithoutResponse._getDeclaration().response).toBeUndefined();
     });
 
+    it.each([
+      {
+        label: 'null',
+        response: null,
+        expected: {type: Type.NULL},
+      },
+      {
+        label: 'z3.void()',
+        response: z3.void(),
+        expected: {type: Type.NULL},
+      },
+      {
+        label: 'z4.void().describe(...)',
+        response: z4.void().describe('No return value.'),
+        expected: {type: Type.NULL, description: 'No return value.'},
+      },
+      {
+        label: 'z3.null()',
+        response: z3.null(),
+        expected: {type: Type.NULL},
+      },
+      {
+        label: 'z4.null()',
+        response: z4.null(),
+        expected: {type: Type.NULL},
+      },
+      {
+        label: 'z3.undefined()',
+        response: z3.undefined(),
+        expected: {type: Type.NULL},
+      },
+      {
+        label: 'z4.undefined()',
+        response: z4.undefined(),
+        expected: {type: Type.NULL},
+      },
+      {
+        label: 'z3.undefined().describe(...)',
+        response: z3.undefined().describe('No return value.'),
+        expected: {type: Type.NULL, description: 'No return value.'},
+      },
+      {
+        label: 'z4.undefined().describe(...)',
+        response: z4.undefined().describe('No return value.'),
+        expected: {type: Type.NULL, description: 'No return value.'},
+      },
+      {
+        label: 'z3.void().optional()',
+        response: z3.void().optional(),
+        expected: {type: Type.NULL},
+      },
+      {
+        label: 'z4.void().optional()',
+        response: z4.void().optional(),
+        expected: {type: Type.NULL},
+      },
+      {
+        label: 'z3.void().describe(...).optional()',
+        response: z3.void().describe('Optional void.').optional(),
+        expected: {type: Type.NULL, description: 'Optional void.'},
+      },
+      {
+        label: 'z4.void().describe(...).optional()',
+        response: z4.void().describe('Optional void.').optional(),
+        expected: {type: Type.NULL, description: 'Optional void.'},
+      },
+      {
+        label: 'z4.void().optional().describe(...)',
+        response: z4.void().optional().describe('Optional void.'),
+        expected: {type: Type.NULL, description: 'Optional void.'},
+      },
+      {
+        label: 'z3.undefined().optional()',
+        response: z3.undefined().optional(),
+        expected: {type: Type.NULL},
+      },
+      {
+        label: 'z4.undefined().optional()',
+        response: z4.undefined().optional(),
+        expected: {type: Type.NULL},
+      },
+      {
+        label: 'z3.void().nullable()',
+        response: z3.void().nullable(),
+        expected: {type: Type.NULL},
+      },
+      {
+        label: 'z4.void().nullable()',
+        response: z4.void().nullable(),
+        expected: {type: Type.NULL},
+      },
+      {
+        label: 'z3.undefined().nullable()',
+        response: z3.undefined().nullable(),
+        expected: {type: Type.NULL},
+      },
+      {
+        label: 'z4.undefined().nullable()',
+        response: z4.undefined().nullable(),
+        expected: {type: Type.NULL},
+      },
+    ])(
+      'maps response: $label to Type.NULL in _getDeclaration',
+      ({response, expected}) => {
+        const tool = new FunctionTool({
+          name: 'void_or_null_tool',
+          description: 'Returns nothing or null.',
+          response,
+          execute: () => null,
+        });
+        expect(tool._getDeclaration().response).toEqual(expected);
+      },
+    );
+
+    it('handles nested objects with optional or nullable void/undefined in response', () => {
+      const z3Tool = new FunctionTool({
+        name: 'z3_nested_void',
+        description: 'Nested optional void/undefined (Zod v3).',
+        response: z3.object({
+          ok: z3.boolean(),
+          empty: z3.void().optional(),
+          unset: z3.undefined().optional(),
+        }),
+        execute: () => ({ok: true}),
+      });
+      expect(z3Tool._getDeclaration().response).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          ok: {type: Type.BOOLEAN},
+          unset: {},
+        },
+        required: ['ok'],
+      });
+
+      const z4Tool = new FunctionTool({
+        name: 'z4_nested_void',
+        description: 'Nested optional void/undefined (Zod v4).',
+        response: z4.object({
+          ok: z4.boolean(),
+          empty: z4.void().optional(),
+          unset: z4.undefined().optional(),
+        }),
+        execute: () => ({ok: true}),
+      });
+      expect(z4Tool._getDeclaration().response).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          ok: {type: Type.BOOLEAN},
+          empty: {},
+          unset: {},
+        },
+        required: ['ok'],
+      });
+
+      const z4NullableTool = new FunctionTool({
+        name: 'z4_nested_nullable_void',
+        description: 'Nested nullable void (Zod v4).',
+        response: z4.object({
+          ok: z4.boolean(),
+          empty: z4.void().nullable(),
+        }),
+        execute: () => ({ok: true, empty: null}),
+      });
+      expect(z4NullableTool._getDeclaration().response).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          ok: {type: Type.BOOLEAN},
+          empty: {nullable: true},
+        },
+        required: ['ok', 'empty'],
+      });
+    });
+
     describe.each([
       {
         version: 'Zod 3',
@@ -1244,17 +1417,57 @@ describe('FunctionTool', () => {
       });
     });
 
-    it('sets a null response schema on Vertex AI when returnType or response is explicitly null or void', () => {
+    it('preserves a parameter named required in buildFunctionDeclarationForLangchain', () => {
+      const decl = buildFunctionDeclarationForLangchain(
+        false,
+        'lc_required_param',
+        'Tool with a parameter named required',
+        function run() {},
+        {
+          required: {type: 'boolean'},
+          optionalFlag: {type: 'boolean', default: false},
+        },
+      );
+      expect(decl.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          required: {type: Type.BOOLEAN},
+          optionalFlag: {type: Type.BOOLEAN},
+        },
+        required: ['required'],
+      });
+
+      const explicitListDecl = buildFunctionDeclarationForLangchain(
+        false,
+        'lc_explicit_required_list',
+        'Tool with an explicit required array',
+        function run() {},
+        {
+          optionalFlag: {type: 'boolean', default: false},
+          required: ['optionalFlag'],
+        },
+      );
+      expect(explicitListDecl.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          optionalFlag: {type: Type.BOOLEAN},
+        },
+        required: ['optionalFlag'],
+      });
+    });
+
+    it('sets a null response schema on Vertex AI when beforeParamSchema has null/void returnType or response', () => {
       const nullReturnTypeDecl = buildFunctionDeclarationUtil(
         true,
         'functionNullReturn',
         'A function that explicitly returns null.',
-        Object.assign(function functionNullReturn() {}, {returnType: null}),
+        function functionNullReturn() {},
         {
           properties: {
             param: {type: 'string'},
           },
           required: ['param'],
+          returnType: null,
         },
       );
       expect(nullReturnTypeDecl.response).toEqual({type: Type.NULL});
@@ -1288,9 +1501,24 @@ describe('FunctionTool', () => {
         },
       );
       expect(nullResponseDecl.response).toEqual({type: Type.NULL});
+
+      const zodVoidResponseDecl = buildFunctionDeclarationUtil(
+        true,
+        'functionZodVoidResponse',
+        'A function with response set to z.void().',
+        function functionZodVoidResponse() {},
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+          response: z4.void(),
+        },
+      );
+      expect(zodVoidResponseDecl.response).toEqual({type: Type.NULL});
     });
 
-    it('gives func.response and func.returnType precedence over beforeParamSchema values', () => {
+    it('ignores monkey-patched null return metadata on func and preserves non-null func precedence', () => {
       const funcResponseOverNullSchema = buildFunctionDeclarationUtil(
         true,
         'funcResponseWins',
@@ -1305,11 +1533,11 @@ describe('FunctionTool', () => {
       );
       expect(funcResponseOverNullSchema.response).toEqual({type: Type.STRING});
 
-      const funcNullResponseOverSchema = buildFunctionDeclarationUtil(
+      const funcNullResponseIgnored = buildFunctionDeclarationUtil(
         true,
-        'funcNullResponseWins',
-        'Function null response overrides schema response.',
-        Object.assign(function funcNullResponseWins() {}, {
+        'funcNullResponseIgnored',
+        'Null response on function is ignored in favor of schema response.',
+        Object.assign(function funcNullResponseIgnored() {}, {
           response: null,
         }),
         {
@@ -1317,7 +1545,7 @@ describe('FunctionTool', () => {
           response: {type: Type.STRING},
         },
       );
-      expect(funcNullResponseOverSchema.response).toEqual({type: Type.NULL});
+      expect(funcNullResponseIgnored.response).toEqual({type: Type.STRING});
 
       const funcReturnTypeOverNullSchema = buildFunctionDeclarationUtil(
         true,
@@ -1335,19 +1563,20 @@ describe('FunctionTool', () => {
         type: Type.STRING,
       });
 
-      const funcNullReturnTypeOverSchema = buildFunctionDeclarationUtil(
+      const funcNullReturnTypeIgnored = buildFunctionDeclarationUtil(
         true,
-        'funcNullReturnTypeWins',
-        'Function null returnType overrides schema returnType.',
-        Object.assign(function funcNullReturnTypeWins() {}, {
+        'funcNullReturnTypeIgnored',
+        'Null returnType on function is ignored.',
+        Object.assign(function funcNullReturnTypeIgnored() {}, {
           returnType: null,
         }),
         {
           properties: {},
-          returnType: 'string',
         },
       );
-      expect(funcNullReturnTypeOverSchema.response).toEqual({type: Type.NULL});
+      expect(funcNullReturnTypeIgnored.response).toEqual({
+        type: Type.TYPE_UNSPECIFIED,
+      });
     });
 
     it('omits response schema on Gemini API when returnType or response is explicitly null or void', () => {
@@ -1355,7 +1584,7 @@ describe('FunctionTool', () => {
         false,
         'functionNullReturn',
         'A function that explicitly returns null.',
-        Object.assign(function functionNullReturn() {}, {returnType: null}),
+        function functionNullReturn() {},
         {
           properties: {
             param: {type: 'string'},
@@ -1407,8 +1636,8 @@ describe('FunctionTool', () => {
         true,
         'testFunction',
         'A test function with no parameters that returns null.',
-        Object.assign(function testFunction() {}, {returnType: null}),
-        {properties: {}},
+        function testFunction() {},
+        {properties: {}, returnType: null},
       );
       expect(decl.name).toBe('testFunction');
       expect(decl.parameters).toBeUndefined();
