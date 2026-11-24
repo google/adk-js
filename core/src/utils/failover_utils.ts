@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {Aclosing} from './context_utils.js';
 import {logger} from './logger.js';
 
 /**
@@ -42,7 +43,7 @@ export async function* runWithRouting<T, C, TYield>(
     try {
       const generatorOrPromise = runFn(selectedItem);
       if (isAsyncGenerator(generatorOrPromise)) {
-        for await (const result of generatorOrPromise) {
+        for await (const result of new Aclosing(generatorOrPromise)) {
           yield result;
           firstYielded = true;
         }
@@ -92,11 +93,16 @@ function getSelectedItem<T>(
 }
 
 function isAsyncGenerator(
-  obj: unknown,
-): obj is AsyncGenerator<unknown, void, void> {
+  candidate: unknown,
+): candidate is AsyncGenerator<unknown, void, void> {
   return (
-    typeof obj === 'object' &&
-    obj !== null &&
-    typeof (obj as AsyncIterable<unknown>)[Symbol.asyncIterator] === 'function'
+    typeof candidate === 'object' &&
+    candidate !== null &&
+    Symbol.asyncIterator in candidate &&
+    typeof candidate[Symbol.asyncIterator] === 'function' &&
+    'next' in candidate &&
+    typeof candidate.next === 'function' &&
+    'return' in candidate &&
+    typeof candidate.return === 'function'
   );
 }
