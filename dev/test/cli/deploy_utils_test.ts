@@ -5,7 +5,10 @@
  */
 
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import {spawnAsync} from '../../src/cli/deploy/deploy_utils.js';
+import {
+  spawnAsync,
+  supportsKebabCaseCliFlags,
+} from '../../src/cli/deploy/deploy_utils.js';
 
 const spawnMock = vi.fn();
 
@@ -62,5 +65,37 @@ describe('spawnAsync', () => {
       stdio: 'inherit',
       shell: false,
     });
+  });
+});
+
+describe('supportsKebabCaseCliFlags', () => {
+  it.each([
+    '2.5.0',
+    '2.5.1',
+    '2.5.0-rc.1',
+    '2.6.0',
+    '3.0.0',
+    '^2.5.0',
+    '~2.5.0',
+    'v2.5.0',
+    'latest',
+    'next',
+  ])('returns true for %s', (adkVersion) => {
+    expect(supportsKebabCaseCliFlags(adkVersion)).toBe(true);
+  });
+
+  it.each([
+    '2.4.0',
+    '2.4.9',
+    '2.0.0',
+    '1.2.3',
+    '1.0.0',
+    '0.9.0',
+    '^2.4.0',
+    '~2.4',
+    'v2.4.0',
+    'v1.9.0',
+  ])('returns false for %s', (adkVersion) => {
+    expect(supportsKebabCaseCliFlags(adkVersion)).toBe(false);
   });
 });

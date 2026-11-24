@@ -129,6 +129,21 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+/**
+ * Returns whether `@google/adk-devtools` at `adkVersion` accepts `--kebab-case`
+ * CLI flags (introduced in 2.5.0). Older pinned versions (`< 2.5.0`) only
+ * understand `--snake_case` flags; dist-tags and non-semver specs default to true.
+ */
+export function supportsKebabCaseCliFlags(adkVersion: string): boolean {
+  const match = /^[~^v]?(\d+)\.(\d+)/.exec(adkVersion);
+  if (!match) {
+    return true;
+  }
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > 2 || (major === 2 && minor >= 5);
+}
+
 export function createDockerFileContent(
   options: CreateDockerFileContentOptions,
 ): string {
@@ -150,6 +165,7 @@ export function createDockerFileContent(
 
   const adkCommand = options.withUi ? 'web' : 'api_server';
   const adkServerOptions = [`--port=${options.port}`, '--host=0.0.0.0'];
+  const useKebabFlags = supportsKebabCaseCliFlags(adkVersion);
 
   // Skip the container's own compile and bundle when the staged agent file
   // was already compiled or bundled. The host build injects the shim banner,
@@ -164,39 +180,44 @@ export function createDockerFileContent(
 
   if (options.logLevel) {
     assertNoDockerfileNewline(options.logLevel, 'logLevel');
-    adkServerOptions.push(`--log_level=${shellQuote(options.logLevel)}`);
+    const flag = useKebabFlags ? '--log-level' : '--log_level';
+    adkServerOptions.push(`${flag}=${shellQuote(options.logLevel)}`);
   }
 
   if (options.allowOrigins) {
     assertNoDockerfileNewline(options.allowOrigins, 'allowOrigins');
-    adkServerOptions.push(
-      `--allow_origins=${shellQuote(options.allowOrigins)}`,
-    );
+    const flag = useKebabFlags ? '--allow-origins' : '--allow_origins';
+    adkServerOptions.push(`${flag}=${shellQuote(options.allowOrigins)}`);
   }
 
   if (options.artifactServiceUri) {
     assertNoDockerfileNewline(options.artifactServiceUri, 'artifactServiceUri');
-    adkServerOptions.push(
-      `--artifact_service_uri=${shellQuote(options.artifactServiceUri)}`,
-    );
+    const flag = useKebabFlags
+      ? '--artifact-service-uri'
+      : '--artifact_service_uri';
+    adkServerOptions.push(`${flag}=${shellQuote(options.artifactServiceUri)}`);
   }
 
   if (options.sessionServiceUri) {
     assertNoDockerfileNewline(options.sessionServiceUri, 'sessionServiceUri');
-    adkServerOptions.push(
-      `--session_service_uri=${shellQuote(options.sessionServiceUri)}`,
-    );
+    const flag = useKebabFlags
+      ? '--session-service-uri'
+      : '--session_service_uri';
+    adkServerOptions.push(`${flag}=${shellQuote(options.sessionServiceUri)}`);
   }
 
   if (options.memoryServiceUri) {
     assertNoDockerfileNewline(options.memoryServiceUri, 'memoryServiceUri');
-    adkServerOptions.push(
-      `--memory_service_uri=${shellQuote(options.memoryServiceUri)}`,
-    );
+    const flag = useKebabFlags
+      ? '--memory-service-uri'
+      : '--memory_service_uri';
+    adkServerOptions.push(`${flag}=${shellQuote(options.memoryServiceUri)}`);
   }
 
   if (options.otelToCloud) {
-    adkServerOptions.push('--otel_to_cloud');
+    adkServerOptions.push(
+      useKebabFlags ? '--otel-to-cloud' : '--otel_to_cloud',
+    );
   }
 
   if (options.a2a) {
@@ -215,7 +236,6 @@ RUN adduser --disabled-password --gecos "" myuser && chown myuser:myuser /app
 USER myuser
 
 # Set up environment variables - Start
-ENV PATH="/home/myuser/.local/bin:$PATH"
 ENV GOOGLE_GENAI_USE_ENTERPRISE=1
 ENV GOOGLE_CLOUD_PROJECT=${options.project}
 ENV GOOGLE_CLOUD_LOCATION=${options.region}

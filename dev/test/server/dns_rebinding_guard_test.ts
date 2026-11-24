@@ -75,7 +75,7 @@ describe('getAllowedRequestHosts', () => {
   });
 
   it('disables the guard when the wildcard appears alongside a real origin', () => {
-    // `--allow_origins 'http://localhost:4200,*'` opts out of the guard: the
+    // `--allow-origins 'http://localhost:4200,*'` opts out of the guard: the
     // wildcard anywhere in the list turns it off, deliberately.
     expect(getAllowedRequestHosts(['http://localhost:4200', '*'])).toBeNull();
   });

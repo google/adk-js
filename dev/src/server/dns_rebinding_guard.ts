@@ -73,9 +73,9 @@ export function isLoopbackAddress(host: string): boolean {
  * `null` if every host should be accepted (guard disabled).
  *
  * A loopback bind behind a same-machine proxy sees the proxy's hostname in
- * Host, so an operator naming an origin in --allow_origins vouches for that
+ * Host, so an operator naming an origin in --allow-origins vouches for that
  * origin's host, and *extraAllowedHosts* (ServerOptions.allowedHosts /
- * --allowed_hosts) vouches for any host explicitly listed there -- the
+ * --allowed-hosts) vouches for any host explicitly listed there -- the
  * latter exists so an embedder behind a proxy can widen the guard without
  * having to open CORS to every origin on the internet just to get a Host
  * header through. Any "*" among *allowOrigins* opts out of the guard entirely.

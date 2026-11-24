@@ -289,7 +289,7 @@ export class AdkApiServer {
       );
     this.serveDebugUI = options.serveDebugUI ?? false;
     // A browser sends one Origin per request, so a comma-separated
-    // `--allow_origins` must become a list: `cors` never matches the joined
+    // `--allow-origins` must become a list: `cors` never matches the joined
     // string, and the DNS-rebinding guard reads only its first host from it.
     const {origins: allowedOrigins, rejected: rejectedOrigins} =
       parseAllowedOrigins(options.allowOrigins);
@@ -314,7 +314,7 @@ export class AdkApiServer {
     this.logger.setLogLevel(options.logLevel ?? LogLevel.INFO);
     for (const rejected of rejectedOrigins) {
       this.logger.warn(
-        `Ignoring --allow_origins entry ${formatHeaderForLog(rejected)}: ` +
+        `Ignoring --allow-origins entry ${formatHeaderForLog(rejected)}: ` +
           'only http:// and https:// origins are allowed.',
       );
     }
@@ -414,7 +414,7 @@ export class AdkApiServer {
         this.logger.warn(
           `Rejected request with Host ${formatHeaderForLog(req.headers.host)}: the server is bound to ` +
             `${this.host} and only loopback hosts are accepted. Set the ` +
-            `allowedHosts server option (or --allowed_hosts on the CLI) to ` +
+            `allowedHosts server option (or --allowed-hosts on the CLI) to ` +
             `the host you are reaching this server through.`,
         );
         res
