@@ -901,23 +901,8 @@ describe('interactions_utils', () => {
         'int-1',
       );
 
-      expect(response).toEqual({
-        content: {
-          role: 'model',
-          parts: [
-            {
-              functionCall: {
-                id: 'call-1',
-                name: 'my_tool',
-                args: {x: 1},
-              },
-            },
-          ],
-        },
-        partial: false,
-        turnComplete: false,
-        interactionId: 'int-1',
-      });
+      // The call is yielded once, in the final aggregated response.
+      expect(response).toBeNull();
       expect(aggregatedParts[0].partMetadata).toBeUndefined(); // metadata should be cleaned up
       expect(aggregatedParts[0].functionCall?.args).toEqual({x: 1});
     });
@@ -1081,7 +1066,7 @@ describe('interactions_utils', () => {
         responses.push(res);
       }
 
-      expect(responses.length).toBe(4);
+      expect(responses.length).toBe(3);
 
       expect(responses[0]).toEqual({
         content: {role: 'model', parts: [{text: 'Part 1'}]},
@@ -1098,14 +1083,6 @@ describe('interactions_utils', () => {
       });
 
       expect(responses[2]).toEqual({
-        content: {role: 'model', parts: [{text: 'Part 1'}, {text: 'Part 2'}]},
-        partial: false,
-        turnComplete: true,
-        finishReason: 'STOP',
-        interactionId: 'int-stream',
-      });
-
-      expect(responses[3]).toEqual({
         content: {role: 'model', parts: [{text: 'Part 1'}, {text: 'Part 2'}]},
         partial: false,
         turnComplete: true,
@@ -1220,7 +1197,7 @@ describe('interactions_utils', () => {
         responses.push(res);
       }
 
-      expect(responses.length).toBe(3);
+      expect(responses.length).toBe(2);
 
       expect(responses[0]).toEqual({
         content: {role: 'model', parts: [{text: 'Stream text'}]},
@@ -1231,8 +1208,6 @@ describe('interactions_utils', () => {
 
       expect(responses[1].interactionId).toBe('int-from-event');
       expect(responses[1].turnComplete).toBe(true);
-
-      expect(responses[2].interactionId).toBe('int-from-event');
     });
 
     it('should pass all generation config parameters', async () => {
@@ -1677,7 +1652,7 @@ describe('interactions_utils', () => {
             },
           ],
         },
-        partial: false,
+        partial: true,
         turnComplete: false,
         interactionId: 'int-1',
       });
@@ -1710,7 +1685,7 @@ describe('interactions_utils', () => {
             },
           ],
         },
-        partial: false,
+        partial: true,
         turnComplete: false,
         interactionId: 'int-1',
       });
@@ -2148,7 +2123,7 @@ describe('interactions_utils', () => {
         responses.push(res);
       }
 
-      expect(responses.length).toBe(3); // delta, completed, end-of-generator
+      expect(responses.length).toBe(2); // delta, completed
 
       expect(responses[0]).toEqual({
         content: {role: 'model', parts: [{text: 'Stream text'}]},
@@ -2159,6 +2134,129 @@ describe('interactions_utils', () => {
 
       expect(responses[1].interactionId).toBe('int-start-id');
       expect(responses[1].turnComplete).toBe(true);
+    });
+
+    async function streamResponses(mockEvents: unknown[]) {
+      const mockApiClient = {
+        interactions: {
+          create: vi.fn().mockResolvedValue(
+            (async function* () {
+              yield* mockEvents;
+            })(),
+          ),
+        },
+      };
+      const responses = [];
+      for await (const res of generateContentViaInteractions(
+        mockApiClient as any,
+        {model: 'gemini-2.5-flash', contents: []} as any,
+        true,
+      )) {
+        responses.push(res);
+      }
+      return responses;
+    }
+
+    it('should yield a streamed function call in one final response only', async () => {
+      const responses = await streamResponses([
+        {
+          event_type: 'interaction.created',
+          interaction: {id: 'int-1', status: 'in_progress'},
+        },
+        {
+          event_type: 'interaction.status_update',
+          interaction_id: 'int-1',
+          status: 'in_progress',
+        },
+        {
+          event_type: 'step.start',
+          index: 0,
+          step: {type: 'function_call', id: 'call-1', name: 'my_tool'},
+        },
+        {
+          event_type: 'step.delta',
+          index: 0,
+          delta: {type: 'arguments_delta', arguments: '{"x": 1}'},
+        },
+        {event_type: 'step.stop', index: 0},
+        {
+          event_type: 'interaction.status_update',
+          interaction_id: 'int-1',
+          status: 'requires_action',
+        },
+        {
+          event_type: 'interaction.completed',
+          interaction: {id: 'int-1', status: 'requires_action'},
+        },
+      ]);
+
+      expect(responses).toEqual([
+        {
+          content: {
+            role: 'model',
+            parts: [
+              {functionCall: {id: 'call-1', name: 'my_tool', args: {x: 1}}},
+            ],
+          },
+          partial: false,
+          turnComplete: true,
+          finishReason: 'STOP',
+          interactionId: 'int-1',
+        },
+      ]);
+    });
+
+    it('should yield streamed media as partial and once in the final response', async () => {
+      const image = {inlineData: {data: 'imgdata', mimeType: 'image/png'}};
+      const responses = await streamResponses([
+        {
+          event_type: 'step.delta',
+          index: 0,
+          delta: {type: 'image', data: 'imgdata', mime_type: 'image/png'},
+        },
+        {event_type: 'step.delta', index: 0, delta: {type: 'text', text: 'Hi'}},
+        {event_type: 'step.stop', index: 0},
+        {event_type: 'interaction.completed'},
+      ]);
+
+      expect(responses.map((r) => r.partial)).toEqual([true, true, false]);
+      expect(responses[2].content?.parts).toEqual([image, {text: 'Hi'}]);
+    });
+
+    it('should yield one final response when a completed status update comes first', async () => {
+      const responses = await streamResponses([
+        {event_type: 'step.delta', delta: {type: 'text', text: 'Hi'}},
+        {event_type: 'step.stop'},
+        {event_type: 'interaction.status_update', status: 'completed'},
+        {event_type: 'interaction.completed'},
+      ]);
+
+      expect(responses.filter((r) => r.turnComplete)).toEqual([
+        {
+          content: {role: 'model', parts: [{text: 'Hi'}]},
+          partial: false,
+          turnComplete: true,
+          finishReason: 'STOP',
+          interactionId: undefined,
+        },
+      ]);
+    });
+
+    it('should yield the aggregated response when the stream ends without completing', async () => {
+      const responses = await streamResponses([
+        {event_type: 'step.delta', delta: {type: 'text', text: 'Hi'}},
+        {event_type: 'step.stop'},
+      ]);
+
+      expect(responses.filter((r) => r.turnComplete)).toEqual([
+        {
+          content: {role: 'model', parts: [{text: 'Hi'}]},
+          partial: false,
+          turnComplete: true,
+          finishReason: 'STOP',
+          interactionId: undefined,
+        },
+      ]);
     });
 
     it('should extract interaction ID from interactionId (camelCase) in streaming event', async () => {
