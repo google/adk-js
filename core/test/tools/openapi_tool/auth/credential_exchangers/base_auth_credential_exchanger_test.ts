@@ -7,8 +7,7 @@
 /**
  * Ported from adk-python
  * tests/unittests/tools/openapi_tool/auth/credential_exchangers/test_base_auth_credential_exchanger.py
- * at tag v0.1.0. Test names are kept verbatim so a reviewer can grep the
- * original.
+ * at tag v0.1.0.
  */
 
 import {
@@ -42,7 +41,8 @@ const AUTH_SCHEME: AuthScheme = {
 };
 
 describe('BaseAuthCredentialExchanger', () => {
-  it('test_exchange_credential_not_implemented', () => {
+  // test_exchange_credential_not_implemented
+  it('throws when exchangeCredential is called on the base class', () => {
     const baseExchanger = new BaseAuthCredentialExchanger();
     const authCredential: AuthCredential = {
       authType: AuthCredentialTypes.API_KEY,
@@ -54,7 +54,8 @@ describe('BaseAuthCredentialExchanger', () => {
     ).toThrowError('Subclasses must implement exchangeCredential.');
   });
 
-  it('test_auth_credential_missing_error', () => {
+  // test_auth_credential_missing_error
+  it('creates an AuthCredentialMissingError with the given message and name', () => {
     const errorMessage = 'Test missing credential';
 
     const error = new AuthCredentialMissingError(errorMessage);

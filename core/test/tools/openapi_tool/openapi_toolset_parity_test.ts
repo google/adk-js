@@ -7,7 +7,6 @@
 /**
  * Ported from adk-python v0.1.0
  * src/google/adk/tests/unittests/tools/openapi_tool/openapi_spec_parser/test_openapi_toolset.py
- * Test names are kept verbatim so the original can be grepped.
  */
 
 import {
@@ -55,7 +54,8 @@ describe('OpenAPIToolset parity with adk-python v0.1.0', () => {
     vi.unstubAllGlobals();
   });
 
-  it('test_openapi_toolset_initialization_from_dict', async () => {
+  // test_openapi_toolset_initialization_from_dict
+  it('initializes tools and declarations from an OpenAPI spec object', async () => {
     const toolset = new OpenAPIToolset({specDict: openapiSpec});
     const tools = await toolset.getTools();
 
@@ -68,7 +68,8 @@ describe('OpenAPIToolset parity with adk-python v0.1.0', () => {
     }
   });
 
-  it('test_openapi_toolset_initialization_from_yaml_string', async () => {
+  // test_openapi_toolset_initialization_from_yaml_string
+  it('initializes tools from a YAML OpenAPI spec string', async () => {
     const toolset = new OpenAPIToolset({specStr, specType: 'yaml'});
     const tools = await toolset.getTools();
 
@@ -78,7 +79,8 @@ describe('OpenAPIToolset parity with adk-python v0.1.0', () => {
     );
   });
 
-  it('test_openapi_toolset_tool_existing', () => {
+  // test_openapi_toolset_tool_existing
+  it('returns parsed tools with expected metadata and parameters', () => {
     const toolset = new OpenAPIToolset({specDict: openapiSpec});
 
     const insertTool = toolset.getTool(INSERT_TOOL);
@@ -108,13 +110,15 @@ describe('OpenAPIToolset parity with adk-python v0.1.0', () => {
     expect(toolset.getTool(PATCH_TOOL)?.name).toBe(PATCH_TOOL);
   });
 
-  it('test_openapi_toolset_tool_non_existing', () => {
+  // test_openapi_toolset_tool_non_existing
+  it('returns undefined for a non-existent tool name', () => {
     const toolset = new OpenAPIToolset({specDict: openapiSpec});
 
     expect(toolset.getTool('non_existent_tool')).toBeUndefined();
   });
 
-  it('test_openapi_toolset_configure_auth_on_init', async () => {
+  // test_openapi_toolset_configure_auth_on_init
+  it('configures auth scheme and credential on all tools during initialization', async () => {
     const authScheme: OpenAPIV3.ApiKeySecurityScheme = {
       type: 'apiKey',
       in: 'header',

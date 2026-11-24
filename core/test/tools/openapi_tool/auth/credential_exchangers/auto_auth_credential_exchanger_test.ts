@@ -8,9 +8,6 @@
  * Ported from adk-python
  * tests/unittests/tools/openapi_tool/auth/credential_exchangers/test_auto_auth_credential_exchanger.py
  * at tag v0.1.0.
- *
- * Test names are kept verbatim from the Python originals so a reviewer can
- * grep for them.
  */
 
 import {
@@ -66,7 +63,8 @@ afterEach(() => {
 });
 
 describe('AutoAuthCredentialExchanger ported from adk-python v0.1.0', () => {
-  it('test_init_with_custom_exchangers', async () => {
+  // test_init_with_custom_exchangers
+  it('registers custom exchangers while preserving built-in defaults', async () => {
     const customExchanger = createMockExchanger(exchangedCredential);
     const oauth2Spy = spyOnDefaultOAuth2Exchanger();
     const autoExchanger = new AutoAuthCredentialExchanger({
@@ -90,7 +88,8 @@ describe('AutoAuthCredentialExchanger ported from adk-python v0.1.0', () => {
     expect(openIdResult.credential).toBe(exchangedCredential);
   });
 
-  it('test_exchange_credential_no_auth_credential', async () => {
+  // test_exchange_credential_no_auth_credential
+  it('returns null without delegating when authCredential is undefined', async () => {
     const oauth2Spy = spyOnDefaultOAuth2Exchanger();
     const autoExchanger = new AutoAuthCredentialExchanger();
 
@@ -103,7 +102,8 @@ describe('AutoAuthCredentialExchanger ported from adk-python v0.1.0', () => {
     expect(oauth2Spy).not.toHaveBeenCalled();
   });
 
-  it('test_exchange_credential_no_exchange', async () => {
+  // test_exchange_credential_no_exchange
+  it('returns unexchanged result when no exchanger matches the auth type', async () => {
     const autoExchanger = new AutoAuthCredentialExchanger();
     const authCredential = credentialOf(AuthCredentialTypes.API_KEY);
 
@@ -114,7 +114,8 @@ describe('AutoAuthCredentialExchanger ported from adk-python v0.1.0', () => {
     expect(result).toEqual({credential: authCredential, wasExchanged: false});
   });
 
-  it('test_exchange_credential_open_id_connect', async () => {
+  // test_exchange_credential_open_id_connect
+  it('delegates OpenID Connect credentials to the registered exchanger', async () => {
     const mockExchanger = createMockExchanger(exchangedCredential);
     const autoExchanger = new AutoAuthCredentialExchanger({
       [AuthCredentialTypes.OPEN_ID_CONNECT]: mockExchanger,
@@ -134,7 +135,8 @@ describe('AutoAuthCredentialExchanger ported from adk-python v0.1.0', () => {
     });
   });
 
-  it('test_exchange_credential_service_account', async () => {
+  // test_exchange_credential_service_account
+  it('delegates service account credentials to the registered exchanger', async () => {
     const mockExchanger = createMockExchanger(exchangedCredential);
     const autoExchanger = new AutoAuthCredentialExchanger({
       [AuthCredentialTypes.SERVICE_ACCOUNT]: mockExchanger,
@@ -154,7 +156,8 @@ describe('AutoAuthCredentialExchanger ported from adk-python v0.1.0', () => {
     });
   });
 
-  it('test_exchange_credential_custom_exchanger', async () => {
+  // test_exchange_credential_custom_exchanger
+  it('delegates credentials to a custom exchanger registered for the auth type', async () => {
     const mockExchanger = createMockExchanger(exchangedCredential);
     const autoExchanger = new AutoAuthCredentialExchanger({
       [AuthCredentialTypes.API_KEY]: mockExchanger,

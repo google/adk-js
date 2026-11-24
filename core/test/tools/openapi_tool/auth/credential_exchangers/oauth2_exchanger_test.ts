@@ -10,9 +10,6 @@
  * at tag `v0.2.0`. The reference implementation is pinned at `v0.1.0`, which
  * ships no `tests/` directory; the implementation file is byte-identical at the
  * two tags, so the `v0.2.0` tests describe the `v0.1.0` shape.
- *
- * Every `it()` string keeps the Python test name verbatim so a reviewer can
- * grep the original.
  */
 
 import {
@@ -45,7 +42,8 @@ function oauth2Credential(oauth2: AuthCredential['oauth2']): AuthCredential {
 }
 
 describe('OAuth2BearerExchanger ported reference tests', () => {
-  it('test_check_scheme_credential_type_success', () => {
+  // test_check_scheme_credential_type_success
+  it('accepts a valid OpenID Connect scheme and OAuth2 credential', () => {
     const authCredential = oauth2Credential({
       clientId: 'test_client',
       clientSecret: 'test_secret',
@@ -57,7 +55,8 @@ describe('OAuth2BearerExchanger ported reference tests', () => {
     ).not.toThrow();
   });
 
-  it('test_check_scheme_credential_type_missing_credential', () => {
+  // test_check_scheme_credential_type_missing_credential
+  it('throws when authCredential is undefined', () => {
     expect(() => checkSchemeCredentialType(authScheme, undefined)).toThrow(
       'authCredential is empty',
     );
@@ -78,7 +77,8 @@ describe('OAuth2BearerExchanger ported reference tests', () => {
     expect((thrown as Error).constructor).toBe(Error);
   });
 
-  it('test_check_scheme_credential_type_invalid_scheme_type', () => {
+  // test_check_scheme_credential_type_invalid_scheme_type
+  it('throws when the security scheme is not OAuth2 or OpenID Connect', () => {
     // Python builds the invalid scheme with `AuthSchemeType.apiKey`. adk-js has
     // no such enum, so the openapi-types literal `'apiKey'` stands in.
     const invalidScheme: AuthScheme = {
@@ -97,7 +97,8 @@ describe('OAuth2BearerExchanger ported reference tests', () => {
     ).toThrow('Invalid security scheme');
   });
 
-  it('test_check_scheme_credential_type_missing_openid_connect', () => {
+  // test_check_scheme_credential_type_missing_openid_connect
+  it('throws when the credential is missing oauth2 configuration', () => {
     const authCredential: AuthCredential = {
       authType: AuthCredentialTypes.OAUTH2,
     };
@@ -107,7 +108,8 @@ describe('OAuth2BearerExchanger ported reference tests', () => {
     );
   });
 
-  it('test_generate_auth_token_success', () => {
+  // test_generate_auth_token_success
+  it('converts an OAuth2 access token into an HTTP bearer credential', () => {
     // Divergence: Python passes `token={"access_token": "test_access_token"}`.
     // adk-python commit 956fb912e replaced that dict with top-level
     // `access_token` and `refresh_token`, and adk-js only ever shipped the
@@ -127,7 +129,8 @@ describe('OAuth2BearerExchanger ported reference tests', () => {
     expect(updatedCredential.http?.credentials.token).toBe('test_access_token');
   });
 
-  it('test_exchange_credential_generate_auth_token', () => {
+  // test_exchange_credential_generate_auth_token
+  it('exchanges a valid OAuth2 credential with an access token into a bearer credential', () => {
     // Same fixture divergence as above, for the same reason.
     const authCredential = oauth2Credential({
       clientId: 'test_client',
@@ -146,7 +149,8 @@ describe('OAuth2BearerExchanger ported reference tests', () => {
     );
   });
 
-  it('test_exchange_credential_refresh_token_only', () => {
+  // test_exchange_credential_refresh_token_only
+  it('returns null when the credential has only a refresh token', () => {
     const authCredential = oauth2Credential({
       clientId: 'test_client',
       clientSecret: 'test_secret',
@@ -159,7 +163,8 @@ describe('OAuth2BearerExchanger ported reference tests', () => {
     expect(updatedCredential).toBeNull();
   });
 
-  it('test_exchange_credential_auth_missing', () => {
+  // test_exchange_credential_auth_missing
+  it('throws when exchangeCredential is called without authCredential', () => {
     expect(() => exchangeCredential(authScheme, undefined)).toThrow(
       'authCredential is empty. Please create AuthCredential using',
     );

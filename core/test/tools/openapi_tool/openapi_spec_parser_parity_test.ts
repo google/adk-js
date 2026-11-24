@@ -8,8 +8,7 @@
  * Ports of the adk-python reference tests for `OpenApiSpecParser`.
  *
  * Source: `tests/unittests/tools/openapi_tool/openapi_spec_parser/
- * test_openapi_spec_parser.py` at adk-python tag `v0.1.0`. The `it()` strings
- * keep the Python test names so the two files can be compared by name.
+ * test_openapi_spec_parser.py` at adk-python tag `v0.1.0`.
  */
 
 import {OpenApiSpecParser, ParsedOperation} from '@google/adk';
@@ -65,7 +64,8 @@ function propertySchema(
 }
 
 describe('OpenApiSpecParser parity with adk-python v0.1.0', () => {
-  it('test_parse_minimal_spec', () => {
+  // test_parse_minimal_spec
+  it('parses a minimal OpenAPI spec into a single operation', () => {
     const openapiSpec = createMinimalOpenApiSpec();
 
     const parsedOperations = new OpenApiSpecParser().parse(openapiSpec);
@@ -81,7 +81,8 @@ describe('OpenApiSpecParser parity with adk-python v0.1.0', () => {
     expect(returnSchema(op).type).toBe('string');
   });
 
-  it('test_parse_spec_with_no_operation_id', () => {
+  // test_parse_spec_with_no_operation_id
+  it('derives an operation name from method and path when operationId is omitted', () => {
     const openapiSpec = createMinimalOpenApiSpec();
     delete openapiSpec.paths['/test']!.get!.operationId;
 
@@ -91,7 +92,8 @@ describe('OpenApiSpecParser parity with adk-python v0.1.0', () => {
     expect(parsedOperations[0].name).toBe('test_get');
   });
 
-  it('test_parse_spec_with_multiple_methods', () => {
+  // test_parse_spec_with_multiple_methods
+  it('parses multiple HTTP methods on the same path', () => {
     const openapiSpec = createMinimalOpenApiSpec();
     openapiSpec.paths['/test']!.post = {
       summary: 'Test POST endpoint',
@@ -107,7 +109,8 @@ describe('OpenApiSpecParser parity with adk-python v0.1.0', () => {
     expect(operationNames.has('test_post')).toBe(true);
   });
 
-  it('test_parse_spec_with_parameters', () => {
+  // test_parse_spec_with_parameters
+  it('extracts query and header parameters from an operation', () => {
     const openapiSpec = createMinimalOpenApiSpec();
     openapiSpec.paths['/test']!.get!.parameters = [
       {name: 'param1', in: 'query', schema: {type: 'string'}},
@@ -124,7 +127,8 @@ describe('OpenApiSpecParser parity with adk-python v0.1.0', () => {
     expect(parameters[1].paramLocation).toBe('header');
   });
 
-  it('test_parse_spec_with_request_body', () => {
+  // test_parse_spec_with_request_body
+  it('flattens JSON object requestBody properties into parameters', () => {
     const openapiSpec = createMinimalOpenApiSpec();
     openapiSpec.paths['/test']!.post = {
       summary: 'Endpoint with request body',
@@ -152,11 +156,13 @@ describe('OpenApiSpecParser parity with adk-python v0.1.0', () => {
     expect(op.name).toBe('test_post_with_body');
     expect(op.parameters.length).toBe(1);
     expect(op.parameters[0].originalName).toBe('name');
-    // Python asserts `type_value == str`; see test_parse_minimal_spec.
+    // Python asserts `type_value == str`; see 'parses a minimal OpenAPI spec
+    // into a single operation' (test_parse_minimal_spec) above.
     expect(op.parameters[0].paramSchema.type).toBe('string');
   });
 
-  it('test_parse_spec_with_reference', () => {
+  // test_parse_spec_with_reference
+  it('resolves $ref response schemas from components.schemas', () => {
     const openapiSpec: OpenAPIV3.Document = {
       openapi: '3.1.0',
       info: {title: 'API with Refs', version: '1.0.0'},
@@ -198,7 +204,8 @@ describe('OpenApiSpecParser parity with adk-python v0.1.0', () => {
     expect(propertySchema(returnSchema(op), 'name').type).toBe('string');
   });
 
-  it('test_parse_spec_with_circular_reference', () => {
+  // test_parse_spec_with_circular_reference
+  it('breaks circular $ref chains without infinite recursion', () => {
     const openapiSpec: OpenAPIV3.Document = {
       openapi: '3.1.0',
       info: {title: 'Circular Ref API', version: '1.0.0'},
@@ -244,7 +251,8 @@ describe('OpenApiSpecParser parity with adk-python v0.1.0', () => {
     expect(cycleEnd).toEqual({});
   });
 
-  it('test_parse_no_paths', () => {
+  // test_parse_no_paths
+  it('returns no operations when paths is missing', () => {
     const openapiSpec = {
       openapi: '3.1.0',
       info: {title: 'No Paths API', version: '1.0.0'},
@@ -255,7 +263,8 @@ describe('OpenApiSpecParser parity with adk-python v0.1.0', () => {
     expect(parsedOperations.length).toBe(0);
   });
 
-  it('test_parse_empty_path_item', () => {
+  // test_parse_empty_path_item
+  it('skips undefined path items', () => {
     const openapiSpec: OpenAPIV3.Document = {
       openapi: '3.1.0',
       info: {title: 'Empty Path Item API', version: '1.0.0'},
@@ -267,7 +276,8 @@ describe('OpenApiSpecParser parity with adk-python v0.1.0', () => {
     expect(parsedOperations.length).toBe(0);
   });
 
-  it('test_parse_spec_with_global_auth_scheme', () => {
+  // test_parse_spec_with_global_auth_scheme
+  it('attaches the global security scheme to operations', () => {
     const openapiSpec = createMinimalOpenApiSpec();
     openapiSpec.security = [{api_key: []}];
     openapiSpec.components = {
@@ -284,7 +294,8 @@ describe('OpenApiSpecParser parity with adk-python v0.1.0', () => {
     expect(op.authScheme?.type).toBe('apiKey');
   });
 
-  it('test_parse_spec_with_local_auth_scheme', () => {
+  // test_parse_spec_with_local_auth_scheme
+  it('attaches an operation-level security scheme', () => {
     const openapiSpec = createMinimalOpenApiSpec();
     openapiSpec.paths['/test']!.get!.security = [{local_auth: []}];
     openapiSpec.components = {
@@ -300,7 +311,8 @@ describe('OpenApiSpecParser parity with adk-python v0.1.0', () => {
     expect(authScheme.scheme).toBe('bearer');
   });
 
-  it('test_parse_spec_with_servers', () => {
+  // test_parse_spec_with_servers
+  it('uses the first server URL as endpoint baseUrl', () => {
     const openapiSpec = createMinimalOpenApiSpec();
     openapiSpec.servers = [
       {url: 'https://api.example.com'},
@@ -315,7 +327,8 @@ describe('OpenApiSpecParser parity with adk-python v0.1.0', () => {
     );
   });
 
-  it('test_parse_spec_with_no_servers', () => {
+  // test_parse_spec_with_no_servers
+  it('defaults endpoint baseUrl to empty string when servers is absent', () => {
     const openapiSpec = createMinimalOpenApiSpec();
     delete openapiSpec.servers;
 
@@ -325,7 +338,8 @@ describe('OpenApiSpecParser parity with adk-python v0.1.0', () => {
     expect(parsedOperations[0].endpoint.baseUrl).toBe('');
   });
 
-  it('test_parse_spec_with_description', () => {
+  // test_parse_spec_with_description
+  it('preserves the operation description', () => {
     const openapiSpec = createMinimalOpenApiSpec();
     const expectedDescription = 'This is a test description.';
     openapiSpec.paths['/test']!.get!.description = expectedDescription;
@@ -336,7 +350,8 @@ describe('OpenApiSpecParser parity with adk-python v0.1.0', () => {
     expect(parsedOperations[0].description).toBe(expectedDescription);
   });
 
-  it('test_parse_spec_with_empty_description', () => {
+  // test_parse_spec_with_empty_description
+  it('preserves an empty operation description', () => {
     const openapiSpec = createMinimalOpenApiSpec();
     openapiSpec.paths['/test']!.get!.description = '';
     openapiSpec.paths['/test']!.get!.summary = '';
@@ -347,7 +362,8 @@ describe('OpenApiSpecParser parity with adk-python v0.1.0', () => {
     expect(parsedOperations[0].description).toBe('');
   });
 
-  it('test_parse_spec_with_no_description', () => {
+  // test_parse_spec_with_no_description
+  it('defaults description to empty string when description and summary are absent', () => {
     const openapiSpec = createMinimalOpenApiSpec();
     delete openapiSpec.paths['/test']!.get!.description;
     delete openapiSpec.paths['/test']!.get!.summary;
@@ -358,7 +374,8 @@ describe('OpenApiSpecParser parity with adk-python v0.1.0', () => {
     expect(parsedOperations[0].description).toBe('');
   });
 
-  it('test_parse_invalid_openapi_spec_type', () => {
+  // test_parse_invalid_openapi_spec_type
+  it('returns an empty array when given a non-object OpenAPI spec', () => {
     // Divergence. Python raises AttributeError for each of these. TypeScript
     // rejects them at compile time, so they only reach the parser through a
     // cast, and the parser finds no paths and returns an empty list.
@@ -371,7 +388,8 @@ describe('OpenApiSpecParser parity with adk-python v0.1.0', () => {
     expect(parseUnknown([])).toEqual([]);
   });
 
-  it('test_parse_external_ref_raises_error', () => {
+  // test_parse_external_ref_raises_error
+  it('throws when encountering an external $ref', () => {
     const openapiSpec: OpenAPIV3.Document = {
       openapi: '3.1.0',
       info: {title: 'External Ref API', version: '1.0.0'},
@@ -400,7 +418,8 @@ describe('OpenApiSpecParser parity with adk-python v0.1.0', () => {
     );
   });
 
-  it('test_parse_spec_with_multiple_paths_deep_refs', () => {
+  // test_parse_spec_with_multiple_paths_deep_refs
+  it('resolves deeply nested $ref schemas across multiple paths', () => {
     const openapiSpec: OpenAPIV3.Document = {
       openapi: '3.1.0',
       info: {title: 'Multiple Paths Deep Refs API', version: '1.0.0'},
@@ -557,7 +576,8 @@ describe('OpenApiSpecParser parity with adk-python v0.1.0', () => {
     ).toBe('string');
   });
 
-  it('test_parse_spec_with_duplicate_parameter_names', () => {
+  // test_parse_spec_with_duplicate_parameter_names
+  it('deduplicates colliding query and body parameter names', () => {
     const openapiSpec: OpenAPIV3.Document = {
       openapi: '3.1.0',
       info: {title: 'Duplicate Parameter Names API', version: '1.0.0'},

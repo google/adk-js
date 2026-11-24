@@ -8,8 +8,7 @@
  * The adk-python parity set for Vertex AI RAG retrieval.
  *
  * Source: adk-python `tests/unittests/tools/retrieval/
- * test_vertex_ai_rag_retrieval.py` at ref `v0.1.0`. Each `it(...)` keeps the
- * Python test function name verbatim so the two suites can be diffed by name.
+ * test_vertex_ai_rag_retrieval.py` at ref `v0.1.0`.
  *
  * adk-js covers Vertex AI RAG with `VertexRagRetrievalTool`, a `BuiltInTool`
  * that always configures server-side retrieval. adk-python v0.1.0's
@@ -124,7 +123,8 @@ function toolsOf(request: LlmRequest): Tool[] {
 }
 
 describe('vertex_ai_rag_retrieval (adk-python v0.1.0 parity)', () => {
-  it('test_vertex_rag_retrieval_for_gemini_1_x', async () => {
+  // test_vertex_rag_retrieval_for_gemini_1_x
+  it('configures server-side retrieval tool for Gemini 1.x models', async () => {
     const mockModel = new MockModel('gemini-1.5-pro', ['response1']);
 
     await runOnce(mockModel, [ragRetrieval()]);
@@ -154,7 +154,8 @@ describe('vertex_ai_rag_retrieval (adk-python v0.1.0 parity)', () => {
     ).toBeDefined();
   });
 
-  it('test_vertex_rag_retrieval_for_gemini_1_x_with_another_function_tool', async () => {
+  // test_vertex_rag_retrieval_for_gemini_1_x_with_another_function_tool
+  it('keeps server-side retrieval separate from function declarations on Gemini 1.x', async () => {
     const mockModel = new MockModel('gemini-1.5-pro', ['response1']);
 
     await runOnce(mockModel, [ragRetrieval(), noopTool()]);
@@ -183,7 +184,8 @@ describe('vertex_ai_rag_retrieval (adk-python v0.1.0 parity)', () => {
     ).toBeDefined();
   });
 
-  it('test_vertex_rag_retrieval_for_gemini_2_x', async () => {
+  // test_vertex_rag_retrieval_for_gemini_2_x
+  it('configures server-side retrieval tool for Gemini 2.x models', async () => {
     const mockModel = new MockModel('gemini-2.0-flash', ['response1']);
 
     await runOnce(mockModel, [ragRetrieval()]);

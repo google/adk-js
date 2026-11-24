@@ -7,8 +7,7 @@
 /**
  * Ported from google/adk-python
  * `tests/unittests/tools/openapi_tool/openapi_spec_parser/test_rest_api_tool.py`
- * at tag `v0.1.0`. Each `it(...)` keeps the Python test name verbatim so a
- * reviewer can grep the original.
+ * at tag `v0.1.0`.
  */
 
 import {
@@ -113,7 +112,8 @@ describe('RestApiTool parity with adk-python v0.1.0', () => {
   // and `tool.auth_credential`, which adk-js keeps private, and
   // `tool.credential_exchanger`, which adk-js owns inside `ToolAuthHandler`.
   // Those assertions are dropped; the rest is the observable surface.
-  it('test_init', () => {
+  // test_init
+  it('initializes name, description, and function declaration', () => {
     const tool = new RestApiTool(
       'test_tool',
       'Test Tool',
@@ -131,7 +131,8 @@ describe('RestApiTool parity with adk-python v0.1.0', () => {
     });
   });
 
-  it('test_from_parsed_operation_str', () => {
+  // test_from_parsed_operation_str
+  it('creates a RestApiTool from a serialized parsed operation JSON string', () => {
     // The reference derives the name from the operation and ignores the `name`
     // field, so the field is omitted here to assert the derivation.
     const parsedOperationJson = JSON.stringify({
@@ -152,7 +153,8 @@ describe('RestApiTool parity with adk-python v0.1.0', () => {
   // The reference injects a mock parser through `should_parse_operation=False`.
   // `operationParser` stays private in adk-js, so the tool is built from a real
   // parameterless operation instead.
-  it('test_get_declaration', () => {
+  // test_get_declaration
+  it('returns a Gemini function declaration with an object parameters schema', () => {
     const tool = new RestApiTool(
       'test_tool',
       'Test description',
@@ -167,7 +169,8 @@ describe('RestApiTool parity with adk-python v0.1.0', () => {
     expect(declaration.parameters?.type).toBe(Type.OBJECT);
   });
 
-  it('test_call_success', async () => {
+  // test_call_success
+  it('returns the parsed JSON response on a successful HTTP call', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       headers: {get: () => 'application/json'},
@@ -193,7 +196,8 @@ describe('RestApiTool parity with adk-python v0.1.0', () => {
     expect(result).toEqual({result: 'success'});
   });
 
-  it('test_call_auth_pending', async () => {
+  // test_call_auth_pending
+  it('returns a pending authorization response when auth is pending', async () => {
     const tool = new RestApiTool(
       'test_tool',
       'Test Tool',
@@ -217,7 +221,8 @@ describe('RestApiTool parity with adk-python v0.1.0', () => {
     });
   });
 
-  it('test_prepare_request_params_query_body', () => {
+  // test_prepare_request_params_query_body
+  it('builds query string and JSON request body from parameters', () => {
     const parameters: ApiParameter[] = [
       {
         originalName: 'param1',
@@ -273,7 +278,8 @@ describe('RestApiTool parity with adk-python v0.1.0', () => {
     expect(body).toBe(JSON.stringify({param1: 'value1', param2: 123}));
   });
 
-  it('test_prepare_request_params_array', () => {
+  // test_prepare_request_params_array
+  it('serializes an array request body as JSON', () => {
     const parameters: ApiParameter[] = [
       {
         originalName: 'array',
@@ -304,7 +310,8 @@ describe('RestApiTool parity with adk-python v0.1.0', () => {
     expect(body).toBe(JSON.stringify(['item1', 'item2']));
   });
 
-  it('test_prepare_request_params_string', () => {
+  // test_prepare_request_params_string
+  it('passes a text/plain string body and sets Content-Type header', () => {
     const parameters: ApiParameter[] = [
       {
         originalName: '',
@@ -334,7 +341,8 @@ describe('RestApiTool parity with adk-python v0.1.0', () => {
 
   // D2: adk-js returns `URLSearchParams` and lets `fetch` set the header, which
   // adds the charset the reference's literal header omits.
-  it('test_prepare_request_params_form_data', () => {
+  // test_prepare_request_params_form_data
+  it('encodes application/x-www-form-urlencoded body as URLSearchParams', () => {
     const parameters: ApiParameter[] = [
       {
         originalName: 'key1',
@@ -369,7 +377,8 @@ describe('RestApiTool parity with adk-python v0.1.0', () => {
 
   // D1: adk-js returns `FormData` and lets `fetch` set the header, because a
   // literal `multipart/form-data` header omits the MIME boundary.
-  it('test_prepare_request_params_multipart', () => {
+  // test_prepare_request_params_multipart
+  it('encodes multipart/form-data body as FormData', () => {
     const parameters: ApiParameter[] = [
       {
         originalName: 'file1',
@@ -405,7 +414,8 @@ describe('RestApiTool parity with adk-python v0.1.0', () => {
     expect(params.headers['Content-Type']).toBeUndefined();
   });
 
-  it('test_prepare_request_params_octet_stream', () => {
+  // test_prepare_request_params_octet_stream
+  it('passes application/octet-stream binary data and sets Content-Type header', () => {
     const parameters: ApiParameter[] = [
       {
         originalName: '',
@@ -438,7 +448,8 @@ describe('RestApiTool parity with adk-python v0.1.0', () => {
     expect(params.headers['Content-Type']).toBe('application/octet-stream');
   });
 
-  it('test_prepare_request_params_path_param', () => {
+  // test_prepare_request_params_path_param
+  it('substitutes path parameters into the request URL', () => {
     const parameters: ApiParameter[] = [
       {
         originalName: 'user_id',
@@ -461,7 +472,8 @@ describe('RestApiTool parity with adk-python v0.1.0', () => {
     expect(params.url).toBe('https://example.com/test/123');
   });
 
-  it('test_prepare_request_params_header_param', () => {
+  // test_prepare_request_params_header_param
+  it('maps header parameters onto request headers', () => {
     const parameters: ApiParameter[] = [
       {
         originalName: 'X-Custom-Header',
@@ -479,7 +491,8 @@ describe('RestApiTool parity with adk-python v0.1.0', () => {
     expect(params.headers['X-Custom-Header']).toBe('header_value');
   });
 
-  it('test_prepare_request_params_cookie_param', () => {
+  // test_prepare_request_params_cookie_param
+  it('maps cookie parameters onto request cookies', () => {
     const parameters: ApiParameter[] = [
       {
         originalName: 'session_id',
@@ -497,7 +510,8 @@ describe('RestApiTool parity with adk-python v0.1.0', () => {
     expect(params.cookies['session_id']).toBe('cookie_value');
   });
 
-  it('test_prepare_request_params_multiple_mime_types', () => {
+  // test_prepare_request_params_multiple_mime_types
+  it('prefers application/json when multiple requestBody MIME types exist', () => {
     const parameters: ApiParameter[] = [
       {
         originalName: '',
@@ -527,7 +541,8 @@ describe('RestApiTool parity with adk-python v0.1.0', () => {
     expect(params.headers['Content-Type']).toBe('application/json');
   });
 
-  it('test_prepare_request_params_unknown_parameter', () => {
+  // test_prepare_request_params_unknown_parameter
+  it('ignores unrecognized argument keys', () => {
     const parameters: ApiParameter[] = [
       {
         originalName: 'known_param',
@@ -546,7 +561,8 @@ describe('RestApiTool parity with adk-python v0.1.0', () => {
     expect(params.url).toBe('https://example.com/test?known_param=value');
   });
 
-  it('test_prepare_request_params_base_url_handling', () => {
+  // test_prepare_request_params_base_url_handling
+  it('handles empty baseUrl and trailing slashes when building URLs', () => {
     const paramsNoBase = prepareRequestParams(
       {baseUrl: '', path: '/no_base', method: 'get'},
       [],
@@ -562,7 +578,8 @@ describe('RestApiTool parity with adk-python v0.1.0', () => {
     expect(paramsTrailing.url).toBe('https://example.com/trailing');
   });
 
-  it('test_prepare_request_params_no_unrecognized_query_parameter', () => {
+  // test_prepare_request_params_no_unrecognized_query_parameter
+  it('omits null query parameters from the request URL', () => {
     const parameters: ApiParameter[] = [
       {
         originalName: 'unrecognized_param',
@@ -580,7 +597,8 @@ describe('RestApiTool parity with adk-python v0.1.0', () => {
     expect(params.url).toBe('https://example.com/test');
   });
 
-  it('test_prepare_request_params_no_credential', () => {
+  // test_prepare_request_params_no_credential
+  it('omits empty string query parameters from the request URL', () => {
     const parameters: ApiParameter[] = [
       {
         originalName: 'param_name',
@@ -608,32 +626,37 @@ describe('RestApiTool parity with adk-python v0.1.0', () => {
 });
 
 describe('openApiSchemaToGeminiSchema parity with adk-python v0.1.0', () => {
-  it('test_to_gemini_schema_none', () => {
+  // test_to_gemini_schema_none
+  it('returns undefined when OpenAPI schema is null', () => {
     expect(openApiSchemaToGeminiSchema(null)).toBeUndefined();
   });
 
-  it('test_to_gemini_schema_not_dict', () => {
+  // test_to_gemini_schema_not_dict
+  it('throws TypeError when OpenAPI schema is not a plain object', () => {
     expect(() => openApiSchemaToGeminiSchema('not a dict')).toThrow(
       'openApiSchema must be a plain object',
     );
     expect(() => openApiSchemaToGeminiSchema('not a dict')).toThrow(TypeError);
   });
 
-  it('test_to_gemini_schema_empty_dict', () => {
+  // test_to_gemini_schema_empty_dict
+  it('converts an empty OpenAPI schema object to Type.OBJECT', () => {
     const result = openApiSchemaToGeminiSchema({});
 
     expect(result?.type).toBe(Type.OBJECT);
     expect(result?.properties).toBeUndefined();
   });
 
-  it('test_to_gemini_schema_dict_with_only_object_type', () => {
+  // test_to_gemini_schema_dict_with_only_object_type
+  it('converts an object schema without properties to Type.OBJECT', () => {
     const result = openApiSchemaToGeminiSchema({type: 'object'});
 
     expect(result?.type).toBe(Type.OBJECT);
     expect(result?.properties).toBeUndefined();
   });
 
-  it('test_to_gemini_schema_basic_types', () => {
+  // test_to_gemini_schema_basic_types
+  it('converts string, integer, and boolean property types', () => {
     const geminiSchema = openApiSchemaToGeminiSchema({
       type: 'object',
       properties: {
@@ -649,7 +672,8 @@ describe('openApiSchemaToGeminiSchema parity with adk-python v0.1.0', () => {
     expect(geminiSchema?.properties?.['is_active'].type).toBe(Type.BOOLEAN);
   });
 
-  it('test_to_gemini_schema_nested_objects', () => {
+  // test_to_gemini_schema_nested_objects
+  it('recursively converts nested object schemas', () => {
     const geminiSchema = openApiSchemaToGeminiSchema({
       type: 'object',
       properties: {
@@ -669,7 +693,8 @@ describe('openApiSchemaToGeminiSchema parity with adk-python v0.1.0', () => {
     expect(address?.properties?.['city'].type).toBe(Type.STRING);
   });
 
-  it('test_to_gemini_schema_array', () => {
+  // test_to_gemini_schema_array
+  it('converts an array schema and its items schema', () => {
     const geminiSchema = openApiSchemaToGeminiSchema({
       type: 'array',
       items: {type: 'string'},
@@ -679,7 +704,8 @@ describe('openApiSchemaToGeminiSchema parity with adk-python v0.1.0', () => {
     expect(geminiSchema?.items?.type).toBe(Type.STRING);
   });
 
-  it('test_to_gemini_schema_nested_array', () => {
+  // test_to_gemini_schema_nested_array
+  it('converts an array of object schemas', () => {
     const geminiSchema = openApiSchemaToGeminiSchema({
       type: 'array',
       items: {
@@ -691,7 +717,8 @@ describe('openApiSchemaToGeminiSchema parity with adk-python v0.1.0', () => {
     expect(geminiSchema?.items?.properties?.['name'].type).toBe(Type.STRING);
   });
 
-  it('test_to_gemini_schema_any_of', () => {
+  // test_to_gemini_schema_any_of
+  it('converts anyOf union schemas', () => {
     const geminiSchema = openApiSchemaToGeminiSchema({
       anyOf: [{type: 'string'}, {type: 'integer'}],
     });
@@ -701,7 +728,8 @@ describe('openApiSchemaToGeminiSchema parity with adk-python v0.1.0', () => {
     expect(geminiSchema?.anyOf?.[1].type).toBe(Type.INTEGER);
   });
 
-  it('test_to_gemini_schema_general_list', () => {
+  // test_to_gemini_schema_general_list
+  it('converts nested array properties', () => {
     const geminiSchema = openApiSchemaToGeminiSchema({
       type: 'array',
       properties: {
@@ -714,7 +742,8 @@ describe('openApiSchemaToGeminiSchema parity with adk-python v0.1.0', () => {
     expect(listField?.items?.type).toBe(Type.STRING);
   });
 
-  it('test_to_gemini_schema_enum', () => {
+  // test_to_gemini_schema_enum
+  it('preserves enum values on string schemas', () => {
     const geminiSchema = openApiSchemaToGeminiSchema({
       type: 'string',
       enum: ['a', 'b', 'c'],
@@ -723,7 +752,8 @@ describe('openApiSchemaToGeminiSchema parity with adk-python v0.1.0', () => {
     expect(geminiSchema?.enum).toEqual(['a', 'b', 'c']);
   });
 
-  it('test_to_gemini_schema_required', () => {
+  // test_to_gemini_schema_required
+  it('preserves required property lists', () => {
     const geminiSchema = openApiSchemaToGeminiSchema({
       type: 'object',
       required: ['name'],
@@ -733,7 +763,8 @@ describe('openApiSchemaToGeminiSchema parity with adk-python v0.1.0', () => {
     expect(geminiSchema?.required).toEqual(['name']);
   });
 
-  it('test_to_gemini_schema_nested_dict', () => {
+  // test_to_gemini_schema_nested_dict
+  it('defaults untyped nested property objects to Type.OBJECT', () => {
     const geminiSchema = openApiSchemaToGeminiSchema({
       type: 'object',
       properties: {metadata: {key1: 'value1', key2: 123}},
@@ -746,7 +777,8 @@ describe('openApiSchemaToGeminiSchema parity with adk-python v0.1.0', () => {
     expect(metadata?.properties).toBeUndefined();
   });
 
-  it('test_to_gemini_schema_ignore_title_default_format', () => {
+  // test_to_gemini_schema_ignore_title_default_format
+  it('strips title, default, and format fields', () => {
     const geminiSchema = openApiSchemaToGeminiSchema({
       type: 'string',
       title: 'Test Title',
@@ -759,7 +791,8 @@ describe('openApiSchemaToGeminiSchema parity with adk-python v0.1.0', () => {
     expect(geminiSchema?.format).toBeUndefined();
   });
 
-  it('test_to_gemini_schema_property_ordering', () => {
+  // test_to_gemini_schema_property_ordering
+  it('preserves propertyOrdering', () => {
     const geminiSchema = openApiSchemaToGeminiSchema({
       type: 'object',
       propertyOrdering: ['name', 'age'],
@@ -772,7 +805,8 @@ describe('openApiSchemaToGeminiSchema parity with adk-python v0.1.0', () => {
     expect(geminiSchema?.propertyOrdering).toEqual(['name', 'age']);
   });
 
-  it('test_to_gemini_schema_converts_property_dict', () => {
+  // test_to_gemini_schema_converts_property_dict
+  it('converts an object schema defining a properties map', () => {
     const geminiSchema = openApiSchemaToGeminiSchema({
       properties: {
         name: {type: 'string', description: 'The property key'},
@@ -787,7 +821,8 @@ describe('openApiSchemaToGeminiSchema parity with adk-python v0.1.0', () => {
     expect(geminiSchema?.properties?.['value'].type).toBe(Type.STRING);
   });
 
-  it('test_to_gemini_schema_remove_unrecognized_fields', () => {
+  // test_to_gemini_schema_remove_unrecognized_fields
+  it('drops unsupported format fields on primitive schemas', () => {
     const geminiSchema = openApiSchemaToGeminiSchema({
       type: 'string',
       description: 'A single date string.',
@@ -800,7 +835,8 @@ describe('openApiSchemaToGeminiSchema parity with adk-python v0.1.0', () => {
 });
 
 describe('openApiSchemaToGeminiSchema type array normalization', () => {
-  it('test_to_gemini_schema_array_string_types', () => {
+  // test_to_gemini_schema_array_string_types
+  it('normalizes nullable and type-array schemas', () => {
     const openApiSchema = {
       type: 'object',
       properties: {
