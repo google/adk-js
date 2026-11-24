@@ -8,7 +8,13 @@ import {FunctionDeclaration, Schema, Type} from '@google/genai';
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
 
-import {isZodObject, zodObjectToSchema} from '../utils/simple_zod_to_json.js';
+import {
+  getZodVoidOrUndefinedDescription,
+  isZodObject,
+  isZodSchema,
+  isZodVoidOrUndefined,
+  zodObjectToSchema,
+} from '../utils/simple_zod_to_json.js';
 
 import {Context} from '../agents/context.js';
 import {BaseTool, RunAsyncToolRequest} from './base_tool.js';
@@ -95,6 +101,7 @@ export type ToolOptions<TParameters extends ToolInputParameters> = {
   response?: SchemaLike;
   execute: ToolExecuteFunction<TParameters>;
   isLongRunning?: boolean;
+  /** Optional JSON-serializable key-value metadata associated with the tool. */
   customMetadata?: Record<string, unknown>;
   /**
    * Whether this tool requires user confirmation before it runs. A boolean, or
@@ -143,12 +150,11 @@ function toResponseSchema(response: SchemaLike): Schema {
   if (isZodObject(response)) {
     return zodObjectToSchema(response);
   }
-  if (
-    typeof response === 'object' &&
-    response !== null &&
-    'safeParse' in response &&
-    typeof (response as {safeParse?: unknown}).safeParse === 'function'
-  ) {
+  if (isZodSchema(response)) {
+    if (isZodVoidOrUndefined(response)) {
+      const description = getZodVoidOrUndefinedDescription(response);
+      return description ? {type: Type.NULL, description} : {type: Type.NULL};
+    }
     const jsonSchema = toJsonSchema(response);
     // `toGeminiSchema` carries the schema constraints (bounds, lengths,
     // patterns) at every depth, so nothing is restored here afterwards.
@@ -458,6 +464,7 @@ const SCHEMA_TYPE_MAP: Readonly<Record<string, Type>> = {
   List: Type.ARRAY,
   Tuple: Type.ARRAY,
   Any: Type.TYPE_UNSPECIFIED,
+  any: Type.TYPE_UNSPECIFIED,
   STRING: Type.STRING,
   INTEGER: Type.INTEGER,
   NUMBER: Type.NUMBER,
@@ -467,6 +474,7 @@ const SCHEMA_TYPE_MAP: Readonly<Record<string, Type>> = {
   NULL: Type.NULL,
   null: Type.NULL,
   void: Type.NULL,
+  undefined: Type.NULL,
   TYPE_UNSPECIFIED: Type.TYPE_UNSPECIFIED,
 };
 

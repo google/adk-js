@@ -123,6 +123,10 @@ const convertCurrencyTool = new FunctionTool({
     },
     required: ['amountEur', 'currency'],
   },
+  customMetadata: {
+    domain: 'billing',
+    version: '1.0',
+  },
   execute: async ({amountUsd}, toolContext?: ToolContext) => {
     const amountEur = Number((amountUsd * 0.92).toFixed(2));
     toolContext?.state.set('lastConvertedEur', amountEur);
@@ -463,6 +467,7 @@ class ToolsShowcaseAgent extends BaseAgent {
       hasResponseSchema: Boolean(
         convertCurrencyTool._getDeclaration().response,
       ),
+      toolCustomMetadata: convertCurrencyTool.customMetadata,
       isLongRunningTicket: approvalTicketTool.isLongRunning,
       quoteResult,
       conversionResult,

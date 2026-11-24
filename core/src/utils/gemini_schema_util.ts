@@ -458,8 +458,8 @@ function takeUnionBranches(
  *
  * This is the counterpart of `toGeminiSchema` for an arbitrary OpenAPI schema
  * rather than an MCP tool input schema. An OpenAPI document may carry any key
- * it likes, so a key the Gemini `Schema` does not declare is dropped instead of
- * being forwarded to a backend that rejects it.
+ * it likes, so nullish fields and keys the Gemini `Schema` does not declare are
+ * dropped instead of being forwarded to a backend that rejects them.
  *
  * `oneOf` branches are folded into `anyOf`. A `{type: 'null'}` branch is
  * removed and marks the schema `nullable`. When only one branch remains, it is
@@ -524,6 +524,7 @@ export function openApiSchemaToGeminiSchema(
     const field = toGeminiSchemaField(key);
     if (
       value === undefined ||
+      value === null ||
       !GEMINI_SCHEMA_FIELDS.has(field) ||
       GEMINI_REJECTED_SCHEMA_FIELDS.has(field)
     ) {

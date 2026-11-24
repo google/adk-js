@@ -87,11 +87,12 @@ export const currencyAgent = new LlmAgent({
 
 The `BaseToolParams` interface defines the base properties accepted by the `BaseTool` constructor.
 
-| Option          | Type      | Default  | Description                                                                                  |
-| :-------------- | :-------- | :------- | :------------------------------------------------------------------------------------------- |
-| `name`          | `string`  | Required | Tool identifier registered in `llmRequest.toolsDict` and emitted in `FunctionDeclaration`.   |
-| `description`   | `string`  | Required | Natural-language description explaining when and how the model should call the tool.         |
-| `isLongRunning` | `boolean` | `false`  | Marks the tool as an asynchronous operation whose final result is supplied after invocation. |
+| Option           | Type                      | Default     | Description                                                                                  |
+| :--------------- | :------------------------ | :---------- | :------------------------------------------------------------------------------------------- |
+| `name`           | `string`                  | Required    | Tool identifier registered in `llmRequest.toolsDict` and emitted in `FunctionDeclaration`.   |
+| `description`    | `string`                  | Required    | Natural-language description explaining when and how the model should call the tool.         |
+| `isLongRunning`  | `boolean`                 | `false`     | Marks the tool as an asynchronous operation whose final result is supplied after invocation. |
+| `customMetadata` | `Record<string, unknown>` | `undefined` | Optional JSON-serializable key-value metadata stored on the tool instance.                   |
 
 Every `BaseTool` requires a `name` and `description`. Setting `isLongRunning` to `true` instructs the runner that the initial `runAsync` return value represents a pending status rather than a completed tool output.
 
@@ -107,9 +108,10 @@ The `ToolOptions` interface configures `new FunctionTool(options)` and `new Long
 | `response`            | `SchemaLike`                       | `undefined`    | Optional return-value schema converted and attached to `FunctionDeclaration.response`.                 |
 | `execute`             | `ToolExecuteFunction<TParameters>` | Required       | Synchronous, asynchronous, or async-generator function invoked with `input` and `toolContext`.         |
 | `isLongRunning`       | `boolean`                          | `false`        | Marks the function tool as long-running; `LongRunningFunctionTool` forces this option to `true`.       |
+| `customMetadata`      | `Record<string, unknown>`          | `undefined`    | Optional JSON-serializable key-value metadata forwarded to `BaseTool.customMetadata`.                  |
 | `requireConfirmation` | `RequireConfirmation<TParameters>` | `false`        | Boolean or predicate gating execution on user approval via `toolContext.requestConfirmation`.          |
 
-When `parameters` is a Zod object, `FunctionTool` parses incoming `args` before calling `execute` and converts the schema to a `@google/genai` `Schema` for `FunctionDeclaration.parameters`. When `response` is supplied as a Zod schema or `@google/genai` `Schema`, `_getDeclaration()` populates `FunctionDeclaration.response`.
+When `parameters` is a Zod object, `FunctionTool` parses incoming `args` before calling `execute` and converts the schema to a `@google/genai` `Schema` for `FunctionDeclaration.parameters`. When `response` is supplied as a Zod schema or `@google/genai` `Schema`, `_getDeclaration()` populates `FunctionDeclaration.response` (mapping `z.void()` and `z.undefined()`, including `.optional()` and `.nullable()` wrappers, to `Type.NULL` while preserving `.describe()` metadata).
 
 ### `BaseAuthenticatedToolParams` and `AuthenticatedFunctionToolOptions`
 
