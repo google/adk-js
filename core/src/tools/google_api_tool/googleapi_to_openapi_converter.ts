@@ -26,6 +26,7 @@ export interface GoogleApiOAuth2Scope {
  */
 export interface GoogleApiParameter {
   type?: string;
+  repeated?: boolean;
   description?: string;
   required?: boolean;
   location?: string;
@@ -349,7 +350,9 @@ export function convertParameterSchema(
     schema['pattern'] = paramData.pattern;
   }
 
-  return schema as unknown as OpenAPIV3.SchemaObject;
+  return (paramData.repeated
+    ? {type: 'array', items: schema}
+    : schema) as unknown as OpenAPIV3.SchemaObject;
 }
 
 /**
