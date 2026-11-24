@@ -9,6 +9,8 @@ import {Event} from '../../events/event.js';
 import {LlmRequest} from '../../models/llm_request.js';
 import {ContextCompactionTrigger} from '../../plugins/base_plugin.js';
 import {recordCompaction} from '../../telemetry/api/instrumentation.js';
+import {isInvocationCancellation} from '../../utils/error_utils.js';
+import {logger} from '../../utils/logger.js';
 import {InvocationContext} from '../invocation_context.js';
 import {BaseLlmRequestProcessor} from './base_llm_processor.js';
 
@@ -34,6 +36,8 @@ export class ContextCompactorRequestProcessor implements BaseLlmRequestProcessor
    * Evaluates compactors in priority order. The first compactor that indicates
    * it should compact will compact the session history, fire plugin hooks, and
    * yield any newly generated events. Iteration stops after one compaction.
+   * If the compaction fails, the error is logged and the request goes ahead
+   * with the uncompacted history.
    *
    * @param invocationContext - The current invocation context.
    * @param _llmRequest - Unused; present to satisfy the {@link BaseLlmRequestProcessor} interface.
@@ -54,9 +58,23 @@ export class ContextCompactorRequestProcessor implements BaseLlmRequestProcessor
         });
 
         const oldEvents = new Set(invocationContext.session.events);
-        await recordCompaction({invocationContext, trigger}, async () =>
-          compactor.compact(invocationContext),
-        );
+        try {
+          await recordCompaction({invocationContext, trigger}, async () =>
+            compactor.compact(invocationContext),
+          );
+        } catch (error) {
+          if (isInvocationCancellation(error, invocationContext.abortSignal)) {
+            throw error;
+          }
+          // The full history is still usable, so a failed summary (a 429, an
+          // empty reply) must not end the turn. The compaction span already
+          // records the error.
+          logger.warn(
+            'Context compaction failed; continuing with the uncompacted history.',
+            error,
+          );
+          return;
+        }
 
         await invocationContext.pluginManager.runAfterContextCompaction({
           invocationContext,
