@@ -5,10 +5,13 @@
  */
 
 import type {
+  EntityClass,
   EntityManager,
   FilterQuery,
   LockMode as LockModeEnum,
   MikroORM as MikroORMClass,
+  RequiredEntityData,
+  UniqueConstraintViolationException as UniqueConstraintViolationExceptionClass,
 } from '@mikro-orm/core';
 import type {MikroORMOptions as MikroDBOptions} from './db/operations.js';
 
@@ -38,6 +41,7 @@ type StorageSessionEntity = InstanceType<SchemaModule['StorageSession']>;
 
 let MikroORM: typeof MikroORMClass;
 let LockMode: typeof LockModeEnum;
+let UniqueConstraintViolationException: typeof UniqueConstraintViolationExceptionClass;
 let ENTITIES: SchemaModule['ENTITIES'];
 let StorageAppState: SchemaModule['StorageAppState'];
 let StorageEvent: SchemaModule['StorageEvent'];
@@ -69,7 +73,7 @@ async function importMikroOrm(): Promise<void> {
     import('./db/operations.js'),
   ]);
 
-  ({MikroORM, LockMode} = core);
+  ({MikroORM, LockMode, UniqueConstraintViolationException} = core);
   ({ENTITIES, StorageAppState, StorageEvent, StorageSession, StorageUserState} =
     schema);
   ({
@@ -214,6 +218,110 @@ function formatDateTime(dateOrEpochMs: Date | number): string {
   return date.toISOString().replace('T', ' ').replace('Z', '');
 }
 
+interface SplitStateDelta {
+  appDelta: Record<string, unknown>;
+  userDelta: Record<string, unknown>;
+  sessionDelta: Record<string, unknown>;
+  hasAppDelta: boolean;
+  hasUserDelta: boolean;
+  hasSessionDelta: boolean;
+}
+
+function splitStateDelta(state?: Record<string, unknown>): SplitStateDelta {
+  const appDelta: Record<string, unknown> = {};
+  const userDelta: Record<string, unknown> = {};
+  const sessionDelta: Record<string, unknown> = {};
+
+  if (state) {
+    for (const [key, value] of Object.entries(state)) {
+      if (key.startsWith(State.APP_PREFIX)) {
+        appDelta[key.slice(State.APP_PREFIX.length)] = value;
+      } else if (key.startsWith(State.USER_PREFIX)) {
+        userDelta[key.slice(State.USER_PREFIX.length)] = value;
+      } else if (!key.startsWith(State.TEMP_PREFIX)) {
+        sessionDelta[key] = value;
+      }
+    }
+  }
+
+  return {
+    appDelta,
+    userDelta,
+    sessionDelta,
+    hasAppDelta: Object.keys(appDelta).length > 0,
+    hasUserDelta: Object.keys(userDelta).length > 0,
+    hasSessionDelta: Object.keys(sessionDelta).length > 0,
+  };
+}
+
+/**
+ * Loads a shared state row or inserts one inside a savepoint so a concurrent
+ * insert collision does not abort the outer transaction.
+ *
+ * When `lockForUpdate` is true, an existing row is locked with
+ * `LockMode.PESSIMISTIC_WRITE` so concurrent writers serialize before merging
+ * their JSON state delta. When `avoidGapLock` is true (such as `createSession`,
+ * where the row may not exist yet), existence is checked without a lock first
+ * so MySQL/InnoDB does not take a gap lock on a missing key and deadlock
+ * concurrent first inserts.
+ */
+async function getOrCreateStateRow<T extends object>(
+  txEm: EntityManager,
+  entityClass: EntityClass<T>,
+  where: FilterQuery<NoInfer<T>>,
+  createData: RequiredEntityData<T>,
+  options: {lockForUpdate: boolean; avoidGapLock: boolean},
+): Promise<T> {
+  const {lockForUpdate, avoidGapLock} = options;
+
+  let row: T | null;
+  if (lockForUpdate && !avoidGapLock) {
+    row = await txEm.findOne(entityClass, where, {
+      lockMode: LockMode.PESSIMISTIC_WRITE,
+    });
+  } else {
+    row = await txEm.findOne(entityClass, where);
+    if (row && lockForUpdate) {
+      row = await txEm.findOne(entityClass, where, {
+        lockMode: LockMode.PESSIMISTIC_WRITE,
+        refresh: true,
+      });
+    }
+  }
+
+  if (row) {
+    return row;
+  }
+
+  try {
+    return await txEm.transactional(
+      async (savepointEm) => {
+        const created = savepointEm.create(entityClass, createData);
+        savepointEm.persist(created);
+        return created;
+      },
+      {clear: true},
+    );
+  } catch (error) {
+    if (!(error instanceof UniqueConstraintViolationException)) {
+      throw error;
+    }
+    // A concurrent transaction inserted the row first. Use a locking read
+    // (`FOR UPDATE` when mutating, `FOR SHARE` otherwise) so MVCC dialects
+    // such as MySQL REPEATABLE READ also observe the newly committed row.
+    const raced = await txEm.findOne(entityClass, where, {
+      lockMode: lockForUpdate
+        ? LockMode.PESSIMISTIC_WRITE
+        : LockMode.PESSIMISTIC_READ,
+      refresh: true,
+    });
+    if (!raced) {
+      throw error;
+    }
+    return raced;
+  }
+}
+
 /**
  * Options for configuring {@link DatabaseSessionService}.
  */
@@ -327,92 +435,81 @@ export class DatabaseSessionService extends BaseSessionService {
 
     const id = sessionId || newId();
     const now = new Date();
-    const existing = await em.findOne(StorageSession, {
-      id,
-      appName,
-      userId,
-    });
-    if (existing) {
-      throw new Error(`Session with id ${id} already exists.`);
-    }
+    const {appDelta, userDelta, sessionDelta, hasAppDelta, hasUserDelta} =
+      splitStateDelta(state);
 
-    let appStateModel = await em.findOne(StorageAppState, {appName});
-    if (!appStateModel) {
-      appStateModel = em.create(StorageAppState, {
-        appName,
-        state: {},
-        updateTime: now,
-      });
-      em.persist(appStateModel);
-    }
-
-    let userStateModel = await em.findOne(StorageUserState, {appName, userId});
-    if (!userStateModel) {
-      userStateModel = em.create(StorageUserState, {
+    return em.transactional(async (txEm) => {
+      const existing = await txEm.findOne(StorageSession, {
+        id,
         appName,
         userId,
-        state: {},
       });
-      em.persist(userStateModel);
-    }
-
-    const appStateDelta: Record<string, unknown> = {};
-    const userStateDelta: Record<string, unknown> = {};
-    const sessionState: Record<string, unknown> = {};
-
-    if (state) {
-      for (const [key, value] of Object.entries(state)) {
-        if (key.startsWith(State.APP_PREFIX)) {
-          appStateDelta[key.replace(State.APP_PREFIX, '')] = value;
-        } else if (key.startsWith(State.USER_PREFIX)) {
-          userStateDelta[key.replace(State.USER_PREFIX, '')] = value;
-        } else if (!key.startsWith(State.TEMP_PREFIX)) {
-          sessionState[key] = value;
-        }
+      if (existing) {
+        throw new Error(`Session with id ${id} already exists.`);
       }
-    }
 
-    if (Object.keys(appStateDelta).length > 0) {
-      appStateModel.state = {...appStateModel.state, ...appStateDelta};
-    }
-    if (Object.keys(userStateDelta).length > 0) {
-      userStateModel.state = {...userStateModel.state, ...userStateDelta};
-    }
+      // Lock order matches appendEvent (app_states before user_states) so
+      // concurrent createSession and appendEvent transactions cannot deadlock.
+      const appStateModel = await getOrCreateStateRow(
+        txEm,
+        StorageAppState,
+        {appName},
+        {appName, state: {}, updateTime: now},
+        {lockForUpdate: hasAppDelta, avoidGapLock: true},
+      );
 
-    const storageSession = em.create(StorageSession, {
-      id,
-      appName,
-      userId,
-      state: sessionState,
-      createTime: now,
-      updateTime: now,
+      const userStateModel = await getOrCreateStateRow(
+        txEm,
+        StorageUserState,
+        {appName, userId},
+        {appName, userId, state: {}},
+        {lockForUpdate: hasUserDelta, avoidGapLock: true},
+      );
+
+      const modelsToPersist: object[] = [];
+      if (hasAppDelta) {
+        appStateModel.state = {...appStateModel.state, ...appDelta};
+        modelsToPersist.push(appStateModel);
+      }
+      if (hasUserDelta) {
+        userStateModel.state = {...userStateModel.state, ...userDelta};
+        modelsToPersist.push(userStateModel);
+      }
+
+      const storageSession = txEm.create(StorageSession, {
+        id,
+        appName,
+        userId,
+        state: sessionDelta,
+        createTime: now,
+        updateTime: now,
+      });
+      modelsToPersist.push(storageSession);
+      txEm.persist(modelsToPersist);
+
+      const mergedState = mergeStates(
+        appStateModel.state,
+        userStateModel.state,
+        sessionDelta,
+      );
+
+      const session = createSession({
+        id,
+        appName,
+        userId,
+        state: mergedState,
+        events: [],
+        lastUpdateTime: storageSession.updateTime.getTime(),
+      });
+      setStorageRevisionMarker(session, {
+        marker: storageSession.updateTime.toISOString(),
+        recordedLastUpdateTime: session.lastUpdateTime,
+        unverifiedWrite: true,
+        eventsComplete: true,
+        totalEventCount: 0,
+      });
+      return session;
     });
-    em.persist(storageSession);
-
-    await em.flush();
-
-    const mergedState = mergeStates(
-      appStateModel.state,
-      userStateModel.state,
-      sessionState,
-    );
-
-    const session = createSession({
-      id,
-      appName,
-      userId,
-      state: mergedState,
-      events: [],
-      lastUpdateTime: storageSession.updateTime.getTime(),
-    });
-    setStorageRevisionMarker(session, {
-      marker: storageSession.updateTime.toISOString(),
-      recordedLastUpdateTime: session.lastUpdateTime,
-      unverifiedWrite: true,
-      eventsComplete: true,
-      totalEventCount: 0,
-    });
-    return session;
   }
 
   async getSession({
@@ -624,6 +721,14 @@ export class DatabaseSessionService extends BaseSessionService {
     }
 
     const stateDelta = event.actions?.stateDelta ?? {};
+    const {
+      appDelta,
+      userDelta,
+      sessionDelta,
+      hasAppDelta,
+      hasUserDelta,
+      hasSessionDelta,
+    } = splitStateDelta(stateDelta);
     const trimmedEvent = trimTempDeltaState(event);
     let sessionWasStale = false;
 
@@ -689,55 +794,36 @@ export class DatabaseSessionService extends BaseSessionService {
         sessionWasStale = true;
       }
 
-      let appStateModel = await txEm.findOne(StorageAppState, {
-        appName: session.appName,
-      });
-      if (!appStateModel) {
-        appStateModel = txEm.create(StorageAppState, {
-          appName: session.appName,
-          state: {},
-          updateTime: new Date(),
-        });
-        txEm.persist(appStateModel);
+      // Lock order: StorageSession -> StorageAppState -> StorageUserState.
+      // Only lock shared rows that this event mutates so concurrent turns that
+      // only touch session state do not serialize on app_states or user_states.
+      const appStateModel = await getOrCreateStateRow(
+        txEm,
+        StorageAppState,
+        {appName: session.appName},
+        {appName: session.appName, state: {}, updateTime: new Date()},
+        {lockForUpdate: hasAppDelta, avoidGapLock: false},
+      );
+
+      const userStateModel = await getOrCreateStateRow(
+        txEm,
+        StorageUserState,
+        {appName: session.appName, userId: session.userId},
+        {appName: session.appName, userId: session.userId, state: {}},
+        {lockForUpdate: hasUserDelta, avoidGapLock: false},
+      );
+
+      const modelsToPersist: object[] = [storageSession];
+      if (hasAppDelta) {
+        appStateModel.state = {...appStateModel.state, ...appDelta};
+        modelsToPersist.push(appStateModel);
       }
-
-      let userStateModel = await txEm.findOne(StorageUserState, {
-        appName: session.appName,
-        userId: session.userId,
-      });
-      if (!userStateModel) {
-        userStateModel = txEm.create(StorageUserState, {
-          appName: session.appName,
-          userId: session.userId,
-          state: {},
-        });
-        txEm.persist(userStateModel);
+      if (hasUserDelta) {
+        userStateModel.state = {...userStateModel.state, ...userDelta};
+        modelsToPersist.push(userStateModel);
       }
-
-      if (event.actions && event.actions.stateDelta) {
-        const appDelta: Record<string, unknown> = {};
-        const userDelta: Record<string, unknown> = {};
-        const sessionDelta: Record<string, unknown> = {};
-
-        for (const [key, value] of Object.entries(event.actions.stateDelta)) {
-          if (key.startsWith(State.APP_PREFIX)) {
-            appDelta[key.replace(State.APP_PREFIX, '')] = value;
-          } else if (key.startsWith(State.USER_PREFIX)) {
-            userDelta[key.replace(State.USER_PREFIX, '')] = value;
-          } else if (!key.startsWith(State.TEMP_PREFIX)) {
-            sessionDelta[key] = value;
-          }
-        }
-
-        if (Object.keys(appDelta).length > 0) {
-          appStateModel.state = {...appStateModel.state, ...appDelta};
-        }
-        if (Object.keys(userDelta).length > 0) {
-          userStateModel.state = {...userStateModel.state, ...userDelta};
-        }
-        if (Object.keys(sessionDelta).length > 0) {
-          storageSession.state = {...storageSession.state, ...sessionDelta};
-        }
+      if (hasSessionDelta) {
+        storageSession.state = {...storageSession.state, ...sessionDelta};
       }
 
       const existingStorageEvent = await txEm.findOne(StorageEvent, {
@@ -768,9 +854,9 @@ export class DatabaseSessionService extends BaseSessionService {
 
       // `em.transactional` owns the single commit for this block, so every
       // mutation has to be staged before the callback returns. MikroORM v7 no
-      // longer picks up scalar and JSON mutations on its own either, so the
-      // three models edited above are persisted explicitly.
-      txEm.persist([appStateModel, userStateModel, storageSession]);
+      // longer picks up scalar and JSON mutations on its own either, so each
+      // model edited above is persisted explicitly.
+      txEm.persist(modelsToPersist);
 
       const newMergedState = mergeStates(
         appStateModel.state,
