@@ -44,7 +44,12 @@ import {
   StreamingMode,
   Workflow,
 } from '@google/adk';
-import {context, type SpanContext, trace} from '@opentelemetry/api';
+import {
+  context,
+  type SpanContext,
+  trace,
+  type TracerProvider,
+} from '@opentelemetry/api';
 import {AsyncLocalStorageContextManager} from '@opentelemetry/context-async-hooks';
 import {emptyResource} from '@opentelemetry/resources';
 import {ReadableSpan, SpanProcessor} from '@opentelemetry/sdk-trace-base';
@@ -6158,6 +6163,33 @@ describe('AdkApiServer custom BaseAgentLoader and reload support', () => {
         workflowTone: 'friendly',
       });
     } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it('invokes registerProcessors once with the active TracerProvider during start', async () => {
+    const customLoader = new MapAgentLoader(
+      new Map<string, adk.RunnableRoot | App>([
+        ['traceApp', new ReplyAgent('traceAgent', 'ok')],
+      ]),
+    );
+    const activeProvider = trace.getTracerProvider();
+    const getProviderSpy = vi
+      .spyOn(trace, 'getTracerProvider')
+      .mockReturnValue(activeProvider);
+    const receivedProviders: TracerProvider[] = [];
+    const apiServer = new AdkApiServer({
+      agentLoader: customLoader,
+      registerProcessors: (provider) => {
+        receivedProviders.push(provider);
+      },
+    });
+
+    try {
+      await apiServer.start();
+      expect(receivedProviders).toEqual([activeProvider]);
+    } finally {
+      getProviderSpy.mockRestore();
       await apiServer.stop();
     }
   });
