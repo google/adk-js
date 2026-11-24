@@ -36,7 +36,115 @@ function createResponse(candidate: Candidate): GenerateContentResponse {
 }
 
 describe('GeminiStreamingResponseAggregator', () => {
+  describe.each([true, false])(
+    'thought signatures (progressive: %s)',
+    (isProgressiveMode) => {
+      it.each([true, false])(
+        'preserves per-call signatures across chunks: %s',
+        async (separateChunks) => {
+          const aggregator = new GeminiStreamingResponseAggregator({
+            isProgressiveMode,
+          });
+          const parts: Part[] = [
+            {
+              functionCall: {name: 'first', args: {}},
+              thoughtSignature: 'signature-a',
+            },
+            {functionCall: {name: 'second', args: {}}},
+            {
+              functionCall: {name: 'third', args: {}},
+              thoughtSignature: 'signature-b',
+            },
+            {functionCall: {name: 'fourth', args: {}}},
+          ];
+          const expectedParts = structuredClone(parts);
+          const finalParts: Part[] = [];
+
+          for (const chunkParts of separateChunks
+            ? parts.map((part) => [part])
+            : [parts]) {
+            for await (const response of aggregator.processResponse(
+              createResponse({content: {role: 'model', parts: chunkParts}}),
+            )) {
+              expect(
+                response.content?.parts?.map((part) => part.thoughtSignature),
+              ).toEqual(
+                chunkParts.map(
+                  (part) => expectedParts[parts.indexOf(part)].thoughtSignature,
+                ),
+              );
+              if (!response.partial) {
+                finalParts.push(...(response.content?.parts ?? []));
+              }
+            }
+          }
+          finalParts.push(...(aggregator.close()?.content?.parts ?? []));
+
+          expect(finalParts).toEqual(
+            expectedParts.map((part) => ({
+              ...part,
+              functionCall: {...part.functionCall, id: 'mocked-fc-id'},
+            })),
+          );
+        },
+      );
+    },
+  );
+
   describe('Progressive Mode', () => {
+    it('keeps a streamed signature on its completed call without signing the next call', async () => {
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: true,
+      });
+      const parts: Part[] = [
+        {
+          functionCall: {
+            name: 'first',
+            partialArgs: [{jsonPath: '$.city', stringValue: 'Pa'}],
+            willContinue: true,
+          },
+          thoughtSignature: 'signature-a',
+        },
+        {
+          functionCall: {
+            partialArgs: [{jsonPath: '$.city', stringValue: 'ris'}],
+            willContinue: false,
+          },
+        },
+        {
+          functionCall: {
+            name: 'second',
+            partialArgs: [{jsonPath: '$.city', stringValue: 'Lima'}],
+            willContinue: false,
+          },
+        },
+      ];
+      for (const part of parts) {
+        for await (const _ of aggregator.processResponse(
+          createResponse({content: {parts: [part]}}),
+        )) {
+          // Consume each chunk before checking the assembled calls.
+        }
+      }
+      expect(aggregator.close()?.content?.parts).toEqual([
+        {
+          functionCall: {
+            name: 'first',
+            args: {city: 'Paris'},
+            id: 'mocked-fc-id',
+          },
+          thoughtSignature: 'signature-a',
+        },
+        {
+          functionCall: {
+            name: 'second',
+            args: {city: 'Lima'},
+            id: 'mocked-fc-id',
+          },
+        },
+      ]);
+    });
+
     it('should aggregate text chunks', async () => {
       const aggregator = new GeminiStreamingResponseAggregator({
         isProgressiveMode: true,
