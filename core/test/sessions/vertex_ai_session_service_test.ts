@@ -887,6 +887,65 @@ describe('VertexAiSessionService', () => {
       );
     });
 
+    it('lists sessions without filter if userId is explicitly undefined', async () => {
+      await service.listSessions({
+        appName: '12345',
+        userId: undefined,
+      });
+
+      expect(mockClient.listInternal).toHaveBeenCalledWith({
+        name: 'reasoningEngines/12345',
+        config: {},
+      });
+    });
+
+    it('sends user_id="" filter when userId is an empty string', async () => {
+      mockClient.listInternal.mockResolvedValue({sessions: []});
+
+      const response = await service.listSessions({
+        appName: '12345',
+        userId: '',
+      });
+
+      expect(mockClient.listInternal).toHaveBeenCalledWith({
+        name: 'reasoningEngines/12345',
+        config: {filter: 'user_id=""'},
+      });
+      expect(response.sessions).toEqual([]);
+      expect(response.totalItems).toBe(0);
+    });
+
+    it('preserves user_id="" filter across paginated listInternal responses', async () => {
+      mockClient.listInternal
+        .mockResolvedValueOnce({
+          sessions: [{name: 'projects/p/locations/l/sessions/s1', userId: ''}],
+          nextPageToken: 'token-page-2',
+        })
+        .mockResolvedValueOnce({
+          sessions: [{name: 'projects/p/locations/l/sessions/s2', userId: ''}],
+        });
+
+      const response = await service.listSessions({
+        appName: '12345',
+        userId: '',
+      });
+
+      expect(mockClient.listInternal).toHaveBeenCalledTimes(2);
+      expect(mockClient.listInternal).toHaveBeenNthCalledWith(1, {
+        name: 'reasoningEngines/12345',
+        config: {filter: 'user_id=""'},
+      });
+      expect(mockClient.listInternal).toHaveBeenNthCalledWith(2, {
+        name: 'reasoningEngines/12345',
+        config: {filter: 'user_id=""', pageToken: 'token-page-2'},
+      });
+      expect(response.sessions.map((s) => [s.id, s.userId])).toEqual([
+        ['s1', ''],
+        ['s2', ''],
+      ]);
+      expect(response.totalItems).toBe(2);
+    });
+
     it('falls back to defaults in listSessions when state or updateTime is missing', async () => {
       mockClient.listInternal.mockResolvedValue({
         sessions: [{name: 'projects/p/locations/l/sessions/s1', userId: 'u1'}],
