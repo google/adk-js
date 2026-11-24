@@ -407,4 +407,32 @@ describe('BigQueryTool', () => {
     expect(receivedConfig).toBe(customConfig);
     expect(receivedConfig?.writeMode).toBe(WriteMode.BLOCKED);
   });
+
+  it.each([
+    {
+      name: 'with provided config',
+      inputConfig: new BigQueryToolConfig({
+        writeMode: WriteMode.BLOCKED,
+        maxQueryResultRows: 50,
+      }),
+      expectedConfig: new BigQueryToolConfig({
+        writeMode: WriteMode.BLOCKED,
+        maxQueryResultRows: 50,
+      }),
+    },
+    {
+      name: 'with undefined config creates default',
+      inputConfig: undefined,
+      expectedConfig: new BigQueryToolConfig(),
+    },
+  ])('initializes toolConfig $name', ({inputConfig, expectedConfig}) => {
+    const tool = new BigQueryTool({
+      description: 'Config init test tool',
+      parameters: sampleParameters,
+      execute: sampleFunction,
+      toolConfig: inputConfig,
+    });
+
+    expect(tool.toolConfig).toEqual(expectedConfig);
+  });
 });

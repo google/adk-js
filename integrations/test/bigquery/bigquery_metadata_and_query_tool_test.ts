@@ -11,6 +11,7 @@ import {
   BigQueryClient,
   type BigQueryConnectionProperty,
   type BigQueryDryRunResult,
+  BigQueryToolConfig,
   executeSql,
   getBigQueryClient,
   getDatasetInfo,
@@ -828,6 +829,53 @@ describe('executeSql query tool', () => {
       result_is_likely_truncated: true,
     });
   });
+
+  it('respects custom config.maxQueryResultRows for maxResults and truncation flag', async () => {
+    const tenRows = Array.from({length: 10}, (_, index) => ({id: index}));
+    const querySpy = vi
+      .spyOn(BigQueryClient.prototype, 'query')
+      .mockResolvedValue(tenRows);
+
+    const result = await executeSql({
+      project_id: 'my-project',
+      query: 'SELECT id FROM largeTable',
+      credentials: mockCredentials,
+      config: {maxQueryResultRows: 10},
+    });
+
+    expect(querySpy).toHaveBeenCalledWith({
+      query: 'SELECT id FROM largeTable',
+      projectId: 'my-project',
+      maxResults: 10,
+    });
+    expect(result).toEqual({
+      status: 'SUCCESS',
+      rows: tenRows,
+      result_is_likely_truncated: true,
+    });
+  });
+
+  it.each([0, -1, 1.5, Number.NaN])(
+    'returns ERROR when config.maxQueryResultRows is %s',
+    async (invalidRows) => {
+      const dryRunSpy = vi.spyOn(BigQueryClient.prototype, 'dryRun');
+      const querySpy = vi.spyOn(BigQueryClient.prototype, 'query');
+
+      const result = await executeSql({
+        project_id: 'my-project',
+        query: 'SELECT id FROM largeTable',
+        credentials: mockCredentials,
+        config: {maxQueryResultRows: invalidRows},
+      });
+
+      expect(result).toEqual({
+        status: 'ERROR',
+        error_details: 'maxQueryResultRows must be a positive integer.',
+      });
+      expect(dryRunSpy).not.toHaveBeenCalled();
+      expect(querySpy).not.toHaveBeenCalled();
+    },
+  );
 
   it('caps rows at 50 and sets result_is_likely_truncated when the fake SDK returns more than 50 rows', async () => {
     const sixtyRows = Array.from({length: 60}, (_, index) => ({id: index}));
@@ -1672,6 +1720,35 @@ describe('getExecuteSql and getExecuteSqlDescription', () => {
       'Only temporary tables can be created, inserted into or deleted.',
     );
   });
+
+  it('interpolates custom maxQueryResultRows in getExecuteSqlDescription', () => {
+    expect(getExecuteSqlDescription()).toContain(
+      'At most 50 rows are returned.',
+    );
+    expect(getExecuteSqlDescription({maxQueryResultRows: 1})).toContain(
+      'At most 1 row is returned.',
+    );
+    const customAllowedDesc = getExecuteSqlDescription(
+      new BigQueryToolConfig({
+        writeMode: WriteMode.ALLOWED,
+        maxQueryResultRows: 25,
+      }),
+    );
+    expect(customAllowedDesc).toContain('At most 25 rows are returned.');
+    expect(customAllowedDesc).toContain('CREATE TABLE');
+  });
+
+  it.each([0, -1, 1.5, Number.NaN])(
+    'throws RangeError in getExecuteSqlDescription when maxQueryResultRows is %s',
+    (invalidRows) => {
+      expect(() =>
+        getExecuteSqlDescription({maxQueryResultRows: invalidRows}),
+      ).toThrow(RangeError);
+      expect(() =>
+        getExecuteSqlDescription({maxQueryResultRows: invalidRows}),
+      ).toThrow('maxQueryResultRows must be a positive integer.');
+    },
+  );
 
   it('enforces bound config precedence over args.config in getExecuteSql', async () => {
     const dryRunSpy = vi

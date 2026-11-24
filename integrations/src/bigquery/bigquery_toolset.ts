@@ -19,6 +19,11 @@ import {
   isBigQueryToolConfig,
 } from './config.js';
 import {
+  ASK_DATA_INSIGHTS_DESCRIPTION,
+  askDataInsights,
+  askDataInsightsParameters,
+} from './data_insights_tool.js';
+import {
   getDatasetInfo,
   getDatasetInfoParameters,
   getTableInfo,
@@ -132,13 +137,21 @@ function createBigQueryTools(
       credentialsConfig,
       toolConfig,
     }),
+    new BigQueryTool({
+      name: 'ask_data_insights',
+      description: ASK_DATA_INSIGHTS_DESCRIPTION,
+      parameters: askDataInsightsParameters,
+      execute: askDataInsights,
+      credentialsConfig,
+      toolConfig,
+    }),
   ];
 }
 
 /**
- * Toolset providing first-party BigQuery metadata and SQL execution tools:
- * `get_dataset_info`, `get_table_info`, `list_dataset_ids`, `list_table_ids`,
- * and `execute_sql`.
+ * Toolset providing first-party BigQuery metadata, SQL execution, and data
+ * insights tools: `get_dataset_info`, `get_table_info`, `list_dataset_ids`,
+ * `list_table_ids`, `execute_sql`, and `ask_data_insights`.
  *
  * In default read-only mode, `execute_sql` verifies that queries are SELECT
  * statements before running. Configure `toolConfig` with
