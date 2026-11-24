@@ -189,6 +189,7 @@ describe('Context', () => {
       expect(artifactService.saveArtifact).toHaveBeenCalledWith({
         filename: 'test-file.txt',
         artifact: testArtifact,
+        customMetadata: undefined,
       });
       expect(context.eventActions.artifactDelta).toEqual({
         'test-file.txt': 1,

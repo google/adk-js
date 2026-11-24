@@ -51,9 +51,11 @@ describe('ForwardingArtifactService', () => {
       };
 
       const version = await service.saveArtifact(request);
-      expect(toolContext.saveArtifact).toHaveBeenCalledWith('file.txt', {
-        text: 'hello',
-      });
+      expect(toolContext.saveArtifact).toHaveBeenCalledWith(
+        'file.txt',
+        {text: 'hello'},
+        undefined,
+      );
       expect(version).toBe(0);
     });
   });

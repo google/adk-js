@@ -38,7 +38,11 @@ export class ForwardingArtifactService implements SessionArtifactService {
   constructor(private readonly toolContext: Context) {}
 
   async saveArtifact(request: SessionSaveArtifactRequest): Promise<number> {
-    return this.toolContext.saveArtifact(request.filename, request.artifact);
+    return this.toolContext.saveArtifact(
+      request.filename,
+      request.artifact,
+      request.customMetadata,
+    );
   }
 
   async loadArtifact(
