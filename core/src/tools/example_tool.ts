@@ -80,12 +80,15 @@ export class ExampleTool extends BaseTool {
     toolContext,
     llmRequest,
   }: ToolProcessLlmRequest): Promise<void> {
-    const parts = toolContext.userContent?.parts;
-    if (!parts || !parts[0]?.text) {
+    const query = toolContext.userContent?.parts
+      ?.filter((part) => part.text && !part.thought)
+      .map((part) => part.text)
+      .join(' ');
+    if (!query) {
       return;
     }
     appendInstructions(llmRequest, [
-      await buildExampleSi(this.examples, parts[0].text, llmRequest.model),
+      await buildExampleSi(this.examples, query, llmRequest.model),
     ]);
   }
 }
