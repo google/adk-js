@@ -425,10 +425,10 @@ export abstract class BasePlugin {
    * modifying the arguments before they are passed to the tool.
    *
    * @param _params.tool The tool instance that is about to be executed.
-   * @param _params.toolArgs The dictionary of arguments to be used for invoking the
+   * @param _params.toolArgs The record of arguments to be used for invoking the
    *     tool.
    * @param _params.toolContext The context specific to the tool execution.
-   * @returns An optional dictionary. If a dictionary is returned, it will stop
+   * @returns An optional record. If a record is returned, it will stop
    *     the tool execution and return this response immediately. Returning
    *     `undefined` uses the original, unmodified arguments.
    */
@@ -449,8 +449,8 @@ export abstract class BasePlugin {
    * @param _params.tool The tool instance that has just been executed.
    * @param _params.toolArgs The original arguments that were passed to the tool.
    * @param _params.toolContext The context specific to the tool execution.
-   * @param _params.result The dictionary returned by the tool invocation.
-   * @returns An optional dictionary. If a dictionary is returned, it will
+   * @param _params.result The record returned by the tool invocation.
+   * @returns An optional record. If a record is returned, it will
    *     **replace** the original result from the tool. This allows for
    *     post-processing or altering tool outputs. Returning `undefined` uses
    *     the original, unmodified result.

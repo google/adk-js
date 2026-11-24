@@ -608,6 +608,55 @@ describe('VertexAiMemoryBankService', () => {
       );
     });
 
+    it('supports camelCase enableConsolidation and prefers it over enable_consolidation', async () => {
+      const memories = [
+        {
+          content: {parts: [{text: 'fact 1'}]} as Content,
+        },
+      ];
+
+      await service.addMemory({
+        appName: 'test-app',
+        userId: 'test-user',
+        memories,
+        customMetadata: {enableConsolidation: true},
+      });
+
+      expect(mockMemories.generateInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          directMemoriesSource: {
+            directMemories: [{fact: 'fact 1'}],
+          },
+        }),
+      );
+      expect(
+        mockMemories.generateInternal.mock.calls[0][0].config.metadata,
+      ).toBeUndefined();
+
+      mockMemories.generateInternal.mockClear();
+      mockMemories.createInternal.mockClear();
+
+      await service.addMemory({
+        appName: 'test-app',
+        userId: 'test-user',
+        memories,
+        customMetadata: {
+          enableConsolidation: false,
+          enable_consolidation: true,
+        },
+      });
+
+      expect(mockMemories.generateInternal).not.toHaveBeenCalled();
+      expect(mockMemories.createInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fact: 'fact 1',
+        }),
+      );
+      expect(
+        mockMemories.createInternal.mock.calls[0][0].config.metadata,
+      ).toBeUndefined();
+    });
+
     it('forwards the entry id as memoryId', async () => {
       const memories: MemoryEntry[] = [
         {id: 'mem-123', content: {parts: [{text: 'fact one'}]}},
@@ -871,7 +920,20 @@ describe('VertexAiMemoryBankService', () => {
           customMetadata: {enable_consolidation: 'true'}, // string instead of boolean
         }),
       ).rejects.toThrow(
-        'customMetadata["enable_consolidation"] must be a bool.',
+        'customMetadata["enable_consolidation"] must be a boolean.',
+      );
+    });
+
+    it('throws error if enableConsolidation is not boolean', async () => {
+      await expect(
+        service.addMemory({
+          appName: 'test-app',
+          userId: 'test-user',
+          memories: [{content: {parts: [{text: 'fact'}]} as Content}],
+          customMetadata: {enableConsolidation: 'true'},
+        }),
+      ).rejects.toThrow(
+        'customMetadata["enableConsolidation"] must be a boolean.',
       );
     });
 

@@ -52,7 +52,8 @@ const CREATE_MEMORY_KNOWN_FIELDS = [
   'memoryId',
 ];
 
-const ENABLE_CONSOLIDATION_KEY = 'enable_consolidation';
+const ENABLE_CONSOLIDATION_KEY = 'enableConsolidation';
+const LEGACY_ENABLE_CONSOLIDATION_KEY = 'enable_consolidation';
 const MAX_DIRECT_MEMORIES_PER_GENERATE_CALL = 5;
 
 /**
@@ -204,6 +205,10 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
 
   /**
    * Adds events to Vertex AI Memory Bank via memories.generate.
+   *
+   * Control keys in `customMetadata` (`enableConsolidation` and its
+   * backwards-compatible alias `enable_consolidation`) are extracted rather
+   * than forwarded to Vertex AI as user metadata.
    */
   async addEventsToMemory(request: {
     appName: string;
@@ -222,6 +227,13 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
 
   /**
    * Adds explicit memory items using Vertex Memory Bank.
+   *
+   * When `customMetadata['enableConsolidation']` (or the backwards-compatible
+   * alias `customMetadata['enable_consolidation']`) is `true`, memories are
+   * routed through `memories.generateInternal` for consolidation instead of
+   * `memories.createInternal`. Both keys are extracted as the consolidation flag
+   * rather than forwarded to Vertex AI as user metadata, with
+   * `enableConsolidation` taking precedence if both are present.
    *
    * When a `MemoryEntry.id` is set, it is forwarded as the `memoryId` of the
    * created memory, so the caller picks the last component of the memory
@@ -415,7 +427,10 @@ function buildCreateMemoryConfig(params: {
   const customRevisionLabels: Record<string, string> = {};
 
   for (const [key, value] of Object.entries(params.customMetadata || {})) {
-    if (key === ENABLE_CONSOLIDATION_KEY) {
+    if (
+      key === ENABLE_CONSOLIDATION_KEY ||
+      key === LEGACY_ENABLE_CONSOLIDATION_KEY
+    ) {
       continue;
     }
     if (key === 'metadata') {
@@ -533,7 +548,10 @@ function buildGenerateMemoriesConfig(
   const metadataByKey: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(customMetadata)) {
-    if (key === ENABLE_CONSOLIDATION_KEY) {
+    if (
+      key === ENABLE_CONSOLIDATION_KEY ||
+      key === LEGACY_ENABLE_CONSOLIDATION_KEY
+    ) {
       continue;
     }
     if (key === 'ttl') {
@@ -660,14 +678,16 @@ function isConsolidationEnabled(
   if (!customMetadata) {
     return false;
   }
-  const enableConsolidation = customMetadata[ENABLE_CONSOLIDATION_KEY];
+  const key =
+    customMetadata[ENABLE_CONSOLIDATION_KEY] !== undefined
+      ? ENABLE_CONSOLIDATION_KEY
+      : LEGACY_ENABLE_CONSOLIDATION_KEY;
+  const enableConsolidation = customMetadata[key];
   if (enableConsolidation === undefined) {
     return false;
   }
   if (typeof enableConsolidation !== 'boolean') {
-    throw new TypeError(
-      `customMetadata["${ENABLE_CONSOLIDATION_KEY}"] must be a bool.`,
-    );
+    throw new TypeError(`customMetadata["${key}"] must be a boolean.`);
   }
   return enableConsolidation;
 }

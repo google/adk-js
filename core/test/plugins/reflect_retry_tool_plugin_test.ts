@@ -48,7 +48,7 @@ describe('ScopedFailureTracker and Utils', () => {
     );
     expect(resolveScopeKey(TrackingScope.GLOBAL)).toBe(GLOBAL_SCOPE_KEY);
     expect(() => resolveScopeKey(TrackingScope.INVOCATION)).toThrow(
-      'invocation_id must be provided for INVOCATION scope',
+      'invocationId must be provided for INVOCATION scope',
     );
     expect(() => resolveScopeKey('invalid' as TrackingScope)).toThrow(
       'Unknown scope',

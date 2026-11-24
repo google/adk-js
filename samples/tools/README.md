@@ -100,10 +100,12 @@ Left unset, the sample runs on the corpus written into the file.
   tool it generates.** The pair is a toolset-wide override, so a specification
   describing several operations authenticates all of them the same way. Give
   each service its own toolset when they need different credentials.
-- **A failing HTTP call returns a result, not an exception.** `RestApiTool`
-  answers a non-2xx response with `{error: "Tool ... execution failed. ..."}`,
-  so the model reads the failure. An agent that is not told what to do with it
-  may report the error text as though it were the answer.
+- **An HTTP error response returns a result, not an exception.** `RestApiTool`
+  answers a response with status `>= 400` with
+  `{error: "Tool ... execution failed. ..."}` (while `fetch` transport
+  failures still reject), so the model reads the failure. An agent that is not
+  told what to do with it may report the error text as though it were the
+  answer.
 - **The type hints reaching the model are Python tokens in a TypeScript SDK.**
   `int`, `str` and `Dict[str, Any]` appear inside the generated description,
   and adk-python emits the same tokens for the same operation. Matching them is

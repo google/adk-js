@@ -125,7 +125,7 @@ export function base64Decode(data: string): string {
  * Checks if the given string is base64-encoded.
  *
  * @param data The string to check.
- * @return True if the string is base64-encoded, false otherwise.
+ * @return `true` if the string is base64-encoded, `false` otherwise.
  */
 export function isBase64Encoded(data: string): boolean {
   try {
@@ -188,7 +188,7 @@ function warnDeprecatedEnterpriseModeEnvVar(message: string): void {
  * value silently overridden by the new variable is still surfaced. This is
  * read per request, so the warning is logged only once.
  *
- * @return True if enterprise mode is enabled, false otherwise.
+ * @return `true` if enterprise mode is enabled, `false` otherwise.
  */
 export function isEnterpriseModeEnabled(): boolean {
   const deprecatedIsSet =

@@ -15,10 +15,10 @@ import {AuthConfig} from '../auth_tool.js';
 export interface BaseCredentialService {
   /**
    * Loads the credential by auth config and current tool context from the
-   *  backend credential store.
+   * backend credential store.
    *
    * @param authConfig The auth config which contains the auth scheme and auth
-   *     credential information. auth_config.get_credential_key will be used to
+   *     credential information. `authConfig.credentialKey` will be used to
    *     build the key to load the credential.
    * @param toolContext The context of the current invocation when the tool is
    *     trying to load the credential.
@@ -29,12 +29,12 @@ export interface BaseCredentialService {
     toolContext: Context,
   ): Promise<AuthCredential | undefined>;
 
-  /*
-   * Saves the exchanged_auth_credential in auth config to the backend
+  /**
+   * Saves the `exchangedAuthCredential` in auth config to the backend
    * credential store.
    *
    * @param authConfig The auth config which contains the auth scheme and auth
-   *     credential information. auth_config.get_credential_key will be used to
+   *     credential information. `authConfig.credentialKey` will be used to
    *     build the key to save the credential.
    * @param toolContext The context of the current invocation when the tool is
    *     trying to save the credential.
