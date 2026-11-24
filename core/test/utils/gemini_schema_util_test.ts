@@ -1290,6 +1290,39 @@ describe('openApiSchemaToGeminiSchema', () => {
     expect(schema).toEqual({type: Type.OBJECT, nullable: true});
   });
 
+  it('omits null-valued properties on top-level and nested object schemas', () => {
+    const schema = openApiSchemaToGeminiSchema({
+      type: 'object',
+      properties: null,
+    });
+
+    expect(schema).toEqual({type: Type.OBJECT});
+    expect(schema?.properties).toBeUndefined();
+    expect(schema !== undefined && 'properties' in schema).toBe(false);
+
+    const nestedSchema = openApiSchemaToGeminiSchema({
+      type: 'object',
+      properties: {
+        nested: {
+          type: 'object',
+          properties: null,
+        },
+      },
+    });
+
+    expect(nestedSchema).toEqual({
+      type: Type.OBJECT,
+      properties: {
+        nested: {type: Type.OBJECT},
+      },
+    });
+    const nestedProperty = nestedSchema?.properties?.['nested'];
+    expect(nestedProperty?.properties).toBeUndefined();
+    expect(nestedProperty !== undefined && 'properties' in nestedProperty).toBe(
+      false,
+    );
+  });
+
   it('throws a TypeError when the schema is not a plain object', () => {
     expect(() => openApiSchemaToGeminiSchema(['not', 'an', 'object'])).toThrow(
       new TypeError('openApiSchema must be a plain object'),
