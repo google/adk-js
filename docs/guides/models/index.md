@@ -76,6 +76,21 @@ export const rootAgent = new LlmAgent({
 
 An `LlmAgent` with a string `model` calls `LLMRegistry.newLlm`. An agent without a `model` uses the model of its nearest ancestor `LlmAgent`.
 
+### Gemini options
+
+Pass a `GeminiParams` object to `new Gemini(...)` when you need custom credentials, headers, or retry settings instead of a model name string.
+
+| Option               | Type                     | Default              | Description                                                                                      |
+| :------------------- | :----------------------- | :------------------- | :----------------------------------------------------------------------------------------------- |
+| `model`              | `string`                 | `'gemini-2.5-flash'` | The Gemini model name or Vertex AI endpoint resource path.                                       |
+| `apiKey`             | `string`                 | `undefined`          | The Gemini API key; falls back to `GOOGLE_GENAI_API_KEY`, `GOOGLE_API_KEY`, or `GEMINI_API_KEY`. |
+| `vertexai`           | `boolean`                | `false`              | Uses the Vertex AI backend when `true` or when `GOOGLE_GENAI_USE_VERTEXAI` is enabled.           |
+| `project`            | `string`                 | `undefined`          | The Google Cloud project ID for Vertex AI; falls back to `GOOGLE_CLOUD_PROJECT`.                 |
+| `location`           | `string`                 | `undefined`          | The Google Cloud location for Vertex AI; falls back to `GOOGLE_CLOUD_LOCATION`.                  |
+| `headers`            | `Record<string, string>` | `undefined`          | Additional HTTP headers merged with the ADK tracking headers.                                    |
+| `retryOptions`       | `HttpRetryOptions`       | `undefined`          | Retry settings forwarded to the underlying `@google/genai` client `httpOptions`.                 |
+| `useInteractionsApi` | `boolean`                | `false`              | Sends requests through the stateful Interactions API instead of `generateContent`.               |
+
 ### Streaming with Gemini
 
 With streaming on, `Gemini` yields each text chunk as a partial response, and then yields one merged response that holds all of the text of the turn. When a chunk starts with inline data, such as audio, `Gemini` yields it as it arrives and keeps the text before it buffered, instead of yielding that text as a separate merged response first. Text that comes before and after the audio is still in the merged response at the end of the turn. A chunk that starts with text and also carries inline data still flushes the buffered text first.
