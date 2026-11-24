@@ -16,6 +16,7 @@ import {RemoteA2AAgent} from '../../a2a/a2a_remote_agent.js';
 import {ReadonlyContext} from '../../agents/readonly_context.js';
 import {AuthCredential} from '../../auth/auth_credential.js';
 import {AuthScheme} from '../../auth/auth_schemes.js';
+import {AuthConfig} from '../../auth/auth_tool.js';
 import {StreamableHTTPConnectionParams} from '../../tools/mcp/mcp_session_manager.js';
 import {logger} from '../../utils/logger.js';
 import {AgentRegistrySingleMCPToolset} from './agent_registry_mcp_toolset.js';
@@ -252,8 +253,10 @@ export class AgentRegistry {
   async getMcpToolset(
     mcpServerName: string,
     options?: {
+      authConfig?: AuthConfig;
       authScheme?: AuthScheme;
       authCredential?: AuthCredential;
+      credentialKey?: string;
       continueUri?: string;
     },
   ): Promise<AgentRegistrySingleMCPToolset> {
@@ -279,7 +282,7 @@ export class AgentRegistry {
 
     let authScheme = options?.authScheme;
 
-    if (mcpServerId && !authScheme) {
+    if (mcpServerId && !authScheme && !options?.authConfig) {
       try {
         const bindingsData =
           await this.makeRequest<ListBindingsResponse>('bindings');
@@ -315,6 +318,7 @@ export class AgentRegistry {
       const headers: Record<string, string> = {};
       if (
         !authScheme &&
+        !options?.authConfig &&
         !options?.authCredential &&
         isGoogleApi(endpointUri!)
       ) {
@@ -331,8 +335,10 @@ export class AgentRegistry {
       connectionParams,
       prefix: name,
       headerProvider: combinedHeaderProvider,
+      authConfig: options?.authConfig,
       authScheme,
       authCredential: options?.authCredential,
+      credentialKey: options?.credentialKey,
     });
   }
 

@@ -11,8 +11,15 @@ import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {
   AgentRegistry,
   AgentRegistrySingleMCPToolset,
+  AuthConfig,
+  AuthCredential,
+  AuthCredentialTypes,
+  AuthScheme,
   cleanName,
+  Context,
+  createSession,
   GCP_MCP_SERVER_DESTINATION_ID,
+  InvocationContext,
   isGoogleApi,
   ProtocolType,
   ReadonlyContext,
@@ -58,6 +65,7 @@ const mockMcpClient = {
       {name: 'tool2', description: 'desc2', inputSchema: {}},
     ],
   }),
+  callTool: vi.fn().mockResolvedValue({content: []}),
 };
 
 // Mock MCP Client
@@ -486,6 +494,147 @@ describe('AgentRegistry', () => {
 
       const toolset = await registry.getMcpToolset('mcpServers/bigquery');
       expect(toolset.authScheme).toBeUndefined();
+    });
+
+    it('should forward explicit authScheme and authCredential to resolved MCPTools and skip ADC headers', async () => {
+      const serverDetails = {
+        displayName: 'My MCP Server',
+        mcpServerId: 'urn:mcp:1234:my-server',
+        interfaces: [
+          {
+            url: 'https://bigquery-mcp.googleapis.com/v1',
+            protocolBinding: 'JSONRPC',
+          },
+        ],
+      };
+
+      const makeRequestSpy = vi.spyOn(registry, 'makeRequest');
+      vi.spyOn(registry, 'getMcpServer').mockResolvedValue(serverDetails);
+
+      const authScheme: AuthScheme = {type: 'http', scheme: 'bearer'};
+      const authCredential: AuthCredential = {
+        authType: AuthCredentialTypes.HTTP,
+        http: {scheme: 'bearer', credentials: {token: 'demo-token'}},
+      };
+
+      const toolset = await registry.getMcpToolset('mcpServers/my-server', {
+        authScheme,
+        authCredential,
+      });
+
+      expect(makeRequestSpy).not.toHaveBeenCalledWith('bindings');
+
+      const [tool] = await toolset.getTools();
+      const forwarded = (tool as unknown as {authConfig?: AuthConfig})
+        .authConfig;
+      expect(forwarded?.authScheme).toEqual(authScheme);
+      expect(forwarded?.rawAuthCredential).toEqual(authCredential);
+
+      const Transport = (
+        await import('@modelcontextprotocol/sdk/client/streamableHttp.js')
+      ).StreamableHTTPClientTransport as unknown as ReturnType<typeof vi.fn>;
+      expect(
+        Transport.mock.calls.at(-1)?.[1]?.requestInit?.headers,
+      ).not.toHaveProperty('Authorization');
+
+      const session = createSession({
+        id: 'sess-1',
+        appName: 'app-1',
+        userId: 'user-1',
+      });
+      const toolContext = new Context({
+        invocationContext: {
+          abortSignal: new AbortController().signal,
+          session,
+        } as unknown as InvocationContext,
+      });
+      await tool.runAsync({args: {}, toolContext});
+
+      expect(
+        Transport.mock.calls.at(-1)?.[1]?.requestInit?.headers,
+      ).toMatchObject({Authorization: 'Bearer demo-token'});
+    });
+
+    it('should forward explicit authConfig to resolved MCPTools and skip binding lookup and ADC headers', async () => {
+      const serverDetails = {
+        displayName: 'My MCP Server',
+        mcpServerId: 'urn:mcp:1234:my-server',
+        interfaces: [
+          {
+            url: 'https://bigquery-mcp.googleapis.com/v1',
+            protocolBinding: 'JSONRPC',
+          },
+        ],
+      };
+
+      const makeRequestSpy = vi.spyOn(registry, 'makeRequest');
+      vi.spyOn(registry, 'getMcpServer').mockResolvedValue(serverDetails);
+
+      const authConfig: AuthConfig = {
+        authScheme: {type: 'apiKey', in: 'header', name: 'X-API-Key'},
+        rawAuthCredential: {
+          authType: AuthCredentialTypes.API_KEY,
+          apiKey: 'demo-api-key',
+        },
+        credentialKey: 'registry-api-key',
+      };
+
+      const toolset = await registry.getMcpToolset('mcpServers/my-server', {
+        authConfig,
+      });
+
+      expect(makeRequestSpy).not.toHaveBeenCalledWith('bindings');
+      expect(toolset.authScheme).toEqual(authConfig.authScheme);
+      expect(toolset.authCredential).toEqual(authConfig.rawAuthCredential);
+
+      const [tool] = await toolset.getTools();
+      expect((tool as unknown as {authConfig?: AuthConfig}).authConfig).toEqual(
+        authConfig,
+      );
+
+      const Transport = (
+        await import('@modelcontextprotocol/sdk/client/streamableHttp.js')
+      ).StreamableHTTPClientTransport as unknown as ReturnType<typeof vi.fn>;
+      expect(
+        Transport.mock.calls.at(-1)?.[1]?.requestInit?.headers,
+      ).not.toHaveProperty('Authorization');
+    });
+
+    it('should forward resolved gcpAuthProviderScheme binding to resolved MCPTools', async () => {
+      const serverDetails = {
+        mcpServerId: 'urn:mcp:1234:bigquery',
+        interfaces: [{url: 'https://example.com', protocolBinding: 'JSONRPC'}],
+      };
+      const bindingsData = {
+        bindings: [
+          {
+            target: {identifier: 'urn:mcp:1234:bigquery'},
+            authProviderBinding: {
+              authProvider: 'projects/p/locations/l/authProviders/ap-1',
+            },
+          },
+        ],
+      };
+
+      vi.spyOn(registry, 'getMcpServer').mockResolvedValue(serverDetails);
+      vi.spyOn(registry, 'makeRequest').mockImplementation(async (path) => {
+        if (path === 'bindings') return bindingsData;
+        return {};
+      });
+
+      const toolset = await registry.getMcpToolset('mcpServers/bigquery', {
+        continueUri: 'https://app.example.com/continue',
+      });
+
+      const [tool] = await toolset.getTools();
+      const forwarded = (tool as unknown as {authConfig?: AuthConfig})
+        .authConfig;
+      expect(forwarded?.authScheme).toEqual({
+        type: 'gcpAuthProviderScheme',
+        name: 'projects/p/locations/l/authProviders/ap-1',
+        continueUri: 'https://app.example.com/continue',
+      });
+      expect(forwarded?.credentialKey).toBeTruthy();
     });
   });
 
