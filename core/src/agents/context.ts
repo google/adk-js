@@ -108,9 +108,14 @@ export class Context extends ReadonlyContext {
    *
    * @param filename The filename of the artifact.
    * @param artifact The artifact to save.
+   * @param customMetadata Metadata associated with this artifact version.
    * @return A promise that resolves to the version of the saved artifact.
    */
-  async saveArtifact(filename: string, artifact: Part): Promise<number> {
+  async saveArtifact(
+    filename: string,
+    artifact: Part,
+    customMetadata?: Record<string, unknown>,
+  ): Promise<number> {
     if (!this.invocationContext.artifactService) {
       throw new Error('Artifact service is not initialized.');
     }
@@ -118,6 +123,7 @@ export class Context extends ReadonlyContext {
     const version = await this.invocationContext.artifactService.saveArtifact({
       filename,
       artifact,
+      customMetadata,
     });
     this.eventActions.artifactDelta[filename] = version;
 
