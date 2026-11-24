@@ -84,9 +84,10 @@ an event or as a thrown error.
    them. A message with no parts throws `No parts in the newMessage.`
 5. The runner picks the agent that continues the conversation, described in
    [Which agent answers](#which-agent-answers).
-6. Plugins get `beforeRunCallback`. A plugin that returns content there ends
-   the invocation: the runner stores that content as an event authored by
-   `model`, yields it, and never starts the agent.
+6. Plugins get `beforeRunCallback`. When a plugin returns content there, the
+   runner wraps it in an event authored by `model` and passes that event
+   through `onEventCallback`. The runner stores the resulting event unless it
+   is partial, yields it, and never starts the agent.
 7. The agent runs. Each event it produces goes through `onEventCallback`, is
    appended to the session unless it is partial, and is then yielded.
 8. Plugins receive `afterRunCallback` when the started run finishes normally,
