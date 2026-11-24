@@ -36,8 +36,10 @@ import {
   EvalResult,
   EvalStatus,
   Event,
+  getRegisteredEvalMetrics,
   InMemoryRunner,
   InvocationContext,
+  type ListMetricsInfoResponse,
   LlmAgent,
   LocalEvalSetResultsManager,
   LocalEvalSetsManager,
@@ -216,6 +218,13 @@ async function main() {
     'support:order_flow',
   ]);
   process.stdout.write(`Parsed eval spec: ${JSON.stringify(parsedSpecs)}\n`);
+
+  const metricsResponse: ListMetricsInfoResponse = {
+    metricsInfo: getRegisteredEvalMetrics(),
+  };
+  process.stdout.write(
+    `Registered eval metrics: ${metricsResponse.metricsInfo.map((m) => m.metricName).join(', ')}\n`,
+  );
 
   const evalResults: EvalResult[] = [];
   for await (const result of runEvals({
