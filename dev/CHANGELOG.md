@@ -1,5 +1,31 @@
 # Changelog
 
+## [2.6.0](https://github.com/google/adk-js/compare/devtools-v2.5.0...devtools-v2.6.0) (2026-11-24)
+
+
+### Features
+
+* **cli:** add BaseAgentLoader, AgentChangeEventHandler, and workflow state seeding ([#1385](https://github.com/google/adk-js/issues/1385)) ([0a7a185](https://github.com/google/adk-js/commit/0a7a185fb9e82976bdfe7442ed04ab5ab806e001))
+* **cli:** add GKE deployment command and eval metric metadata endpoints ([#1387](https://github.com/google/adk-js/issues/1387)) ([8e530a8](https://github.com/google/adk-js/commit/8e530a8d5bc106b946e267eb947da94745338a63))
+* **cli:** reload only the changed agent with --reload_agents ([#1322](https://github.com/google/adk-js/issues/1322)) ([a662b30](https://github.com/google/adk-js/commit/a662b30976d68625a7348f3139bb41806aad7818))
+* **cli:** store eval sets and results in GCS with --eval_storage_uri ([#1314](https://github.com/google/adk-js/issues/1314)) ([077dbfb](https://github.com/google/adk-js/commit/077dbfbdb5aacd02b76f527b9fa1a4d4c20a9152))
+* **cli:** support local eval set IDs in adk eval and sessionDbOptions forwarding ([#1351](https://github.com/google/adk-js/issues/1351)) ([c5d963b](https://github.com/google/adk-js/commit/c5d963bd0125563b300c781f62b03dc3970dc5be))
+* **dev:** support session event import, agentengine session URIs, and default credential service ([#1304](https://github.com/google/adk-js/issues/1304)) ([b001b63](https://github.com/google/adk-js/commit/b001b63ea93ebb20d30df8efbecf4b613221b2ed))
+* **plugins:** align LoggingPlugin with forward-compatible callback logging ([#1354](https://github.com/google/adk-js/issues/1354)) ([281670e](https://github.com/google/adk-js/commit/281670ea771ee4e9a63441039bda4e676b7c3128))
+
+
+### Bug Fixes
+
+* **cli:** honour explicit --log_level over --verbose and wire deploy --verbose ([#1388](https://github.com/google/adk-js/issues/1388)) ([c5593f8](https://github.com/google/adk-js/commit/c5593f8b9f0b3572b5b548f0593cf96d28305bca))
+* **cli:** set agentFramework on Agent Engine deploys and wire eval loader flags ([#1417](https://github.com/google/adk-js/issues/1417)) ([c1181e6](https://github.com/google/adk-js/commit/c1181e600bdad84d800c5aad14bbfe529ef3d304))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^2.5.0 to ^2.6.0
+
 ## [2.5.0](https://github.com/google/adk-js/compare/devtools-v2.4.0...devtools-v2.5.0) (2026-11-12)
 
 

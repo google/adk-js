@@ -1,5 +1,43 @@
 # Changelog
 
+## [2.6.0](https://github.com/google/adk-js/compare/adk-v2.5.0...adk-v2.6.0) (2026-11-24)
+
+
+### Features
+
+* **a2a:** add a request timeout and a card resolution error to RemoteA2AAgent ([#1323](https://github.com/google/adk-js/issues/1323)) ([4776b47](https://github.com/google/adk-js/commit/4776b4728744b6d70a70c8bef5565ce3b3074e3c))
+* **a2a:** add AgentCardBuilder, extend toA2a options, and resolve authenticated A2A user IDs ([#1352](https://github.com/google/adk-js/issues/1352)) ([1957ff4](https://github.com/google/adk-js/commit/1957ff4455087a8832eb0d4165dc7c1ca1f830ef))
+* **a2a:** add auth-required task state, runner caching and request logs ([#1320](https://github.com/google/adk-js/issues/1320)) ([1ce9cfa](https://github.com/google/adk-js/commit/1ce9cfa11dff999a96002ce6968be81d18e85b8f))
+* **agents:** add saveCredential and loadCredential to Context ([#1334](https://github.com/google/adk-js/issues/1334)) ([9171335](https://github.com/google/adk-js/commit/9171335f72072300f9f78dff5c096f10c8cbb948))
+* **agents:** deep-clone functionCall.args and add RunConfig.sessionResumption ([#1356](https://github.com/google/adk-js/issues/1356)) ([c84a617](https://github.com/google/adk-js/commit/c84a617d7c3f664bf3db98d6809a5e7bfed8dab3))
+* **agents:** execute parallel tool calls concurrently and retain latest state writes ([#1416](https://github.com/google/adk-js/issues/1416)) ([a0522e5](https://github.com/google/adk-js/commit/a0522e55d450e42082e80b7ce74dcda54eb01351))
+* **auth:** add CredentialManager and port auth credential changes ([#1299](https://github.com/google/adk-js/issues/1299)) ([0cc97a7](https://github.com/google/adk-js/commit/0cc97a781d39c15bff43e600d524c83877f91811))
+* **cli:** add BaseAgentLoader, AgentChangeEventHandler, and workflow state seeding ([#1385](https://github.com/google/adk-js/issues/1385)) ([0a7a185](https://github.com/google/adk-js/commit/0a7a185fb9e82976bdfe7442ed04ab5ab806e001))
+* **cli:** add GKE deployment command and eval metric metadata endpoints ([#1387](https://github.com/google/adk-js/issues/1387)) ([8e530a8](https://github.com/google/adk-js/commit/8e530a8d5bc106b946e267eb947da94745338a63))
+* **cli:** store eval sets and results in GCS with --eval_storage_uri ([#1314](https://github.com/google/adk-js/issues/1314)) ([077dbfb](https://github.com/google/adk-js/commit/077dbfbdb5aacd02b76f527b9fa1a4d4c20a9152))
+* **cli:** support local eval set IDs in adk eval and sessionDbOptions forwarding ([#1351](https://github.com/google/adk-js/issues/1351)) ([c5d963b](https://github.com/google/adk-js/commit/c5d963bd0125563b300c781f62b03dc3970dc5be))
+* **core:** expose Gemini retryOptions and return state in listSessions ([#1353](https://github.com/google/adk-js/issues/1353)) ([d831987](https://github.com/google/adk-js/commit/d831987493681105e986a464527ab7ccfbb02dcd))
+* **models:** convert image and code execution parts for Claude ([#1324](https://github.com/google/adk-js/issues/1324)) ([3ed0fb9](https://github.com/google/adk-js/commit/3ed0fb9a27d42d5fe013f5cdf595449579f0bdc6))
+* **models:** support Vertex AI model-optimizer endpoints in Gemini ([#1350](https://github.com/google/adk-js/issues/1350)) ([0fcab55](https://github.com/google/adk-js/commit/0fcab5503afa44012207b995864e59ff9012653d))
+* **plugins:** align LoggingPlugin with forward-compatible callback logging ([#1354](https://github.com/google/adk-js/issues/1354)) ([281670e](https://github.com/google/adk-js/commit/281670ea771ee4e9a63441039bda4e676b7c3128))
+* **tools:** add authentication to MCP tool calls ([#1307](https://github.com/google/adk-js/issues/1307)) ([6f80d23](https://github.com/google/adk-js/commit/6f80d23ad14c83e4d8829835388e3e93a81a5e4e))
+* **tools:** add BaseAuthenticatedTool and AuthenticatedFunctionTool ([#1306](https://github.com/google/adk-js/issues/1306)) ([dc9bf84](https://github.com/google/adk-js/commit/dc9bf847beb03255ff16cd439462465526a5bd86))
+* **tools:** add service account auth to GoogleApiTool and GoogleApiToolset ([#1329](https://github.com/google/adk-js/issues/1329)) ([29b98c2](https://github.com/google/adk-js/commit/29b98c2113d5b55aae6882d0bf58c5755cfcc3e9))
+* **tools:** support automatic OAuth2 token refresh in ToolAuthHandler ([#1305](https://github.com/google/adk-js/issues/1305)) ([4e2f0b2](https://github.com/google/adk-js/commit/4e2f0b25fd7545285dcc5089295a67b4713258b1))
+* **tools:** support null/void return schemas on Vertex AI ([#1340](https://github.com/google/adk-js/issues/1340)) ([199243d](https://github.com/google/adk-js/commit/199243dd7ad9cff94defd2b1d0ddc903d0fc04f8))
+
+
+### Bug Fixes
+
+* **agents:** give each streamed model event its own timestamp ([#1319](https://github.com/google/adk-js/issues/1319)) ([70612f2](https://github.com/google/adk-js/commit/70612f2f0c56988ac8c35cfecd5226a486e75cfe))
+* **core:** tokenize memory queries and override path-level OpenAPI parameters ([#1339](https://github.com/google/adk-js/issues/1339)) ([6ec680e](https://github.com/google/adk-js/commit/6ec680ee752c0f2611e894bc8bbb4b897d3f138a))
+* **flows:** deep-merge event actions and fix live/callback edges ([#1333](https://github.com/google/adk-js/issues/1333)) ([2378015](https://github.com/google/adk-js/commit/2378015a2e2d9e9df223101dd28a37ea01ea340b))
+* **plugins:** guard LoggingPlugin and result classification against unserializable values ([#1399](https://github.com/google/adk-js/issues/1399)) ([0d71971](https://github.com/google/adk-js/commit/0d71971a1fc921dca010ace7813d7222f02d9b5e))
+* **runner:** process beforeRunCallback early-exit events through onEventCallback ([#1384](https://github.com/google/adk-js/issues/1384)) ([866dec6](https://github.com/google/adk-js/commit/866dec605ea650c3d68b73e2e7d6ea4881d40c8a))
+* **runner:** route a user function response to the calling agent without resumability ([#1312](https://github.com/google/adk-js/issues/1312)) ([e75433e](https://github.com/google/adk-js/commit/e75433e6626f8e1e802d1aec2a770a637cdceb7c))
+* **tools:** omit null OpenAPI schema fields and map void response schemas ([#1414](https://github.com/google/adk-js/issues/1414)) ([1c4ce2b](https://github.com/google/adk-js/commit/1c4ce2b4f2e19f5d18b8ead514214b530f9488d4))
+* **utils:** match only Gemini 1.x version names in isGemini1Model ([#1326](https://github.com/google/adk-js/issues/1326)) ([19f19c6](https://github.com/google/adk-js/commit/19f19c61bb43e4e8e5cccb3aa5e9598fbcc66890))
+
 ## [2.5.0](https://github.com/google/adk-js/compare/adk-v2.4.0...adk-v2.5.0) (2026-11-12)
 
 

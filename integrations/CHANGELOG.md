@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.6.0](https://github.com/google/adk-js/compare/integrations-v2.5.0...integrations-v2.6.0) (2026-11-24)
+
+
+### Features
+
+* **integrations:** add askDataInsights tool and maxQueryResultRows config ([#1357](https://github.com/google/adk-js/issues/1357)) ([daa8dcc](https://github.com/google/adk-js/commit/daa8dcc6038a16863c5ba42a5ed1581e064eb104))
+* **integrations:** add WriteMode.PROTECTED to BigQuery execute_sql ([#1318](https://github.com/google/adk-js/issues/1318)) ([5389c26](https://github.com/google/adk-js/commit/5389c26dfdc8bda1f2866410fa2cc9217a041e03))
+* **models:** convert image and code execution parts for Claude ([#1324](https://github.com/google/adk-js/issues/1324)) ([3ed0fb9](https://github.com/google/adk-js/commit/3ed0fb9a27d42d5fe013f5cdf595449579f0bdc6))
+* **tools:** support null/void return schemas on Vertex AI ([#1340](https://github.com/google/adk-js/issues/1340)) ([199243d](https://github.com/google/adk-js/commit/199243dd7ad9cff94defd2b1d0ddc903d0fc04f8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^2.5.0 to ^2.6.0
+
 ## [2.5.0](https://github.com/google/adk-js/compare/integrations-v2.4.0...integrations-v2.5.0) (2026-11-12)
 
 
