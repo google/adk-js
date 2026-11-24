@@ -16,9 +16,14 @@ import {carryDeltaStamps, shouldApplyDeltaWrite} from './state_write_order.js';
  * The configuration of getting a session.
  */
 export interface GetSessionConfig {
-  /** The number of recent events to retrieve. */
+  /**
+   * The maximum number of recent events to retrieve. If `0`, no events are
+   * returned.
+   */
   numRecentEvents?: number;
-  /** Retrieve events after this timestamp. */
+  /**
+   * Retrieve events with `timestamp >= afterTimestamp` (in milliseconds).
+   */
   afterTimestamp?: number;
 }
 

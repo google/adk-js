@@ -320,6 +320,70 @@ describe('InMemorySessionService', () => {
       expect(retrievedSession?.events[0].timestamp).toBe(4);
       expect(retrievedSession?.events[1].timestamp).toBe(5);
     });
+
+    it('returns no events when numRecentEvents is 0 without mutating stored events', async () => {
+      const session = await service.createSession({
+        appName: 'app',
+        userId: 'user',
+      });
+      for (let i = 1; i <= 3; i++) {
+        await service.appendEvent({
+          session,
+          event: createEvent({author: 'user', timestamp: i * 1000}),
+        });
+      }
+
+      const zeroEventsSession = await service.getSession({
+        appName: 'app',
+        userId: 'user',
+        sessionId: session.id,
+        config: {numRecentEvents: 0},
+      });
+      expect(zeroEventsSession?.events).toEqual([]);
+
+      const combinedZeroSession = await service.getSession({
+        appName: 'app',
+        userId: 'user',
+        sessionId: session.id,
+        config: {numRecentEvents: 0, afterTimestamp: 1000},
+      });
+      expect(combinedZeroSession?.events).toEqual([]);
+
+      const fullSession = await service.getSession({
+        appName: 'app',
+        userId: 'user',
+        sessionId: session.id,
+      });
+      expect(fullSession?.events.map((e) => e.timestamp)).toEqual([
+        1000, 2000, 3000,
+      ]);
+    });
+
+    it('respects afterTimestamp of 0 inclusively', async () => {
+      const session = await service.createSession({
+        appName: 'app',
+        userId: 'user',
+      });
+      const beforeEpoch = createEvent({author: 'user', timestamp: -1000});
+      const atEpoch = createEvent({author: 'user'});
+      atEpoch.timestamp = 0;
+      const afterEpoch = createEvent({author: 'user', timestamp: 1000});
+
+      await service.appendEvent({session, event: beforeEpoch});
+      await service.appendEvent({session, event: atEpoch});
+      await service.appendEvent({session, event: afterEpoch});
+
+      const retrievedSession = await service.getSession({
+        appName: 'app',
+        userId: 'user',
+        sessionId: session.id,
+        config: {afterTimestamp: 0},
+      });
+
+      expect(retrievedSession?.events.map((e) => e.timestamp)).toEqual([
+        0, 1000,
+      ]);
+    });
   });
 
   describe('listSessions', () => {
