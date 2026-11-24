@@ -6,6 +6,7 @@
 
 import {getClientLabels, runWithClientLabel} from '@google/adk';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {AsyncLocalStorage as ShimAsyncLocalStorage} from '../../src/utils/async_hooks_shim.js';
 import {
   getTrackingHeaders,
   mergeTrackingHeaders,
@@ -443,6 +444,81 @@ describe('client_labels', () => {
         'x-goog-api-client': 'caller-client/2.0',
         'X-Custom': 'value',
       });
+    });
+  });
+
+  describe('async_hooks_shim AsyncLocalStorage', () => {
+    it('scopes the store synchronously and restores it on return, nesting, or throw', () => {
+      const storage = new ShimAsyncLocalStorage<string>();
+      expect(storage.getStore()).toBeUndefined();
+
+      const result = storage.run(
+        'outer',
+        (suffix: string) => {
+          expect(storage.getStore()).toBe('outer');
+          const nested = storage.run('inner', () => {
+            expect(storage.getStore()).toBe('inner');
+            return 'nested-ok';
+          });
+          expect(nested).toBe('nested-ok');
+          expect(storage.getStore()).toBe('outer');
+          return `done-${suffix}`;
+        },
+        'arg',
+      );
+      expect(result).toBe('done-arg');
+      expect(storage.getStore()).toBeUndefined();
+
+      expect(() =>
+        storage.run('sync-throw', () => {
+          expect(storage.getStore()).toBe('sync-throw');
+          throw new Error('sync boom');
+        }),
+      ).toThrow('sync boom');
+      expect(storage.getStore()).toBeUndefined();
+    });
+
+    it('does not leak the store across await to unrelated concurrent callers', async () => {
+      const storage = new ShimAsyncLocalStorage<string>();
+
+      let resolveFirst!: () => void;
+      const firstGate = new Promise<void>((resolve) => {
+        resolveFirst = resolve;
+      });
+      let resolveSecond!: () => void;
+      const secondGate = new Promise<void>((resolve) => {
+        resolveSecond = resolve;
+      });
+
+      const observed: Array<string | undefined> = [];
+
+      const firstTask = storage.run('label-a', async () => {
+        observed.push(storage.getStore());
+        await firstGate;
+        observed.push(storage.getStore());
+      });
+
+      // Immediately after firstTask suspends at await, the store is already restored.
+      expect(storage.getStore()).toBeUndefined();
+
+      const secondTask = storage.run('label-b', async () => {
+        observed.push(storage.getStore());
+        await secondGate;
+        observed.push(storage.getStore());
+      });
+
+      expect(storage.getStore()).toBeUndefined();
+
+      // Settle out of order (second before first) and verify no leakage or corruption.
+      resolveSecond();
+      await secondTask;
+      expect(storage.getStore()).toBeUndefined();
+
+      resolveFirst();
+      await firstTask;
+      expect(storage.getStore()).toBeUndefined();
+
+      expect(observed).toEqual(['label-a', 'label-b', undefined, undefined]);
     });
   });
 });

@@ -48,6 +48,74 @@ describe('appendInstructions', () => {
     appendInstructions(request, ['only']);
     expect(request.config).toEqual({systemInstruction: 'only'});
   });
+
+  it('extends a Content systemInstruction by appending a text part', () => {
+    const request = newRequest();
+    request.config = {
+      systemInstruction: {
+        role: 'system',
+        parts: [{text: 'existing'}],
+      },
+    };
+    appendInstructions(request, ['first', 'second']);
+    expect(request.config.systemInstruction).toEqual({
+      role: 'system',
+      parts: [{text: 'existing'}, {text: 'first\n\nsecond'}],
+    });
+  });
+
+  it('extends a Content systemInstruction when parts is undefined', () => {
+    const request = newRequest();
+    request.config = {
+      systemInstruction: {
+        role: 'system',
+        parts: undefined,
+      },
+    };
+    appendInstructions(request, ['added']);
+    expect(request.config.systemInstruction).toEqual({
+      role: 'system',
+      parts: [{text: 'added'}],
+    });
+  });
+
+  it('extends a Content systemInstruction with role only and omitted parts', () => {
+    const request = newRequest();
+    request.config = {
+      systemInstruction: {
+        role: 'system',
+      },
+    };
+    appendInstructions(request, ['added']);
+    expect(request.config.systemInstruction).toEqual({
+      role: 'system',
+      parts: [{text: 'added'}],
+    });
+  });
+
+  it('extends a Part systemInstruction into a PartUnion array', () => {
+    const request = newRequest();
+    const existingPart = {text: 'existing part'};
+    request.config = {systemInstruction: existingPart};
+    appendInstructions(request, ['added']);
+    expect(request.config.systemInstruction).toEqual([
+      existingPart,
+      {text: 'added'},
+    ]);
+  });
+
+  it('extends a PartUnion[] systemInstruction by appending a text part', () => {
+    const request = newRequest();
+    request.config = {
+      systemInstruction: ['first', {text: 'second'}],
+    };
+    appendInstructions(request, ['third', 'fourth']);
+    expect(request.config.systemInstruction).toEqual([
+      'first',
+      {text: 'second'},
+      {text: 'third\n\nfourth'},
+    ]);
+  });
 });
 
 describe('appendTools', () => {

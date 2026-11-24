@@ -913,7 +913,7 @@ Instruction body`;
       );
     });
 
-    it.each(['../evil', 'a/b', '..'])(
+    it.each(['../evil', 'a/b', '..', 'foo\\bar', '..\\evil'])(
       'rejects the non-bare skill name %s',
       (name) => {
         expect(() =>

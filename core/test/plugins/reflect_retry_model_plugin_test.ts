@@ -234,5 +234,49 @@ describe('ReflectAndRetryModelPlugin', () => {
         'retry attempt **2** of **3**',
       );
     });
+
+    it('should report the actual retryCount when executing the injected reflection tool with snake_case retry part args', async () => {
+      const plugin = new ReflectAndRetryModelPlugin({maxRetries: 3});
+      const callbackContext = createMockContext('inv-snake-retry-count');
+      const llmRequest = createMockRequest();
+      await plugin.beforeModelCallback({callbackContext, llmRequest});
+
+      const malformedResponse: LlmResponse = {
+        errorCode: 'MALFORMED_FUNCTION_CALL',
+        errorMessage: 'Bad tool call',
+        finishReason: FinishReason.MALFORMED_FUNCTION_CALL,
+      };
+
+      await plugin.afterModelCallback({
+        callbackContext,
+        llmResponse: malformedResponse,
+      });
+      await plugin.afterModelCallback({
+        callbackContext,
+        llmResponse: malformedResponse,
+      });
+      const thirdRetryResponse = await plugin.afterModelCallback({
+        callbackContext,
+        llmResponse: malformedResponse,
+      });
+
+      const retryArgs = thirdRetryResponse!.content!.parts![0].functionCall!
+        .args as Record<string, unknown>;
+      expect(retryArgs['retry_count']).toBe(3);
+
+      const reflectionTool =
+        llmRequest.toolsDict[ADK_HANDLE_MODEL_ERROR_TOOL_NAME];
+      const toolResult = (await reflectionTool.runAsync({
+        args: retryArgs,
+        toolContext: callbackContext,
+      })) as {reflection_guidance: string};
+
+      expect(toolResult.reflection_guidance).toContain(
+        'retry attempt **3** of **3**',
+      );
+      expect(toolResult.reflection_guidance).not.toContain(
+        'retry attempt **1** of **3**',
+      );
+    });
   });
 });

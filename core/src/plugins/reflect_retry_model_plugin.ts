@@ -181,16 +181,27 @@ Formulate a new plan based on your analysis and try a corrected or different app
       name: ADK_HANDLE_MODEL_ERROR_TOOL_NAME,
       description:
         'A tool that triggers reflection. Reserved for internal framework use only. Do not call directly.',
-      execute: (args) =>
-        this.adkHandleModelError(
-          args as {
-            responseType?: string;
-            errorType?: string;
-            errorDetails?: string;
-            finishReason?: string;
-            retryCount?: number;
-          },
-        ),
+      execute: (args) => {
+        const typedArgs = args as {
+          responseType?: string;
+          response_type?: string;
+          errorType?: string;
+          error_type?: string;
+          errorDetails?: string;
+          error_details?: string;
+          finishReason?: string;
+          finish_reason?: string;
+          retryCount?: number;
+          retry_count?: number;
+        };
+        return this.adkHandleModelError({
+          responseType: typedArgs.responseType ?? typedArgs.response_type,
+          errorType: typedArgs.errorType ?? typedArgs.error_type,
+          errorDetails: typedArgs.errorDetails ?? typedArgs.error_details,
+          finishReason: typedArgs.finishReason ?? typedArgs.finish_reason,
+          retryCount: typedArgs.retryCount ?? typedArgs.retry_count,
+        });
+      },
     });
   }
 

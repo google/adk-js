@@ -8,7 +8,7 @@ import {Context} from '../agents/context.js';
 import {injectSessionState} from '../agents/instructions.js';
 import {InstructionProvider} from '../agents/llm_agent.js';
 import {ReadonlyContext} from '../agents/readonly_context.js';
-import {LlmRequest} from '../models/llm_request.js';
+import {isContentObject, LlmRequest} from '../models/llm_request.js';
 import {LlmResponse} from '../models/llm_response.js';
 import {BasePlugin} from './base_plugin.js';
 
@@ -81,11 +81,22 @@ export class GlobalInstructionPlugin extends BasePlugin {
         finalGlobalInstruction,
         ...existingInstruction,
       ];
+    } else if (
+      typeof existingInstruction === 'object' &&
+      isContentObject(existingInstruction)
+    ) {
+      params.llmRequest.config.systemInstruction = {
+        ...existingInstruction,
+        parts: [
+          {text: finalGlobalInstruction},
+          ...(existingInstruction.parts ?? []),
+        ],
+      };
     } else {
       params.llmRequest.config.systemInstruction = [
         finalGlobalInstruction,
         existingInstruction,
-      ] as unknown as string[];
+      ];
     }
 
     return;

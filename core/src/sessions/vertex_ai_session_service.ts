@@ -349,7 +349,7 @@ export class VertexAiSessionService extends BaseSessionService {
           : eventsIterator;
 
       for (const event of recentEvents) {
-        session.events.push(_fromApiEvent(event));
+        session.events.push(fromApiEvent(event));
       }
 
       return session;
@@ -640,7 +640,7 @@ function applyWorkflowMetadata(
 
 /**
  * Renames `transferToAgent` to the `transferAgent` the Agent Engine sessions
- * API actually defines, mirroring what `_fromApiEvent` reads back and what
+ * API actually defines, mirroring what `fromApiEvent` reads back and what
  * adk-python writes. Returns a new object: `partialCopy` is shallow, so
  * rewriting the event's own `actions` in place would mutate the caller's event.
  */
@@ -709,7 +709,7 @@ interface ExtendedEvent extends Event {
   compactedContent?: string;
 }
 
-function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
+function fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
   const rawEvent = apiEventObj.rawEvent;
   if (rawEvent) {
     const event = JSON.parse(JSON.stringify(rawEvent)) as Event;

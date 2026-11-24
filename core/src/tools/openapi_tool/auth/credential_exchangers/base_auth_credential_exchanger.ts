@@ -25,6 +25,9 @@ export class AuthCredentialMissingError extends Error {
  * one that can be sent to the API. The base implementation always throws, so a
  * subclass that forgets to override the method fails on the first call rather
  * than silently returning nothing.
+ *
+ * @deprecated Use {@link BaseCredentialExchanger} instead. This unused
+ *     synchronous base class will be removed in a future major release.
  */
 @experimental
 export class BaseAuthCredentialExchanger {
