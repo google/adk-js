@@ -95,9 +95,11 @@ export type {
 } from './crewai/crewai_tool.js';
 export {LangchainTool, isLangchainTool} from './langchain/langchain_tool.js';
 export type {
+  LangchainPublicToolLike,
   LangchainSchemaLike,
   LangchainToolConfig,
   LangchainToolLike,
+  LegacyLangchainToolLike,
 } from './langchain/langchain_tool.js';
 export {
   AnthropicLlm,

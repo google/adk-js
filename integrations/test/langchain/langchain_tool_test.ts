@@ -507,4 +507,165 @@ describe('LangchainTool', () => {
       },
     });
   });
+
+  it('prefers schema/argsSchema over args when both exist so optional fields stay optional', () => {
+    const wrapped = new LangchainTool({
+      name: 'dual_schema_tool',
+      description: 'Has both schema and args getter',
+      schema: z.object({
+        req: z.string(),
+        opt: z.string().optional(),
+      }),
+      get args() {
+        return {
+          req: {type: 'string'},
+          opt: {type: 'string'},
+        };
+      },
+      invoke: async () => 'ok',
+    });
+
+    expect(wrapped._getDeclaration()).toEqual({
+      name: 'dual_schema_tool',
+      description: 'Has both schema and args getter',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          req: {type: Type.STRING},
+          opt: {type: Type.STRING},
+        },
+        required: ['req'],
+      },
+    });
+  });
+
+  it('normalizes array types in tool.args fallback and ignores non-clonable schema metadata', () => {
+    const withRawArgs = new LangchainTool({
+      name: 'raw_args_array_type',
+      description: 'Has array type in args',
+      args: {
+        requiredField: {type: 'string'},
+        nullableField: {type: ['string', 'null']},
+      },
+      _run: () => 'ok',
+    });
+
+    expect(withRawArgs._getDeclaration()).toEqual({
+      name: 'raw_args_array_type',
+      description: 'Has array type in args',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          requiredField: {type: Type.STRING},
+          nullableField: {type: Type.STRING},
+        },
+        required: ['requiredField'],
+      },
+    });
+
+    const withNonClonableMetadata = new LangchainTool({
+      name: 'standard_schema_metadata',
+      description: 'Has non-clonable validate function on schema',
+      schema: {
+        type: 'object',
+        properties: {query: {type: 'string'}},
+        required: ['query'],
+        '~standard': {
+          version: 1,
+          vendor: 'custom',
+          validate: (value: unknown) => ({value}),
+        },
+      },
+      invoke: async () => 'ok',
+    });
+
+    expect(withNonClonableMetadata._getDeclaration()).toEqual({
+      name: 'standard_schema_metadata',
+      description: 'Has non-clonable validate function on schema',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {query: {type: Type.STRING}},
+        required: ['query'],
+      },
+    });
+  });
+
+  it('ignores generic runner property names (including bound runners) when deriving fallback names and preserves explicit function names', () => {
+    expect(
+      new LangchainTool({
+        description: 'Unnamed invoke',
+        invoke() {
+          return 'ok';
+        },
+      }).name,
+    ).toBe('langchain_tool');
+    expect(
+      new LangchainTool({
+        description: 'Unnamed call',
+        call() {
+          return 'ok';
+        },
+      }).name,
+    ).toBe('langchain_tool');
+    expect(
+      new LangchainTool({
+        description: 'Unnamed run',
+        run() {
+          return 'ok';
+        },
+      }).name,
+    ).toBe('langchain_tool');
+    expect(
+      new LangchainTool({
+        description: 'Unnamed func',
+        func() {
+          return 'ok';
+        },
+      }).name,
+    ).toBe('langchain_tool');
+    expect(
+      new LangchainTool({
+        description: 'Unnamed _run',
+        _run() {
+          return 'ok';
+        },
+      }).name,
+    ).toBe('langchain_tool');
+    expect(
+      new LangchainTool({
+        description: 'Unnamed _call',
+        _call() {
+          return 'ok';
+        },
+      }).name,
+    ).toBe('langchain_tool');
+
+    const boundTarget = {
+      invoke() {
+        return 'ok';
+      },
+    };
+    expect(
+      new LangchainTool({
+        description: 'Bound generic invoke',
+        invoke: boundTarget.invoke.bind(boundTarget),
+      }).name,
+    ).toBe('langchain_tool');
+
+    function searchWeb() {
+      return 'ok';
+    }
+    expect(
+      new LangchainTool({
+        description: 'Named runner function',
+        invoke: searchWeb,
+      }).name,
+    ).toBe('searchWeb');
+    expect(
+      new LangchainTool({
+        description: 'Bound named runner function',
+        invoke: searchWeb.bind(null),
+      }).name,
+    ).toBe('searchWeb');
+  });
 });

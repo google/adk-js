@@ -56,21 +56,24 @@
   "dependencies": {
     "@google/adk": "^2.5.0",
     "@google/genai": "^2.29.1",
-    "@opentelemetry/api": "^1.9.1"
+    "@opentelemetry/api": "^1.9.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^1.0.0",
     "@anthropic-ai/vertex-sdk": "^1.0.0",
     "@google-cloud/bigquery": "^9.2.0",
     "@google-cloud/bigquery-storage": "^6.1.0",
-    "@google-cloud/storage": "^7.17.1"
+    "@google-cloud/storage": "^7.17.1",
+    "@langchain/core": "^1.0.0"
   },
   "peerDependencies": {
     "@anthropic-ai/sdk": "^1.0.0",
     "@anthropic-ai/vertex-sdk": "^1.0.0",
     "@google-cloud/bigquery": "^9.2.0",
     "@google-cloud/bigquery-storage": "^6.1.0",
-    "@google-cloud/storage": "^7.17.1"
+    "@google-cloud/storage": "^7.17.1",
+    "@langchain/core": "^0.3.0 || ^1.0.0"
   },
   "peerDependenciesMeta": {
     "@anthropic-ai/sdk": {
@@ -86,6 +89,9 @@
       "optional": true
     },
     "@google-cloud/storage": {
+      "optional": true
+    },
+    "@langchain/core": {
       "optional": true
     }
   }

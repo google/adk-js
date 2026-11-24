@@ -17,6 +17,8 @@ import {
 } from '@google/adk';
 import type {FunctionDeclaration} from '@google/genai';
 
+import {cloneSchemaRecord} from '../utils/schema_clone.js';
+
 /**
  * Schema formats accepted on a wrapped LangChain tool.
  */
@@ -186,6 +188,17 @@ interface InternalLangchainRunnerShape {
 
 const LANGCHAIN_TOOL_SIGNATURE_SYMBOL = Symbol.for('google.adk.langchainTool');
 
+const GENERIC_RUNNER_NAMES = new Set([
+  'invoke',
+  'call',
+  'run',
+  'func',
+  'coroutine',
+  '_run',
+  '_call',
+  'anonymous',
+]);
+
 /**
  * Type guard to check if an object is an instance of {@link LangchainTool}.
  */
@@ -302,7 +315,7 @@ function readRawSchema(
     typeof (schemaSource as {toJsonSchema?: unknown}).toJsonSchema ===
     'function'
   ) {
-    return structuredClone(
+    return cloneSchemaRecord(
       (
         schemaSource as {toJsonSchema: () => Record<string, unknown>}
       ).toJsonSchema(),
@@ -311,7 +324,7 @@ function readRawSchema(
   if (
     typeof (schemaSource as {jsonSchema?: unknown}).jsonSchema === 'function'
   ) {
-    return structuredClone(
+    return cloneSchemaRecord(
       (
         schemaSource as {jsonSchema: () => Record<string, unknown>}
       ).jsonSchema(),
@@ -321,58 +334,22 @@ function readRawSchema(
     typeof (schemaSource as {modelJsonSchema?: unknown}).modelJsonSchema ===
     'function'
   ) {
-    return structuredClone(
+    return cloneSchemaRecord(
       (
         schemaSource as {modelJsonSchema: () => Record<string, unknown>}
       ).modelJsonSchema(),
     );
   }
   if (isZodSchema(schemaSource)) {
-    return structuredClone(toJsonSchema(schemaSource));
+    return cloneSchemaRecord(toJsonSchema(schemaSource));
   }
-  return structuredClone(schemaSource as Record<string, unknown>);
+  return cloneSchemaRecord(schemaSource as Record<string, unknown>);
 }
 
-function extractLangchainPropertiesMap(
-  tool: LangchainToolLike,
+function normalizePropertiesMap(
+  properties: Record<string, unknown>,
+  requiredSet?: Set<string>,
 ): Record<string, unknown> {
-  if (tool.args && typeof tool.args === 'object') {
-    return structuredClone(tool.args);
-  }
-
-  const schemaSource = tool.argsSchema ?? tool.schema;
-  if (!schemaSource) {
-    return {};
-  }
-
-  const rawSchema = readRawSchema(schemaSource);
-
-  // A JSON Schema with a string `type` or a `$schema` key but no `properties`
-  // (for example `{type: 'object'}` or `{type: 'string'}`) has no parameters.
-  // A raw property map never has a string `type`: its values are schemas.
-  const hasProperties = isPlainRecord(rawSchema['properties']);
-  const isObjectOrScalarSchema =
-    hasProperties ||
-    typeof rawSchema['type'] === 'string' ||
-    typeof rawSchema['$schema'] === 'string';
-
-  const properties: Record<string, Record<string, unknown>> = hasProperties
-    ? (rawSchema['properties'] as Record<string, Record<string, unknown>>)
-    : isObjectOrScalarSchema
-      ? {}
-      : (rawSchema as Record<string, Record<string, unknown>>);
-
-  // In JSON Schema, an object schema without `required` requires no
-  // properties. A bare property map has no such list, so its fields stay
-  // required unless they allow null or carry a default.
-  const isJsonObjectSchema =
-    rawSchema['type'] === 'object' || typeof rawSchema['$schema'] === 'string';
-  const requiredSet = Array.isArray(rawSchema['required'])
-    ? new Set<string>(rawSchema['required'] as string[])
-    : isJsonObjectSchema
-      ? new Set<string>()
-      : undefined;
-
   for (const [key, prop] of Object.entries(properties)) {
     if (!isPlainRecord(prop)) {
       continue;
@@ -392,6 +369,50 @@ function extractLangchainPropertiesMap(
   }
 
   return properties;
+}
+
+function extractLangchainPropertiesMap(
+  tool: LangchainToolLike,
+): Record<string, unknown> {
+  const schemaSource = tool.argsSchema ?? tool.schema;
+  if (schemaSource) {
+    const rawSchema = readRawSchema(schemaSource);
+
+    // A JSON Schema with a string `type` or a `$schema` key but no `properties`
+    // (for example `{type: 'object'}` or `{type: 'string'}`) has no parameters.
+    // A raw property map never has a string `type`: its values are schemas.
+    const hasProperties = isPlainRecord(rawSchema['properties']);
+    const isObjectOrScalarSchema =
+      hasProperties ||
+      typeof rawSchema['type'] === 'string' ||
+      typeof rawSchema['$schema'] === 'string';
+
+    const properties: Record<string, unknown> = hasProperties
+      ? (rawSchema['properties'] as Record<string, unknown>)
+      : isObjectOrScalarSchema
+        ? {}
+        : rawSchema;
+
+    // In JSON Schema, an object schema without `required` requires no
+    // properties. A bare property map has no such list, so its fields stay
+    // required unless they allow null or carry a default.
+    const isJsonObjectSchema =
+      rawSchema['type'] === 'object' ||
+      typeof rawSchema['$schema'] === 'string';
+    const requiredSet = Array.isArray(rawSchema['required'])
+      ? new Set<string>(rawSchema['required'] as string[])
+      : isJsonObjectSchema
+        ? new Set<string>()
+        : undefined;
+
+    return normalizePropertiesMap(properties, requiredSet);
+  }
+
+  if (isPlainRecord(tool.args)) {
+    return normalizePropertiesMap(cloneSchemaRecord(tool.args));
+  }
+
+  return {};
 }
 
 /**
@@ -443,7 +464,14 @@ export class LangchainTool extends FunctionTool<ToolInputParameters> {
 
     const runnerFn = resolveRunnerFunction(config.tool);
     const rawFn = resolveRawFunction(config.tool);
-    const rawFnName = typeof rawFn === 'function' ? rawFn.name : undefined;
+    const strippedRawFnName =
+      typeof rawFn === 'function' && rawFn.name
+        ? rawFn.name.replace(/^(?:bound\s+)+/, '')
+        : '';
+    const rawFnName =
+      strippedRawFnName && !GENERIC_RUNNER_NAMES.has(strippedRawFnName)
+        ? strippedRawFnName
+        : undefined;
     const resolvedName =
       config.name || config.tool.name || rawFnName || 'langchain_tool';
     const resolvedDescription =

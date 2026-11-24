@@ -5,7 +5,11 @@
  */
 
 import {Context, FunctionTool, GoogleLLMVariant} from '@google/adk';
-import {CrewaiTool, isCrewaiTool} from '@google/adk-integrations';
+import {
+  CrewaiTool,
+  type CrewaiToolLike,
+  isCrewaiTool,
+} from '@google/adk-integrations';
 import {Type} from '@google/genai';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod/v4';
@@ -284,6 +288,92 @@ describe('CrewaiTool', () => {
           n: {type: Type.INTEGER},
         },
         required: ['q'],
+      },
+    });
+  });
+
+  it('throws a clear TypeError when tool or tool.run is missing', () => {
+    expect(
+      () =>
+        new CrewaiTool({
+          tool: {name: 'bad'} as unknown as CrewaiToolLike,
+        }),
+    ).toThrow(
+      new TypeError('CrewaiTool requires a tool object with a run method.'),
+    );
+    expect(
+      () => new CrewaiTool({name: 'bad'} as unknown as CrewaiToolLike),
+    ).toThrow(
+      new TypeError('CrewaiTool requires a tool object with a run method.'),
+    );
+    expect(() => new CrewaiTool(null as unknown as CrewaiToolLike)).toThrow(
+      new TypeError('CrewaiTool requires a tool object with a run method.'),
+    );
+  });
+
+  it('falls back to crewai_tool for unnamed or bound run methods while keeping explicit function names', () => {
+    expect(
+      new CrewaiTool({
+        description: 'Unnamed method',
+        run() {
+          return 'ok';
+        },
+      }).name,
+    ).toBe('crewai_tool');
+
+    const boundTarget = {
+      run() {
+        return 'ok';
+      },
+    };
+    expect(
+      new CrewaiTool({
+        description: 'Bound generic run',
+        run: boundTarget.run.bind(boundTarget),
+      }).name,
+    ).toBe('crewai_tool');
+
+    function searchWeb() {
+      return 'ok';
+    }
+    expect(
+      new CrewaiTool({
+        description: 'Named function',
+        run: searchWeb,
+      }).name,
+    ).toBe('searchWeb');
+    expect(
+      new CrewaiTool({
+        description: 'Bound named function',
+        run: searchWeb.bind(null),
+      }).name,
+    ).toBe('searchWeb');
+  });
+
+  it('ignores non-clonable metadata on schema objects', () => {
+    const tool = new CrewaiTool({
+      name: 'Standard Schema Tool',
+      description: 'Carries non-clonable ~standard validator',
+      argsSchema: {
+        type: 'object',
+        properties: {query: {type: 'string'}},
+        required: ['query'],
+        '~standard': {
+          version: 1,
+          vendor: 'custom',
+          validate: (value: unknown) => ({value}),
+        },
+      },
+      run: () => 'ok',
+    });
+
+    expect(tool._getDeclaration()).toEqual({
+      name: 'standard_schema_tool',
+      description: 'Carries non-clonable ~standard validator',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {query: {type: Type.STRING}},
+        required: ['query'],
       },
     });
   });
