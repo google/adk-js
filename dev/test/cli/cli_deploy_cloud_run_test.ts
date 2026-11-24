@@ -580,6 +580,25 @@ describe('deployToCloudRun', () => {
     );
   });
 
+  it('should reject when gcloud config get-value project fails', async () => {
+    const optionsWithoutProject = {
+      ...defaultOptions,
+      project: '',
+    };
+
+    execMock.mockImplementation((cmd: string, callback: Callback) => {
+      if (cmd.includes('config get-value project')) {
+        callback(new Error('gcloud command failed'));
+      } else {
+        callback(null, {stdout: 'gcloud-region\n'});
+      }
+    });
+
+    await expect(deployToCloudRun(optionsWithoutProject)).rejects.toThrow(
+      'gcloud command failed',
+    );
+  });
+
   it('should create a private temp folder when none is supplied', async () => {
     const createdTempFolder = '/tmp/cloud_run_deploy_src-abc123';
     (createTempDir as Mock).mockResolvedValue(createdTempFolder);
@@ -762,6 +781,24 @@ describe('deployToCloudRun', () => {
       expect.stringContaining('Command failed with exit code 1'),
       expect.stringContaining('\x1b[0m'),
     );
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('should clean up temporary folder when gcloud deploy fails', async () => {
+    spawnMock.mockReturnValue({
+      on: vi.fn((event: string, cb: (code: number) => void) => {
+        if (event === 'close') {
+          process.nextTick(() => cb(1));
+        }
+      }),
+    });
+
+    await deployToCloudRun(defaultOptions);
+
+    expect(fs.rm).toHaveBeenCalledWith('/tmp/test-deploy', {
+      recursive: true,
+      force: true,
+    });
     expect(process.exitCode).toBe(1);
   });
 

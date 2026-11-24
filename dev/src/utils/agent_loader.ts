@@ -19,6 +19,7 @@ import {createRequire} from 'node:module';
 import * as path from 'node:path';
 import {pathToFileURL} from 'node:url';
 
+import {type AgentFileHandle, BaseAgentLoader} from './base_agent_loader.js';
 import {
   createTempDir,
   isFile,
@@ -194,7 +195,7 @@ export function replaceDirnamePlugin(
  * .ts) and has a dispose function to cleanup the compiled artifact after file
  * usage.
  */
-export class AgentFile {
+export class AgentFile implements AgentFileHandle {
   private cleanupFilePath: string | undefined;
   private cleanupDirPath: string | undefined;
   private disposed = false;
@@ -573,7 +574,7 @@ export class AgentFile {
  * Agent/App file should have export of the rootAgent as instance of BaseAgent
  * (or a Workflow, which is adapted into one) or app/rootApp as instance of App.
  */
-export class AgentLoader {
+export class AgentLoader extends BaseAgentLoader {
   private agentsAlreadyPreloaded = false;
   private preloadInFlight?: Promise<void>;
   private invalidationGeneration = 0;
@@ -593,6 +594,7 @@ export class AgentLoader {
     private readonly options = DEFAULT_AGENT_FILE_OPTIONS,
     private readonly watchForChanges = false,
   ) {
+    super();
     // Do cleanups on exit
     const exitHandler = async ({
       exit,
@@ -755,7 +757,7 @@ export class AgentLoader {
     );
   }
 
-  async listAgents(): Promise<string[]> {
+  override async listAgents(): Promise<string[]> {
     await this.preloadAgents();
 
     return Object.keys(this.preloadedAgents).sort();
@@ -784,7 +786,7 @@ export class AgentLoader {
    * directly; use {@link AgentFile.retain} while a request is using the bundle
    * so invalidation defers cleanup until active users finish.
    */
-  async getAgentFile(agentName: string): Promise<AgentFile> {
+  override async getAgentFile(agentName: string): Promise<AgentFile> {
     await this.preloadAgents();
 
     // `Object.hasOwn` rather than a plain lookup, so a request-supplied name
@@ -814,7 +816,7 @@ export class AgentLoader {
     return this.getAgentFile(appName);
   }
 
-  async disposeAll(): Promise<void> {
+  override async disposeAll(): Promise<void> {
     this.watcher?.close();
     this.watcher = undefined;
     const filesToDispose = [
