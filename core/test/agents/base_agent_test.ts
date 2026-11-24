@@ -1508,4 +1508,110 @@ describe('BaseAgent', () => {
       });
     });
   });
+
+  describe('name validation', () => {
+    it('throws when the agent name is not a valid identifier', () => {
+      expect(() => new MockAgent({name: 'not an identifier'})).toThrow(
+        'Found invalid agent name: "not an identifier"',
+      );
+    });
+
+    it('throws when the agent name is the reserved name user', () => {
+      expect(() => new MockAgent({name: 'user'})).toThrow(
+        "Agent name cannot be 'user'",
+      );
+      expect(new MockAgent({name: 'User'}).name).toBe('User');
+      expect(new MockAgent({name: 'USER'}).name).toBe('USER');
+    });
+  });
+
+  describe('parentAgent and tree lookup', () => {
+    it('sets parentAgent for all subAgents', () => {
+      const subAgent1 = new MockAgent({name: 'subAgent1'});
+      const subAgent2 = new MockAgent({name: 'subAgent2'});
+      const parent = new MockAgent({
+        name: 'parentAgent',
+        subAgents: [subAgent1, subAgent2],
+      });
+
+      expect(parent.parentAgent).toBeUndefined();
+      expect(subAgent1.parentAgent).toBe(parent);
+      expect(subAgent2.parentAgent).toBe(parent);
+    });
+
+    it('throws when adding a sub-agent to a second parent agent', () => {
+      const subAgent = new MockAgent({name: 'subAgent'});
+      const firstParent = new MockAgent({
+        name: 'firstParent',
+        subAgents: [subAgent],
+      });
+
+      expect(
+        () =>
+          new MockAgent({
+            name: 'secondParent',
+            subAgents: [subAgent],
+          }),
+      ).toThrow(
+        'Agent "subAgent" already has a parent agent, current parent: "firstParent", trying to add: "secondParent"',
+      );
+      expect(subAgent.parentAgent).toBe(firstParent);
+    });
+
+    it('finds the agent itself and its descendants with findAgent and returns undefined when absent', () => {
+      const grandSubAgent1 = new MockAgent({name: 'grandSubAgent1'});
+      const grandSubAgent2 = new MockAgent({name: 'grandSubAgent2'});
+      const subAgent1 = new MockAgent({
+        name: 'subAgent1',
+        subAgents: [grandSubAgent1],
+      });
+      const subAgent2 = new MockAgent({
+        name: 'subAgent2',
+        subAgents: [grandSubAgent2],
+      });
+      const parent = new MockAgent({
+        name: 'parentAgent',
+        subAgents: [subAgent1, subAgent2],
+      });
+
+      expect(parent.findAgent(parent.name)).toBe(parent);
+      expect(parent.findAgent(subAgent1.name)).toBe(subAgent1);
+      expect(parent.findAgent(subAgent2.name)).toBe(subAgent2);
+      expect(parent.findAgent(grandSubAgent1.name)).toBe(grandSubAgent1);
+      expect(parent.findAgent(grandSubAgent2.name)).toBe(grandSubAgent2);
+      expect(subAgent1.findAgent(grandSubAgent1.name)).toBe(grandSubAgent1);
+      expect(subAgent1.findAgent(grandSubAgent2.name)).toBeUndefined();
+      expect(subAgent2.findAgent(grandSubAgent1.name)).toBeUndefined();
+      expect(subAgent2.findAgent(subAgent2.name)).toBe(subAgent2);
+      expect(parent.findAgent('nonExistentAgent')).toBeUndefined();
+    });
+
+    it('finds only descendants with findSubAgent and excludes the agent itself', () => {
+      const grandSubAgent1 = new MockAgent({name: 'grandSubAgent1'});
+      const grandSubAgent2 = new MockAgent({name: 'grandSubAgent2'});
+      const subAgent1 = new MockAgent({
+        name: 'subAgent1',
+        subAgents: [grandSubAgent1],
+      });
+      const subAgent2 = new MockAgent({
+        name: 'subAgent2',
+        subAgents: [grandSubAgent2],
+      });
+      const parent = new MockAgent({
+        name: 'parentAgent',
+        subAgents: [subAgent1, subAgent2],
+      });
+
+      expect(parent.findSubAgent(subAgent1.name)).toBe(subAgent1);
+      expect(parent.findSubAgent(subAgent2.name)).toBe(subAgent2);
+      expect(parent.findSubAgent(grandSubAgent1.name)).toBe(grandSubAgent1);
+      expect(parent.findSubAgent(grandSubAgent2.name)).toBe(grandSubAgent2);
+      expect(subAgent1.findSubAgent(grandSubAgent1.name)).toBe(grandSubAgent1);
+      expect(subAgent1.findSubAgent(grandSubAgent2.name)).toBeUndefined();
+      expect(subAgent2.findSubAgent(grandSubAgent1.name)).toBeUndefined();
+      expect(subAgent2.findSubAgent(grandSubAgent2.name)).toBe(grandSubAgent2);
+      expect(parent.findSubAgent(parent.name)).toBeUndefined();
+      expect(parent.findSubAgent('nonExistentAgent')).toBeUndefined();
+    });
+  });
 });
