@@ -236,9 +236,10 @@ const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
 /**
  * Builds the function response for a tool's result.
  *
- * A computer use tool returns its screenshot as `{image: {data, mimetype}}`.
- * The image moves out of the response into the function response's `parts`,
- * so the model receives it as an image rather than as text.
+ * A computer use tool returns its screenshot as `{image: {data, mimeType}}` or
+ * `{image: {data, mimetype}}`. The image moves out of the response into the
+ * function response's `parts`, so the model receives it as an image rather
+ * than as text.
  */
 function buildFunctionResponse({
   tool,
@@ -250,14 +251,20 @@ function buildFunctionResponse({
   response: Record<string, unknown> | undefined;
 }): FunctionResponse {
   const image = isComputerUseTool(tool) ? response?.['image'] : undefined;
+  if (typeof image !== 'object' || image === null || !('data' in image)) {
+    return {id, name: tool.name, response};
+  }
+  const data = image.data;
+  const mimeType =
+    'mimeType' in image && typeof image.mimeType === 'string'
+      ? image.mimeType
+      : 'mimetype' in image && typeof image.mimetype === 'string'
+        ? image.mimetype
+        : undefined;
   if (
-    typeof image !== 'object' ||
-    image === null ||
-    !('data' in image) ||
-    !('mimetype' in image) ||
-    typeof image.data !== 'string' ||
-    typeof image.mimetype !== 'string' ||
-    !BASE64.test(image.data)
+    typeof data !== 'string' ||
+    mimeType === undefined ||
+    !BASE64.test(data)
   ) {
     return {id, name: tool.name, response};
   }
@@ -267,7 +274,7 @@ function buildFunctionResponse({
     id,
     name: tool.name,
     response: rest,
-    parts: [{inlineData: {data: image.data, mimeType: image.mimetype}}],
+    parts: [{inlineData: {data, mimeType}}],
   };
 }
 

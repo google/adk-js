@@ -3039,6 +3039,32 @@ describe('computer use function responses', () => {
     ]);
   });
 
+  it('sends {image: {data, mimetype}} as an inline image part', async () => {
+    const image = {data: 'AQID', mimetype: 'image/png'};
+
+    const functionResponse = await respond(
+      computerUseTool({image, url: 'https://example.com'}),
+    );
+
+    expect(functionResponse.response).toEqual({url: 'https://example.com'});
+    expect(functionResponse.parts).toEqual([
+      {inlineData: {data: 'AQID', mimeType: 'image/png'}},
+    ]);
+  });
+
+  it('sends {image: {data, mimeType}} as an inline image part', async () => {
+    const image = {data: 'AQID', mimeType: 'image/jpeg'};
+
+    const functionResponse = await respond(
+      computerUseTool({image, url: 'https://example.com'}),
+    );
+
+    expect(functionResponse.response).toEqual({url: 'https://example.com'});
+    expect(functionResponse.parts).toEqual([
+      {inlineData: {data: 'AQID', mimeType: 'image/jpeg'}},
+    ]);
+  });
+
   it('leaves an image that is not base64 in the response', async () => {
     const image = {data: 'not base64!', mimetype: 'image/png'};
 

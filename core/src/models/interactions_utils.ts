@@ -5,6 +5,7 @@
  */
 import {
   Content,
+  Environment,
   FinishReason,
   GenerateContentConfig,
   GoogleGenAI,
@@ -12,6 +13,7 @@ import {
   Language,
   Outcome,
   Part,
+  SafetyPolicy,
   Tool,
 } from '@google/genai';
 import {logger} from '../utils/logger.js';
@@ -422,6 +424,37 @@ export function convertStepToParts(step: Interactions.Step): Part[] {
   }
 }
 
+type InteractionsComputerUseEnvironment = NonNullable<
+  Interactions.Tool.ComputerUse['environment']
+>;
+type InteractionsDisabledSafetyPolicy = NonNullable<
+  Interactions.Tool.ComputerUse['disabled_safety_policies']
+>[number];
+
+const INTERACTIONS_COMPUTER_USE_ENVIRONMENT_MAP: Record<
+  Environment,
+  InteractionsComputerUseEnvironment | undefined
+> = {
+  [Environment.ENVIRONMENT_UNSPECIFIED]: undefined,
+  [Environment.ENVIRONMENT_BROWSER]: 'browser',
+  [Environment.ENVIRONMENT_MOBILE]: 'mobile',
+  [Environment.ENVIRONMENT_DESKTOP]: 'desktop',
+};
+
+const INTERACTIONS_SAFETY_POLICY_MAP: Record<
+  SafetyPolicy,
+  InteractionsDisabledSafetyPolicy | undefined
+> = {
+  [SafetyPolicy.SAFETY_POLICY_UNSPECIFIED]: undefined,
+  [SafetyPolicy.FINANCIAL_TRANSACTIONS]: 'financial_transactions',
+  [SafetyPolicy.SENSITIVE_DATA_MODIFICATION]: 'sensitive_data_modification',
+  [SafetyPolicy.COMMUNICATION_TOOL]: 'communication_tool',
+  [SafetyPolicy.ACCOUNT_CREATION]: 'account_creation',
+  [SafetyPolicy.DATA_MODIFICATION]: 'data_modification',
+  [SafetyPolicy.USER_CONSENT_MANAGEMENT]: 'user_consent_management',
+  [SafetyPolicy.LEGAL_TERMS_AND_AGREEMENTS]: 'legal_terms_and_agreements',
+};
+
 /**
  * Convert tools config to interactions format.
  */
@@ -485,7 +518,35 @@ export function convertToolsConfigToInteractionsFormat(
     }
 
     if (t.computerUse) {
-      interactionTools.push({type: 'computer_use'} as Interactions.Tool);
+      const computerUseTool: Interactions.Tool.ComputerUse = {
+        type: 'computer_use',
+      };
+      if (t.computerUse.environment !== undefined) {
+        const mappedEnv =
+          INTERACTIONS_COMPUTER_USE_ENVIRONMENT_MAP[t.computerUse.environment];
+        if (mappedEnv !== undefined) {
+          computerUseTool.environment = mappedEnv;
+        }
+      }
+      if (t.computerUse.excludedPredefinedFunctions !== undefined) {
+        computerUseTool.excluded_predefined_functions = [
+          ...t.computerUse.excludedPredefinedFunctions,
+        ];
+      }
+      if (t.computerUse.enablePromptInjectionDetection !== undefined) {
+        computerUseTool.enable_prompt_injection_detection =
+          t.computerUse.enablePromptInjectionDetection;
+      }
+      if (t.computerUse.disabledSafetyPolicies !== undefined) {
+        computerUseTool.disabled_safety_policies =
+          t.computerUse.disabledSafetyPolicies
+            .map((policy) => INTERACTIONS_SAFETY_POLICY_MAP[policy])
+            .filter(
+              (policy): policy is InteractionsDisabledSafetyPolicy =>
+                policy !== undefined,
+            );
+      }
+      interactionTools.push(computerUseTool);
     }
   }
 
