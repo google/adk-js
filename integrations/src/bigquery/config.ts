@@ -30,6 +30,19 @@ export enum WriteMode {
   ALLOWED = 'allowed',
 }
 
+export const DEFAULT_MAX_QUERY_RESULT_ROWS = 50;
+
+/**
+ * Validates `maxQueryResultRows` when provided and returns the effective
+ * positive integer row limit, defaulting to {@link DEFAULT_MAX_QUERY_RESULT_ROWS}.
+ */
+export function resolveMaxQueryResultRows(value?: number): number {
+  if (value !== undefined && (!Number.isInteger(value) || value <= 0)) {
+    throw new RangeError('maxQueryResultRows must be a positive integer.');
+  }
+  return value ?? DEFAULT_MAX_QUERY_RESULT_ROWS;
+}
+
 /**
  * Configuration options for {@link BigQueryToolConfig}.
  */
@@ -38,6 +51,12 @@ export interface BigQueryToolConfigOptions {
    * Write mode for BigQuery tools. Defaults to {@link WriteMode.BLOCKED}.
    */
   writeMode?: WriteMode;
+
+  /**
+   * Maximum number of rows to return from a query. Must be a positive integer;
+   * defaults to `50`.
+   */
+  maxQueryResultRows?: number;
 }
 
 const BIGQUERY_TOOL_CONFIG_SIGNATURE_SYMBOL = Symbol.for(
@@ -68,7 +87,16 @@ export class BigQueryToolConfig {
    */
   readonly writeMode: WriteMode;
 
+  /**
+   * Maximum number of rows to return from a query. Must be a positive integer;
+   * defaults to `50`.
+   */
+  readonly maxQueryResultRows: number;
+
   constructor(options: BigQueryToolConfigOptions = {}) {
     this.writeMode = options.writeMode ?? WriteMode.BLOCKED;
+    this.maxQueryResultRows = resolveMaxQueryResultRows(
+      options.maxQueryResultRows,
+    );
   }
 }
