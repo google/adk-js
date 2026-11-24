@@ -90,6 +90,7 @@ export interface AgentExecutorConfig {
 export class A2AAgentExecutor implements AgentExecutor {
   private agentPartialArtifactIdsMap: Record<string, string> = {};
   private runnerPromise?: Promise<Runner>;
+  private warnedUnauthenticatedUserName = false;
 
   constructor(private readonly config: AgentExecutorConfig) {}
 
@@ -102,7 +103,9 @@ export class A2AAgentExecutor implements AgentExecutor {
       throw new Error('message not provided');
     }
 
-    const userId = resolveA2aUserId(ctx);
+    const userId = resolveA2aUserId(ctx, () =>
+      this.warnUnauthenticatedUserNameOnce(),
+    );
     const sessionId = ctx.contextId;
     const genAIUserMessage = toGenAIContent(a2aUserMessage);
     const adkRunner = await this.resolveRunner();
@@ -243,6 +246,19 @@ export class A2AAgentExecutor implements AgentExecutor {
     return this.runnerPromise;
   }
 
+  private warnUnauthenticatedUserNameOnce(): void {
+    if (this.warnedUnauthenticatedUserName) {
+      return;
+    }
+    this.warnedUnauthenticatedUserName = true;
+    logger.warn(
+      'Ignoring the user name of an unauthenticated A2A caller. Requests ' +
+        'without an authenticated user run as A2A_USER_<contextId>, so ' +
+        'sessions, state, artifacts and memory stored under an unverified ' +
+        'name are no longer used.',
+    );
+  }
+
   private convertAdkEventToA2AEvent(
     adkEvent: AdkEvent,
     executorContext: ExecutorContext,
@@ -301,28 +317,6 @@ export class A2AAgentExecutor implements AgentExecutor {
   }
 }
 
-let warnedUnauthenticatedUserName = false;
-
-/**
- * Resets the one-time warning state for unauthenticated A2A user names.
- */
-export function resetUnauthenticatedUserNameWarning(): void {
-  warnedUnauthenticatedUserName = false;
-}
-
-function warnUnauthenticatedUserNameOnce(): void {
-  if (warnedUnauthenticatedUserName) {
-    return;
-  }
-  warnedUnauthenticatedUserName = true;
-  logger.warn(
-    'Ignoring the user name of an unauthenticated A2A caller. Requests ' +
-      'without an authenticated user run as A2A_USER_<contextId>, so ' +
-      'sessions, state, artifacts and memory stored under an unverified name ' +
-      'are no longer used.',
-  );
-}
-
 /**
  * Returns the ADK user ID to run this request as.
  *
@@ -331,14 +325,21 @@ function warnUnauthenticatedUserNameOnce(): void {
  * The name on an unauthenticated principal is a claim the caller made rather
  * than one the server checked, so it is ignored and the conversation is used as
  * an anonymous identity instead.
+ *
+ * @param ctx The A2A request context.
+ * @param onIgnoredUserName Called when the caller is unauthenticated but
+ *     carries a user name that was ignored.
  */
-export function resolveA2aUserId(ctx: RequestContext): string {
+export function resolveA2aUserId(
+  ctx: RequestContext,
+  onIgnoredUserName?: () => void,
+): string {
   const user = ctx.context?.user;
   if (user && user.userName) {
     if (user.isAuthenticated) {
       return user.userName;
     }
-    warnUnauthenticatedUserNameOnce();
+    onIgnoredUserName?.();
   }
 
   return `A2A_USER_${ctx.contextId}`;

@@ -23,10 +23,7 @@ import {
   Session,
 } from '@google/adk';
 import {beforeEach, describe, expect, it, Mocked, vi} from 'vitest';
-import {
-  resetUnauthenticatedUserNameWarning,
-  resolveA2aUserId,
-} from '../../src/a2a/agent_executor.js';
+import {resolveA2aUserId} from '../../src/a2a/agent_executor.js';
 import {logger} from '../../src/utils/logger.js';
 
 // Mock the Runner to control its async generator
@@ -616,10 +613,6 @@ describe('A2AAgentExecutor', () => {
   });
 
   describe('resolveA2aUserId and authenticated call context', () => {
-    beforeEach(() => {
-      resetUnauthenticatedUserNameWarning();
-    });
-
     it('returns userName when RequestContext user is authenticated', () => {
       const user: User = {
         isAuthenticated: true,
@@ -704,9 +697,51 @@ describe('A2AAgentExecutor', () => {
       }
     });
 
-    it('logs a warning once without leaking the unauthenticated userName', () => {
+    it('reports an ignored unauthenticated userName through the callback only', () => {
+      const onIgnoredUserName = vi.fn();
+      const unverifiedUser: User = {
+        isAuthenticated: false,
+        userName: 'victim@example.com',
+      };
+      const authenticatedUser: User = {
+        isAuthenticated: true,
+        userName: 'authenticated_user',
+      };
+
+      resolveA2aUserId(
+        createRequestContext({
+          context: new ServerCallContext(undefined, unverifiedUser),
+        }),
+        onIgnoredUserName,
+      );
+      resolveA2aUserId(
+        createRequestContext({
+          context: new ServerCallContext(undefined, authenticatedUser),
+        }),
+        onIgnoredUserName,
+      );
+      resolveA2aUserId(createRequestContext(), onIgnoredUserName);
+
+      expect(onIgnoredUserName).toHaveBeenCalledTimes(1);
+    });
+
+    it('warns once per executor without leaking the unauthenticated userName', async () => {
       const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
       try {
+        mockSessionService.getSession.mockResolvedValue(
+          createSession({
+            id: 'test_context',
+            userId: 'A2A_USER_test_context',
+            appName: 'test-app',
+          }),
+        );
+        vi.mocked(Runner).mockImplementation(function (config: RunnerConfig) {
+          return {
+            appName: config?.appName,
+            sessionService: config?.sessionService,
+            runAsync: vi.fn(async function* () {}),
+          } as unknown as Runner;
+        });
         const unverifiedUser: User = {
           isAuthenticated: false,
           userName: 'victim@example.com',
@@ -715,15 +750,26 @@ describe('A2AAgentExecutor', () => {
           contextId: 'test_context',
           context: new ServerCallContext(undefined, unverifiedUser),
         });
+        const newExecutor = () =>
+          new A2AAgentExecutor({
+            runner: {appName: 'test-app', sessionService: mockSessionService},
+          });
 
-        resolveA2aUserId(ctx);
-        resolveA2aUserId(ctx);
+        const first = newExecutor();
+        await first.execute(ctx, mockEventBus);
+        await first.execute(ctx, mockEventBus);
+        await newExecutor().execute(ctx, mockEventBus);
 
-        expect(warnSpy).toHaveBeenCalledTimes(1);
-        expect(warnSpy.mock.calls[0]?.[0]).toContain(
-          'unauthenticated A2A caller',
+        const unauthenticatedWarnings = warnSpy.mock.calls
+          .map((call) => String(call[0]))
+          .filter((message) => message.includes('unauthenticated A2A caller'));
+        expect(unauthenticatedWarnings).toHaveLength(2);
+        expect(unauthenticatedWarnings.join()).not.toContain(
+          'victim@example.com',
         );
-        expect(warnSpy.mock.calls[0]?.[0]).not.toContain('victim@example.com');
+        expect(mockSessionService.getSession).toHaveBeenCalledWith(
+          expect.objectContaining({userId: 'A2A_USER_test_context'}),
+        );
       } finally {
         warnSpy.mockRestore();
       }

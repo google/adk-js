@@ -20,6 +20,7 @@ export {
   AgentCardBuilder,
   AgentCardResolutionError,
   getA2AAgentCard,
+  isAgentCardBuilder,
   isAgentCardResolutionError,
 } from './agent_card.js';
 export type {

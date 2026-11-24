@@ -61,6 +61,7 @@ import {
   ExampleTool,
   FunctionTool,
   getA2AAgentCard,
+  isAgentCardBuilder,
   isAgentCardResolutionError,
   isExampleTool,
   LlmAgent,
@@ -216,7 +217,7 @@ describe('Agent Card', () => {
       });
 
       const card = await getA2AAgentCard(seqAgent, [dummyTransport]);
-      expect(card.description).toBe('');
+      expect(card.description).toBe('An ADK Agent');
       expect(card.skills.length).toBeGreaterThan(1);
 
       const seqSkill = card.skills.find((s) => s.name === 'workflow');
@@ -812,8 +813,16 @@ describe('Agent Card', () => {
       const skills = await buildAgentSkills(agent);
 
       const workflowSkill = skills.find((s) => s.name === 'workflow');
-      expect(workflowSkill?.description).toBe('Runs a graph');
+      expect(workflowSkill?.description).toBe(
+        'Runs a graph This workflow orchestrates the following nodes: step: execute the step node.',
+      );
+      expect(workflowSkill?.tags).toEqual(['graph_workflow']);
       expect(skills.find((s) => s.name === 'custom')).toBeUndefined();
+      expect(skills.map((s) => s.id)).toEqual([
+        'graph_workflow',
+        'graph_workflow-sub-agents',
+        'step_step',
+      ]);
     });
 
     it('publishes a code-execution skill for an agent with a code executor', async () => {
@@ -1303,15 +1312,22 @@ describe('Agent Card', () => {
       expect(card.securitySchemes).toEqual(securitySchemes);
     });
 
-    it.each([undefined, null])(
-      'throws when agent is %s',
-      (invalidAgent: unknown) => {
+    it.each([
+      {invalidAgent: undefined, typeName: 'undefined'},
+      {invalidAgent: null, typeName: 'null'},
+    ])(
+      'throws TypeError when agent is $typeName',
+      ({invalidAgent, typeName}) => {
         expect(
           () =>
             new AgentCardBuilder({
-              agent: invalidAgent as BaseAgent,
+              agent: invalidAgent as unknown as BaseAgent,
             }),
-        ).toThrow('Agent cannot be null or undefined.');
+        ).toThrow(
+          new TypeError(
+            `AgentCardBuilder requires a BaseAgent or Workflow, got ${typeName}.`,
+          ),
+        );
       },
     );
 
@@ -1358,8 +1374,89 @@ describe('Agent Card', () => {
             defaultSkillSecurity: value as unknown as SkillSecurity,
           }),
       ).toThrow(
-        'defaultSkillSecurity must be an Array<Record<string, string[]>>.',
+        new TypeError(
+          'defaultSkillSecurity must be an Array<Record<string, string[]>>.',
+        ),
       );
+    });
+
+    it.each(['/', '///', 'not a url', 'a2a/'])(
+      'throws TypeError when rpcUrl %j is not an absolute URL',
+      (rpcUrl) => {
+        const agent = new CustomAgent('test_agent');
+
+        expect(() => new AgentCardBuilder({agent, rpcUrl})).toThrow(
+          new TypeError(`rpcUrl must be an absolute URL, got "${rpcUrl}".`),
+        );
+      },
+    );
+
+    it('uses rpcUrl and omits additionalInterfaces when transports is empty', async () => {
+      const agent = new CustomAgent('test_agent');
+
+      const card = await new AgentCardBuilder({
+        agent,
+        rpcUrl: 'https://example.com/a2a/',
+        transports: [],
+      }).build();
+
+      expect(card.url).toBe('https://example.com/a2a');
+      expect(card.preferredTransport).toBe('JSONRPC');
+      expect(card.additionalInterfaces).toBeUndefined();
+    });
+
+    it('takes url and preferredTransport from the first transport', async () => {
+      const agent = new CustomAgent('test_agent');
+      const transports = [
+        {url: 'http://localhost:8000/rest', transport: 'HTTP+JSON'},
+        {url: 'http://localhost:8000/jsonrpc', transport: 'JSONRPC'},
+      ];
+
+      const card = await new AgentCardBuilder({
+        agent,
+        rpcUrl: 'ignored',
+        transports,
+      }).build();
+
+      expect(card.url).toBe('http://localhost:8000/rest');
+      expect(card.preferredTransport).toBe('HTTP+JSON');
+      expect(card.additionalInterfaces).toEqual(transports);
+    });
+
+    it('is recognized by isAgentCardBuilder', () => {
+      const builder = new AgentCardBuilder({agent: new CustomAgent('a')});
+
+      expect(isAgentCardBuilder(builder)).toBe(true);
+      expect(isAgentCardBuilder({})).toBe(false);
+      expect(isAgentCardBuilder(null)).toBe(false);
+    });
+
+    it('builds the same card as getA2AAgentCard for the same transports', async () => {
+      const agent = new LlmAgent({
+        name: 'writer',
+        description: 'Writes.',
+        subAgents: [new CustomAgent('helper', 'Helps.')],
+      });
+      const transports = [
+        {url: 'http://localhost:8000/jsonrpc', transport: 'JSONRPC'},
+      ];
+      const securitySchemes: Record<string, SecurityScheme> = {
+        apiKey: apiKeyScheme,
+      };
+      const defaultSkillSecurity: SkillSecurity = [{apiKey: []}];
+
+      const fromBuilder = await new AgentCardBuilder({
+        agent,
+        transports,
+        securitySchemes,
+        defaultSkillSecurity,
+      }).build();
+      const fromFunction = await getA2AAgentCard(agent, transports, {
+        securitySchemes,
+        defaultSkillSecurity,
+      });
+
+      expect(fromFunction).toEqual(fromBuilder);
     });
 
     it('wraps skill-building failures with the agent name and cause', async () => {
@@ -1723,6 +1820,17 @@ describe('Agent Card', () => {
         'writer: Writes the reply',
       );
       expect(getWorkflowDescription(wfEmpty)).toBeUndefined();
+
+      const wfPadded = new Workflow({
+        name: 'padded',
+        edges: [
+          [START, new CustomAgent('fetch', 'Fetches user data. ')],
+          [START, new CustomAgent('blank', '   ')],
+        ],
+      });
+      expect(buildGraphWorkflowDescription(wfPadded)).toBe(
+        'This workflow orchestrates the following nodes: fetch: Fetches user data; blank: execute the blank node.',
+      );
     });
 
     it('builds orchestration skills for agents with and without sub-agent descriptions', () => {
@@ -1780,11 +1888,19 @@ describe('Agent Card', () => {
       expect(
         extractInputsFromExamples([
           {
-            input: {text: 'Plain text input'},
-            output: [{text: 'Plain text output'}],
+            input: {
+              role: 'user',
+              parts: [{text: 'Line one'}, {text: 'Line two'}],
+            },
+            output: [],
           },
+          {
+            input: {role: 'user', parts: [{inlineData: {data: 'x'}}]},
+            output: [],
+          },
+          {input: {role: 'user'}, output: []},
         ]),
-      ).toEqual(['Plain text input']);
+      ).toEqual(['Line one\nLine two']);
       expect(extractInputsFromExamples(undefined)).toEqual([]);
 
       const emptyTool = new ExampleTool([]);
