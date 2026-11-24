@@ -64,7 +64,9 @@ export class InMemoryArtifactService implements BaseArtifactService {
       customMetadata,
     };
 
-    if (!artifact.inlineData && artifact.text === undefined) {
+    if (artifact.inlineData?.mimeType !== undefined) {
+      metadata.mimeType = artifact.inlineData.mimeType;
+    } else if (!artifact.inlineData && artifact.text === undefined) {
       const fileData = artifact.fileData!;
 
       metadata.mimeType = fileData.mimeType;

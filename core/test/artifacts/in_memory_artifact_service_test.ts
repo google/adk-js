@@ -14,6 +14,37 @@ describe('InMemoryArtifactService', () => {
     async () => {},
   );
 
+  it('preserves the MIME type of each inline artifact version', async () => {
+    const service = new InMemoryArtifactService();
+    const key = {
+      appName: 'app',
+      userId: 'user',
+      sessionId: 'session',
+      filename: 'report',
+    };
+
+    const firstVersion = await service.saveArtifact({
+      ...key,
+      artifact: {inlineData: {data: 'e30=', mimeType: 'application/json'}},
+    });
+    await service.saveArtifact({
+      ...key,
+      artifact: {inlineData: {data: 'YQ==', mimeType: 'text/plain'}},
+    });
+
+    const first = await service.getArtifactVersion({
+      ...key,
+      version: firstVersion,
+    });
+    const versions = await service.listArtifactVersions(key);
+
+    expect(first?.mimeType).toBe('application/json');
+    expect(versions.map((version) => version.mimeType)).toEqual([
+      'application/json',
+      'text/plain',
+    ]);
+  });
+
   it('keeps artifacts with ambiguous path components isolated', async () => {
     const service = new InMemoryArtifactService();
 
