@@ -6,7 +6,10 @@
 
 import type {Anthropic} from '@anthropic-ai/sdk';
 import {logger} from '@google/adk';
-import {FinishReason, Type} from '@google/genai';
+import {FinishReason, Language, type Part, Type} from '@google/genai';
+import {mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 import {
@@ -41,6 +44,9 @@ const {mockAnthropicCtor, mockAnthropicSdkState} = vi.hoisted(() => {
     shouldFailImport: boolean;
     ctorError?: Error;
     credentials?: unknown;
+    authStateFactory?: (client: {
+      credentials?: unknown;
+    }) => {resolution?: Promise<unknown> | null; error?: unknown} | undefined;
   } = {
     shouldFailImport: false,
   };
@@ -50,6 +56,7 @@ const {mockAnthropicCtor, mockAnthropicSdkState} = vi.hoisted(() => {
       apiKey?: string | null;
       authToken?: string | null;
       credentials?: unknown;
+      _authState?: {resolution?: Promise<unknown> | null; error?: unknown};
     },
     options: unknown,
   ) {
@@ -60,6 +67,9 @@ const {mockAnthropicCtor, mockAnthropicSdkState} = vi.hoisted(() => {
     this.apiKey = process.env['ANTHROPIC_API_KEY'] || null;
     this.authToken = process.env['ANTHROPIC_AUTH_TOKEN'] || null;
     this.credentials = anthropicSdkState.credentials ?? null;
+    if (anthropicSdkState.authStateFactory) {
+      this._authState = anthropicSdkState.authStateFactory(this);
+    }
   });
   return {
     mockAnthropicCtor: anthropicCtorFn,
@@ -738,6 +748,10 @@ describe('Claude conversion helpers', () => {
       [{result: 'failed', is_error: true}, true],
       [{result: 'failed', isError: true}, true],
       [{error: 'Permission denied'}, true],
+      [{is_error: false, error: 'Permission denied'}, true],
+      [{isError: false, error: 'Permission denied'}, true],
+      [{is_error: false, isError: true}, true],
+      [{is_error: false, isError: false, error: ''}, false],
     ])(
       'sets is_error on tool_result blocks from response %j to %s',
       (responsePayload, expectedIsError) => {
@@ -863,6 +877,33 @@ describe('Claude conversion helpers', () => {
       });
     });
 
+    it('preserves signed empty-text thinking blocks across contentBlockToPart and partToMessageBlock round-trips', () => {
+      const part = contentBlockToPart({
+        type: 'thinking',
+        thinking: '',
+        signature: 'empty_thinking_sig',
+      });
+      expect(part).toEqual({
+        text: '',
+        thought: true,
+        thoughtSignature: 'empty_thinking_sig',
+      });
+      expect(partToMessageBlock(part)).toEqual({
+        type: 'thinking',
+        thinking: '',
+        signature: 'empty_thinking_sig',
+      });
+    });
+
+    it('throws for unsigned empty-text thought parts in partToMessageBlock', () => {
+      expect(() => partToMessageBlock({thought: true, text: ''})).toThrow(
+        'Part kind "thought" is not supported by Claude.',
+      );
+      expect(() =>
+        partToMessageBlock({thought: true, text: '', thoughtSignature: ''}),
+      ).toThrow('Part kind "thought" is not supported by Claude.');
+    });
+
     it('returns an empty text block and warns for a part that carries only a thoughtSignature', () => {
       const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
       try {
@@ -959,7 +1000,48 @@ describe('Claude conversion helpers', () => {
         type: 'text',
         text: 'Code:```python\nprint(1)\n```',
       });
+      expect(
+        partToMessageBlock({
+          executableCode: {language: Language.PYTHON, code: 'print(1)'},
+        }),
+      ).toEqual({
+        type: 'text',
+        text: 'Code:```python\nprint(1)\n```',
+      });
+      expect(
+        partToMessageBlock({
+          executableCode: {
+            language: Language.LANGUAGE_UNSPECIFIED,
+            code: 'print(1)',
+          },
+        }),
+      ).toEqual({
+        type: 'text',
+        text: 'Code:```python\nprint(1)\n```',
+      });
     });
+
+    // `@google/genai` types `ExecutableCode.language` strictly as the `Language`
+    // enum (`LANGUAGE_UNSPECIFIED` | `PYTHON`), so construct non-enum runtime
+    // payloads via `unknown` without misleading `as Language` casts.
+    const createExecutableCodePart = (language: string, code: string): Part =>
+      ({executableCode: {language, code}}) as unknown as Part;
+
+    it.each<[string, string, string]>([
+      ['JAVASCRIPT', 'console.log(1)', 'javascript'],
+      ['javascript', 'console.log(1)', 'javascript'],
+      ['BASH', 'echo hi', 'bash'],
+    ])(
+      'uses the lowercased explicit executableCode language %s in the code fence',
+      (language, code, expectedFenceLanguage) => {
+        expect(
+          partToMessageBlock(createExecutableCodePart(language, code)),
+        ).toEqual({
+          type: 'text',
+          text: `Code:\`\`\`${expectedFenceLanguage}\n${code}\n\`\`\``,
+        });
+      },
+    );
 
     it('converts an executableCode part without code into an empty fenced block', () => {
       expect(partToMessageBlock({executableCode: {}})).toEqual({
@@ -1230,6 +1312,34 @@ describe('Claude conversion helpers', () => {
       });
 
       expect(result).toEqual({
+        role: 'assistant',
+        content: [],
+      });
+    });
+
+    it('preserves signed empty-text thinking parts and skips unsigned empty-text thinking parts on assistant turns', () => {
+      const signedPart = contentBlockToPart({
+        type: 'thinking',
+        thinking: '',
+        signature: 'sig_empty',
+      });
+
+      expect(
+        contentToMessageParam({
+          role: 'model',
+          parts: [signedPart, {thought: true, text: ''}],
+        }),
+      ).toEqual({
+        role: 'assistant',
+        content: [{type: 'thinking', thinking: '', signature: 'sig_empty'}],
+      });
+
+      expect(
+        contentToMessageParam({
+          role: 'model',
+          parts: [{thought: true, text: ''}],
+        }),
+      ).toEqual({
         role: 'assistant',
         content: [],
       });
@@ -1890,6 +2000,7 @@ describe('Claude conversion helpers', () => {
       mockAnthropicSdkState.shouldFailImport = false;
       mockAnthropicSdkState.ctorError = undefined;
       mockAnthropicSdkState.credentials = undefined;
+      mockAnthropicSdkState.authStateFactory = undefined;
       vi.stubEnv('ANTHROPIC_API_KEY', '');
       vi.stubEnv('ANTHROPIC_AUTH_TOKEN', '');
     });
@@ -1929,6 +2040,38 @@ describe('Claude conversion helpers', () => {
       expect(mockAnthropicCtor).toHaveBeenCalledTimes(1);
     });
 
+    it('awaits async _authState.resolution before checking credentials', async () => {
+      const provider = vi.fn();
+      mockAnthropicSdkState.authStateFactory = (client) => ({
+        resolution: Promise.resolve().then(() => {
+          client.credentials = provider;
+        }),
+        error: null,
+      });
+
+      const client = await createDirectAnthropicClient();
+
+      expect(client.credentials).toBe(provider);
+    });
+
+    it('surfaces async _authState.error instead of masking it', async () => {
+      const profileError = new Error(
+        'ANTHROPIC_PROFILE names the profile "missing", but it does not exist.',
+      );
+      mockAnthropicSdkState.authStateFactory = () => {
+        const authState: {
+          resolution?: Promise<unknown> | null;
+          error?: unknown;
+        } = {error: null};
+        authState.resolution = Promise.resolve().then(() => {
+          authState.error = profileError;
+        });
+        return authState;
+      };
+
+      await expect(createDirectAnthropicClient()).rejects.toBe(profileError);
+    });
+
     it('throws a credential error naming ANTHROPIC_API_KEY and Claude when no credential is resolved', async () => {
       await expect(createDirectAnthropicClient()).rejects.toThrow(
         'No Anthropic credential was found for AnthropicLlm. ' +
@@ -1936,19 +2079,44 @@ describe('Claude conversion helpers', () => {
           'or use Claude to call Claude models on Vertex AI.',
       );
       expect(mockAnthropicCtor).toHaveBeenCalledTimes(1);
-    });
 
-    it('throws a credential error that preserves cause when the Anthropic constructor throws', async () => {
-      const sdkError = new Error('SDK credential resolution failed');
-      mockAnthropicSdkState.ctorError = sdkError;
+      mockAnthropicSdkState.authStateFactory = () => ({
+        resolution: Promise.resolve(),
+        error: null,
+      });
 
-      await expect(createDirectAnthropicClient()).rejects.toMatchObject({
-        message:
-          'No Anthropic credential was found for AnthropicLlm. ' +
+      await expect(createDirectAnthropicClient()).rejects.toThrow(
+        'No Anthropic credential was found for AnthropicLlm. ' +
           'Set ANTHROPIC_API_KEY (for example, `export ANTHROPIC_API_KEY=<your-key>`), ' +
           'or use Claude to call Claude models on Vertex AI.',
-        cause: sdkError,
-      });
+      );
+    });
+
+    it('rethrows Anthropic constructor errors directly without masking them', async () => {
+      const browserError = new Error(
+        "It looks like you're running in a browser-like environment.\n\n" +
+          'This is disabled by default, as it risks exposing your secret API credentials to attackers.\n' +
+          'If you understand the risks and have appropriate mitigations in place,\n' +
+          'you can set the `dangerouslyAllowBrowser` option to `true`, e.g.,\n\n' +
+          'new Anthropic({ apiKey, dangerouslyAllowBrowser: true });\n',
+      );
+      mockAnthropicSdkState.ctorError = browserError;
+
+      await expect(createDirectAnthropicClient()).rejects.toBe(browserError);
+
+      const conflictingOptionsError = new TypeError(
+        'Pass at most one of apiKey, authToken, credentials, or none',
+      );
+      mockAnthropicSdkState.ctorError = conflictingOptionsError;
+
+      await expect(createDirectAnthropicClient()).rejects.toBe(
+        conflictingOptionsError,
+      );
+
+      const genericError = new Error('Unexpected constructor failure');
+      mockAnthropicSdkState.ctorError = genericError;
+
+      await expect(createDirectAnthropicClient()).rejects.toBe(genericError);
     });
 
     it('throws an installation error that keeps the cause when the Anthropic export is missing', async () => {
@@ -1960,6 +2128,70 @@ describe('Claude conversion helpers', () => {
           'Install it with: npm install @anthropic-ai/sdk',
         cause: expect.any(Error),
       });
+    });
+  });
+
+  describe('createDirectAnthropicClient with real @anthropic-ai/sdk', () => {
+    let tempConfigDir: string;
+
+    beforeEach(() => {
+      tempConfigDir = mkdtempSync(join(tmpdir(), 'adk-anthropic-test-'));
+      vi.stubEnv('ANTHROPIC_API_KEY', '');
+      vi.stubEnv('ANTHROPIC_AUTH_TOKEN', '');
+      vi.stubEnv('ANTHROPIC_PROFILE', '');
+      vi.stubEnv('ANTHROPIC_CONFIG_DIR', tempConfigDir);
+      vi.stubEnv('ANTHROPIC_FEDERATION_RULE_ID', '');
+      vi.stubEnv('ANTHROPIC_ORGANIZATION_ID', '');
+      vi.resetModules();
+      vi.doMock('@anthropic-ai/sdk', async () =>
+        vi.importActual('@anthropic-ai/sdk'),
+      );
+    });
+
+    afterEach(() => {
+      vi.doUnmock('@anthropic-ai/sdk');
+      vi.resetModules();
+      vi.unstubAllEnvs();
+      rmSync(tempConfigDir, {recursive: true, force: true});
+    });
+
+    it('resolves credentials asynchronously when ANTHROPIC_PROFILE points to a valid profile', async () => {
+      const configsDir = join(tempConfigDir, 'configs');
+      mkdirSync(configsDir, {recursive: true});
+      writeFileSync(
+        join(configsDir, 'test-profile.json'),
+        JSON.stringify({
+          authentication: {
+            type: 'user_oauth',
+          },
+        }),
+      );
+      vi.stubEnv('ANTHROPIC_PROFILE', 'test-profile');
+
+      const utils = await import('../../src/models/anthropic_utils.js');
+      const client = await utils.createDirectAnthropicClient();
+
+      expect(client.apiKey).toBeNull();
+      expect(client.authToken).toBeNull();
+      expect(typeof client.credentials).toBe('function');
+    });
+
+    it('surfaces the SDK profile error when ANTHROPIC_PROFILE does not exist', async () => {
+      vi.stubEnv('ANTHROPIC_PROFILE', 'missing-profile');
+
+      const utils = await import('../../src/models/anthropic_utils.js');
+
+      await expect(utils.createDirectAnthropicClient()).rejects.toThrow(
+        'ANTHROPIC_PROFILE names the profile "missing-profile"',
+      );
+    });
+
+    it('throws the missing credential error when no env var or profile is configured', async () => {
+      const utils = await import('../../src/models/anthropic_utils.js');
+
+      await expect(utils.createDirectAnthropicClient()).rejects.toThrow(
+        'No Anthropic credential was found for AnthropicLlm.',
+      );
     });
   });
 

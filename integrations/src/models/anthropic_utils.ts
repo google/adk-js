@@ -203,7 +203,7 @@ function isErrorFunctionResponse(
     return false;
   }
   return Boolean(
-    response['is_error'] ?? response['isError'] ?? response['error'],
+    response['is_error'] || response['isError'] || response['error'],
   );
 }
 
@@ -405,6 +405,14 @@ export class ToolUseIdSanitizer {
   }
 }
 
+function formatExecutableCodeLanguage(language?: string): string {
+  const normalized = language?.trim().toLowerCase();
+  if (!normalized || normalized === 'language_unspecified') {
+    return 'python';
+  }
+  return normalized;
+}
+
 /**
  * Converts an ADK `Part` into an Anthropic content block parameter.
  *
@@ -421,7 +429,11 @@ export function partToMessageBlock(
   part: Part,
   sanitizer: ToolUseIdSanitizer = new ToolUseIdSanitizer(),
 ): ClaudeMessageBlockParam {
-  if (part.thought && part.text) {
+  if (
+    part.thought &&
+    typeof part.text === 'string' &&
+    (Boolean(part.text) || Boolean(part.thoughtSignature))
+  ) {
     return {
       type: 'thinking',
       thinking: part.text,
@@ -484,9 +496,10 @@ export function partToMessageBlock(
     };
   }
   if (part.executableCode) {
+    const language = formatExecutableCodeLanguage(part.executableCode.language);
     return {
       type: 'text',
-      text: 'Code:```python\n' + (part.executableCode.code ?? '') + '\n```',
+      text: `Code:\`\`\`${language}\n${part.executableCode.code ?? ''}\n\`\`\``,
     };
   }
   if (part.codeExecutionResult) {
@@ -697,6 +710,13 @@ const MISSING_ANTHROPIC_CREDENTIAL_ERROR_MESSAGE =
   'Set ANTHROPIC_API_KEY (for example, `export ANTHROPIC_API_KEY=<your-key>`), ' +
   'or use Claude to call Claude models on Vertex AI.';
 
+interface AnthropicClientWithAuthState {
+  _authState?: {
+    resolution?: Promise<unknown> | null;
+    error?: unknown;
+  };
+}
+
 /**
  * Dynamically imports `@anthropic-ai/sdk` and constructs an `Anthropic` client
  * configured from `ANTHROPIC_API_KEY` or other credentials resolved by the SDK.
@@ -717,11 +737,20 @@ export async function createDirectAnthropicClient(): Promise<Anthropic> {
     );
   }
 
-  let client: Anthropic;
-  try {
-    client = new AnthropicClass();
-  } catch (cause: unknown) {
-    throw new Error(MISSING_ANTHROPIC_CREDENTIAL_ERROR_MESSAGE, {cause});
+  const client = new AnthropicClass();
+
+  // Anthropic.authHeaders() is `protected`, and `@anthropic-ai/sdk` v1.x stores
+  // async `defaultChain` credential resolution on `_authState.resolution` /
+  // `_authState.error` (never rejecting `resolution`). If a future SDK renames
+  // `_authState`, optional chaining safely falls through to the
+  // `apiKey`/`authToken`/`credentials` check below.
+  const authState = (client as unknown as AnthropicClientWithAuthState)
+    ._authState;
+  if (authState?.resolution) {
+    await authState.resolution;
+  }
+  if (authState?.error) {
+    throw authState.error;
   }
 
   if (!client.apiKey && !client.authToken && !client.credentials) {
