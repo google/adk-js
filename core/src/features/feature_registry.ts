@@ -11,6 +11,7 @@ import {logger} from '../utils/logger.js';
  * Feature names.
  */
 export enum FeatureName {
+  CLASSIFIER = 'CLASSIFIER',
   COMPUTER_USE = 'COMPUTER_USE',
   PROGRESSIVE_SSE_STREAMING = 'PROGRESSIVE_SSE_STREAMING',
 }
@@ -34,6 +35,10 @@ export interface FeatureConfig {
 
 // Central registry: FeatureName -> FeatureConfig
 const FEATURE_REGISTRY: Record<FeatureName, FeatureConfig> = {
+  [FeatureName.CLASSIFIER]: {
+    stage: FeatureStage.EXPERIMENTAL,
+    defaultOn: true,
+  },
   [FeatureName.COMPUTER_USE]: {
     stage: FeatureStage.EXPERIMENTAL,
     defaultOn: true,
