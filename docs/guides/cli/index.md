@@ -116,7 +116,7 @@ Each helper handles one stage of preparing, observing, or evaluating an agent ru
 
 When `agentParentFolder` is given, `agentName` must be a single path segment inside it. When it is omitted, `agentName` can be a path, but it must not be `.` or contain a `..` segment. `filename` must be a single path segment. Invalid input throws `InputValidationError` before any file is read. These checks compare strings only and do not follow symlinks.
 
-When deploying to Vertex AI Agent Engine (`adk deploy agent_engine`, `adk deploy agent-engine`, `adk deploy reasoning_engine`, or `adk deploy reasoning-engine`), `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` defined in the agent directory's `.env` file are automatically resolved as the target Google Cloud project and region when `--project` or `--region` flags are omitted. If `--project` or `--region` is explicitly specified on the command line, the explicit CLI option takes precedence.
+When deploying to Vertex AI Agent Engine (`adk deploy agent_engine`, `adk deploy agent-engine`, `adk deploy reasoning_engine`, or `adk deploy reasoning-engine`), `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` defined in the agent directory's `.env` file are automatically resolved as the target Google Cloud project and region when `--project` or `--region` flags are omitted. If `--project` or `--region` is explicitly specified on the command line, the explicit CLI option takes precedence. Agent Engine deployments also set `spec.agentFramework` to `'google-adk'` when creating or updating a Reasoning Engine resource, and include `'spec.agent_framework'` in `updateMask` on updates.
 
 ### ADK service options
 
@@ -152,7 +152,7 @@ export ADK_A2A_AUTH_TOKEN=<token>
 adk api_server path/to/agents --a2a
 ```
 
-`adk deploy cloud_run` accepts the same two options. `--a2a` starts the deployed server with `--a2a`. `--a2a_auth_token` reaches Cloud Run as the `ADK_A2A_AUTH_TOKEN` environment variable and is not written into the image. Without a token, the command prints a security warning, because the deployed A2A endpoints then accept every caller. `adk deploy gke`, `adk deploy agent_engine`, and `adk deploy reasoning_engine` accept `--a2a`, which also starts the deployed server with `--a2a`. They do not accept `--a2a_auth_token`.
+`adk deploy cloud_run` accepts the same two options. `--a2a` starts the deployed server with `--a2a`. `--a2a_auth_token` reaches Cloud Run as the `ADK_A2A_AUTH_TOKEN` environment variable and is not written into the image. Without a token, the command prints a security warning, because the deployed A2A endpoints then accept every caller. `adk deploy cloud_run` also accepts `--allow-origins, --allow_origins <string>` to configure allowed CORS origins and `--log-level, --log_level <string>` (or `-v, --verbose`) to set the server and deployment log level. `adk deploy gke`, `adk deploy agent_engine`, and `adk deploy reasoning_engine` accept `--a2a`, which also starts the deployed server with `--a2a`. They do not accept `--a2a_auth_token`.
 
 ### Deploying to Google Kubernetes Engine (`adk deploy gke`)
 
@@ -183,7 +183,7 @@ Key options (all accept both `--snake_case` and `--kebab-case` spellings):
 
 `@google/adk-devtools` exports `BaseAgentLoader` (`isBaseAgentLoader` and `AgentFileHandle`), the filesystem-backed `AgentLoader` (`AgentFile`, `FileModuleType`, `AgentFileOptions`, `AgentLoadFailure`), `AgentChangeEventHandler` (`AgentChangeEventHandlerOptions` and `CachingAgentLoader`), `SharedValue` (`isSharedValue` and `SharedValueOptions`), and `ServerOptions` for programmatic `AdkApiServer` setups:
 
-- Subclass `BaseAgentLoader` to serve agents from memory or a custom registry via `listAgents()` and `getAgentFile(agentName)` without writing temporary files (`readReadme` on `AgentFileHandle` is optional, and `disposeAll()` defaults to a no-op).
+- Subclass `BaseAgentLoader` to serve agents from memory or a custom registry via `listAgents()` and `getAgentFile(agentName)` without writing temporary files (`readReadme` and `getResetFunc` on `AgentFileHandle` are optional, and `disposeAll()` defaults to a no-op).
 - `AdkApiServer` exposes `runnersToClean: Set<string>` and `currentAppNameRef: SharedValue<string>`. When an app name is added to `runnersToClean`, the next request retires the cached `Runner` and builds a fresh one.
 - Passing `reloadAgents: true` with `agentsDir` and a custom `BaseAgentLoader` attaches `AgentChangeEventHandler` so edits to `.js`, `.cjs`, `.mjs`, `.ts`, `.mts`, `.cts`, `.yaml`, or `.yml` files inside agent directories (ignoring `node_modules` and dot-prefixed directories) call `removeAgentFromCache` (when implemented) and add affected agent names to `runnersToClean`.
 - Pass `registerProcessors` on `ServerOptions` to receive the active OpenTelemetry `TracerProvider` during `AdkApiServer` telemetry initialization.
@@ -285,7 +285,7 @@ adk web --eval_storage_uri gs://my-bucket path/to/agents
 adk eval path/to/agents/my_app my_eval_set:case_1,case_2 --eval_storage_uri gs://my-bucket
 ```
 
-`adk eval` accepts either existing eval set file paths or eval set IDs (mixing file paths and IDs in one invocation is rejected). Existing regular files take precedence over eval set IDs with the same name in the working directory; otherwise each eval set ID is read from the local agents directory (or from the bucket when `--eval_storage_uri` is set) and the command fails when an ID is not there. It saves the results to the configured eval results manager in both cases.
+`adk eval` loads the target file or directory entry (`app`, `agent`, or `index` across `.js`, `.ts`, `.mjs`, `.cjs`, `.mts`, and `.cts`) through `AgentFile` — honoring `--compile [boolean]`, `--bundle [boolean]`, and `--file-type, --file_type <cjs|esm>` — and reads any exported `resetData` hook via `agentFile.getResetFunc()`. It accepts either existing eval set file paths or eval set IDs (mixing file paths and IDs in one invocation is rejected). Existing regular files take precedence over eval set IDs with the same name in the working directory; otherwise each eval set ID is read from the local agents directory (or from the bucket when `--eval_storage_uri` is set) and the command fails when an ID is not there. It saves the results to the configured eval results manager in both cases.
 
 The bucket uses this layout:
 

@@ -266,6 +266,7 @@ describe('deployToAgentEngine', () => {
         displayName: 'test-agent',
         description: undefined,
         spec: {
+          agentFramework: 'google-adk',
           containerSpec: {
             imageUri:
               'us-central1-docker.pkg.dev/test-project/agent-engine-repo/agent-engine-agent:latest',
@@ -381,6 +382,7 @@ describe('deployToAgentEngine', () => {
         displayName: 'custom-display-name',
         description: 'custom-description',
         spec: {
+          agentFramework: 'google-adk',
           containerSpec: {
             imageUri:
               'us-central1-docker.pkg.dev/test-project/custom-repo/agent-engine-agent:latest',
@@ -694,13 +696,14 @@ describe('deployToAgentEngine', () => {
         displayName: 'test-agent',
         description: undefined,
         spec: {
+          agentFramework: 'google-adk',
           containerSpec: {
             imageUri:
               'us-central1-docker.pkg.dev/test-project/agent-engine-repo/agent-engine-agent:latest',
           },
           deploymentSpec: {},
         },
-        updateMask: 'display_name,spec.container_spec',
+        updateMask: 'display_name,spec.agent_framework,spec.container_spec',
       },
     });
     expect(mockCreateInternal).not.toHaveBeenCalled();
@@ -733,13 +736,14 @@ describe('deployToAgentEngine', () => {
         displayName: 'test-agent',
         description: undefined,
         spec: {
+          agentFramework: 'google-adk',
           containerSpec: {
             imageUri:
               'us-central1-docker.pkg.dev/test-project/agent-engine-repo/agent-engine-agent:latest',
           },
           deploymentSpec: {},
         },
-        updateMask: 'display_name,spec.container_spec',
+        updateMask: 'display_name,spec.agent_framework,spec.container_spec',
       },
     });
     expect(mockCreateInternal).not.toHaveBeenCalled();
@@ -756,7 +760,8 @@ describe('deployToAgentEngine', () => {
       name: 'projects/test-project/locations/us-central1/reasoningEngines/12345',
       config: expect.objectContaining({
         description: 'new-description',
-        updateMask: 'display_name,description,spec.container_spec',
+        updateMask:
+          'display_name,description,spec.agent_framework,spec.container_spec',
       }),
     });
   });
@@ -770,7 +775,7 @@ describe('deployToAgentEngine', () => {
 
     const {config} = mockUpdateInternal.mock.calls[0][0];
     expect(config).not.toHaveProperty('displayName');
-    expect(config.updateMask).toBe('spec.container_spec');
+    expect(config.updateMask).toBe('spec.agent_framework,spec.container_spec');
   });
 
   it('should send the display name on create when none is provided', async () => {
@@ -791,7 +796,7 @@ describe('deployToAgentEngine', () => {
     const {config} = mockUpdateInternal.mock.calls[0][0];
     expect(config.spec.deploymentSpec).toEqual({minInstances: 0});
     expect(config.updateMask).toBe(
-      'display_name,spec.container_spec,spec.deployment_spec.min_instances',
+      'display_name,spec.agent_framework,spec.container_spec,spec.deployment_spec.min_instances',
     );
   });
 
@@ -805,7 +810,7 @@ describe('deployToAgentEngine', () => {
     const {config} = mockUpdateInternal.mock.calls[0][0];
     expect(config.spec.deploymentSpec).toEqual({minInstances: 3});
     expect(config.updateMask).toBe(
-      'display_name,spec.container_spec,spec.deployment_spec.min_instances',
+      'display_name,spec.agent_framework,spec.container_spec,spec.deployment_spec.min_instances',
     );
   });
 
@@ -819,7 +824,7 @@ describe('deployToAgentEngine', () => {
     const {config} = mockUpdateInternal.mock.calls[0][0];
     expect(config.spec.deploymentSpec).toEqual({maxInstances: 8});
     expect(config.updateMask).toBe(
-      'display_name,spec.container_spec,spec.deployment_spec.max_instances',
+      'display_name,spec.agent_framework,spec.container_spec,spec.deployment_spec.max_instances',
     );
   });
 
@@ -838,7 +843,34 @@ describe('deployToAgentEngine', () => {
       maxInstances: 5,
     });
     expect(config.updateMask).toBe(
-      'display_name,description,spec.container_spec,spec.deployment_spec.min_instances,spec.deployment_spec.max_instances',
+      'display_name,description,spec.agent_framework,spec.container_spec,spec.deployment_spec.min_instances,spec.deployment_spec.max_instances',
+    );
+  });
+
+  it('sets spec.agentFramework to google-adk when creating a Reasoning Engine', async () => {
+    await deployToAgentEngine(defaultOptions);
+
+    const callArg = mockCreateInternal.mock.calls[0]?.[0];
+    expect(callArg?.config?.spec?.agentFramework).toBe('google-adk');
+    expect(callArg?.config).not.toHaveProperty('agentFramework');
+  });
+
+  it('sets spec.agentFramework to google-adk and includes spec.agent_framework in updateMask when updating a Reasoning Engine', async () => {
+    await deployToAgentEngine({
+      ...defaultOptions,
+      agentEngineId: '12345',
+    });
+
+    const callArg = mockUpdateInternal.mock.calls[0]?.[0];
+    expect(callArg?.config?.spec?.agentFramework).toBe('google-adk');
+    expect(callArg?.config).not.toHaveProperty('agentFramework');
+    const maskFields: string[] =
+      typeof callArg?.config?.updateMask === 'string'
+        ? callArg.config.updateMask.split(',')
+        : [];
+    expect(maskFields).toContain('spec.agent_framework');
+    expect(maskFields.indexOf('spec.agent_framework')).toBeLessThan(
+      maskFields.indexOf('spec.container_spec'),
     );
   });
 

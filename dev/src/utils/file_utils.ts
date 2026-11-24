@@ -49,6 +49,8 @@ export async function createFolder(folderPath: string): Promise<void> {
     await fs.mkdir(folderPath);
   } catch (e) {
     console.error(`Failed to create folder ${folderPath}`, e);
+
+    throw e;
   }
 }
 

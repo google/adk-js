@@ -114,8 +114,8 @@ export interface AgentFileOptions {
    * A debug build is ~3.5x larger than a minified one (23.6 MB -> 83.1 MB
    * across the four agents in the app_loader fixture) and costs roughly a
    * second of extra load time per agent, so it is opt-in per call site. The
-   * interactive commands — `adk run`, `adk web`, `adk api_server` — ask for
-   * it because a human reads their output. Deployment bundles and
+   * local commands — `adk run`, `adk eval`, `adk web`, `adk api_server` — ask
+   * for it because a human reads their output. Deployment bundles and
    * programmatic callers leave it unset and keep the small artifact.
    *
    * When unset, a bundled file is minified, which is the historical
@@ -209,6 +209,7 @@ export class AgentFile implements AgentFileHandle {
   };
   private agent?: RunnableRoot;
   private app?: App;
+  private resetFunc?: () => void | Promise<void>;
 
   constructor(
     private readonly filePath: string,
@@ -333,6 +334,24 @@ export class AgentFile implements AgentFileHandle {
     const jsModule = await import(importUrl);
 
     if (jsModule) {
+      const nestedAgents = [
+        jsModule.agent,
+        jsModule.default?.agent,
+        jsModule.default?.default?.agent,
+      ].filter(isObjectRecord);
+      this.resetFunc = [
+        jsModule.resetData,
+        jsModule.reset_data,
+        jsModule.default?.resetData,
+        jsModule.default?.default?.resetData,
+        jsModule.default?.reset_data,
+        jsModule.default?.default?.reset_data,
+        ...nestedAgents.flatMap((nested) => [
+          nested['resetData'],
+          nested['reset_data'],
+        ]),
+      ].find(isResetFunc);
+
       if (isApp(jsModule.app)) {
         this.app = jsModule.app;
         this.agent = jsModule.app.rootAgent;
@@ -371,15 +390,22 @@ export class AgentFile implements AgentFileHandle {
       // A bare `Workflow` counts as a root: the runner drives it as a node, so
       // a sample can export a graph directly rather than dressing it as an
       // agent.
-      if (isRunnableRoot(jsModule.rootAgent)) {
-        return (this.agent = jsModule.rootAgent);
-      }
-
-      const defaultAgent = [jsModule.default, jsModule.default?.default].find(
-        isRunnableRoot,
-      );
-      if (defaultAgent) {
-        return (this.agent = defaultAgent);
+      const explicitAgent = [
+        jsModule.rootAgent,
+        jsModule.root_agent,
+        jsModule.default,
+        jsModule.default?.default,
+        jsModule.default?.rootAgent,
+        jsModule.default?.default?.rootAgent,
+        jsModule.default?.root_agent,
+        jsModule.default?.default?.root_agent,
+        ...nestedAgents.flatMap((nested) => [
+          nested['rootAgent'],
+          nested['root_agent'],
+        ]),
+      ].find(isRunnableRoot);
+      if (explicitAgent) {
+        return (this.agent = explicitAgent);
       }
 
       const rootAgents = Object.values(jsModule).filter(isRunnableRoot);
@@ -395,6 +421,7 @@ export class AgentFile implements AgentFileHandle {
       }
     }
 
+    this.resetFunc = undefined;
     await this.dispose();
     throw new AgentFileLoadingError(
       `Failed to load agent ${
@@ -420,6 +447,14 @@ export class AgentFile implements AgentFileHandle {
       });
     }
     return this.app!;
+  }
+
+  /**
+   * Returns the optional reset hook exported by the loaded agent module, or
+   * `undefined` when none was exported.
+   */
+  getResetFunc(): (() => void | Promise<void>) | undefined {
+    return this.resetFunc;
   }
 
   getFilePath(): string {
@@ -973,6 +1008,14 @@ export class AgentLoader extends BaseAgentLoader {
         `Skipping it; the other agents are unaffected.`,
     );
   }
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isResetFunc(value: unknown): value is () => void | Promise<void> {
+  return typeof value === 'function';
 }
 
 function toLoadError(e: unknown): Error {
