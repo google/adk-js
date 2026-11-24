@@ -475,7 +475,7 @@ export class Runner {
   private async *runAsyncWithPlugins(
     invocationContext: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    // Step 1: Run the before_run callbacks to see if we should early exit.
+    // Step 1: Run beforeRunCallback hooks to see if we should early exit.
     const beforeRunCallbackResponse =
       await this.pluginManager.runBeforeRunCallback({
         invocationContext,
@@ -512,7 +512,7 @@ export class Runner {
             break;
           }
 
-          // Step 3: Run the on_event callbacks before persisting so
+          // Step 3: Run onEventCallback hooks before persisting so
           // callback changes are stored in the session and match the
           // streamed event.
           const outputEvent = await this.processAndAppendEvent({
