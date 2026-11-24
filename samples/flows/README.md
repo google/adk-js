@@ -1,43 +1,43 @@
-# Flows Sample (`BaseLlmRequestProcessor`, `BaseLlmResponseProcessor`, `handleFunctionCallsLive`, and `supportCfc`)
+# Flows Sample (`BaseLlmRequestProcessor`, `BaseLlmResponseProcessor`, Concurrent Parallel Tools, `handleFunctionCallsLive`, `sessionResumption`, and `supportCfc`)
 
-This sample demonstrates how the ADK LLM flow subsystem prepares requests, transforms responses, executes live streaming tools with `stop_streaming` cancellation, and routes Compositional Function Calling (`runConfig.supportCfc`) through the live flow.
+This sample demonstrates how the ADK LLM flow subsystem prepares requests (including excluding foreign-agent `thought` parts), transforms responses, executes multiple `functionCall` parts concurrently while preserving call-order responses and out-of-order `toolContext.state` updates, runs live streaming tools with `stop_streaming`, resumes dropped live sessions via `sessionResumption`, and routes Compositional Function Calling (`runConfig.supportCfc`) through the live flow.
 
 ## Overview
 
-`flows_showcase_agent` (`rootAgent`) is an `LlmAgent` configured with a custom `BaseLlmRequestProcessor` (`RequestAuditProcessor`) and a custom `BaseLlmResponseProcessor` (`ResponseStampProcessor`) backed by a deterministic offline `BaseLlm` (`FlowDemoLlm`). In addition to exporting `rootAgent` for the ADK CLI, the direct `main()` script demonstrates live streaming tool execution and cancellation via `handleFunctionCallsLive` (`monitor_metric` and `stop_streaming`) and Compositional Function Calling via `createRunConfig({supportCfc: true})`.
+`flowsShowcaseAgent` (`rootAgent`) is an `LlmAgent` configured with a custom `BaseLlmRequestProcessor` (`RequestAuditProcessor`), `CONTENT_REQUEST_PROCESSOR`, and a custom `BaseLlmResponseProcessor` (`ResponseStampProcessor`) backed by a deterministic offline `BaseLlm` (`FlowDemoLlm`). In addition to exporting `rootAgent` for the ADK CLI, the direct `main()` script demonstrates concurrent parallel tool calls (`lookupServiceStatus`), live streaming tool execution and cancellation via `handleFunctionCallsLive` (`monitorMetric` and `stop_streaming`), live session resumption across `goAway` (`createRunConfig({sessionResumption: {transparent: true}})`), and Compositional Function Calling (`createRunConfig({supportCfc: true})`).
 
 ## Sample Inputs
 
-- `Check the payments service.`
+- `Check the payments and checkout services.`
 
-  _Runs `RequestAuditProcessor` to append the active session channel to `systemInstruction`, calls `lookup_service_status`, and runs `ResponseStampProcessor` to prefix the final model response with `[flow-processed]`._
+  _Runs `RequestAuditProcessor` to append the active session channel to `systemInstruction`, excludes foreign-agent `thought` parts in `CONTENT_REQUEST_PROCESSOR`, executes two `lookupServiceStatus` calls concurrently while retaining out-of-order `checkedServices` state updates and call-ordered responses, and prefixes the final model response with `[flow-processed]` in `ResponseStampProcessor`._
 
 ## Graph
 
 ```mermaid
 graph TD
-    ReqProc[RequestAuditProcessor] --> Agent[flows_showcase_agent]
-    ContentProc[CONTENT_REQUEST_PROCESSOR] --> Agent
-    Agent -->|calls| Tool(lookup_service_status)
-    Agent --> RespProc[ResponseStampProcessor]
+    ReqProc["RequestAuditProcessor"] --> Agent["flowsShowcaseAgent"]
+    ContentProc["CONTENT_REQUEST_PROCESSOR"] --> Agent
+    Agent -->|concurrent calls| Tool["lookupServiceStatus"]
+    Agent --> RespProc["ResponseStampProcessor"]
 ```
 
 ## How To
 
-**Attach custom request and response processors to `LlmAgent`.** Pass `BaseLlmRequestProcessor` and `BaseLlmResponseProcessor` instances in `requestProcessors` and `responseProcessors`:
+**Attach custom request and response processors and concurrent tools to `LlmAgent`.** Pass `BaseLlmRequestProcessor` and `BaseLlmResponseProcessor` instances in `requestProcessors` and `responseProcessors`:
 
 ```ts
 export const rootAgent = new LlmAgent({
-  name: 'flows_showcase_agent',
-  model: new FlowDemoLlm(),
-  instruction: 'Check service health with lookup_service_status.',
+  name: 'flowsShowcaseAgent',
+  model: flowDemoLlm,
+  instruction: 'Check service health with lookupServiceStatus.',
   tools: [lookupServiceStatus],
   requestProcessors: [new RequestAuditProcessor(), CONTENT_REQUEST_PROCESSOR],
   responseProcessors: [new ResponseStampProcessor()],
 });
 ```
 
-**Start and cancel an async-generator streaming tool in live mode.** Call `handleFunctionCallsLive` with a `FunctionTool` whose `execute` function is an `AsyncGeneratorFunction`, then stop it by dispatching a `stop_streaming` function call with `{function_name}`:
+**Start and cancel an async-generator streaming tool in live mode.** Call `handleFunctionCallsLive` with a `FunctionTool` whose `execute` function is an `AsyncGeneratorFunction`, then stop it by dispatching the built-in `stop_streaming` function call with `{function_name}`:
 
 ```ts
 const stopResponse = await handleFunctionCallsLive({
@@ -52,19 +52,34 @@ const stopResponse = await handleFunctionCallsLive({
           functionCall: {
             id: 'call-stop-1',
             name: 'stop_streaming',
-            args: {function_name: 'monitor_metric'},
+            args: {function_name: 'monitorMetric'},
           },
         },
       ],
     },
   }),
   toolsDict: {
-    monitor_metric: monitorMetric,
+    monitorMetric,
     stop_streaming: stopStreaming,
   },
   beforeToolCallbacks: [],
   afterToolCallbacks: [],
 });
+```
+
+**Resume a live session across `goAway` reconnects.** Pass `sessionResumption` in `createRunConfig` when calling `Runner.runLive`:
+
+```ts
+for await (const event of runner.runLive({
+  userId: 'user-1',
+  sessionId: session.id,
+  liveRequestQueue,
+  runConfig: createRunConfig({
+    sessionResumption: {transparent: true},
+  }),
+})) {
+  void event;
+}
 ```
 
 **Run Compositional Function Calling (`supportCfc`).** Pass `createRunConfig({supportCfc: true})` to route `LlmAgent.runAsync` through `runLiveFlow`:
@@ -84,9 +99,9 @@ const ctx = new InvocationContext({
 
 ## Running the Sample
 
-The sample uses offline `BaseLlm` implementations (`FlowDemoLlm` and `CfcDemoLlm`), so no API key is required.
+The sample uses offline `BaseLlm` implementations (`FlowDemoLlm` and `ResumableLiveDemoLlm`), so no API key is required.
 
-Run the self-contained script directly to execute all three flow demos (request/response processors, live streaming tool execution and `stop_streaming`, and `supportCfc`):
+Run the self-contained script directly to execute all four flow demos (processors + concurrent parallel tools, live streaming tools + `stop_streaming`, live session resumption, and `supportCfc`):
 
 ```bash
 npm run build
@@ -108,4 +123,4 @@ npm run ts:check:samples
 
 ## Related Guides
 
-- [Flows](../../docs/guides/flows/index.md) - Request and response processors, function call handling (`handleFunctionCallsAsync` and `handleFunctionCallsLive`), and `supportCfc`.
+- [Flows](../../docs/guides/flows/index.md) - Request and response processors, concurrent parallel function-call handling, live session resumption, `handleFunctionCallsLive`, and `supportCfc`.

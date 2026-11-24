@@ -15,6 +15,7 @@ import {
   BaseLlmConnection,
   BasePlugin,
   BaseTool,
+  BaseToolset,
   BeforeToolCallback,
   ComputerUseTool,
   Context,
@@ -25,6 +26,7 @@ import {
   functionsExportedForTestingOnly,
   FunctionTool,
   getFunctionCalls,
+  getFunctionResponses,
   InMemorySessionService,
   InvocationContext,
   isToolNotFound,
@@ -61,6 +63,10 @@ import {
   handleFunctionCallsAsync,
   mergeParallelFunctionResponseEvents,
 } from '../../src/agents/functions.js';
+import {
+  getDeltaWriteStamp,
+  getStateWriteStamp,
+} from '../../src/sessions/state_write_order.js';
 import {logger} from '../../src/utils/logger.js';
 import {Task} from '../../src/utils/task.js';
 
@@ -3791,5 +3797,1383 @@ describe('functionCall.args deep cloning', () => {
         receivedItems: ['item1', 'item2', 'newItem'],
       },
     );
+  });
+});
+
+describe('concurrent parallel function-call execution and state ordering', () => {
+  interface RunParallelTurnOptions {
+    tools: BaseTool[];
+    functionCalls: FunctionCall[];
+    initialState?: Record<string, unknown>;
+  }
+
+  async function runParallelTurn({
+    tools,
+    functionCalls,
+    initialState,
+  }: RunParallelTurnOptions): Promise<{
+    events: Event[];
+    storedState: Record<string, unknown>;
+  }> {
+    const appName = 'parallel-exec-app';
+    const userId = 'user-1';
+    const mockLlm = new RecordingResponsesLlm([
+      {
+        content: {
+          role: 'model',
+          parts: functionCalls.map((functionCall) => ({functionCall})),
+        },
+      },
+      {content: {role: 'model', parts: [{text: 'done'}]}},
+    ]);
+    const agent = new LlmAgent({
+      name: 'testAgent',
+      model: mockLlm,
+      tools,
+    });
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName,
+      userId,
+      state: initialState,
+    });
+    const runner = new Runner({
+      appName,
+      agent,
+      sessionService,
+    });
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'run tools'}]},
+    })) {
+      events.push(event);
+    }
+
+    const storedSession = await sessionService.getSession({
+      appName,
+      userId,
+      sessionId: session.id,
+    });
+    return {
+      events,
+      storedState: storedSession?.state ?? {},
+    };
+  }
+
+  it('returns null when no function calls match the filter', async () => {
+    const agent = new LlmAgent({
+      name: 'filterAgent',
+      model: 'gemini-flash-latest',
+      tools: [testTool],
+    });
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv-empty-filter',
+      agent,
+      session: createSession({
+        id: 'sess-empty-filter',
+        appName: 'parallel-exec-app',
+        userId: 'user-1',
+      }),
+      pluginManager: new PluginManager(),
+    });
+
+    const emptyResult = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [],
+      toolsDict: {testTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    const filteredOutResult = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: 'fc-1', name: 'testTool', args: {}}],
+      toolsDict: {testTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+      filters: new Set(['fc-other']),
+    });
+
+    expect(emptyResult).toBeNull();
+    expect(filteredOutResult).toBeNull();
+  });
+
+  it('starts multiple async tool calls concurrently in Runner.runAsync and merges responses in call order', async () => {
+    const executionLog: string[] = [];
+
+    const slowTool1 = new FunctionTool({
+      name: 'slowTool1',
+      description: 'first async tool finishing second',
+      parameters: z.object({}),
+      execute: async () => {
+        executionLog.push('start1');
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        executionLog.push('end1');
+        return {result: 'firstResult'};
+      },
+    });
+    const slowTool2 = new FunctionTool({
+      name: 'slowTool2',
+      description: 'second async tool finishing first',
+      parameters: z.object({}),
+      execute: async () => {
+        executionLog.push('start2');
+        await Promise.resolve();
+        executionLog.push('end2');
+        return {result: 'secondResult'};
+      },
+    });
+
+    const {events} = await runParallelTurn({
+      tools: [slowTool1, slowTool2],
+      functionCalls: [
+        {id: 'fc-1', name: 'slowTool1', args: {}},
+        {id: 'fc-2', name: 'slowTool2', args: {}},
+      ],
+    });
+
+    const lastStart = Math.max(
+      executionLog.indexOf('start1'),
+      executionLog.indexOf('start2'),
+    );
+    const firstEnd = Math.min(
+      executionLog.indexOf('end1'),
+      executionLog.indexOf('end2'),
+    );
+    expect(lastStart).toBeGreaterThanOrEqual(0);
+    expect(lastStart).toBeLessThan(firstEnd);
+    expect(executionLog).toEqual(['start1', 'start2', 'end2', 'end1']);
+
+    expect(events).toHaveLength(3);
+    const responses = getFunctionResponses(events[1]);
+    expect(responses).toEqual([
+      {id: 'fc-1', name: 'slowTool1', response: {result: 'firstResult'}},
+      {id: 'fc-2', name: 'slowTool2', response: {result: 'secondResult'}},
+    ]);
+  });
+
+  it('starts multiple async tool calls concurrently in handleFunctionCallsLive and merges responses in call order', async () => {
+    const executionLog: string[] = [];
+
+    const slowLiveTool1 = new FunctionTool({
+      name: 'slowLiveTool1',
+      description: 'first live async tool finishing second',
+      parameters: z.object({}),
+      execute: async () => {
+        executionLog.push('start1');
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        executionLog.push('end1');
+        return {result: 'liveFirst'};
+      },
+    });
+    const slowLiveTool2 = new FunctionTool({
+      name: 'slowLiveTool2',
+      description: 'second live async tool finishing first',
+      parameters: z.object({}),
+      execute: async () => {
+        executionLog.push('start2');
+        await Promise.resolve();
+        executionLog.push('end2');
+        return {result: 'liveSecond'};
+      },
+    });
+
+    const agent = new LlmAgent({
+      name: 'liveParallelAgent',
+      model: 'gemini-flash-latest',
+      tools: [slowLiveTool1, slowLiveTool2],
+    });
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv-live-parallel',
+      agent,
+      session: createSession({
+        id: 'sess-live-parallel',
+        appName: 'parallel-exec-app',
+        userId: 'user-1',
+      }),
+      liveRequestQueue: new LiveRequestQueue(),
+      pluginManager: new PluginManager(),
+    });
+    const functionCallEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: agent.name,
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'fc-live-1', name: 'slowLiveTool1', args: {}}},
+          {functionCall: {id: 'fc-live-2', name: 'slowLiveTool2', args: {}}},
+        ],
+      },
+    });
+
+    const mergedEvent = await handleFunctionCallsLive({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {slowLiveTool1, slowLiveTool2},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const lastStart = Math.max(
+      executionLog.indexOf('start1'),
+      executionLog.indexOf('start2'),
+    );
+    const firstEnd = Math.min(
+      executionLog.indexOf('end1'),
+      executionLog.indexOf('end2'),
+    );
+    expect(lastStart).toBeGreaterThanOrEqual(0);
+    expect(lastStart).toBeLessThan(firstEnd);
+    expect(executionLog).toEqual(['start1', 'start2', 'end2', 'end1']);
+
+    expect(mergedEvent).not.toBeNull();
+    expect(mergedEvent ? getFunctionResponses(mergedEvent) : []).toEqual([
+      {id: 'fc-live-1', name: 'slowLiveTool1', response: {result: 'liveFirst'}},
+      {
+        id: 'fc-live-2',
+        name: 'slowLiveTool2',
+        response: {result: 'liveSecond'},
+      },
+    ]);
+  });
+
+  it('merges state updates from parallel synchronous tools on toolContext.state', async () => {
+    const stateSnapshots: Array<[string, Record<string, unknown>]> = [];
+
+    const modifyState1 = new FunctionTool({
+      name: 'modifyState1',
+      description: 'increments counter and records first flag',
+      parameters: z.object({}),
+      execute: (_args, toolContext) => {
+        if (!toolContext) {
+          return {result: 'missingContext'};
+        }
+        stateSnapshots.push(['tool1Start', {...toolContext.state.toRecord()}]);
+        const current = toolContext.state.get<number>('counter') ?? 0;
+        toolContext.state.set('counter', current + 1);
+        toolContext.state.set('tool1Executed', true);
+        stateSnapshots.push(['tool1End', {...toolContext.state.toRecord()}]);
+        return {result: 'modified1'};
+      },
+    });
+    const modifyState2 = new FunctionTool({
+      name: 'modifyState2',
+      description: 'increments counter and records second flag',
+      parameters: z.object({}),
+      execute: (_args, toolContext) => {
+        if (!toolContext) {
+          return {result: 'missingContext'};
+        }
+        stateSnapshots.push(['tool2Start', {...toolContext.state.toRecord()}]);
+        const current = toolContext.state.get<number>('counter') ?? 0;
+        toolContext.state.set('counter', current + 1);
+        toolContext.state.set('tool2Executed', true);
+        stateSnapshots.push(['tool2End', {...toolContext.state.toRecord()}]);
+        return {result: 'modified2'};
+      },
+    });
+
+    const {events, storedState} = await runParallelTurn({
+      tools: [modifyState1, modifyState2],
+      functionCalls: [
+        {id: 'fc-1', name: 'modifyState1', args: {}},
+        {id: 'fc-2', name: 'modifyState2', args: {}},
+      ],
+    });
+
+    expect(events[1]?.actions.stateDelta).toEqual({
+      counter: 2,
+      tool1Executed: true,
+      tool2Executed: true,
+    });
+    expect(storedState).toEqual({
+      counter: 2,
+      tool1Executed: true,
+      tool2Executed: true,
+    });
+    expect(stateSnapshots.map(([stage]) => stage)).toEqual([
+      'tool1Start',
+      'tool1End',
+      'tool2Start',
+      'tool2End',
+    ]);
+  });
+
+  it('blocks a sibling yielding async tool until a synchronous tool finishes', async () => {
+    const executionOrder: string[] = [];
+
+    const blockingSyncTool = new FunctionTool({
+      name: 'blockingSyncTool',
+      description: 'performs synchronous CPU work',
+      parameters: z.object({}),
+      execute: () => {
+        executionOrder.push('syncA');
+        let acc = 0;
+        for (let i = 0; i < 10_000; i++) {
+          acc += i;
+        }
+        executionOrder.push('syncB');
+        return {result: acc > 0 ? 'syncDone' : 'empty'};
+      },
+    });
+    const yieldingAsyncTool = new FunctionTool({
+      name: 'yieldingAsyncTool',
+      description: 'yields control across microtasks',
+      parameters: z.object({}),
+      execute: async () => {
+        executionOrder.push('asyncC');
+        await Promise.resolve();
+        executionOrder.push('asyncD');
+        return {result: 'asyncDone'};
+      },
+    });
+
+    await runParallelTurn({
+      tools: [blockingSyncTool, yieldingAsyncTool],
+      functionCalls: [
+        {id: 'fc-1', name: 'blockingSyncTool', args: {}},
+        {id: 'fc-2', name: 'yieldingAsyncTool', args: {}},
+      ],
+    });
+
+    expect(executionOrder).toEqual(['syncA', 'syncB', 'asyncC', 'asyncD']);
+  });
+
+  it('blocks a sibling yielding async tool until a non-yielding async tool finishes', async () => {
+    const executionOrder: string[] = [];
+
+    const nonYieldingAsyncTool = new FunctionTool({
+      name: 'nonYieldingAsyncTool',
+      description: 'async function with no await points',
+      parameters: z.object({}),
+      execute: async () => {
+        executionOrder.push('nonYieldA');
+        let acc = 0;
+        for (let i = 0; i < 10_000; i++) {
+          acc += i;
+        }
+        executionOrder.push('nonYieldB');
+        return {result: acc > 0 ? 'nonYieldDone' : 'empty'};
+      },
+    });
+    const yieldingAsyncTool = new FunctionTool({
+      name: 'yieldingAsyncTool',
+      description: 'async function that yields control',
+      parameters: z.object({}),
+      execute: async () => {
+        executionOrder.push('yieldC');
+        await Promise.resolve();
+        executionOrder.push('yieldD');
+        return {result: 'yieldDone'};
+      },
+    });
+
+    await runParallelTurn({
+      tools: [nonYieldingAsyncTool, yieldingAsyncTool],
+      functionCalls: [
+        {id: 'fc-1', name: 'nonYieldingAsyncTool', args: {}},
+        {id: 'fc-2', name: 'yieldingAsyncTool', args: {}},
+      ],
+    });
+
+    expect(executionOrder).toEqual([
+      'nonYieldA',
+      'nonYieldB',
+      'yieldC',
+      'yieldD',
+    ]);
+  });
+
+  it('interleaves two yielding async tools on the event loop', async () => {
+    const executionOrder: string[] = [];
+
+    const yieldingTool1 = new FunctionTool({
+      name: 'yieldingTool1',
+      description: 'first yielding async tool',
+      parameters: z.object({}),
+      execute: async () => {
+        executionOrder.push('func1A');
+        await Promise.resolve();
+        executionOrder.push('func1B');
+        return {result: 'func1Done'};
+      },
+    });
+    const yieldingTool2 = new FunctionTool({
+      name: 'yieldingTool2',
+      description: 'second yielding async tool',
+      parameters: z.object({}),
+      execute: async () => {
+        executionOrder.push('func2C');
+        await Promise.resolve();
+        executionOrder.push('func2D');
+        return {result: 'func2Done'};
+      },
+    });
+
+    await runParallelTurn({
+      tools: [yieldingTool1, yieldingTool2],
+      functionCalls: [
+        {id: 'fc-1', name: 'yieldingTool1', args: {}},
+        {id: 'fc-2', name: 'yieldingTool2', args: {}},
+      ],
+    });
+
+    expect(executionOrder).toEqual(['func1A', 'func2C', 'func1B', 'func2D']);
+  });
+
+  it('runs synchronous, non-yielding async, and yielding async tools in expected event-loop order', async () => {
+    const executionOrder: string[] = [];
+
+    const syncTool = new FunctionTool({
+      name: 'syncTool',
+      description: 'synchronous tool',
+      parameters: z.object({}),
+      execute: () => {
+        executionOrder.push('syncA');
+        executionOrder.push('syncB');
+        return {result: 'syncDone'};
+      },
+    });
+    const nonYieldingAsyncTool = new FunctionTool({
+      name: 'nonYieldingAsyncTool',
+      description: 'non-yielding async tool',
+      parameters: z.object({}),
+      execute: async () => {
+        executionOrder.push('nonYieldC');
+        executionOrder.push('nonYieldD');
+        return {result: 'nonYieldDone'};
+      },
+    });
+    const yieldingAsyncTool = new FunctionTool({
+      name: 'yieldingAsyncTool',
+      description: 'yielding async tool',
+      parameters: z.object({}),
+      execute: async () => {
+        executionOrder.push('yieldE');
+        await Promise.resolve();
+        executionOrder.push('yieldF');
+        return {result: 'yieldDone'};
+      },
+    });
+
+    await runParallelTurn({
+      tools: [syncTool, nonYieldingAsyncTool, yieldingAsyncTool],
+      functionCalls: [
+        {id: 'fc-1', name: 'syncTool', args: {}},
+        {id: 'fc-2', name: 'nonYieldingAsyncTool', args: {}},
+        {id: 'fc-3', name: 'yieldingAsyncTool', args: {}},
+      ],
+    });
+
+    expect(executionOrder).toEqual([
+      'syncA',
+      'syncB',
+      'nonYieldC',
+      'nonYieldD',
+      'yieldE',
+      'yieldF',
+    ]);
+  });
+
+  it('retains every item when parallel array appends on toolContext.state finish out of call order', async () => {
+    let markSecondWritten: (() => void) | undefined;
+    const secondWritten = new Promise<void>((resolve) => {
+      markSecondWritten = resolve;
+    });
+
+    const appendItem = new FunctionTool({
+      name: 'appendItem',
+      description: 'appends an item to state array',
+      parameters: z.object({item: z.string()}),
+      execute: async ({item}, toolContext) => {
+        if (item === 'a') {
+          let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([
+              secondWritten,
+              new Promise<void>((resolve) => {
+                fallbackTimer = setTimeout(resolve, 50);
+              }),
+            ]);
+          } finally {
+            clearTimeout(fallbackTimer);
+          }
+        }
+        const existing = toolContext?.state.get<string[]>('items') ?? [];
+        toolContext?.state.set('items', [...existing, item]);
+        markSecondWritten?.();
+        return null;
+      },
+    });
+
+    const {events, storedState} = await runParallelTurn({
+      tools: [appendItem],
+      functionCalls: [
+        {id: 'fc-a', name: 'appendItem', args: {item: 'a'}},
+        {id: 'fc-b', name: 'appendItem', args: {item: 'b'}},
+      ],
+    });
+
+    expect(events[1]?.actions.stateDelta['items']).toEqual(['b', 'a']);
+    expect(storedState['items']).toEqual(['b', 'a']);
+  });
+
+  it('stores no duplicates when parallel array appends on toolContext.state finish in call order', async () => {
+    const appendItem = new FunctionTool({
+      name: 'appendItem',
+      description: 'appends an item to state array in order',
+      parameters: z.object({item: z.string()}),
+      execute: async ({item}, toolContext) => {
+        const existing = toolContext?.state.get<string[]>('items') ?? [];
+        toolContext?.state.set('items', [...existing, item]);
+        return null;
+      },
+    });
+
+    const {events, storedState} = await runParallelTurn({
+      tools: [appendItem],
+      functionCalls: [
+        {id: 'fc-a', name: 'appendItem', args: {item: 'a'}},
+        {id: 'fc-b', name: 'appendItem', args: {item: 'b'}},
+      ],
+    });
+
+    expect(events[1]?.actions.stateDelta['items']).toEqual(['a', 'b']);
+    expect(storedState['items']).toEqual(['a', 'b']);
+  });
+
+  it('retains the latest nested array when parallel deep-cloned object writes finish out of call order', async () => {
+    interface DocState {
+      entities: Array<{name: string; labels: string[]}>;
+    }
+
+    let markSecondWritten: (() => void) | undefined;
+    const secondWritten = new Promise<void>((resolve) => {
+      markSecondWritten = resolve;
+    });
+
+    const addLabel = new FunctionTool({
+      name: 'addLabel',
+      description: 'adds a label to a deep-cloned document entity',
+      parameters: z.object({label: z.string()}),
+      execute: async ({label}, toolContext) => {
+        if (label === 'a') {
+          let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([
+              secondWritten,
+              new Promise<void>((resolve) => {
+                fallbackTimer = setTimeout(resolve, 50);
+              }),
+            ]);
+          } finally {
+            clearTimeout(fallbackTimer);
+          }
+        }
+        const currentDoc = toolContext?.state.get<DocState>('doc');
+        if (currentDoc) {
+          const clonedDoc = structuredClone(currentDoc);
+          clonedDoc.entities[0]?.labels.push(label);
+          toolContext?.state.set('doc', clonedDoc);
+        }
+        markSecondWritten?.();
+        return null;
+      },
+    });
+
+    const {events, storedState} = await runParallelTurn({
+      tools: [addLabel],
+      functionCalls: [
+        {id: 'fc-a', name: 'addLabel', args: {label: 'a'}},
+        {id: 'fc-b', name: 'addLabel', args: {label: 'b'}},
+      ],
+      initialState: {
+        doc: {entities: [{name: 'e1', labels: []}]},
+      },
+    });
+
+    const expectedDoc: DocState = {
+      entities: [{name: 'e1', labels: ['b', 'a']}],
+    };
+    expect(events[1]?.actions.stateDelta['doc']).toEqual(expectedDoc);
+    expect(storedState['doc']).toEqual(expectedDoc);
+  });
+
+  it('retains separate keys written in parallel to the same plain-object state entry', async () => {
+    const saveDraft = new FunctionTool({
+      name: 'saveDraft',
+      description: 'writes a draft key into state',
+      parameters: z.object({draftId: z.string()}),
+      execute: async ({draftId}, toolContext) => {
+        toolContext?.state.set('drafts', {[draftId]: 'body'});
+        return null;
+      },
+    });
+
+    const {events, storedState} = await runParallelTurn({
+      tools: [saveDraft],
+      functionCalls: [
+        {id: 'fc-a', name: 'saveDraft', args: {draftId: 'a'}},
+        {id: 'fc-b', name: 'saveDraft', args: {draftId: 'b'}},
+      ],
+    });
+
+    expect(events[1]?.actions.stateDelta['drafts']).toEqual({
+      a: 'body',
+      b: 'body',
+    });
+    expect(storedState['drafts']).toEqual({
+      a: 'body',
+      b: 'body',
+    });
+  });
+
+  it('keeps call-order precedence for direct writes to toolContext.actions.stateDelta that bypass toolContext.state', async () => {
+    const setItemsDirect = new FunctionTool({
+      name: 'setItemsDirect',
+      description: 'writes array directly to actions.stateDelta',
+      parameters: z.object({item: z.string()}),
+      execute: async ({item}, toolContext) => {
+        if (toolContext) {
+          toolContext.actions.stateDelta['items'] = [item];
+        }
+        return null;
+      },
+    });
+    const setDoneDirect = new FunctionTool({
+      name: 'setDoneDirect',
+      description: 'writes scalar directly to actions.stateDelta',
+      parameters: z.object({doneFlag: z.string()}),
+      execute: async ({doneFlag}, toolContext) => {
+        if (toolContext) {
+          toolContext.actions.stateDelta['done'] = doneFlag === 'yes';
+        }
+        return null;
+      },
+    });
+
+    const arrayRun = await runParallelTurn({
+      tools: [setItemsDirect],
+      functionCalls: [
+        {id: 'fc-a', name: 'setItemsDirect', args: {item: 'a'}},
+        {id: 'fc-b', name: 'setItemsDirect', args: {item: 'b'}},
+      ],
+      initialState: {items: ['old']},
+    });
+    expect(arrayRun.events[1]?.actions.stateDelta['items']).toEqual(['b']);
+    expect(arrayRun.storedState['items']).toEqual(['b']);
+
+    const scalarRun = await runParallelTurn({
+      tools: [setDoneDirect],
+      functionCalls: [
+        {id: 'fc-no', name: 'setDoneDirect', args: {doneFlag: 'no'}},
+        {id: 'fc-yes', name: 'setDoneDirect', args: {doneFlag: 'yes'}},
+      ],
+      initialState: {done: false},
+    });
+    expect(scalarRun.events[1]?.actions.stateDelta['done']).toBe(true);
+    expect(scalarRun.storedState['done']).toBe(true);
+  });
+
+  it('preserves a newly started streaming Task when stop_streaming awaits cancellation in parallel', async () => {
+    let releaseNewStream: (() => void) | undefined;
+    const monitorFeed = new FunctionTool({
+      name: 'monitorFeed',
+      description: 'streams feed updates until released',
+      parameters: z.object({feedId: z.string()}),
+      execute: async function* ({feedId}) {
+        yield `feed:${feedId}`;
+        await new Promise<void>((resolve) => {
+          releaseNewStream = resolve;
+        });
+      },
+    });
+    const stopStreaming = new FunctionTool({
+      name: 'stop_streaming',
+      description: 'stops an active streaming tool',
+      parameters: z.object({function_name: z.string()}),
+      execute: async () => ({}),
+    });
+
+    const previousTask = new Task<void>(async (abortSignal) => {
+      await new Promise<void>((resolve) => {
+        if (abortSignal.aborted) {
+          queueMicrotask(resolve);
+          return;
+        }
+        abortSignal.addEventListener('abort', () => queueMicrotask(resolve), {
+          once: true,
+        });
+      });
+    });
+
+    const agent = new LlmAgent({
+      name: 'liveStreamGuardAgent',
+      model: 'gemini-flash-latest',
+      tools: [monitorFeed, stopStreaming],
+    });
+    const liveRequestQueue = new LiveRequestQueue();
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv-stop-restart',
+      agent,
+      session: createSession({
+        id: 'sess-stop-restart',
+        appName: 'parallel-exec-app',
+        userId: 'user-1',
+      }),
+      liveRequestQueue,
+      activeStreamingTools: {
+        monitorFeed: new ActiveStreamingTool({task: previousTask}),
+      },
+      pluginManager: new PluginManager(),
+    });
+
+    try {
+      const mergedEvent = await handleFunctionCallsLive({
+        invocationContext,
+        functionCallEvent: createEvent({
+          invocationId: invocationContext.invocationId,
+          author: agent.name,
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  id: 'fc-stop',
+                  name: 'stop_streaming',
+                  args: {function_name: 'monitorFeed'},
+                },
+              },
+              {
+                functionCall: {
+                  id: 'fc-restart',
+                  name: 'monitorFeed',
+                  args: {feedId: 'feed-2'},
+                },
+              },
+            ],
+          },
+        }),
+        toolsDict: {
+          monitorFeed,
+          stop_streaming: stopStreaming,
+        },
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+
+      const currentTask =
+        invocationContext.activeStreamingTools?.['monitorFeed']?.task;
+      expect(previousTask.done()).toBe(true);
+      expect(currentTask).toBeDefined();
+      expect(currentTask).not.toBe(previousTask);
+      expect(currentTask?.done()).toBe(false);
+      expect(mergedEvent ? getFunctionResponses(mergedEvent) : []).toEqual([
+        {
+          id: 'fc-stop',
+          name: 'stop_streaming',
+          response: {
+            status: 'Successfully stopped streaming function monitorFeed',
+          },
+        },
+        {
+          id: 'fc-restart',
+          name: 'monitorFeed',
+          response: {
+            status:
+              'The function is running asynchronously and the results are pending.',
+          },
+        },
+      ]);
+    } finally {
+      releaseNewStream?.();
+      invocationContext.activeStreamingTools?.['monitorFeed']?.task?.cancel();
+      await invocationContext.activeStreamingTools?.['monitorFeed']?.task
+        ?.promise;
+      liveRequestQueue.close();
+    }
+  });
+
+  it('retains the highest-stamped scalar value when parallel async tools update toolContext.state out of call order', async () => {
+    let markSecondWritten: (() => void) | undefined;
+    const secondWritten = new Promise<void>((resolve) => {
+      markSecondWritten = resolve;
+    });
+
+    const incrementCounter = new FunctionTool({
+      name: 'incrementCounter',
+      description: 'increments a shared scalar counter in state',
+      parameters: z.object({stepTag: z.string()}),
+      execute: async ({stepTag}, toolContext) => {
+        if (stepTag === 'slowFirst') {
+          let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([
+              secondWritten,
+              new Promise<void>((resolve) => {
+                fallbackTimer = setTimeout(resolve, 50);
+              }),
+            ]);
+          } finally {
+            clearTimeout(fallbackTimer);
+          }
+        }
+        const current = toolContext?.state.get<number>('counter') ?? 0;
+        toolContext?.state.set('counter', current + 1);
+        markSecondWritten?.();
+        return {stepTag};
+      },
+    });
+
+    const {events, storedState} = await runParallelTurn({
+      tools: [incrementCounter],
+      functionCalls: [
+        {
+          id: 'fc-slow',
+          name: 'incrementCounter',
+          args: {stepTag: 'slowFirst'},
+        },
+        {
+          id: 'fc-fast',
+          name: 'incrementCounter',
+          args: {stepTag: 'fastSecond'},
+        },
+      ],
+      initialState: {counter: 0},
+    });
+
+    const mergedDelta = events[1]?.actions.stateDelta ?? {};
+    expect(mergedDelta['counter']).toBe(2);
+    expect(storedState['counter']).toBe(2);
+    expect(getDeltaWriteStamp(mergedDelta, 'counter')).toBeTypeOf('number');
+    expect(getDeltaWriteStamp(mergedDelta, 'unstampedKey')).toBeUndefined();
+
+    const session = createSession({
+      id: 'sess-stamp-check',
+      appName: 'parallel-exec-app',
+      userId: 'user-1',
+    });
+    expect(getStateWriteStamp(session.state, 'counter')).toBeUndefined();
+    const ctx = new InvocationContext({
+      invocationId: 'inv-stamp-check',
+      agent: new LlmAgent({
+        name: 'stampCheckAgent',
+        model: 'gemini-flash-latest',
+        tools: [incrementCounter],
+      }),
+      session,
+      pluginManager: new PluginManager(),
+    });
+    const toolCtx = new Context({invocationContext: ctx});
+    toolCtx.state.set('counter', 7);
+    expect(getStateWriteStamp(session.state, 'counter')).toBe(
+      getDeltaWriteStamp(toolCtx.actions.stateDelta, 'counter'),
+    );
+
+    const setStampedThenDirect = new FunctionTool({
+      name: 'setStampedThenDirect',
+      description: 'writes either via state or directly to stateDelta',
+      parameters: z.object({mode: z.enum(['stamped', 'direct'])}),
+      execute: async ({mode}, currentToolContext) => {
+        if (mode === 'stamped') {
+          currentToolContext?.state.set('counter', 10);
+        } else if (currentToolContext) {
+          currentToolContext.actions.stateDelta['counter'] = 99;
+        }
+        return {mode};
+      },
+    });
+
+    const mixedRun = await runParallelTurn({
+      tools: [setStampedThenDirect],
+      functionCalls: [
+        {
+          id: 'fc-stamped',
+          name: 'setStampedThenDirect',
+          args: {mode: 'stamped'},
+        },
+        {
+          id: 'fc-direct',
+          name: 'setStampedThenDirect',
+          args: {mode: 'direct'},
+        },
+      ],
+    });
+
+    const mixedDelta = mixedRun.events[1]?.actions.stateDelta ?? {};
+    expect(mixedDelta['counter']).toBe(99);
+    expect(mixedRun.storedState['counter']).toBe(99);
+    expect(getDeltaWriteStamp(mixedDelta, 'counter')).toBeUndefined();
+  });
+
+  it('restores the latest stamped state write when an intermediate unstamped stateDelta write is overwritten by a later stamped call', async () => {
+    let markOlderWritten: (() => void) | undefined;
+    const olderWritten = new Promise<void>((resolve) => {
+      markOlderWritten = resolve;
+    });
+    let invocationSession: Session | undefined;
+
+    const mixedThreeWayTool = new FunctionTool({
+      name: 'mixedThreeWayTool',
+      description:
+        'writes scalar, array, and plain-object keys across stamped and unstamped paths',
+      parameters: z.object({
+        callRole: z.enum(['latestStamped', 'unstampedMiddle', 'olderStamped']),
+      }),
+      execute: async ({callRole}, toolContext) => {
+        if (!toolContext) {
+          return {callRole};
+        }
+        invocationSession = toolContext.invocationContext.session;
+        if (callRole === 'latestStamped') {
+          let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([
+              olderWritten,
+              new Promise<void>((resolve) => {
+                fallbackTimer = setTimeout(resolve, 50);
+              }),
+            ]);
+          } finally {
+            clearTimeout(fallbackTimer);
+          }
+          toolContext.state.set('score', 2);
+          const existingItems = toolContext.state.get<string[]>('items') ?? [];
+          toolContext.state.set('items', [...existingItems, 'a']);
+          const existingDoc = toolContext.state.get<{tags: string[]}>('doc');
+          toolContext.state.set('doc', {
+            tags: [...(existingDoc?.tags ?? []), 'a'],
+          });
+          toolContext.state.set('scalarOverPlain', 'latest');
+          toolContext.state.set('config', {shared: 'fromFirst', firstOnly: 1});
+          return {callRole};
+        }
+
+        if (callRole === 'unstampedMiddle') {
+          toolContext.actions.stateDelta['score'] = 50;
+          toolContext.actions.stateDelta['items'] = ['direct'];
+          toolContext.actions.stateDelta['doc'] = ['directDoc'];
+          toolContext.actions.stateDelta['scalarOverPlain'] = {direct: true};
+          toolContext.actions.stateDelta['config'] = {
+            shared: 'directOverride',
+          };
+          return {callRole};
+        }
+
+        toolContext.state.set('score', 1);
+        toolContext.state.set('items', ['c']);
+        toolContext.state.set('doc', {tags: ['c']});
+        toolContext.state.set('scalarOverPlain', 'older');
+        toolContext.state.set('config', {thirdOnly: 3});
+        markOlderWritten?.();
+        return {callRole};
+      },
+    });
+
+    const {events, storedState} = await runParallelTurn({
+      tools: [mixedThreeWayTool],
+      functionCalls: [
+        {
+          id: 'fc-1',
+          name: 'mixedThreeWayTool',
+          args: {callRole: 'latestStamped'},
+        },
+        {
+          id: 'fc-2',
+          name: 'mixedThreeWayTool',
+          args: {callRole: 'unstampedMiddle'},
+        },
+        {
+          id: 'fc-3',
+          name: 'mixedThreeWayTool',
+          args: {callRole: 'olderStamped'},
+        },
+      ],
+    });
+
+    const mergedDelta = events[1]?.actions.stateDelta ?? {};
+    const liveState = invocationSession?.state ?? {};
+
+    expect(mergedDelta['score']).toBe(2);
+    expect(liveState['score']).toBe(2);
+    expect(storedState['score']).toBe(2);
+    expect(getDeltaWriteStamp(mergedDelta, 'score')).toBe(
+      getStateWriteStamp(liveState, 'score'),
+    );
+
+    expect(mergedDelta['items']).toEqual(['c', 'a']);
+    expect(liveState['items']).toEqual(['c', 'a']);
+    expect(storedState['items']).toEqual(['c', 'a']);
+
+    expect(mergedDelta['doc']).toEqual({tags: ['c', 'a']});
+    expect(liveState['doc']).toEqual({tags: ['c', 'a']});
+    expect(storedState['doc']).toEqual({tags: ['c', 'a']});
+
+    expect(mergedDelta['scalarOverPlain']).toBe('latest');
+    expect(liveState['scalarOverPlain']).toBe('latest');
+    expect(storedState['scalarOverPlain']).toBe('latest');
+
+    const expectedConfig = {
+      shared: 'directOverride',
+      firstOnly: 1,
+      thirdOnly: 3,
+    };
+    expect(mergedDelta['config']).toEqual(expectedConfig);
+    expect(liveState['config']).toEqual(expectedConfig);
+    expect(storedState['config']).toEqual(expectedConfig);
+  });
+
+  it('ignores inherited Object.prototype keys in plain object maps during function call handling', async () => {
+    expect(
+      getLongRunningFunctionCalls(
+        [{id: 'fc-proto', name: 'toString', args: {}}],
+        {testTool},
+      ).size,
+    ).toBe(0);
+
+    let seenConfirmation: unknown = 'unset';
+    let seenResumeInputs: Record<string, unknown> | undefined;
+    const inspectContextTool = new FunctionTool({
+      name: 'inspectContextTool',
+      description: 'captures confirmation and resume inputs from toolContext',
+      parameters: z.object({}),
+      execute: (_args, toolContext) => {
+        seenConfirmation = toolContext?.toolConfirmation;
+        seenResumeInputs = toolContext?.resumeInputs;
+        return {ok: true};
+      },
+    });
+    const stopStreaming = new FunctionTool({
+      name: 'stop_streaming',
+      description: 'stops an active streaming tool',
+      parameters: z.object({function_name: z.string()}),
+      execute: async () => ({}),
+    });
+
+    const agent = new LlmAgent({
+      name: 'protoGuardAgent',
+      model: 'gemini-flash-latest',
+      tools: [inspectContextTool, stopStreaming],
+    });
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv-proto-guard',
+      agent,
+      session: createSession({
+        id: 'sess-proto-guard',
+        appName: 'parallel-exec-app',
+        userId: 'user-1',
+      }),
+      activeStreamingTools: {},
+      pluginManager: new PluginManager(),
+    });
+
+    const responseEvent = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [
+        {id: 'constructor', name: 'inspectContextTool', args: {}},
+      ],
+      toolsDict: {inspectContextTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+      toolConfirmationDict: {},
+      resumeInputsDict: {},
+    });
+
+    expect(responseEvent).not.toBeNull();
+    expect(seenConfirmation).toBeUndefined();
+    expect(seenResumeInputs).toEqual({});
+
+    const stopProtoEvent = await handleFunctionCallsLive({
+      invocationContext,
+      functionCallEvent: createEvent({
+        invocationId: invocationContext.invocationId,
+        author: agent.name,
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-stop-proto',
+                name: 'stop_streaming',
+                args: {function_name: 'constructor'},
+              },
+            },
+          ],
+        },
+      }),
+      toolsDict: {stop_streaming: stopStreaming},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(stopProtoEvent ? getFunctionResponses(stopProtoEvent) : []).toEqual([
+      {
+        id: 'fc-stop-proto',
+        name: 'stop_streaming',
+        response: {
+          status: 'No active streaming function named constructor found',
+        },
+      },
+    ]);
+  });
+
+  it('awaits in-flight sibling tools before rejecting when a tool callback throws in a parallel batch', async () => {
+    // 1. Direct `handleFunctionCallsAsync` call: rejects with the first
+    //    callback error only after the in-flight sibling tool settles.
+    let markDirectSiblingInFlight: (() => void) | undefined;
+    const directSiblingInFlight = new Promise<void>((resolve) => {
+      markDirectSiblingInFlight = resolve;
+    });
+    let releaseDirectSibling: (() => void) | undefined;
+    const allowDirectSiblingToFinish = new Promise<void>((resolve) => {
+      releaseDirectSibling = resolve;
+    });
+    let directSiblingFinished = false;
+
+    const directSiblingTool = new FunctionTool({
+      name: 'directSiblingTool',
+      description: 'updates session state after awaiting an async step',
+      parameters: z.object({}),
+      execute: async (_args, toolContext) => {
+        markDirectSiblingInFlight?.();
+        await allowDirectSiblingToFinish;
+        toolContext?.state.set('directSiblingWrite', 'settledBeforeRejection');
+        directSiblingFinished = true;
+        return {result: 'siblingDone'};
+      },
+    });
+    const directFailingBeforeTool = new FunctionTool({
+      name: 'directFailingBeforeTool',
+      description: 'never executes because beforeToolCallback throws',
+      parameters: z.object({}),
+      execute: async () => ({result: 'unreachable'}),
+    });
+    const directFailingAfterTool = new FunctionTool({
+      name: 'directFailingAfterTool',
+      description: 'executes before afterToolCallback throws',
+      parameters: z.object({}),
+      execute: () => ({result: 'fastDone'}),
+    });
+
+    const directAgent = new LlmAgent({
+      name: 'directCallbackRejectionAgent',
+      model: 'gemini-flash-latest',
+      tools: [
+        directSiblingTool,
+        directFailingBeforeTool,
+        directFailingAfterTool,
+      ],
+    });
+    const directSession = createSession({
+      id: 'sess-direct-reject',
+      appName: 'parallel-exec-app',
+      userId: 'user-1',
+    });
+    const directContext = new InvocationContext({
+      invocationId: 'inv-direct-reject',
+      agent: directAgent,
+      session: directSession,
+      pluginManager: new PluginManager(),
+    });
+
+    let caughtError: unknown;
+    let stateAtRejection: Record<string, unknown> = {};
+    try {
+      await handleFunctionCallsAsync({
+        invocationContext: directContext,
+        functionCallEvent: createEvent({
+          invocationId: directContext.invocationId,
+          author: directAgent.name,
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  id: 'fc-direct-1',
+                  name: 'directSiblingTool',
+                  args: {},
+                },
+              },
+              {
+                functionCall: {
+                  id: 'fc-direct-2',
+                  name: 'directFailingBeforeTool',
+                  args: {},
+                },
+              },
+              {
+                functionCall: {
+                  id: 'fc-direct-3',
+                  name: 'directFailingAfterTool',
+                  args: {},
+                },
+              },
+            ],
+          },
+        }),
+        toolsDict: {
+          directSiblingTool,
+          directFailingBeforeTool,
+          directFailingAfterTool,
+        },
+        beforeToolCallbacks: [
+          async ({tool}) => {
+            if (tool.name === 'directFailingBeforeTool') {
+              await directSiblingInFlight;
+              setTimeout(() => {
+                releaseDirectSibling?.();
+              }, 0);
+              throw new Error('Before-tool callback failed.');
+            }
+            return undefined;
+          },
+        ],
+        afterToolCallbacks: [
+          async ({tool}) => {
+            if (tool.name === 'directFailingAfterTool') {
+              await directSiblingInFlight;
+              throw new Error('After-tool callback failed.');
+            }
+            return undefined;
+          },
+        ],
+      });
+    } catch (e: unknown) {
+      caughtError = e;
+      stateAtRejection = {...directSession.state};
+    }
+
+    expect(caughtError).toBeInstanceOf(Error);
+    expect(caughtError instanceof Error ? caughtError.message : '').toBe(
+      'Before-tool callback failed.',
+    );
+    expect(directSiblingFinished).toBe(true);
+    expect(stateAtRejection).toEqual({
+      directSiblingWrite: 'settledBeforeRejection',
+    });
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    expect(directSession.state).toEqual(stateAtRejection);
+
+    // 2. Full `Runner.runAsync` lifecycle: `BaseToolset.close()` in `Runner`'s
+    //    `finally` runs only after the sibling async tool finishes.
+    class TrackingToolset extends BaseToolset {
+      closed = false;
+
+      constructor(private readonly resolveTools: () => BaseTool[]) {
+        super();
+      }
+
+      override async getTools(): Promise<BaseTool[]> {
+        return this.resolveTools();
+      }
+
+      override async close(): Promise<void> {
+        this.closed = true;
+      }
+    }
+
+    let markRunnerSiblingInFlight: (() => void) | undefined;
+    const runnerSiblingInFlight = new Promise<void>((resolve) => {
+      markRunnerSiblingInFlight = resolve;
+    });
+    let releaseRunnerSibling: (() => void) | undefined;
+    const allowRunnerSiblingToFinish = new Promise<void>((resolve) => {
+      releaseRunnerSibling = resolve;
+    });
+
+    let runnerSiblingFinished = false;
+    let toolsetClosedDuringSibling = false;
+    let runnerInvocationState: Record<string, unknown> | undefined;
+    const trackingToolset = new TrackingToolset(() => [
+      siblingAsyncTool,
+      failingBeforeTool,
+    ]);
+
+    const siblingAsyncTool = new FunctionTool({
+      name: 'siblingAsyncTool',
+      description: 'updates session state before runner tears down toolsets',
+      parameters: z.object({}),
+      execute: async (_args, toolContext) => {
+        runnerInvocationState = toolContext?.invocationContext.session.state;
+        markRunnerSiblingInFlight?.();
+        await allowRunnerSiblingToFinish;
+        toolsetClosedDuringSibling = trackingToolset.closed;
+        toolContext?.state.set('siblingWrite', 'settledBeforeClose');
+        runnerSiblingFinished = true;
+        return {result: 'siblingDone'};
+      },
+    });
+    const failingBeforeTool = new FunctionTool({
+      name: 'failingBeforeTool',
+      description: 'never executes because beforeToolCallback throws',
+      parameters: z.object({}),
+      execute: async () => ({result: 'unreachable'}),
+    });
+
+    const appName = 'parallel-exec-app';
+    const userId = 'user-1';
+    const mockLlm = new RecordingResponsesLlm([
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {functionCall: {id: 'fc-1', name: 'siblingAsyncTool', args: {}}},
+            {functionCall: {id: 'fc-2', name: 'failingBeforeTool', args: {}}},
+          ],
+        },
+      },
+    ]);
+    const agent = new LlmAgent({
+      name: 'callbackRejectionAgent',
+      model: mockLlm,
+      tools: [trackingToolset],
+      beforeToolCallback: async ({tool}) => {
+        if (tool.name === 'failingBeforeTool') {
+          await runnerSiblingInFlight;
+          setTimeout(() => {
+            releaseRunnerSibling?.();
+          }, 0);
+          throw new Error('Runner before-tool callback failed.');
+        }
+        return undefined;
+      },
+    });
+
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({appName, userId});
+    const runner = new Runner({appName, agent, sessionService});
+
+    const emittedEvents: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'run parallel tools'}]},
+    })) {
+      emittedEvents.push(event);
+    }
+    const stateAfterRun = {...runnerInvocationState};
+
+    expect(emittedEvents.at(-1)?.errorMessage).toBe(
+      'Runner before-tool callback failed.',
+    );
+    expect(runnerSiblingFinished).toBe(true);
+    expect(toolsetClosedDuringSibling).toBe(false);
+    expect(trackingToolset.closed).toBe(true);
+    expect(stateAfterRun).toEqual({
+      siblingWrite: 'settledBeforeClose',
+    });
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    expect(runnerInvocationState).toEqual(stateAfterRun);
   });
 });

@@ -165,3 +165,25 @@ export function carryMergedDeltaStamp({
     stampsFor(deltaStamps, to).set(key, mergedStamp);
   }
 }
+
+/**
+ * Returns the newest write-order stamp recorded for `key` on `state`, or
+ * `undefined` when `key` has no recorded stamp.
+ */
+export function getStateWriteStamp(
+  state: object,
+  key: string,
+): number | undefined {
+  return stateStamps.get(state)?.get(key);
+}
+
+/**
+ * Returns the write-order stamp recorded for `key` on `delta`, or `undefined`
+ * when the delta entry was not written through `State`.
+ */
+export function getDeltaWriteStamp(
+  delta: object,
+  key: string,
+): number | undefined {
+  return deltaStamps.get(delta)?.get(key);
+}

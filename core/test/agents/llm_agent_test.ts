@@ -26,6 +26,8 @@ import {
   Event,
   FunctionTool,
   Gemini,
+  getFunctionCalls,
+  getFunctionResponses,
   InMemorySessionService,
   INTERACTIONS_REQUEST_PROCESSOR,
   InvocationContext,
@@ -3674,6 +3676,178 @@ describe('LlmAgent live session resumption', () => {
         transparent: true,
       },
     });
+  });
+
+  it('delegates via transfer_to_agent in Runner.runLive to a sub-agent that executes a tool call', async () => {
+    const rootLlm = new ResumptionLiveLlm([
+      [
+        {
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  id: 'fc-delegate',
+                  name: 'transfer_to_agent',
+                  args: {agent_name: 'rollAgent'},
+                },
+              },
+            ],
+          },
+          turnComplete: false,
+        },
+        {turnComplete: true},
+      ],
+    ]);
+    const rollLlm = new ResumptionLiveLlm([
+      [
+        {
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  id: 'fc-roll',
+                  name: 'rollDie',
+                  args: {sides: 20},
+                },
+              },
+            ],
+          },
+          turnComplete: false,
+        },
+        {turnComplete: true},
+      ],
+    ]);
+
+    const rollDie = new FunctionTool({
+      name: 'rollDie',
+      description: 'Rolls a die with the requested number of sides.',
+      parameters: z4.object({sides: z4.number()}),
+      execute: ({sides}) => (sides === 20 ? 15 : 1),
+    });
+    const rollAgent = new LlmAgent({
+      name: 'rollAgent',
+      model: rollLlm,
+      tools: [rollDie],
+    });
+    const rootAgent = new LlmAgent({
+      name: 'rootAgent',
+      model: rootLlm,
+      subAgents: [rollAgent],
+    });
+
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'live-multi-agent-app',
+      userId: 'user-1',
+    });
+    const runner = new Runner({
+      appName: 'live-multi-agent-app',
+      agent: rootAgent,
+      sessionService,
+    });
+    const liveRequestQueue = new LiveRequestQueue();
+    liveRequestQueue.sendRealtime({
+      data: 'Um9sbCBhIDIwLXNpZGVkIGRpZQ==',
+      mimeType: 'audio/pcm',
+    });
+    liveRequestQueue.close();
+
+    const events: Event[] = [];
+    for await (const event of runner.runLive({
+      userId: 'user-1',
+      sessionId: session.id,
+      liveRequestQueue,
+    })) {
+      events.push(event);
+    }
+
+    const functionCalls = events.flatMap((event) => getFunctionCalls(event));
+    const functionResponses = events.flatMap((event) =>
+      getFunctionResponses(event),
+    );
+    expect(functionCalls).toEqual([
+      {
+        id: 'fc-delegate',
+        name: 'transfer_to_agent',
+        args: {agent_name: 'rollAgent'},
+      },
+      {
+        id: 'fc-roll',
+        name: 'rollDie',
+        args: {sides: 20},
+      },
+    ]);
+    expect(functionResponses).toEqual([
+      {
+        id: 'fc-delegate',
+        name: 'transfer_to_agent',
+        response: {result: 'Transfer queued'},
+      },
+      {
+        id: 'fc-roll',
+        name: 'rollDie',
+        response: {result: 15},
+      },
+    ]);
+  });
+
+  it('rejects Runner.runLive without retrying when BaseLlm.connect throws an unrecoverable error', async () => {
+    const unrecoverableConnectError = Object.assign(
+      new Error(
+        'gemini-live-2.5-flash-preview is not supported in the live api.',
+      ),
+      {code: 1007},
+    );
+    const llm = new ResumptionLiveLlm([
+      unrecoverableConnectError,
+      [{turnComplete: true}],
+    ]);
+    const agent = new LlmAgent({
+      name: 'connectionFailureAgent',
+      model: llm,
+    });
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'live-connect-error-app',
+      userId: 'user-1',
+    });
+    const runner = new Runner({
+      appName: 'live-connect-error-app',
+      agent,
+      sessionService,
+    });
+    const liveRequestQueue = new LiveRequestQueue();
+    liveRequestQueue.sendRealtime({
+      data: 'SW5pdGlhbCBhdWRpbyBjaHVua3M=',
+      mimeType: 'audio/pcm',
+    });
+    liveRequestQueue.close();
+
+    let caughtError: unknown;
+    try {
+      for await (const _event of runner.runLive({
+        userId: 'user-1',
+        sessionId: session.id,
+        liveRequestQueue,
+        runConfig: createRunConfig({
+          sessionResumption: {handle: 'caller-handle'},
+        }),
+      })) {
+        // Consume stream until rejection
+      }
+    } catch (err: unknown) {
+      caughtError = err;
+    }
+
+    expect(caughtError).toBe(unrecoverableConnectError);
+    expect(caughtError).toBeInstanceOf(Error);
+    expect(caughtError).toMatchObject({
+      code: 1007,
+      message: expect.stringContaining('is not supported in the live api'),
+    });
+    expect(llm.connectedRequests).toHaveLength(1);
   });
 });
 

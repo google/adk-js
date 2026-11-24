@@ -5,26 +5,26 @@
  */
 
 /**
- * Flows (`BaseLlmRequestProcessor`, `BaseLlmResponseProcessor`, `handleFunctionCallsLive`, and `supportCfc`)
+ * Flows (`BaseLlmRequestProcessor`, `BaseLlmResponseProcessor`, concurrent tool execution, `handleFunctionCallsLive`, `sessionResumption`, and `supportCfc`)
  * ../../docs/guides/flows/index.md
  *
- * Demonstrates the three core parts of the ADK LLM flow subsystem without
- * requiring an API key:
+ * Demonstrates four core parts of the ADK LLM flow subsystem without requiring
+ * an API key:
  * 1. An `LlmAgent` (`rootAgent`) configured with a custom
- *    `BaseLlmRequestProcessor` (`RequestAuditProcessor`) and a custom
- *    `BaseLlmResponseProcessor` (`ResponseStampProcessor`) backed by a
- *    deterministic offline `BaseLlm` (`FlowDemoLlm`).
+ *    `BaseLlmRequestProcessor` (`RequestAuditProcessor`),
+ *    `CONTENT_REQUEST_PROCESSOR` (excluding foreign-agent `thought` parts), a
+ *    custom `BaseLlmResponseProcessor` (`ResponseStampProcessor`), and
+ *    concurrent parallel execution of multiple `lookupServiceStatus` calls that
+ *    update `toolContext.state` out of call order.
  * 2. Live streaming tool execution and cancellation via
  *    `handleFunctionCallsLive`, an async-generator `FunctionTool`
- *    (`monitor_metric`), `LiveRequestQueue`, and `stop_streaming`.
- * 3. Compositional Function Calling (`runConfig.supportCfc: true`), routing
- *    `LlmAgent.runAsync` through `runLiveFlow` with single tool execution and
- *    `StreamingMode.SSE`.
- *
- * This sample exports `rootAgent` for `adk web` and `npm run sample`, and also
- * includes a direct `main()` driver so you can inspect the processor effects,
- * live streaming tool queue messages, `stop_streaming` cancellation status, and
- * `supportCfc` events in one self-contained run.
+ *    (`monitorMetric`), `LiveRequestQueue`, and `stop_streaming`.
+ * 3. Live session resumption in `Runner.runLive` via
+ *    `createRunConfig({sessionResumption: {transparent: true}})`, capturing
+ *    `liveSessionResumptionUpdate.newHandle` and reconnecting on `goAway`
+ *    without replaying history.
+ * 4. Compositional Function Calling (`runConfig.supportCfc: true`), routing
+ *    `LlmAgent.runAsync` through `runLiveFlow` with `StreamingMode.NONE`.
  *
  * Run (offline, no API key):
  *   npm run build
@@ -33,6 +33,7 @@
  */
 
 import {
+  AsyncQueue,
   BaseLlm,
   BaseLlmConnection,
   BaseLlmRequestProcessor,
@@ -41,12 +42,14 @@ import {
   Event,
   FunctionTool,
   InMemoryRunner,
+  InMemorySessionService,
   InvocationContext,
   LiveRequestQueue,
   LlmAgent,
   LlmRequest,
   LlmResponse,
   PluginManager,
+  Runner,
   StreamingMode,
   appendInstructions,
   createEvent,
@@ -72,9 +75,8 @@ class RequestAuditProcessor extends BaseLlmRequestProcessor {
     invocationContext: InvocationContext,
     llmRequest: LlmRequest,
   ): AsyncGenerator<Event, void, void> {
-    const channel =
-      (invocationContext.session.state['channel'] as string | undefined) ??
-      'cli';
+    const rawChannel = invocationContext.session.state['channel'];
+    const channel = typeof rawChannel === 'string' ? rawChannel : 'cli';
     appendInstructions(llmRequest, [`Active channel: ${channel}.`]);
     yield* [];
   }
@@ -102,6 +104,8 @@ class ResponseStampProcessor extends BaseLlmResponseProcessor {
 }
 
 class FlowDemoLlm extends BaseLlm {
+  lastCapturedContents: Content[] = [];
+
   constructor() {
     super({model: 'flow-demo-llm'});
   }
@@ -109,13 +113,15 @@ class FlowDemoLlm extends BaseLlm {
   async *generateContentAsync(
     llmRequest: LlmRequest,
   ): AsyncGenerator<LlmResponse, void, void> {
+    this.lastCapturedContents = llmRequest.contents;
     const lastContent = llmRequest.contents[llmRequest.contents.length - 1];
-    const functionResponse = lastContent?.parts?.find(
-      (part) => part.functionResponse !== undefined,
-    )?.functionResponse;
+    const functionResponses =
+      lastContent?.parts
+        ?.map((part) => part.functionResponse)
+        .filter((response) => response !== undefined) ?? [];
 
     const rawResponse = new GenerateContentResponse();
-    if (!functionResponse) {
+    if (functionResponses.length === 0) {
       rawResponse.candidates = [
         {
           content: {
@@ -124,8 +130,15 @@ class FlowDemoLlm extends BaseLlm {
               {
                 functionCall: {
                   id: 'call-status-1',
-                  name: 'lookup_service_status',
-                  args: {service: 'payments'},
+                  name: 'lookupServiceStatus',
+                  args: {serviceName: 'payments'},
+                },
+              },
+              {
+                functionCall: {
+                  id: 'call-status-2',
+                  name: 'lookupServiceStatus',
+                  args: {serviceName: 'checkout'},
                 },
               },
             ],
@@ -134,9 +147,16 @@ class FlowDemoLlm extends BaseLlm {
         },
       ];
     } else {
-      const status =
-        (functionResponse.response as Record<string, unknown>)['status'] ??
-        'UNKNOWN';
+      const summaries = functionResponses.map((response) => {
+        const payload = response.response ?? {};
+        const serviceName =
+          typeof payload['serviceName'] === 'string'
+            ? payload['serviceName']
+            : 'service';
+        const status =
+          typeof payload['status'] === 'string' ? payload['status'] : 'UNKNOWN';
+        return `${serviceName}=${status}`;
+      });
       const systemInstruction =
         typeof llmRequest.config?.systemInstruction === 'string'
           ? llmRequest.config.systemInstruction
@@ -147,7 +167,7 @@ class FlowDemoLlm extends BaseLlm {
             role: 'model',
             parts: [
               {
-                text: `Service payments is ${String(status)} (${systemInstruction.trim()})`,
+                text: `Services checked: ${summaries.join(', ')} (${systemInstruction.trim()})`,
               },
             ],
           },
@@ -164,29 +184,41 @@ class FlowDemoLlm extends BaseLlm {
 }
 
 const lookupServiceStatus = new FunctionTool({
-  name: 'lookup_service_status',
+  name: 'lookupServiceStatus',
   description: 'Returns the health status of a backend service.',
   parameters: z.object({
-    service: z.string().describe('The service name to inspect.'),
+    serviceName: z.string().describe('The service name to inspect.'),
   }),
-  execute: async ({service}) => ({
-    service,
-    status: 'HEALTHY',
-  }),
+  execute: async ({serviceName}, toolContext) => {
+    if (serviceName === 'payments') {
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+    const checked = toolContext?.state.get<string[]>('checkedServices') ?? [];
+    toolContext?.state.set('checkedServices', [...checked, serviceName]);
+    return {
+      serviceName,
+      status: 'HEALTHY',
+    };
+  },
 });
 
+const flowDemoLlm = new FlowDemoLlm();
+
 export const rootAgent = new LlmAgent({
-  name: 'flows_showcase_agent',
-  model: new FlowDemoLlm(),
-  instruction: 'Check service health with lookup_service_status.',
+  name: 'flowsShowcaseAgent',
+  model: flowDemoLlm,
+  instruction: 'Check service health with lookupServiceStatus.',
   tools: [lookupServiceStatus],
   requestProcessors: [new RequestAuditProcessor(), CONTENT_REQUEST_PROCESSOR],
   responseProcessors: [new ResponseStampProcessor()],
 });
 
-async function runProcessorFlowDemo(): Promise<void> {
-  process.stdout.write('=== 1. LlmAgent Request & Response Processors ===\n');
-  const appName = 'flows_sample_app';
+async function runProcessorAndParallelToolsDemo(): Promise<void> {
+  process.stdout.write(
+    '=== 1. Processors, Thought Filtering & Concurrent Parallel Tools ===\n',
+  );
+  const appName = 'flows-sample-app';
   const userId = 'user-1';
   const runner = new InMemoryRunner({agent: rootAgent, appName});
   const session = await runner.sessionService.createSession({
@@ -195,23 +227,42 @@ async function runProcessorFlowDemo(): Promise<void> {
     state: {channel: 'console'},
   });
 
+  // Seed a foreign-agent event with a private thought part to verify CONTENT_REQUEST_PROCESSOR excludes it.
+  await runner.sessionService.appendEvent({
+    session,
+    event: createEvent({
+      invocationId: 'inv-seed',
+      author: 'triageAgent',
+      content: {
+        role: 'model',
+        parts: [
+          {text: 'Internal triage reasoning', thought: true},
+          {text: 'Escalating service check to flowsShowcaseAgent.'},
+        ],
+      },
+    }),
+  });
+
   for await (const event of runner.runAsync({
     userId,
     sessionId: session.id,
     newMessage: {
       role: 'user',
-      parts: [{text: 'Check the payments service.'}],
+      parts: [{text: 'Check the payments and checkout services.'}],
     },
   })) {
     const calls = getFunctionCalls(event);
     const responses = getFunctionResponses(event);
     if (calls.length > 0) {
       process.stdout.write(
-        `[${event.author}] tool call: ${calls.map((c) => `${c.name}(${JSON.stringify(c.args)})`).join(', ')}\n`,
+        `[${event.author}] parallel tool calls: ${calls.map((c) => `${c.name}(${JSON.stringify(c.args)})`).join(', ')}\n`,
       );
     } else if (responses.length > 0) {
       process.stdout.write(
-        `[${event.author}] tool response: ${responses.map((r) => `${r.name} -> ${JSON.stringify(r.response)}`).join(', ')}\n`,
+        `[${event.author}] merged tool responses: ${responses.map((r) => `${r.name} -> ${JSON.stringify(r.response)}`).join(', ')}\n`,
+      );
+      process.stdout.write(
+        `[${event.author}] merged stateDelta.checkedServices: ${JSON.stringify(event.actions.stateDelta['checkedServices'])}\n`,
       );
     } else {
       process.stdout.write(
@@ -219,6 +270,14 @@ async function runProcessorFlowDemo(): Promise<void> {
       );
     }
   }
+
+  const forwardedText = flowDemoLlm.lastCapturedContents
+    .flatMap((c) => c.parts ?? [])
+    .map((p) => p.text ?? '')
+    .join(' | ');
+  process.stdout.write(
+    `Foreign thought excluded from request contents: ${!forwardedText.includes('Internal triage reasoning')}\n`,
+  );
 }
 
 async function runLiveStreamingToolsDemo(): Promise<void> {
@@ -227,16 +286,16 @@ async function runLiveStreamingToolsDemo(): Promise<void> {
   );
   let releaseNextTick: (() => void) | undefined;
   const monitorMetric = new FunctionTool({
-    name: 'monitor_metric',
+    name: 'monitorMetric',
     description: 'Streams live metric samples until stopped.',
-    parameters: z.object({metric: z.string()}),
-    execute: async function* ({metric}) {
-      yield `${metric}=42ms`;
-      yield `${metric}=39ms`;
+    parameters: z.object({metricName: z.string()}),
+    execute: async function* ({metricName}) {
+      yield `${metricName}=42ms`;
+      yield `${metricName}=39ms`;
       await new Promise<void>((resolve) => {
         releaseNextTick = resolve;
       });
-      yield `${metric}=99ms`;
+      yield `${metricName}=99ms`;
     },
   });
 
@@ -253,7 +312,7 @@ async function runLiveStreamingToolsDemo(): Promise<void> {
     agent: rootAgent,
     session: createSession({
       id: 'sess-live-demo',
-      appName: 'flows_sample_app',
+      appName: 'flows-sample-app',
       userId: 'user-1',
     }),
     liveRequestQueue,
@@ -271,15 +330,15 @@ async function runLiveStreamingToolsDemo(): Promise<void> {
           {
             functionCall: {
               id: 'call-stream-1',
-              name: 'monitor_metric',
-              args: {metric: 'p95_latency'},
+              name: 'monitorMetric',
+              args: {metricName: 'p95Latency'},
             },
           },
         ],
       },
     }),
     toolsDict: {
-      monitor_metric: monitorMetric,
+      monitorMetric,
       stop_streaming: stopStreaming,
     },
     beforeToolCallbacks: [],
@@ -288,7 +347,7 @@ async function runLiveStreamingToolsDemo(): Promise<void> {
 
   if (startResponse) {
     process.stdout.write(
-      `Initial response: ${JSON.stringify(getFunctionResponses(startResponse)[0].response)}\n`,
+      `Initial response: ${JSON.stringify(getFunctionResponses(startResponse)[0]?.response)}\n`,
     );
   }
 
@@ -313,14 +372,14 @@ async function runLiveStreamingToolsDemo(): Promise<void> {
             functionCall: {
               id: 'call-stop-1',
               name: 'stop_streaming',
-              args: {function_name: 'monitor_metric'},
+              args: {function_name: 'monitorMetric'},
             },
           },
         ],
       },
     }),
     toolsDict: {
-      monitor_metric: monitorMetric,
+      monitorMetric,
       stop_streaming: stopStreaming,
     },
     beforeToolCallbacks: [],
@@ -330,94 +389,170 @@ async function runLiveStreamingToolsDemo(): Promise<void> {
 
   if (stopResponse) {
     process.stdout.write(
-      `Stop response: ${JSON.stringify(getFunctionResponses(stopResponse)[0].response)}\n`,
+      `Stop response: ${JSON.stringify(getFunctionResponses(stopResponse)[0]?.response)}\n`,
     );
   }
+  liveRequestQueue.close();
 }
 
-class CfcDemoConnection implements BaseLlmConnection {
-  private closed = false;
-  private yielded = false;
+class ScriptedLiveConnection implements BaseLlmConnection {
+  historyCalls = 0;
+  private readonly queue = new AsyncQueue<LlmResponse>();
 
-  constructor(private readonly responses: LlmResponse[]) {}
+  constructor(responses: LlmResponse[]) {
+    for (const response of responses) {
+      this.queue.push(response);
+    }
+    this.queue.close();
+  }
 
-  async sendHistory(_history: Content[]): Promise<void> {}
+  async sendHistory(_history: Content[]): Promise<void> {
+    this.historyCalls += 1;
+  }
   async sendContent(_content: Content): Promise<void> {}
   async sendRealtime(_blob: Blob): Promise<void> {}
 
   async *receive(): AsyncGenerator<LlmResponse, void, void> {
-    if (this.closed || this.yielded) {
-      return;
-    }
-    this.yielded = true;
-    for (const response of this.responses) {
-      if (this.closed) {
-        return;
-      }
+    for await (const response of this.queue) {
       yield response;
     }
   }
 
   async close(): Promise<void> {
-    this.closed = true;
+    this.queue.close();
   }
 }
 
-class CfcDemoLlm extends BaseLlm {
-  constructor(private readonly connection: CfcDemoConnection) {
-    super({model: 'gemini-2.0-flash'});
+class ResumableLiveDemoLlm extends BaseLlm {
+  readonly connections: ScriptedLiveConnection[] = [];
+  readonly seenHandles: Array<string | undefined> = [];
+
+  constructor(private readonly scriptedTurns: LlmResponse[][]) {
+    // Numeric 2.x+ version required when shared with supportCfc validation.
+    super({model: 'gemini-2.5-flash'});
   }
 
   async *generateContentAsync(): AsyncGenerator<LlmResponse, void, void> {
     yield* [];
-    throw new Error(
-      'generateContentAsync is not used when supportCfc is true.',
-    );
+    throw new Error('generateContentAsync is not used in live mode.');
   }
 
-  async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
-    return this.connection;
+  async connect(llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+    this.seenHandles.push(
+      llmRequest.liveConnectConfig?.sessionResumption?.handle,
+    );
+    const turnResponses = this.scriptedTurns[this.connections.length] ?? [];
+    const connection = new ScriptedLiveConnection(turnResponses);
+    this.connections.push(connection);
+    return connection;
+  }
+}
+
+async function runLiveSessionResumptionDemo(): Promise<void> {
+  process.stdout.write(
+    '\n=== 3. Live Session Resumption (sessionResumption & goAway) ===\n',
+  );
+  const liveLlm = new ResumableLiveDemoLlm([
+    [
+      {liveSessionResumptionUpdate: {newHandle: 'resume-token-42'}},
+      {goAway: {timeLeft: '1s'}},
+    ],
+    [
+      {
+        content: {
+          role: 'model',
+          parts: [{text: 'Reconnected live session with saved handle.'}],
+        },
+        turnComplete: true,
+      },
+    ],
+  ]);
+  const liveAgent = new LlmAgent({
+    name: 'liveResumptionAgent',
+    model: liveLlm,
+  });
+  const sessionService = new InMemorySessionService();
+  const session = await sessionService.createSession({
+    appName: 'flows-sample-app',
+    userId: 'user-1',
+  });
+  await sessionService.appendEvent({
+    session,
+    event: createEvent({
+      invocationId: 'inv-prior',
+      author: 'user',
+      content: {role: 'user', parts: [{text: 'Prior turn in history.'}]},
+    }),
+  });
+
+  const runner = new Runner({
+    appName: 'flows-sample-app',
+    agent: liveAgent,
+    sessionService,
+  });
+  const liveRequestQueue = new LiveRequestQueue();
+  liveRequestQueue.close();
+
+  for await (const event of runner.runLive({
+    userId: 'user-1',
+    sessionId: session.id,
+    liveRequestQueue,
+    runConfig: createRunConfig({
+      sessionResumption: {transparent: true},
+    }),
+  })) {
+    if (event.liveSessionResumptionUpdate?.newHandle) {
+      process.stdout.write(
+        `Captured resumption handle: ${event.liveSessionResumptionUpdate.newHandle}\n`,
+      );
+    } else if (event.content) {
+      process.stdout.write(
+        `[${event.author}] ${stringifyContent(event)} (handles seen=${JSON.stringify(liveLlm.seenHandles)}, historyCalls=${JSON.stringify(liveLlm.connections.map((c) => c.historyCalls))})\n`,
+      );
+    }
   }
 }
 
 async function runSupportCfcDemo(): Promise<void> {
   process.stdout.write(
-    '\n=== 3. Compositional Function Calling (runConfig.supportCfc) ===\n',
+    '\n=== 4. Compositional Function Calling (runConfig.supportCfc) ===\n',
   );
-  const connection = new CfcDemoConnection([
-    {
-      content: {
-        role: 'model',
-        parts: [
-          {
-            functionCall: {
-              id: 'call-cfc-1',
-              name: 'lookup_service_status',
-              args: {service: 'billing'},
+  const cfcLlm = new ResumableLiveDemoLlm([
+    [
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'call-cfc-1',
+                name: 'lookupServiceStatus',
+                args: {serviceName: 'billing'},
+              },
             },
-          },
-        ],
+          ],
+        },
       },
-    },
-    {
-      content: {
-        role: 'model',
-        parts: [{text: 'CFC verified: billing is HEALTHY.'}],
+      {
+        content: {
+          role: 'model',
+          parts: [{text: 'CFC verified: billing is HEALTHY.'}],
+        },
+        partial: false,
+        turnComplete: true,
       },
-      partial: false,
-      turnComplete: true,
-    },
+    ],
   ]);
 
   const cfcAgent = new LlmAgent({
-    name: 'cfc_demo_agent',
-    model: new CfcDemoLlm(connection),
+    name: 'cfcDemoAgent',
+    model: cfcLlm,
     tools: [lookupServiceStatus],
   });
 
   const session = createSession({
     id: 'sess-cfc-demo',
-    appName: 'flows_sample_app',
+    appName: 'flows-sample-app',
     userId: 'user-1',
     events: [
       createEvent({
@@ -459,14 +594,17 @@ async function runSupportCfcDemo(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  await runProcessorFlowDemo();
+  await runProcessorAndParallelToolsDemo();
   await runLiveStreamingToolsDemo();
+  await runLiveSessionResumptionDemo();
   await runSupportCfcDemo();
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   main().catch((err: unknown) => {
-    process.stderr.write(`${String(err)}\n`);
+    const message =
+      err instanceof Error ? (err.stack ?? err.message) : JSON.stringify(err);
+    process.stderr.write(`${message}\n`);
     process.exit(1);
   });
 }

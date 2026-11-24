@@ -25,6 +25,12 @@ import {
   isDefaultEventActions,
   mergeEventActions,
 } from '../events/event_actions.js';
+import {
+  carryDeltaStamp,
+  carryMergedDeltaStamp,
+  getDeltaWriteStamp,
+  getStateWriteStamp,
+} from '../sessions/state_write_order.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {isComputerUseTool} from '../tools/computer_use/computer_use_tool.js';
 import {CallLiveToolRequest, isFunctionTool} from '../tools/function_tool.js';
@@ -94,7 +100,7 @@ export function getLongRunningFunctionCalls(
   for (const functionCall of functionCalls) {
     if (
       functionCall.name &&
-      functionCall.name in toolsDict &&
+      Object.hasOwn(toolsDict, functionCall.name) &&
       toolsDict[functionCall.name].isLongRunning &&
       functionCall.id
     ) {
@@ -308,21 +314,24 @@ function buildResponseEvent(
   });
 }
 /**
- * Handles function calls.
- * Runtime behavior to pay attention to:
- * - Iterate through each function call in the `functionCallEvent`:
- *   - Resolve the named tool. If the name is not callable, run the on-tool-
- *     error callbacks and answer the call with their response, or with the
- *     resolution error when none handles it, then move to the next call. That
- *     answer skips the before/after tool callbacks below, so a plugin auditing
- *     every response does not observe it — as in Python.
- *   - Execute before tool callbacks !!if a callback provides a response, short
- *     circuit the rest.
- *   - Execute the tool.
- *   - Execute after tool callbacks !!if a callback provides a response, short
- *     circuit the rest.
- *   - If the tool is long-running and the response is null, continue. !!state
- * - Merge all function response events into a single event.
+ * Executes filtered function calls concurrently and merges their response
+ * events into a single event in the original `functionCall` order.
+ *
+ * Runtime behavior for each call:
+ * - Resolve the named tool. If the name cannot be resolved, run the plugin
+ *   `onToolErrorCallback` hooks and answer the call with their response or the
+ *   resolution error, skipping the before/after tool callbacks below.
+ * - Run plugin and canonical `beforeToolCallbacks`; if a callback provides a
+ *   response, skip calling the tool.
+ * - Execute the tool, routing unhandled errors through plugin
+ *   `onToolErrorCallback` hooks or returning an `{error}` response.
+ * - Run plugin and canonical `afterToolCallbacks`; if a callback provides a
+ *   response, replace the tool response.
+ * - Defer long-running tools whose final response is nullish while preserving
+ *   any recorded `EventActions`.
+ * - Wait for all started calls in the batch to settle before rethrowing any
+ *   callback error, then merge non-null function response events in original
+ *   call order while retaining the latest `Context.state` writes.
  */
 export async function handleFunctionCallsAsync({
   invocationContext,
@@ -357,7 +366,9 @@ export async function handleFunctionCallsAsync({
 }
 
 /**
- * Handles function calls in a live (bidirectional streaming) session.
+ * Executes filtered function calls concurrently in a live (bidirectional
+ * streaming) session and merges their response events in the original
+ * `functionCall` order.
  *
  * Supports regular sync/async tools, async-generator streaming tools that push
  * incremental results onto `invocationContext.liveRequestQueue`, and the
@@ -532,10 +543,319 @@ async function answerUnresolvableCall({
   );
 }
 
+interface ExecuteSingleFunctionCallParams {
+  invocationContext: InvocationContext;
+  functionCall: FunctionCall;
+  toolsDict: Record<string, BaseTool>;
+  beforeToolCallbacks: SingleBeforeToolCallback[];
+  afterToolCallbacks: SingleAfterToolCallback[];
+  toolConfirmation?: ToolConfirmation;
+  resumeInputs?: ResumeInputs;
+  isLive?: boolean;
+}
+
 /**
- * The underlying implementation of handleFunctionCalls, but takes a list of
- * function calls instead of an event.
- * This is also used by llm_agent execution flow in preprocessing.
+ * Executes a single function call and returns its function response event, or
+ * `null` when a long-running tool defers its response with default actions.
+ */
+async function executeSingleFunctionCall({
+  invocationContext,
+  functionCall,
+  toolsDict,
+  beforeToolCallbacks,
+  afterToolCallbacks,
+  toolConfirmation,
+  resumeInputs,
+  isLive = false,
+}: ExecuteSingleFunctionCallParams): Promise<Event | null> {
+  const toolContext = new Context({
+    invocationContext,
+    functionCallId: functionCall.id ? functionCall.id : undefined,
+    toolConfirmation,
+    resumeInputs,
+  });
+  // `functionCall.name` comes from the model, and `toolsDict` is a plain
+  // object, so an unguarded lookup would resolve `toString` or `constructor`
+  // to a function on `Object.prototype` and treat the call as found.
+  const tool =
+    functionCall.name && Object.hasOwn(toolsDict, functionCall.name)
+      ? toolsDict[functionCall.name]
+      : undefined;
+
+  if (!tool) {
+    return answerUnresolvableCall({
+      invocationContext,
+      functionCall,
+      toolsDict,
+      toolContext,
+    });
+  }
+
+  logger.debug(`execute_tool ${tool.name}`);
+  const functionArgs = functionCall.args
+    ? structuredClone(functionCall.args)
+    : {};
+
+  // Step 1: Check if plugin beforeToolCallback overrides the function
+  // response.
+  let functionResponse =
+    await invocationContext.pluginManager.runBeforeToolCallback({
+      tool,
+      toolArgs: functionArgs,
+      toolContext,
+    });
+
+  // Step 2: If no overrides are provided from the plugins, further run the
+  // canonical callback.
+  if (functionResponse == null) {
+    // Cover both null and undefined
+    for (const callback of beforeToolCallbacks) {
+      functionResponse = await callback({
+        tool,
+        args: functionArgs,
+        context: toolContext,
+      });
+      if (functionResponse != null) {
+        break;
+      }
+    }
+  }
+
+  // An override from step 1 or 2 bypasses the tool call and is handed to the
+  // after-tool callbacks as-is, so normalize it before they see it.
+  functionResponse = normalizeCallbackResponse(functionResponse);
+
+  // Step 3: Otherwise, proceed calling the tool normally.
+  if (functionResponse == null) {
+    // Cover both null and undefined
+    try {
+      const rawFunctionResponse = isLive
+        ? await processFunctionLiveHelper({
+            tool,
+            toolContext,
+            functionCall,
+            functionArgs,
+            invocationContext,
+          })
+        : await callToolAsync(tool, functionArgs, toolContext);
+      // Keep a long-running nullish return as undefined so the deferral below fires;
+      // wrap a normal nullish return as {result: null}.
+      if (rawFunctionResponse == null && !tool.isLongRunning) {
+        functionResponse = {result: rawFunctionResponse};
+      } else {
+        functionResponse = normalizeCallbackResponse(rawFunctionResponse);
+      }
+    } catch (e: unknown) {
+      if (e instanceof Error) {
+        const onToolErrorResponse =
+          await invocationContext.pluginManager.runOnToolErrorCallback({
+            tool,
+            toolArgs: functionArgs,
+            toolContext,
+            error: e,
+          });
+
+        // Set function response to the result of the error callback and
+        // continue execution, do not shortcut
+        if (onToolErrorResponse != null) {
+          functionResponse = normalizeCallbackResponse(onToolErrorResponse);
+        } else {
+          // If the error callback returns undefined, use the error message
+          // as the function response error.
+          functionResponse = {error: e.message};
+        }
+      } else {
+        // If the error is not an Error, use the error object as the function
+        // response error.
+        functionResponse = {error: e};
+      }
+    }
+  }
+
+  // Step 4: Check if plugin afterToolCallback overrides the function
+  // response.
+  const callbackResult = functionResponse ?? {};
+  let alteredFunctionResponse =
+    await invocationContext.pluginManager.runAfterToolCallback({
+      tool,
+      toolArgs: functionArgs,
+      toolContext,
+      result: callbackResult,
+    });
+
+  // Step 5: If no overrides are provided from the plugins, further run the
+  // canonical afterToolCallbacks.
+  if (alteredFunctionResponse == null) {
+    // Cover both null and undefined
+    for (const callback of afterToolCallbacks) {
+      alteredFunctionResponse = await callback({
+        tool,
+        args: functionArgs,
+        context: toolContext,
+        response: callbackResult,
+      });
+      if (alteredFunctionResponse != null) {
+        break;
+      }
+    }
+  }
+
+  // Step 6: If alternative response exists from afterToolCallback, use it
+  // instead of the original function response.
+  if (alteredFunctionResponse != null) {
+    functionResponse = normalizeCallbackResponse(alteredFunctionResponse);
+  }
+
+  // Allow a long-running function to return no response.
+  // Only a nullish response defers the event. A falsy-but-present response
+  // ('', 0, false) is a real result and still emits one, so long-running
+  // tools that return such a value now produce a response event where they
+  // previously produced none.
+  if (tool.isLongRunning && functionResponse == null) {
+    // The tool's response will arrive later, but any actions it recorded on
+    // the tool context (state/artifact deltas, auth or confirmation
+    // requests, transfer, escalation, skipSummarization) must not be lost.
+    if (!isDefaultEventActions(toolContext.actions)) {
+      return createEvent({
+        invocationId: invocationContext.invocationId,
+        author: toolEventAuthor(invocationContext),
+        actions: toolContext.actions,
+        branch: invocationContext.branch,
+      });
+    }
+    return null;
+  }
+
+  return createEvent({
+    invocationId: invocationContext.invocationId,
+    author: toolEventAuthor(invocationContext),
+    content: createUserContent({
+      functionResponse: buildFunctionResponse({
+        tool,
+        id: toolContext.functionCallId,
+        response: functionResponse,
+      }),
+    }),
+    actions: toolContext.actions,
+    branch: invocationContext.branch,
+  });
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * Returns whether an unstamped direct `actions.stateDelta` write after
+ * `lastMatchingIndex` survives call-order merging in `deepMergeRecords`.
+ */
+function hasSurvivingUnstampedWrite(
+  eventsWithKey: Event[],
+  key: string,
+  lastMatchingIndex: number,
+): boolean {
+  let hasUnstamped = false;
+  let prevIsPlain = isPlainObject(
+    eventsWithKey[lastMatchingIndex].actions.stateDelta[key],
+  );
+  for (let i = lastMatchingIndex + 1; i < eventsWithKey.length; i++) {
+    const stateDelta = eventsWithKey[i].actions.stateDelta;
+    const currentIsPlain = isPlainObject(stateDelta[key]);
+    if (getDeltaWriteStamp(stateDelta, key) === undefined) {
+      hasUnstamped = true;
+    } else if (!prevIsPlain || !currentIsPlain) {
+      hasUnstamped = false;
+    }
+    prevIsPlain = currentIsPlain;
+  }
+  return hasUnstamped;
+}
+
+/**
+ * Re-applies the latest `Context.state` value for keys written by multiple
+ * parallel calls.
+ *
+ * Parallel calls share `session.state`, so a call that reads and updates a key
+ * after a sibling call wrote it builds on that write; merging `EventActions`
+ * strictly in call order would otherwise roll back out-of-order updates while
+ * direct unstamped `actions.stateDelta` writes retain call-order precedence.
+ */
+function applyLatestStateWrites(
+  mergedEvent: Event,
+  functionResponseEvents: Event[],
+  sessionState: Record<string, unknown>,
+): void {
+  const mergedDelta = mergedEvent.actions.stateDelta;
+  const latestWrites: Record<string, unknown> = Object.create(null);
+  let hasLatestWrites = false;
+
+  for (const key of Object.keys(mergedDelta)) {
+    if (!Object.hasOwn(sessionState, key)) {
+      continue;
+    }
+    const eventsWithKey = functionResponseEvents.filter(
+      (event) =>
+        event.actions?.stateDelta &&
+        Object.hasOwn(event.actions.stateDelta, key),
+    );
+    if (eventsWithKey.length <= 1) {
+      continue;
+    }
+
+    const latest = sessionState[key];
+    const stateStamp = getStateWriteStamp(sessionState, key);
+    let matchingEvents: Event[];
+    if (Array.isArray(latest) || isPlainObject(latest)) {
+      matchingEvents = eventsWithKey.filter(
+        (event) => event.actions.stateDelta[key] === latest,
+      );
+    } else if (stateStamp !== undefined) {
+      matchingEvents = eventsWithKey.filter(
+        (event) =>
+          getDeltaWriteStamp(event.actions.stateDelta, key) === stateStamp &&
+          Object.is(event.actions.stateDelta[key], latest),
+      );
+    } else {
+      continue;
+    }
+    if (matchingEvents.length === 0) {
+      continue;
+    }
+
+    const lastMatchingEvent = matchingEvents[matchingEvents.length - 1];
+    const lastMatchingIndex = eventsWithKey.lastIndexOf(lastMatchingEvent);
+    if (hasSurvivingUnstampedWrite(eventsWithKey, key, lastMatchingIndex)) {
+      continue;
+    }
+
+    latestWrites[key] = latest;
+    hasLatestWrites = true;
+    carryDeltaStamp(matchingEvents[0].actions.stateDelta, latestWrites, key);
+    for (const event of matchingEvents.slice(1)) {
+      carryMergedDeltaStamp({
+        base: latestWrites,
+        incoming: event.actions.stateDelta,
+        to: latestWrites,
+        key,
+      });
+    }
+  }
+
+  if (hasLatestWrites) {
+    mergedEvent.actions = mergeEventActions(
+      [{stateDelta: latestWrites}],
+      mergedEvent.actions,
+    );
+  }
+}
+
+/**
+ * The underlying implementation of handleFunctionCalls, taking an array of
+ * function calls instead of an event and executing filtered calls concurrently.
  */
 export async function handleFunctionCallList({
   invocationContext,
@@ -564,212 +884,64 @@ export async function handleFunctionCallList({
   resumeInputsDict?: Record<string, ResumeInputs>;
   isLive?: boolean;
 }): Promise<Event | null> {
-  const functionResponseEvents: Event[] = [];
-
   // Note: only function ids INCLUDED in the filters will be executed.
   const filteredFunctionCalls = functionCalls.filter((functionCall) => {
     return !filters || (functionCall.id && filters.has(functionCall.id));
   });
-
-  for (const functionCall of filteredFunctionCalls) {
-    let toolConfirmation = undefined;
-    if (toolConfirmationDict && functionCall.id) {
-      toolConfirmation = toolConfirmationDict[functionCall.id];
-    }
-
-    let resumeInputs = undefined;
-    if (resumeInputsDict && functionCall.id) {
-      resumeInputs = resumeInputsDict[functionCall.id];
-    }
-
-    const toolContext = new Context({
-      invocationContext,
-      functionCallId: functionCall.id || undefined,
-      toolConfirmation,
-      resumeInputs,
-    });
-    // `functionCall.name` comes from the model, and `toolsDict` is a plain
-    // object, so an unguarded lookup would resolve `toString` or `constructor`
-    // to a function on `Object.prototype` and treat the call as found.
-    const tool =
-      functionCall.name && Object.hasOwn(toolsDict, functionCall.name)
-        ? toolsDict[functionCall.name]
-        : undefined;
-
-    if (!tool) {
-      functionResponseEvents.push(
-        await answerUnresolvableCall({
-          invocationContext,
-          functionCall,
-          toolsDict,
-          toolContext,
-        }),
-      );
-      continue;
-    }
-
-    // TODO - b/436079721: implement [tracer.start_as_current_span]
-    logger.debug(`execute_tool ${tool.name}`);
-    const functionArgs = functionCall.args
-      ? structuredClone(functionCall.args)
-      : {};
-
-    // Step 1: Check if plugin before_tool_callback overrides the function
-    // response.
-    let functionResponse = null;
-    functionResponse =
-      await invocationContext.pluginManager.runBeforeToolCallback({
-        tool: tool,
-        toolArgs: functionArgs,
-        toolContext: toolContext,
-      });
-
-    // Step 2: If no overrides are provided from the plugins, further run the
-    // canonical callback.
-    if (functionResponse == null) {
-      // Cover both null and undefined
-      for (const callback of beforeToolCallbacks) {
-        functionResponse = await callback({
-          tool: tool,
-          args: functionArgs,
-          context: toolContext,
-        });
-        if (functionResponse != null) {
-          break;
-        }
-      }
-    }
-
-    // An override from step 1 or 2 bypasses the tool call and is handed to the
-    // after-tool callbacks as-is, so normalize it before they see it.
-    functionResponse = normalizeCallbackResponse(functionResponse);
-
-    // Step 3: Otherwise, proceed calling the tool normally.
-    if (functionResponse == null) {
-      // Cover both null and undefined
-      try {
-        const rawFunctionResponse = isLive
-          ? await processFunctionLiveHelper({
-              tool,
-              toolContext,
-              functionCall,
-              functionArgs,
-              invocationContext,
-            })
-          : await callToolAsync(tool, functionArgs, toolContext);
-        // Keep a long-running nullish return as undefined so the deferral below fires;
-        // wrap a normal nullish return as {result: null}.
-        if (rawFunctionResponse == null && !tool.isLongRunning) {
-          functionResponse = {result: rawFunctionResponse};
-        } else {
-          functionResponse = normalizeCallbackResponse(rawFunctionResponse);
-        }
-      } catch (e: unknown) {
-        if (e instanceof Error) {
-          const onToolErrorResponse =
-            await invocationContext.pluginManager.runOnToolErrorCallback({
-              tool: tool,
-              toolArgs: functionArgs,
-              toolContext: toolContext,
-              error: e,
-            });
-
-          // Set function response to the result of the error callback and
-          // continue execution, do not shortcut
-          if (onToolErrorResponse != null) {
-            functionResponse = normalizeCallbackResponse(onToolErrorResponse);
-          } else {
-            // If the error callback returns undefined, use the error message
-            // as the function response error.
-            functionResponse = {error: e.message};
-          }
-        } else {
-          // If the error is not an Error, use the error object as the function
-          // response error.
-          functionResponse = {error: e};
-        }
-      }
-    }
-
-    // Step 4: Check if plugin after_tool_callback overrides the function
-    // response.
-    const callbackResult = functionResponse ?? {};
-    let alteredFunctionResponse =
-      await invocationContext.pluginManager.runAfterToolCallback({
-        tool: tool,
-        toolArgs: functionArgs,
-        toolContext: toolContext,
-        result: callbackResult,
-      });
-
-    // Step 5: If no overrides are provided from the plugins, further run the
-    // canonical after_tool_callbacks.
-    if (alteredFunctionResponse == null) {
-      // Cover both null and undefined
-      for (const callback of afterToolCallbacks) {
-        alteredFunctionResponse = await callback({
-          tool: tool,
-          args: functionArgs,
-          context: toolContext,
-          response: callbackResult,
-        });
-        if (alteredFunctionResponse != null) {
-          break;
-        }
-      }
-    }
-
-    // Step 6: If alternative response exists from after_tool_callback, use it
-    // instead of the original function response.
-    if (alteredFunctionResponse != null) {
-      functionResponse = normalizeCallbackResponse(alteredFunctionResponse);
-    }
-
-    // Allow a long-running function to return no response.
-    // Only a nullish response defers the event. A falsy-but-present response
-    // ('', 0, false) is a real result and still emits one, so long-running
-    // tools that return such a value now produce a response event where they
-    // previously produced none.
-    if (tool.isLongRunning && functionResponse == null) {
-      // The tool's response will arrive later, but any actions it recorded on
-      // the tool context (state/artifact deltas, auth or confirmation
-      // requests, transfer, escalation, skipSummarization) must not be lost.
-      if (!isDefaultEventActions(toolContext.actions)) {
-        functionResponseEvents.push(
-          createEvent({
-            invocationId: invocationContext.invocationId,
-            author: toolEventAuthor(invocationContext),
-            actions: toolContext.actions,
-            branch: invocationContext.branch,
-          }),
-        );
-      }
-      continue;
-    }
-
-    const functionResponseEvent = createEvent({
-      invocationId: invocationContext.invocationId,
-      author: toolEventAuthor(invocationContext),
-      content: createUserContent({
-        functionResponse: buildFunctionResponse({
-          tool,
-          id: toolContext.functionCallId,
-          response: functionResponse,
-        }),
-      }),
-      actions: toolContext.actions,
-      branch: invocationContext.branch,
-    });
-
-    functionResponseEvents.push(functionResponseEvent);
+  if (filteredFunctionCalls.length === 0) {
+    return null;
   }
 
-  if (!functionResponseEvents.length) {
+  const settledResults = await Promise.allSettled(
+    filteredFunctionCalls.map((functionCall) =>
+      executeSingleFunctionCall({
+        invocationContext,
+        functionCall,
+        toolsDict,
+        beforeToolCallbacks,
+        afterToolCallbacks,
+        toolConfirmation:
+          toolConfirmationDict &&
+          functionCall.id &&
+          Object.hasOwn(toolConfirmationDict, functionCall.id)
+            ? toolConfirmationDict[functionCall.id]
+            : undefined,
+        resumeInputs:
+          resumeInputsDict &&
+          functionCall.id &&
+          Object.hasOwn(resumeInputsDict, functionCall.id)
+            ? resumeInputsDict[functionCall.id]
+            : undefined,
+        isLive,
+      }),
+    ),
+  );
+  const firstRejection = settledResults.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected',
+  );
+  if (firstRejection) {
+    throw firstRejection.reason;
+  }
+  const functionResponseEvents: Event[] = [];
+  for (const result of settledResults) {
+    if (result.status === 'fulfilled' && result.value !== null) {
+      functionResponseEvents.push(result.value);
+    }
+  }
+
+  if (functionResponseEvents.length === 0) {
     return null;
   }
   const mergedEvent = mergeParallelFunctionResponseEvents(
     functionResponseEvents,
   );
+  if (functionResponseEvents.length > 1 && invocationContext.session?.state) {
+    applyLatestStateWrites(
+      mergedEvent,
+      functionResponseEvents,
+      invocationContext.session.state,
+    );
+  }
 
   if (functionResponseEvents.length > 1) {
     logger.debug('execute_tool (merged)');
@@ -925,7 +1097,10 @@ async function processFunctionLiveHelper({
     targetFunctionName !== undefined
   ) {
     const activeTasks = invocationContext.activeStreamingTools;
-    const activeTask = activeTasks?.[targetFunctionName]?.task;
+    const activeTask =
+      activeTasks && Object.hasOwn(activeTasks, targetFunctionName)
+        ? activeTasks[targetFunctionName]?.task
+        : undefined;
     if (activeTasks && activeTask && !activeTask.done()) {
       activeTask.cancel();
       await waitForTaskWithTimeout(activeTask, STOP_STREAMING_TIMEOUT_MS);
@@ -935,7 +1110,15 @@ async function processFunctionLiveHelper({
           status: `The task is not cancelled yet for ${targetFunctionName}.`,
         };
       } else {
-        activeTasks[targetFunctionName].task = undefined;
+        // Preserve any newer task started for the same tool while awaiting cancellation.
+        const currentStreamingTools = invocationContext.activeStreamingTools;
+        if (
+          currentStreamingTools &&
+          Object.hasOwn(currentStreamingTools, targetFunctionName) &&
+          currentStreamingTools[targetFunctionName]?.task === activeTask
+        ) {
+          currentStreamingTools[targetFunctionName].task = undefined;
+        }
         functionResponse = {
           status: `Successfully stopped streaming function ${targetFunctionName}`,
         };
@@ -993,7 +1176,7 @@ async function processFunctionLiveHelper({
     });
 
     invocationContext.activeStreamingTools ??= {};
-    if (tool.name in invocationContext.activeStreamingTools) {
+    if (Object.hasOwn(invocationContext.activeStreamingTools, tool.name)) {
       invocationContext.activeStreamingTools[tool.name].task = task;
     } else {
       invocationContext.activeStreamingTools[tool.name] =
