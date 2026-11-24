@@ -33,9 +33,15 @@ interface BigQuerySessionInfo {
 }
 
 const bqSessionsByKey = new Map<string, BigQuerySessionInfo>();
-const bqSessionsByContext = new WeakMap<Context, BigQuerySessionInfo>();
+const bqSessionsByContext = new WeakMap<
+  Context,
+  Map<string, BigQuerySessionInfo>
+>();
 
-function getSessionKey(toolContext?: Context): string | undefined {
+function getSessionKey(
+  toolContext?: Context,
+  projectId?: string,
+): string | undefined {
   if (!toolContext) {
     return undefined;
   }
@@ -46,27 +52,29 @@ function getSessionKey(toolContext?: Context): string | undefined {
   }
   const appName = session?.appName ?? '';
   const userId = session?.userId ?? toolContext.userId ?? '';
-  return JSON.stringify([appName, userId, sessionId]);
+  return JSON.stringify([appName, userId, sessionId, projectId ?? '']);
 }
 
 function getRememberedBigQuerySession(
   toolContext?: Context,
+  projectId?: string,
 ): BigQuerySessionInfo | undefined {
-  const sessionKey = getSessionKey(toolContext);
+  const sessionKey = getSessionKey(toolContext, projectId);
   if (sessionKey !== undefined) {
     return bqSessionsByKey.get(sessionKey);
   }
   if (toolContext !== undefined) {
-    return bqSessionsByContext.get(toolContext);
+    return bqSessionsByContext.get(toolContext)?.get(projectId ?? '');
   }
   return undefined;
 }
 
 function rememberBigQuerySession(
   toolContext: Context | undefined,
+  projectId: string | undefined,
   sessionInfo: BigQuerySessionInfo,
 ): void {
-  const sessionKey = getSessionKey(toolContext);
+  const sessionKey = getSessionKey(toolContext, projectId);
   if (sessionKey !== undefined) {
     if (bqSessionsByKey.has(sessionKey)) {
       bqSessionsByKey.delete(sessionKey);
@@ -81,7 +89,12 @@ function rememberBigQuerySession(
     return;
   }
   if (toolContext !== undefined) {
-    bqSessionsByContext.set(toolContext, sessionInfo);
+    let sessionsByProject = bqSessionsByContext.get(toolContext);
+    if (!sessionsByProject) {
+      sessionsByProject = new Map();
+      bqSessionsByContext.set(toolContext, sessionsByProject);
+    }
+    sessionsByProject.set(projectId ?? '', sessionInfo);
   }
 }
 
@@ -182,7 +195,10 @@ export async function executeSql(
     let connectionProperties: BigQueryConnectionProperty[] | undefined;
 
     if (writeMode === WriteMode.PROTECTED) {
-      let bqSessionInfo = getRememberedBigQuerySession(effectiveToolContext);
+      let bqSessionInfo = getRememberedBigQuerySession(
+        effectiveToolContext,
+        bqClient.projectId,
+      );
       if (!bqSessionInfo) {
         const sessionCreatorJob = await bqClient.dryRun({
           query: 'SELECT 1',
@@ -200,7 +216,11 @@ export async function executeSql(
           sessionId,
           datasetId: sessionCreatorJob.destinationTable?.datasetId,
         };
-        rememberBigQuerySession(effectiveToolContext, bqSessionInfo);
+        rememberBigQuerySession(
+          effectiveToolContext,
+          bqClient.projectId,
+          bqSessionInfo,
+        );
       }
 
       connectionProperties = [

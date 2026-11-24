@@ -329,15 +329,15 @@ function formatFloat(value: number): string {
  * Python `repr(float)`: shortest round-trip digits, exponent form below 1e-4 or
  * from 1e16.
  */
-function formatNumber(value: number): string {
-  if (Number.isNaN(value)) {
-    return 'NaN';
-  }
-  if (value === Number.POSITIVE_INFINITY) {
-    return 'Infinity';
-  }
-  if (value === Number.NEGATIVE_INFINITY) {
-    return '-Infinity';
+function formatNumber(value: number, allowNan = true): string {
+  if (!Number.isFinite(value)) {
+    if (!allowNan) {
+      return 'null';
+    }
+    if (Number.isNaN(value)) {
+      return 'NaN';
+    }
+    return value === Number.POSITIVE_INFINITY ? 'Infinity' : '-Infinity';
   }
   if (Number.isInteger(value) && Math.abs(value) < 1e16) {
     return String(value);
@@ -352,11 +352,25 @@ function formatNumber(value: number): string {
   return `${mantissa}e${sign}${String(Math.abs(exponent)).padStart(2, '0')}`;
 }
 
+/** Options controlling {@link pythonJsonDumps} serialization behavior. */
+export interface PythonJsonDumpsOptions {
+  /**
+   * Whether to emit non-standard `NaN`, `Infinity`, and `-Infinity` literals
+   * (default `true`, matching Python's `json.dumps` default). Set to `false`
+   * to serialize non-finite numbers as `null` for strict RFC 8259 JSON.
+   */
+  allowNan?: boolean;
+}
+
 /**
  * `json.dumps(value)` with Python's defaults: `ensure_ascii=True`, `", "` and
  * `": "` separators.
  */
-export function pythonJsonDumps(value: PythonJsonValue): string {
+export function pythonJsonDumps(
+  value: PythonJsonValue,
+  options?: PythonJsonDumpsOptions,
+): string {
+  const allowNan = options?.allowNan ?? true;
   if (value === null) {
     return 'null';
   }
@@ -367,17 +381,17 @@ export function pythonJsonDumps(value: PythonJsonValue): string {
     return value ? 'true' : 'false';
   }
   if (typeof value === 'number') {
-    return formatNumber(value);
+    return formatNumber(value, allowNan);
   }
   if (typeof value === 'string') {
     return escapeString(value);
   }
   if (Array.isArray(value)) {
-    return `[${value.map((item) => pythonJsonDumps(item)).join(', ')}]`;
+    return `[${value.map((item) => pythonJsonDumps(item, options)).join(', ')}]`;
   }
   const members = Object.keys(value).map((key) => {
     const member = value[key];
-    return `${escapeString(key)}: ${pythonJsonDumps(member === undefined ? null : member)}`;
+    return `${escapeString(key)}: ${pythonJsonDumps(member === undefined ? null : member, options)}`;
   });
   return `{${members.join(', ')}}`;
 }

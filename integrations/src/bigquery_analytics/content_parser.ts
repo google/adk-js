@@ -689,9 +689,15 @@ export class HybridContentParser {
           ...partData,
           mime_type: 'application/json',
           text: `Function: ${pyStr(part.functionCall.name)}`,
-          part_attributes: pythonJsonDumps({
-            function_name: part.functionCall.name ?? null,
-          }),
+          // `part_attributes` uses `{allowNan: false}` (diverging from Python
+          // `json.dumps`'s default `NaN`/`Infinity` tokens) so BigQuery
+          // `JSON_QUERY` in `v_eval_*` views can parse it as strict RFC 8259 JSON.
+          part_attributes: pythonJsonDumps(
+            {
+              function_name: part.functionCall.name ?? null,
+            },
+            {allowNan: false},
+          ),
         },
         summary: null,
         isTruncated: false,
@@ -717,9 +723,13 @@ export class HybridContentParser {
           ...partData,
           mime_type: 'application/json',
           text: responseSummary,
-          part_attributes: pythonJsonDumps({
-            function_response: serialized.value,
-          }),
+          // Strict RFC 8259 JSON for BigQuery `JSON_QUERY` in `v_eval_*` views.
+          part_attributes: pythonJsonDumps(
+            {
+              function_response: serialized.value,
+            },
+            {allowNan: false},
+          ),
         },
         summary: responseSummary,
         isTruncated: serialized.isTruncated || name.isTruncated,
@@ -735,7 +745,11 @@ export class HybridContentParser {
         part: {
           ...partData,
           text: code.text,
-          part_attributes: pythonJsonDumps({executable_code: serialized.value}),
+          // Strict RFC 8259 JSON for BigQuery `JSON_QUERY` in `v_eval_*` views.
+          part_attributes: pythonJsonDumps(
+            {executable_code: serialized.value},
+            {allowNan: false},
+          ),
         },
         summary: `Executable code (${language.text}): ${code.text}`,
         isTruncated:
@@ -752,9 +766,13 @@ export class HybridContentParser {
         part: {
           ...partData,
           text: output.text,
-          part_attributes: pythonJsonDumps({
-            code_execution_result: serialized.value,
-          }),
+          // Strict RFC 8259 JSON for BigQuery `JSON_QUERY` in `v_eval_*` views.
+          part_attributes: pythonJsonDumps(
+            {
+              code_execution_result: serialized.value,
+            },
+            {allowNan: false},
+          ),
         },
         summary: `Code execution result (${outcome.text}): ${output.text}`,
         isTruncated:

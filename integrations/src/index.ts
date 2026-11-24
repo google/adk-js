@@ -18,6 +18,7 @@ export type {
   BigQueryCredentials,
   BigQueryCredentialsConfigOptions,
   BigQueryOAuthCredentialsOptions,
+  GoogleAuthLibraryCredentials,
   GoogleOAuthCredentials,
 } from './bigquery/bigquery_credentials.js';
 export {BigQueryTool, isBigQueryTool} from './bigquery/bigquery_tool.js';
