@@ -115,7 +115,11 @@ flowchart LR
    - `Context`, aliased as `CallbackContext`, extends `ReadonlyContext` with a delta-recording `state` (`State`), `actions` (`EventActions`), `loadArtifact`, `saveArtifact`, `listArtifacts`, `searchMemory`, `saveCredential`, `loadCredential`, `requestCredential`, `getAuthResponse`, and `requestConfirmation`. Both `saveCredential` and `loadCredential` delegate to `invocationContext.credentialService` (configured on `Runner` or `InvocationContext`) and reject when no credential service is initialized.
    - `beforeAgentCallback` runs before `runAsyncImpl`. If any callback in the list returns a `Content` object, `BaseAgent` yields an event carrying that content and skips both `runAsyncImpl` and `afterAgentCallback`.
    - `afterAgentCallback` runs after `runAsyncImpl` finishes and can emit a trailing event by returning a `Content` object.
-4. **Live streaming and transcription helpers**:
+4. **Deterministic generator and span cleanup (`Aclosing`)**:
+   - `BaseAgent.runAsync` and `BaseAgent.runLive` consume `runAsyncImpl` and `runLiveImpl` through `Aclosing`, and `SequentialAgent`, `LoopAgent`, and `ParallelAgent` likewise wrap sub-agent streams in `Aclosing` so early iterator exit, `AbortSignal` cancellation, or a `next()` rejection deterministically awaits `return(undefined)` and closes active `invoke_agent` OpenTelemetry spans.
+   - `ParallelAgent` chains a branch-scoped `AbortController` to `context.abortSignal`, aborts in-flight sibling branches on early consumer exit or sibling failure, suppresses late pending race rejections, and awaits `Promise.allSettled` in `finally` to close all started sub-agent generators concurrently.
+   - Outer `recordAgentInvocation` scopes retain `yield*` delegation so errors injected by a consumer via `generator.throw(err)` trigger `onAgentErrorCallback` and mark the agent span with error status.
+5. **Live streaming and transcription helpers**:
    - `LiveRequestQueue` is an async FIFO queue of `LiveRequest` items (`content`, `blob`, `activityStart`, `activityEnd`, `close`) that feeds bidirectional `runLive` sessions and Compositional Function Calling (`runConfig.supportCfc`).
    - `ActiveStreamingTool` pairs a background `Task<void>` and an optional input `LiveRequestQueue` for live streaming tools stored in `invocationContext.activeStreamingTools`.
    - `TranscriptionEntry` records `{role, data}` entries (`Blob` or `Content`) in `invocationContext.transcriptionCache` for speech transcription.
@@ -142,30 +146,32 @@ Every agent class accepts the properties defined on `BaseAgentConfig`:
 
 The `LlmAgentConfig` interface extends `BaseAgentConfig` with model, instruction, tool, schema, and callback settings:
 
-| Option                     | Type                            | Default       | Description                                                                                                   |
-| :------------------------- | :------------------------------ | :------------ | :------------------------------------------------------------------------------------------------------------ |
-| `model`                    | `string \| BaseLlm`             | Inherited     | Model name or `BaseLlm` instance. Resolves from the nearest ancestor `LlmAgent` when omitted.                 |
-| `instruction`              | `string \| InstructionProvider` | `''`          | Agent instruction string supporting `{state_key}` interpolation, or a function receiving `ReadonlyContext`.   |
-| `globalInstruction`        | `string \| InstructionProvider` | `''`          | Root-agent instruction prepended to every agent in the tree.                                                  |
-| `tools`                    | `ToolUnion[]`                   | `[]`          | `BaseTool`, `BaseToolset`, or `BaseNode` instances exposed to the model.                                      |
-| `generateContentConfig`    | `GenerateContentConfig`         | `undefined`   | Model generation parameters such as `temperature` and `maxOutputTokens`.                                      |
-| `disallowTransferToParent` | `boolean`                       | `false`       | Prevents the model from transferring control back to `parentAgent`.                                           |
-| `disallowTransferToPeers`  | `boolean`                       | `false`       | Prevents the model from transferring control to sibling agents.                                               |
-| `includeContents`          | `'default' \| 'none'`           | `'default'`   | Controls whether prior conversation history is included in model requests.                                    |
-| `inputSchema`              | `LlmAgentSchema`                | `undefined`   | Zod object or `@google/genai` `Schema` validating input when this agent is invoked as a tool.                 |
-| `outputSchema`             | `LlmAgentSchema`                | `undefined`   | Zod object or `@google/genai` `Schema` enforcing structured JSON output from the model.                       |
-| `outputKey`                | `string`                        | `undefined`   | Session state key where the agent's text response is persisted via `actions.stateDelta`.                      |
-| `codeExecutor`             | `BaseCodeExecutor`              | `undefined`   | Code executor used to run fenced code blocks emitted by the model.                                            |
-| `planner`                  | `BasePlanner`                   | `undefined`   | Planner such as `BuiltInPlanner` or `PlanReActPlanner` applied before and after model calls.                  |
-| `contextCompactors`        | `BaseContextCompactor[]`        | `[]`          | Context compactors evaluated in priority order before `CONTENT_REQUEST_PROCESSOR`.                            |
-| `requestProcessors`        | `BaseLlmRequestProcessor[]`     | Default chain | Ordered request processor pipeline.                                                                           |
-| `responseProcessors`       | `BaseLlmResponseProcessor[]`    | Default chain | Ordered response processor pipeline.                                                                          |
-| `beforeModelCallback`      | `BeforeModelCallback`           | `[]`          | Callback or array of callbacks run before the model call; returning `LlmResponse` skips the model call.       |
-| `afterModelCallback`       | `AfterModelCallback`            | `[]`          | Callback or array of callbacks run after the model call; returning `LlmResponse` replaces the model response. |
-| `beforeToolCallback`       | `BeforeToolCallback`            | `[]`          | Callback or array of callbacks run before tool execution; returning a record skips the tool call.             |
-| `afterToolCallback`        | `AfterToolCallback`             | `[]`          | Callback or array of callbacks run after tool execution; returning a record replaces the tool result.         |
+| Option                     | Type                            | Default       | Description                                                                                                                                 |
+| :------------------------- | :------------------------------ | :------------ | :------------------------------------------------------------------------------------------------------------------------------------------ |
+| `model`                    | `string \| BaseLlm`             | Inherited     | Model name or `BaseLlm` instance. Resolves from the nearest ancestor `LlmAgent` when omitted.                                               |
+| `instruction`              | `string \| InstructionProvider` | `''`          | Agent instruction string supporting `{state_key}` interpolation, or a function receiving `ReadonlyContext`.                                 |
+| `globalInstruction`        | `string \| InstructionProvider` | `''`          | Root-agent instruction prepended to every agent in the tree.                                                                                |
+| `tools`                    | `ToolUnion[]`                   | `[]`          | `BaseTool`, `BaseToolset` (resolved via `getToolsWithPrefix` so `toolNamePrefix` applies), or `BaseNode` instances exposed to the model.    |
+| `generateContentConfig`    | `GenerateContentConfig`         | `undefined`   | Model generation parameters such as `temperature` and `maxOutputTokens`.                                                                    |
+| `disallowTransferToParent` | `boolean`                       | `false`       | Prevents the model from transferring control back to `parentAgent`.                                                                         |
+| `disallowTransferToPeers`  | `boolean`                       | `false`       | Prevents the model from transferring control to sibling agents.                                                                             |
+| `includeContents`          | `'default' \| 'none'`           | `'default'`   | Controls whether prior conversation history is included in model requests.                                                                  |
+| `inputSchema`              | `LlmAgentSchema`                | `undefined`   | Zod object or `@google/genai` `Schema` validating input when this agent is invoked as a tool.                                               |
+| `outputSchema`             | `LlmAgentSchema`                | `undefined`   | Zod object or `@google/genai` `Schema` enforcing structured JSON output; coexists with `tools` and disables parent and peer agent transfer. |
+| `outputKey`                | `string`                        | `undefined`   | Session state key where the agent's text response is persisted via `actions.stateDelta`.                                                    |
+| `codeExecutor`             | `BaseCodeExecutor`              | `undefined`   | Code executor used to run fenced code blocks emitted by the model.                                                                          |
+| `planner`                  | `BasePlanner`                   | `undefined`   | Planner such as `BuiltInPlanner` or `PlanReActPlanner` applied before and after model calls.                                                |
+| `contextCompactors`        | `BaseContextCompactor[]`        | `[]`          | Context compactors evaluated in priority order before `CONTENT_REQUEST_PROCESSOR`.                                                          |
+| `requestProcessors`        | `BaseLlmRequestProcessor[]`     | Default chain | Ordered request processor pipeline.                                                                                                         |
+| `responseProcessors`       | `BaseLlmResponseProcessor[]`    | Default chain | Ordered response processor pipeline.                                                                                                        |
+| `beforeModelCallback`      | `BeforeModelCallback`           | `[]`          | Callback or array of callbacks run before the model call; returning `LlmResponse` skips the model call.                                     |
+| `afterModelCallback`       | `AfterModelCallback`            | `[]`          | Callback or array of callbacks run after the model call; returning `LlmResponse` replaces the model response.                               |
+| `beforeToolCallback`       | `BeforeToolCallback`            | `[]`          | Callback or array of callbacks run before tool execution; returning a record skips the tool call.                                           |
+| `afterToolCallback`        | `AfterToolCallback`             | `[]`          | Callback or array of callbacks run after tool execution; returning a record replaces the tool result.                                       |
 
 Setting `tools`, `systemInstruction`, or `responseSchema` inside `generateContentConfig` throws an error at construction time; configure those on `LlmAgentConfig` directly via `tools`, `instruction`, and `outputSchema`.
+
+When `outputSchema` is configured alongside function tools (`tools` or reachable `subAgents` transfer targets, outside `mode: 'task'`, live mode, and `runConfig.supportCfc`), Vertex AI Gemini 2.0+ models send `responseSchema` natively alongside tool declarations, while other models automatically attach `SetModelResponseTool` (`set_model_response`) so the model can call tools first and emit validated structured JSON at the end of the turn. When a `BaseToolset` in `tools` specifies `toolNamePrefix`, `LlmAgent` resolves its tools through `getToolsWithPrefix(context)` so exposed tool names are prefixed without mutating the underlying `BaseTool` instances. Built-in ADK framework tools (`transfer_to_agent`, `set_model_response`, `finish_task`, `task_completed`) use `snake_case` wire names across languages, whereas TypeScript configuration options and application-defined tools use `camelCase`.
 
 ### Workflow and LangGraph agent configurations
 
@@ -332,6 +338,47 @@ export const remoteSpecialist = new RemoteA2AAgent({
   name: 'remote_billing_agent',
   description: 'Delegates billing questions to a remote A2A service.',
   agentCard: 'https://billing-agent.example.invalid/.well-known/agent.json',
+});
+```
+
+### Combining `outputSchema` with a prefixed `BaseToolset`
+
+Configure `outputSchema` alongside `tools` on `LlmAgent` and set `toolNamePrefix` on `BaseToolset` to namespace tool declarations when multiple toolsets share an agent:
+
+```ts
+import {BaseTool, BaseToolset, FunctionTool, LlmAgent} from '@google/adk';
+import {z} from 'zod';
+
+class CityGuideToolset extends BaseToolset {
+  constructor() {
+    super({toolNamePrefix: 'cityGuide'});
+  }
+
+  override async getTools(): Promise<BaseTool[]> {
+    return [
+      new FunctionTool({
+        name: 'lookupHighlight',
+        description: 'Returns a landmark highlight for a city.',
+        parameters: z.object({city: z.string()}),
+        execute: async ({city}) => ({
+          city,
+          highlight: `${city} historic district`,
+        }),
+      }),
+    ];
+  }
+}
+
+export const cityBriefAgent = new LlmAgent({
+  name: 'cityBriefAgent',
+  model: 'gemini-flash-latest',
+  instruction: 'Look up the city highlight and return a structured brief.',
+  tools: [new CityGuideToolset()],
+  outputSchema: z.object({
+    city: z.string(),
+    highlight: z.string(),
+  }),
+  outputKey: 'cityBrief',
 });
 ```
 

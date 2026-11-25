@@ -21,6 +21,9 @@
  *    across a multi-iteration `LoopAgent`.
  * 5. `Context.saveCredential` and `Context.loadCredential` inside agent
  *    callbacks using `Runner` configured with `InMemoryCredentialService`.
+ * 6. `LlmAgent` configured with both `outputSchema` and a `BaseToolset` using
+ *    `toolNamePrefix`, resolving prefixed tools via `getToolsWithPrefix` and
+ *    saving validated structured JSON under `outputKey`.
  *
  * This sample exports `rootAgent` for `adk web` and `npm run sample`, and also
  * includes a direct `InMemoryRunner` driver in `main()` to inspect the agent
@@ -41,8 +44,11 @@ import {
   BaseAgentConfig,
   BaseLlm,
   BaseLlmConnection,
+  BaseTool,
+  BaseToolset,
   CompiledGraphLike,
   Event,
+  FunctionTool,
   InMemoryArtifactService,
   InMemoryCredentialService,
   InMemoryRunner,
@@ -56,6 +62,7 @@ import {
   LoopAgent,
   ParallelAgent,
   Runner,
+  SET_MODEL_RESPONSE_TOOL_NAME,
   SequentialAgent,
   createEvent,
   isFinalResponse,
@@ -68,6 +75,7 @@ import {
   stringifyContent,
 } from '@google/adk';
 import {fileURLToPath} from 'node:url';
+import {z} from 'zod';
 
 /**
  * Deterministic offline `BaseLlm` implementation used by `rootAgent` and `main()`
@@ -93,6 +101,93 @@ class DeterministicDemoLlm extends BaseLlm {
       content: {
         role: 'model',
         parts: [{text: `Summary for "${topic}"`}],
+      },
+    };
+  }
+
+  override async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+    throw new Error('Live connection is not used in this sample.');
+  }
+}
+
+/**
+ * Offline `BaseToolset` using `toolNamePrefix` so exposed tool names are
+ * automatically prefixed without mutating the underlying `FunctionTool`.
+ */
+class CityGuideToolset extends BaseToolset {
+  constructor() {
+    super({toolNamePrefix: 'cityGuide'});
+  }
+
+  override async getTools(): Promise<BaseTool[]> {
+    return [
+      new FunctionTool({
+        name: 'lookupHighlight',
+        description: 'Returns a landmark highlight for a city.',
+        parameters: z.object({city: z.string()}),
+        execute: async ({city}) => ({
+          city,
+          highlight: `${city} waterfront`,
+        }),
+      }),
+    ];
+  }
+}
+
+/**
+ * Offline `BaseLlm` driving a prefixed tool call followed by
+ * `set_model_response` when `outputSchema` and `tools` are configured together.
+ */
+class StructuredToolDemoLlm extends BaseLlm {
+  constructor() {
+    super({model: 'structured-tool-demo-llm'});
+  }
+
+  override async *generateContentAsync(
+    llmRequest: LlmRequest,
+  ): AsyncGenerator<LlmResponse, void, void> {
+    const toolResponsePart = llmRequest.contents
+      .flatMap((content) => content.parts ?? [])
+      .find(
+        (part) => part.functionResponse?.name === 'cityGuide_lookupHighlight',
+      );
+
+    if (!toolResponsePart) {
+      yield {
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-highlight-1',
+                name: 'cityGuide_lookupHighlight',
+                args: {city: 'Lisbon'},
+              },
+            },
+          ],
+        },
+      };
+      return;
+    }
+
+    const responseRecord = toolResponsePart.functionResponse?.response;
+    const highlight =
+      typeof responseRecord?.['highlight'] === 'string'
+        ? responseRecord['highlight']
+        : 'Lisbon historic district';
+
+    yield {
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'fc-structured-1',
+              name: SET_MODEL_RESPONSE_TOOL_NAME,
+              args: {city: 'Lisbon', highlight},
+            },
+          },
+        ],
       },
     };
   }
@@ -385,6 +480,55 @@ async function main(): Promise<void> {
   }
   process.stdout.write(
     `Loaded credential type from callback context: ${loadedCredentialType ?? 'none'}\n`,
+  );
+
+  process.stdout.write(
+    '\n=== 5. Structured Output with Prefixed Toolset ===\n',
+  );
+  const cityGuideToolset = new CityGuideToolset();
+  const prefixedTools = await cityGuideToolset.getToolsWithPrefix();
+  process.stdout.write(
+    `Prefixed tool names: ${prefixedTools.map((tool) => tool.name).join(', ')}\n`,
+  );
+
+  const structuredBriefAgent = new LlmAgent({
+    name: 'structuredBriefAgent',
+    model: new StructuredToolDemoLlm(),
+    instruction: 'Look up a highlight and return a structured city brief.',
+    tools: [cityGuideToolset],
+    outputSchema: z.object({
+      city: z.string(),
+      highlight: z.string(),
+    }),
+    outputKey: 'cityBrief',
+  });
+  const structuredRunner = new InMemoryRunner({
+    agent: structuredBriefAgent,
+    appName: 'agents-sample-app',
+  });
+  const structuredSession = await structuredRunner.sessionService.createSession(
+    {
+      appName: 'agents-sample-app',
+      userId: 'sample-user',
+    },
+  );
+  for await (const event of structuredRunner.runAsync({
+    userId: structuredSession.userId,
+    sessionId: structuredSession.id,
+    newMessage: {role: 'user', parts: [{text: 'Share a Lisbon brief'}]},
+  })) {
+    if (isFinalResponse(event)) {
+      process.stdout.write(`[${event.author}] ${stringifyContent(event)}\n`);
+    }
+  }
+  const updatedStructuredSession =
+    await structuredRunner.sessionService.getSession({
+      appName: 'agents-sample-app',
+      userId: 'sample-user',
+      sessionId: structuredSession.id,
+    });
+  process.stdout.write(
+    `Saved structured cityBrief: ${JSON.stringify(updatedStructuredSession?.state['cityBrief'])}\n`,
   );
 }
 

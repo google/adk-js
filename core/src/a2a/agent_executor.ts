@@ -15,6 +15,7 @@ import {Event as AdkEvent} from '../events/event.js';
 import {isRunner, Runner, RunnerConfig} from '../runner/runner.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {Session} from '../sessions/session.js';
+import {Aclosing} from '../utils/context_utils.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 import {
@@ -165,19 +166,21 @@ export class A2AAgentExecutor implements AgentExecutor {
       );
 
       const adkEvents: AdkEvent[] = [];
-      for await (const adkEvent of adkRunner.runAsync({
-        userId,
-        sessionId,
-        newMessage: genAIUserMessage,
-        // Marked remote so the run knows this message came from a peer rather
-        // than from the operator: a human-in-the-loop gate is not answerable
-        // over A2A unless the deployment opts in.
-        runConfig: {
-          ...this.config.runConfig,
-          remoteDelivered: true,
-          ...(a2aMetadata ? {a2aMetadata} : {}),
-        },
-      })) {
+      for await (const adkEvent of new Aclosing(
+        adkRunner.runAsync({
+          userId,
+          sessionId,
+          newMessage: genAIUserMessage,
+          // Marked remote so the run knows this message came from a peer rather
+          // than from the operator: a human-in-the-loop gate is not answerable
+          // over A2A unless the deployment opts in.
+          runConfig: {
+            ...this.config.runConfig,
+            remoteDelivered: true,
+            ...(a2aMetadata ? {a2aMetadata} : {}),
+          },
+        }),
+      )) {
         adkEvents.push(adkEvent);
 
         const a2aEvent = this.convertAdkEventToA2AEvent(

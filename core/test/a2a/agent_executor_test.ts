@@ -802,4 +802,156 @@ describe('A2AAgentExecutor', () => {
       );
     });
   });
+
+  describe('Aclosing generator cleanup on runner.runAsync', () => {
+    it('closes runner.runAsync via return(undefined) and publishes failed status when next() rejects', async () => {
+      const {Runner: ActualRunner} = await vi.importActual<
+        typeof import('../../src/runner/runner.js')
+      >('../../src/runner/runner.js');
+      const {LlmAgent} = await import('@google/adk');
+
+      mockSessionService.getSession.mockResolvedValue(
+        createSession({
+          id: 'session-id',
+          userId: 'A2A_USER_test-context',
+          appName: 'test-app',
+        }),
+      );
+
+      const returnSpy = vi.fn(
+        async (): Promise<IteratorResult<AdkEvent, void>> => ({
+          value: undefined,
+          done: true,
+        }),
+      );
+
+      class RejectingStreamRunner extends ActualRunner {
+        override runAsync(): AsyncGenerator<AdkEvent, void, undefined> {
+          const generator: AsyncGenerator<AdkEvent, void, undefined> = {
+            next: async () => {
+              throw new Error('runner stream next failed');
+            },
+            return: returnSpy,
+            throw: async (error: unknown) => {
+              throw error;
+            },
+            [Symbol.asyncIterator]() {
+              return this;
+            },
+          };
+          return generator;
+        }
+      }
+
+      const runner = new RejectingStreamRunner({
+        appName: 'test-app',
+        agent: new LlmAgent({name: 'executorWorkerAgent'}),
+        sessionService: mockSessionService,
+      });
+
+      const executor = new A2AAgentExecutor({runner});
+      await executor.execute(createRequestContext(), mockEventBus);
+
+      expect(returnSpy).toHaveBeenCalledTimes(1);
+      expect(returnSpy).toHaveBeenCalledWith(undefined);
+
+      const lastPublished = mockEventBus.publish.mock.calls.at(-1)?.[0];
+      expect(lastPublished?.kind).toBe('status-update');
+      if (lastPublished?.kind === 'status-update') {
+        expect(lastPublished.final).toBe(true);
+        expect(lastPublished.status.state).toBe('failed');
+        const firstPart = lastPublished.status.message?.parts[0];
+        expect(firstPart?.kind).toBe('text');
+        if (firstPart?.kind === 'text') {
+          expect(firstPart.text).toContain(
+            'Agent run failed: runner stream next failed',
+          );
+        }
+      }
+    });
+
+    it('closes runner.runAsync via return(undefined) and publishes failed status when afterEventCallback throws', async () => {
+      const {Runner: ActualRunner} = await vi.importActual<
+        typeof import('../../src/runner/runner.js')
+      >('../../src/runner/runner.js');
+      const {LlmAgent} = await import('@google/adk');
+
+      mockSessionService.getSession.mockResolvedValue(
+        createSession({
+          id: 'session-id',
+          userId: 'A2A_USER_test-context',
+          appName: 'test-app',
+        }),
+      );
+
+      const returnSpy = vi.fn(
+        async (): Promise<IteratorResult<AdkEvent, void>> => ({
+          value: undefined,
+          done: true,
+        }),
+      );
+
+      class MultiEventRunner extends ActualRunner {
+        override runAsync(): AsyncGenerator<AdkEvent, void, undefined> {
+          let step = 0;
+          const generator: AsyncGenerator<AdkEvent, void, undefined> = {
+            next: async () => {
+              step += 1;
+              if (step <= 2) {
+                return {
+                  value: createEvent({
+                    author: 'executorWorkerAgent',
+                    content: {role: 'model', parts: [{text: `chunk ${step}`}]},
+                    partial: step === 1,
+                    actions: createEventActions(),
+                  }),
+                  done: false,
+                };
+              }
+              return {value: undefined, done: true};
+            },
+            return: returnSpy,
+            throw: async (error: unknown) => {
+              throw error;
+            },
+            [Symbol.asyncIterator]() {
+              return this;
+            },
+          };
+          return generator;
+        }
+      }
+
+      const runner = new MultiEventRunner({
+        appName: 'test-app',
+        agent: new LlmAgent({name: 'executorWorkerAgent'}),
+        sessionService: mockSessionService,
+      });
+
+      const executor = new A2AAgentExecutor({
+        runner,
+        afterEventCallback: async () => {
+          throw new Error('afterEventCallback failed');
+        },
+      });
+      await executor.execute(createRequestContext(), mockEventBus);
+
+      expect(returnSpy).toHaveBeenCalledTimes(1);
+      expect(returnSpy).toHaveBeenCalledWith(undefined);
+
+      const lastPublished = mockEventBus.publish.mock.calls.at(-1)?.[0];
+      expect(lastPublished?.kind).toBe('status-update');
+      if (lastPublished?.kind === 'status-update') {
+        expect(lastPublished.final).toBe(true);
+        expect(lastPublished.status.state).toBe('failed');
+        const firstPart = lastPublished.status.message?.parts[0];
+        expect(firstPart?.kind).toBe('text');
+        if (firstPart?.kind === 'text') {
+          expect(firstPart.text).toContain(
+            'Agent run failed: afterEventCallback failed',
+          );
+        }
+      }
+    });
+  });
 });
