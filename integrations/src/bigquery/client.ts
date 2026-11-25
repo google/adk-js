@@ -4,11 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {type GoogleCredentials, isGoogleAuthClient} from '@google/adk';
+
 import {version} from '../version.js';
-import {
-  type BigQueryCredentials,
-  isBigQueryAuthClient,
-} from './bigquery_credentials.js';
 
 /**
  * Default User-Agent string sent on BigQuery API requests from ADK tools.
@@ -238,13 +236,13 @@ export interface GetBigQueryClientOptions {
 
   /**
    * Credentials to authenticate BigQuery requests. Objects implementing
-   * {@link BigQueryAuthClient} (such as `google-auth-library` clients) are
-   * passed directly as `authClient`; objects carrying an access `token` are
-   * wrapped in a bearer-token `authClient`. When `credentials` is omitted, the
-   * SDK uses Application Default Credentials; when `credentials` is provided
-   * without a token or `getRequestHeaders`, client creation throws.
+   * `GoogleAuthClient` (such as `google-auth-library` clients) are passed
+   * directly as `authClient`; objects carrying an access `token` are wrapped in
+   * a bearer-token `authClient`. When `credentials` is omitted, the SDK uses
+   * Application Default Credentials; when `credentials` is provided without a
+   * token or `getRequestHeaders`, client creation throws.
    */
-  credentials?: BigQueryCredentials;
+  credentials?: GoogleCredentials;
 
   /**
    * Default geographic location for datasets and jobs.
@@ -305,7 +303,7 @@ function buildUserAgent(
  */
 export class BigQueryClient {
   readonly projectId?: string;
-  readonly credentials?: BigQueryCredentials;
+  readonly credentials?: GoogleCredentials;
   readonly location?: string;
   readonly userAgent: string;
   private readonly sdkLoader: () => Promise<BigQuerySdkModule>;
@@ -499,7 +497,7 @@ export class BigQueryClient {
     if (this.credentials !== undefined) {
       // `credentials` in the SDK options expects a service account or
       // authorized user key, so pre-configured credentials go on `authClient`.
-      if (isBigQueryAuthClient(this.credentials)) {
+      if (isGoogleAuthClient(this.credentials)) {
         clientOptions['authClient'] = this.credentials;
       } else if (
         typeof this.credentials.token === 'string' &&

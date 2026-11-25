@@ -100,3 +100,19 @@ export class BigQueryToolConfig {
     );
   }
 }
+
+/**
+ * Resolves effective tool settings from `args.settings`, falling back to
+ * deprecated `args.config` only when `GoogleTool` has not injected both
+ * `settings` and `credentials` onto `args`.
+ */
+export function resolveToolSettings(args: {
+  settings?: BigQueryToolConfig | BigQueryToolConfigOptions;
+  config?: BigQueryToolConfig | BigQueryToolConfigOptions;
+  credentials?: unknown;
+}): BigQueryToolConfig | BigQueryToolConfigOptions | undefined {
+  if (Object.hasOwn(args, 'settings') && Object.hasOwn(args, 'credentials')) {
+    return args.settings;
+  }
+  return args.settings ?? args.config;
+}

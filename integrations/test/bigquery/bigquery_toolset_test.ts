@@ -4,26 +4,29 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {type Context, State} from '@google/adk';
+import {type Context, isGoogleTool, State} from '@google/adk';
 import {
   BigQueryCredentialsConfig,
   BigQueryToolConfig,
   BigQueryToolset,
   isBigQueryTool,
+  isBigQueryToolConfig,
   isBigQueryToolset,
   WriteMode,
 } from '@google/adk-integrations';
-import {describe, expect, it, vi} from 'vitest';
+import {afterEach, describe, expect, it, vi} from 'vitest';
 
 import {BigQueryClient} from '../../src/bigquery/client.js';
 
-function createMockToolContext(): Context {
+function createMockToolContext(
+  initialState: Record<string, unknown> = {},
+): Context {
   return {
     getAuthResponse: vi.fn(() => undefined),
     requestCredential: vi.fn(),
     requestConfirmation: vi.fn(),
     actions: {},
-    state: new State(),
+    state: new State(initialState),
   } as unknown as Context;
 }
 
@@ -44,6 +47,10 @@ function createCredentialsConfig(): BigQueryCredentialsConfig {
 }
 
 describe('BigQueryToolset', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('identifies BigQueryToolset instances via isBigQueryToolset', () => {
     const toolset = new BigQueryToolset();
     expect(isBigQueryToolset(toolset)).toBe(true);
@@ -64,7 +71,8 @@ describe('BigQueryToolset', () => {
 
     const tools = await toolset.getTools();
     expect(tools).toHaveLength(6);
-    expect(tools.every((tool) => isBigQueryTool(tool))).toBe(true);
+    expect(tools.every((tool) => isGoogleTool(tool))).toBe(true);
+    expect(tools.every((tool) => !isBigQueryTool(tool))).toBe(true);
     expect(new Set(tools.map((tool) => tool.name))).toEqual(
       new Set(ALL_TOOL_NAMES),
     );
@@ -87,7 +95,7 @@ describe('BigQueryToolset', () => {
 
       const tools = await toolset.getTools();
       expect(tools).toHaveLength(selectedTools.length);
-      expect(tools.every((tool) => isBigQueryTool(tool))).toBe(true);
+      expect(tools.every((tool) => isGoogleTool(tool))).toBe(true);
       expect(new Set(tools.map((tool) => tool.name))).toEqual(
         new Set(selectedTools),
       );
@@ -122,6 +130,7 @@ describe('BigQueryToolset', () => {
 
       const tools = await toolset.getTools();
       expect(tools).toHaveLength(returnedTools.length);
+      expect(tools.every((tool) => isGoogleTool(tool))).toBe(true);
       expect(new Set(tools.map((tool) => tool.name))).toEqual(
         new Set(returnedTools),
       );
@@ -420,6 +429,112 @@ describe('BigQueryToolset', () => {
       query: 'CREATE TABLE my_dataset.new_table AS SELECT 1',
       projectId: 'my_project',
       maxResults: 50,
+    });
+  });
+
+  it('assigns toolset toolConfig to returned GoogleTool toolSettings', async () => {
+    const defaultToolset = new BigQueryToolset();
+    const defaultTools = await defaultToolset.getTools();
+    for (const tool of defaultTools) {
+      if (!isGoogleTool(tool)) {
+        throw new Error(`Expected GoogleTool for ${tool.name}`);
+      }
+      expect(tool.toolSettings).toBe(defaultToolset.toolConfig);
+      expect(isBigQueryToolConfig(tool.toolSettings)).toBe(true);
+      if (isBigQueryToolConfig(tool.toolSettings)) {
+        expect(tool.toolSettings.writeMode).toBe(WriteMode.BLOCKED);
+        expect(tool.toolSettings.maxQueryResultRows).toBe(50);
+      }
+    }
+
+    const customConfig = new BigQueryToolConfig({
+      writeMode: WriteMode.ALLOWED,
+      maxQueryResultRows: 12,
+    });
+    const customToolset = new BigQueryToolset({toolConfig: customConfig});
+    const customTools = await customToolset.getTools();
+    for (const tool of customTools) {
+      if (!isGoogleTool(tool)) {
+        throw new Error(`Expected GoogleTool for ${tool.name}`);
+      }
+      expect(tool.toolSettings).toBe(customConfig);
+    }
+  });
+
+  it('applies toolConfig.maxQueryResultRows to ask_data_insights and execute_sql through BigQueryToolset', async () => {
+    const streamBody = [
+      '[{',
+      '"systemMessage": {"data": {"result": {"data": [{"id": 1}, {"id": 2}, {"id": 3}], "schema": {"fields": [{"name": "id"}]}}}}',
+      '}]',
+    ].join('\n');
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(streamBody, {status: 200}));
+    vi.spyOn(BigQueryClient.prototype, 'dryRun').mockResolvedValue({
+      statementType: 'SELECT',
+    });
+    const querySpy = vi
+      .spyOn(BigQueryClient.prototype, 'query')
+      .mockResolvedValue([{id: 1}, {id: 2}]);
+
+    const toolset = new BigQueryToolset({
+      credentialsConfig: new BigQueryCredentialsConfig({
+        externalAccessTokenKey: 'bqToken',
+      }),
+      toolConfig: {maxQueryResultRows: 2},
+    });
+    const tools = await toolset.getTools();
+    const askDataInsightsTool = tools.find(
+      (t) => t.name === 'ask_data_insights',
+    );
+    const executeSqlTool = tools.find((t) => t.name === 'execute_sql');
+    if (!askDataInsightsTool || !executeSqlTool) {
+      throw new Error('Expected ask_data_insights and execute_sql tools');
+    }
+
+    const toolContext = createMockToolContext({bqToken: 'token-123'});
+
+    const insightsResult = await askDataInsightsTool.runAsync({
+      args: {
+        project_id: 'my-project',
+        user_query_with_context: 'List top rows',
+        table_references: [
+          {projectId: 'my-project', datasetId: 'sales', tableId: 'orders'},
+        ],
+      },
+      toolContext,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(insightsResult).toEqual({
+      status: 'SUCCESS',
+      response: [
+        {
+          'Data Retrieved': {
+            headers: ['id'],
+            rows: [[1], [2]],
+            summary: 'Showing the first 2 of 3 total rows.',
+          },
+        },
+      ],
+    });
+
+    const sqlResult = await executeSqlTool.runAsync({
+      args: {
+        project_id: 'my-project',
+        query: 'SELECT id FROM sales.orders',
+      },
+      toolContext,
+    });
+    expect(querySpy).toHaveBeenCalledWith({
+      query: 'SELECT id FROM sales.orders',
+      projectId: 'my-project',
+      maxResults: 2,
+    });
+    expect(sqlResult).toEqual({
+      status: 'SUCCESS',
+      rows: [{id: 1}, {id: 2}],
+      result_is_likely_truncated: true,
     });
   });
 });

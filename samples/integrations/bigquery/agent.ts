@@ -5,12 +5,12 @@
  */
 
 /**
- * BigQuery Toolset (`BigQueryToolset`, `BigQueryTool`, `BigQueryCredentialsConfig`, `BigQueryToolConfig`)
+ * BigQuery Toolset (`BigQueryToolset`, `GoogleTool`, `BigQueryCredentialsConfig`, `BigQueryToolConfig`)
  * ../../../docs/guides/integrations/bigquery/index.md
  *
- * An `LlmAgent` equipped with `BigQueryToolset` and a custom `BigQueryTool`
- * from `@google/adk-integrations` for inspecting BigQuery datasets and tables
- * and running SQL queries with configured write modes.
+ * An `LlmAgent` equipped with `BigQueryToolset` from `@google/adk-integrations`
+ * and a custom `GoogleTool` from `@google/adk` for inspecting BigQuery datasets
+ * and tables and running SQL queries with configured write modes.
  *
  * Prerequisites:
  *   npm install @google-cloud/bigquery
@@ -24,10 +24,9 @@
  * Try "List datasets in project bigquery-public-data."
  */
 
-import {LlmAgent} from '@google/adk';
+import {GoogleTool, LlmAgent} from '@google/adk';
 import {
   BigQueryCredentialsConfig,
-  BigQueryTool,
   BigQueryToolConfig,
   BigQueryToolset,
   WriteMode,
@@ -58,7 +57,7 @@ export const bigQueryToolset = new BigQueryToolset({
   ],
 });
 
-export const summarizeBigQueryTargetTool = new BigQueryTool({
+export const summarizeBigQueryTargetTool = new GoogleTool({
   name: 'summarize_bigquery_target',
   description:
     'Formats a fully-qualified BigQuery table identifier for a project, dataset, and table.',
@@ -68,10 +67,11 @@ export const summarizeBigQueryTargetTool = new BigQueryTool({
     tableId: z.string().describe('BigQuery table ID.'),
   }),
   credentialsConfig,
-  toolConfig,
-  execute: async ({projectId, datasetId, tableId, credentials}) => ({
+  toolSettings: toolConfig,
+  execute: async ({projectId, datasetId, tableId, credentials, settings}) => ({
     fullTableId: `${projectId}.${datasetId}.${tableId}`,
     authenticated: credentials !== undefined,
+    writeMode: settings?.writeMode,
   }),
 });
 
