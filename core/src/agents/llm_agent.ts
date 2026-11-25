@@ -6,7 +6,10 @@
 
 import {GenerateContentConfig, Modality, Schema} from '@google/genai';
 import {FinishTaskTool} from '../tools/finish_task_tool.js';
-import {FunctionTool} from '../tools/function_tool.js';
+import {
+  SET_MODEL_RESPONSE_TOOL_NAME,
+  SetModelResponseTool,
+} from '../tools/set_model_response_tool.js';
 import {AsyncQueue} from '../utils/async_queue.js';
 import {isBaseNode, type BaseNode} from '../workflow/base_node.js';
 import {NodeContext} from '../workflow/node_context.js';
@@ -24,7 +27,6 @@ import {
   Event,
   getFunctionCalls,
   getFunctionResponses,
-  hasTrailingCodeExecutionResult,
   isEvent,
   isFinalResponse,
   populateClientFunctionCallId,
@@ -455,6 +457,41 @@ export interface LlmAgentConfig extends BaseAgentConfig {
   planner?: BasePlanner;
 }
 
+function getStructuredModelResponse(
+  functionResponseEvent: Event,
+): string | undefined {
+  const functionResponses = getFunctionResponses(functionResponseEvent);
+  if (!functionResponses.length) {
+    return undefined;
+  }
+  for (const funcResponse of functionResponses) {
+    if (funcResponse.name === SET_MODEL_RESPONSE_TOOL_NAME) {
+      const response = functionResponseEvent.actions.setModelResponse;
+      if (response === undefined) {
+        return undefined;
+      }
+      return JSON.stringify(response);
+    }
+  }
+  return undefined;
+}
+
+function createFinalModelResponseEvent(
+  invocationContext: InvocationContext,
+  agentName: string,
+  jsonResponse: string,
+): Event {
+  return createEvent({
+    invocationId: invocationContext.invocationId,
+    author: agentName,
+    branch: invocationContext.branch,
+    content: {
+      role: 'model',
+      parts: [{text: jsonResponse}],
+    },
+  });
+}
+
 async function convertToolUnionToTools(
   toolUnion: ToolUnion,
   context?: ReadonlyContext,
@@ -467,7 +504,9 @@ async function convertToolUnionToTools(
     // model can call it (mirrors Python's Agent(tools=[node/workflow])).
     return [new NodeTool(toolUnion)];
   }
-  return await toolUnion.getTools(context);
+  return typeof toolUnion.getToolsWithPrefix === 'function'
+    ? await toolUnion.getToolsWithPrefix(context)
+    : await toolUnion.getTools(context);
 }
 
 /**
@@ -960,27 +999,22 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
   ): AsyncGenerator<Event, void, void> {
     while (true) {
       let lastEvent: Event | undefined = undefined;
-      let stepHadToolCalls = false;
-      let stepTransferred = false;
+      let lastMeaningfulEvent: Event | undefined = undefined;
       for await (const event of this.runOneStepAsync(context)) {
         if (context.abortSignal?.aborted) {
           return;
         }
 
         lastEvent = event;
-        // A code execution result needs another model call to be answered,
-        // the same as a function response. Only a complete event counts: a
-        // streamed chunk that ends in a result can still be followed by the
-        // model's answer in the same response.
-        if (
-          getFunctionCalls(event).length > 0 ||
-          getFunctionResponses(event).length > 0 ||
-          (!event.partial && hasTrailingCodeExecutionResult(event))
-        ) {
-          stepHadToolCalls = true;
-        }
-        if (event.author === this.name && event.actions.transferToAgent) {
-          stepTransferred = true;
+        const isEmptyMetadataEvent =
+          event.author === this.name &&
+          !event.partial &&
+          !event.errorCode &&
+          !event.interrupted &&
+          (!event.content?.parts || event.content.parts.length === 0) &&
+          isDefaultEventActions(event.actions);
+        if (!isEmptyMetadataEvent) {
+          lastMeaningfulEvent = event;
         }
         this.maybeSaveOutputToState(event);
         yield event;
@@ -990,20 +1024,22 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         break;
       }
 
-      const isEmptyMetadataEvent =
-        lastEvent.author === this.name &&
-        !lastEvent.partial &&
-        (!lastEvent.content?.parts || lastEvent.content.parts.length === 0) &&
-        isDefaultEventActions(lastEvent.actions);
-
+      const terminalEvent = lastMeaningfulEvent ?? lastEvent;
+      // Preserve existing behavior for long-running tool calls followed by a
+      // trailing empty metadata chunk with default actions.
+      const trailingEmptyAfterLongRunningCall =
+        lastMeaningfulEvent !== undefined &&
+        lastMeaningfulEvent !== lastEvent &&
+        (lastMeaningfulEvent.longRunningToolIds?.length ?? 0) > 0 &&
+        getFunctionCalls(lastMeaningfulEvent).length > 0;
       if (
-        isFinalResponse(lastEvent) &&
-        !(isEmptyMetadataEvent && stepHadToolCalls && !stepTransferred)
+        isFinalResponse(terminalEvent) &&
+        !trailingEmptyAfterLongRunningCall
       ) {
         break;
       }
 
-      if (lastEvent.partial) {
+      if (terminalEvent.partial) {
         logger.warn('The last event is partial, which is not expected.');
         break;
       }
@@ -1628,19 +1664,9 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       allTools.length > 0 &&
       !canUseOutputSchemaWithTools(this.canonicalModel)
     ) {
-      const setModelResponseTool = new FunctionTool({
-        name: 'set_model_response',
-        description:
-          'Call this tool to submit your final response conforming to the output schema. Use this tool only when you have collected all the information and are ready to return the final answer.',
-        parameters: this.outputSchema,
-        execute: async (args, toolContext) => {
-          if (toolContext) {
-            toolContext.actions.skipSummarization = true;
-          }
-          return JSON.stringify(args);
-        },
-      });
-      allTools.push(setModelResponseTool);
+      allTools.push(
+        new SetModelResponseTool(this.outputSchemaSource ?? this.outputSchema),
+      );
     }
     // Collect turn metadata and event actions
     // TODO - b/425992518: misleading, this is passing metadata.
@@ -1676,7 +1702,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         return (
           !llmRequest.allowedTools ||
           llmRequest.allowedTools.includes(tool.name) ||
-          tool.name === 'set_model_response'
+          tool.name === SET_MODEL_RESPONSE_TOOL_NAME
         );
       });
 
@@ -1813,14 +1839,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
 
     if (mergedEvent.content) {
       const functionCalls = getFunctionCalls(mergedEvent);
-      const setModelResponseCall = functionCalls.find(
-        (call) => call.name === 'set_model_response',
-      );
-      if (setModelResponseCall) {
-        const args = setModelResponseCall.args;
-        mergedEvent.content.parts = [{text: JSON.stringify(args)}];
-        mergedEvent.actions.skipSummarization = true;
-      } else if (functionCalls && functionCalls.length) {
+      if (functionCalls && functionCalls.length) {
         populateClientFunctionCallId(mergedEvent);
         // TODO - b/425992518: hacky, transaction log, simplify.
         // Long running is a property of tool in registry.
@@ -1933,6 +1952,17 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     }
 
     yield functionResponseEvent;
+
+    const structuredResponse = getStructuredModelResponse(
+      functionResponseEvent,
+    );
+    if (structuredResponse !== undefined) {
+      yield createFinalModelResponseEvent(
+        invocationContext,
+        this.name,
+        structuredResponse,
+      );
+    }
 
     // If model instruct to transfer to an agent, run the transferred agent.
     const nextAgentName = functionResponseEvent.actions.transferToAgent;

@@ -6,7 +6,7 @@
 
 import {Context, FunctionTool, isFunctionTool} from '@google/adk';
 import {Schema, Type} from '@google/genai';
-import {beforeEach, describe, expect, it} from 'vitest';
+import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
 
@@ -888,6 +888,118 @@ describe('FunctionTool', () => {
         invocationContext: {} as unknown as Context['invocationContext'],
       });
       await expect(invalidGenerator.next()).rejects.toThrow();
+    });
+
+    it('awaits inner generator cleanup in _callLive on early return, consumer throw, and next() rejection', async () => {
+      let earlyCleanupCompleted = false;
+      const earlyExitTool = new FunctionTool({
+        name: 'earlyExitLiveTool',
+        description: 'Cleans up async generator on early return.',
+        execute: async function* () {
+          try {
+            yield 'first';
+            yield 'second';
+          } finally {
+            await Promise.resolve();
+            earlyCleanupCompleted = true;
+          }
+        },
+      });
+
+      const liveGen = earlyExitTool._callLive({
+        args: {},
+        toolContext: emptyContext,
+        invocationContext: {} as unknown as Context['invocationContext'],
+      });
+      expect((await liveGen.next()).value).toBe('first');
+      await liveGen.return();
+      expect(earlyCleanupCompleted).toBe(true);
+
+      let throwCleanupCompleted = false;
+      const bodyThrowTool = new FunctionTool({
+        name: 'bodyThrowLiveTool',
+        description: 'Cleans up async generator when consumer throws.',
+        execute: async function* () {
+          try {
+            yield 'chunk';
+          } finally {
+            await Promise.resolve();
+            throwCleanupCompleted = true;
+          }
+        },
+      });
+      await expect(
+        (async () => {
+          for await (const _item of bodyThrowTool._callLive({
+            args: {},
+            toolContext: emptyContext,
+            invocationContext: {} as unknown as Context['invocationContext'],
+          })) {
+            throw new Error('consumer failed');
+          }
+        })(),
+      ).rejects.toThrow('consumer failed');
+      expect(throwCleanupCompleted).toBe(true);
+
+      const returnSpy = vi.fn(async () => ({value: undefined, done: true}));
+      const failingInnerGen: AsyncGenerator<unknown, void, void> = {
+        next: async () => {
+          throw new Error('inner next failed');
+        },
+        return: returnSpy,
+        throw: async (err: unknown) => {
+          throw err;
+        },
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+      };
+      const rejectingGenTool = new FunctionTool({
+        name: 'rejectingGenTool',
+        description: 'Wraps resolved async generator with Aclosing.',
+        execute: async () => failingInnerGen,
+      });
+
+      const rejectingIter = rejectingGenTool._callLive({
+        args: {},
+        toolContext: emptyContext,
+        invocationContext: {} as unknown as Context['invocationContext'],
+      });
+      await expect(rejectingIter.next()).rejects.toThrow('inner next failed');
+      expect(returnSpy).toHaveBeenCalledTimes(1);
+      expect(returnSpy).toHaveBeenCalledWith(undefined);
+    });
+
+    it('streams plain AsyncIterable values without requiring next/return generator methods', async () => {
+      const plainAsyncIterable: AsyncIterable<string> = {
+        [Symbol.asyncIterator]() {
+          let index = 0;
+          const items = ['alpha', 'beta'];
+          return {
+            async next() {
+              if (index < items.length) {
+                return {value: items[index++], done: false};
+              }
+              return {value: undefined, done: true};
+            },
+          };
+        },
+      };
+      const iterableTool = new FunctionTool({
+        name: 'plainIterableTool',
+        description: 'Returns a plain AsyncIterable.',
+        execute: () => plainAsyncIterable,
+      });
+
+      const items: unknown[] = [];
+      for await (const item of iterableTool._callLive({
+        args: {},
+        toolContext: emptyContext,
+        invocationContext: {} as unknown as Context['invocationContext'],
+      })) {
+        items.push(item);
+      }
+      expect(items).toEqual(['alpha', 'beta']);
     });
   });
 

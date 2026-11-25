@@ -13,6 +13,7 @@ import {Event} from '../events/event.js';
 import {InMemoryMemoryService} from '../memory/in_memory_memory_service.js';
 import {Runner} from '../runner/runner.js';
 import {InMemorySessionService} from '../sessions/in_memory_session_service.js';
+import {Aclosing} from '../utils/context_utils.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
 
 import {State} from '../sessions/state.js';
@@ -239,13 +240,15 @@ export class AgentTool extends BaseTool {
     }
 
     let lastEvent: Event | undefined;
-    for await (const event of runner.runAsync({
-      userId: session.userId,
-      sessionId: session.id,
-      newMessage: content,
-      stateDelta: Object.keys(stateDelta).length > 0 ? stateDelta : undefined,
-      abortSignal: toolContext.abortSignal,
-    })) {
+    for await (const event of new Aclosing(
+      runner.runAsync({
+        userId: session.userId,
+        sessionId: session.id,
+        newMessage: content,
+        stateDelta: Object.keys(stateDelta).length > 0 ? stateDelta : undefined,
+        abortSignal: toolContext.abortSignal,
+      }),
+    )) {
       if (toolContext.abortSignal?.aborted) {
         return;
       }

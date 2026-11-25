@@ -108,9 +108,9 @@ Conversations and their state: the events of each session, and the `app:`, `user
 
 ### Tools
 
-Function, authenticated, agent, ecosystem-adapter, and built-in model tools (`BaseTool`, `BaseAuthenticatedTool`, `FunctionTool`, `AuthenticatedFunctionTool`, `LongRunningFunctionTool`, `AgentTool`, `ToolContext`, `ToolboxToolset`, and built-in grounding and control-flow tools).
+Function, authenticated, Google API, structured-response, agent, ecosystem-adapter, and built-in model tools (`BaseTool`, `BaseToolset`, `BaseAuthenticatedTool`, `FunctionTool`, `AuthenticatedFunctionTool`, `LongRunningFunctionTool`, `GoogleTool`, `BaseGoogleCredentialsConfig`, `GoogleCredentialsManager`, `SetModelResponseTool`, `AgentTool`, `ToolContext`, `ToolboxToolset`, and built-in grounding and control-flow tools).
 
-- [Tools](tools/index.md) - `BaseTool`, `BaseAuthenticatedTool`, `FunctionTool` (with `response` schema and `_callLive` streaming), `AuthenticatedFunctionTool`, `LongRunningFunctionTool`, `AgentTool` (with `inputSchema` and `outputSchema`), `ToolContext`, `ToolboxToolset`, and built-in utility tools.
+- [Tools](tools/index.md) - `BaseTool`, `BaseToolset` (`toolNamePrefix`, `getToolsWithPrefix`, optional `close()`), `BaseAuthenticatedTool`, `FunctionTool` (with `response` schema and `_callLive` streaming), `AuthenticatedFunctionTool`, `LongRunningFunctionTool`, `GoogleTool`, `BaseGoogleCredentialsConfig`, `GoogleCredentialsManager`, `SetModelResponseTool`, `AgentTool` (with `inputSchema` and `outputSchema`), `ToolContext`, `ToolboxToolset`, and built-in utility tools.
 
 #### Retrieval
 
