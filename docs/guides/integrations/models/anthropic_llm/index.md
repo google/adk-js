@@ -145,7 +145,7 @@ Each call requests `llmRequest.config?.maxOutputTokens ?? maxTokens` output toke
 When an `LlmAgent` is configured with tools, `AnthropicLlm` and `Claude` translate ADK tool declarations and tool execution turns as follows:
 
 1. **Tool collection**: Collects `functionDeclarations` across every `Tool` entry in `llmRequest.config?.tools`.
-2. **Schema conversion**: Converts `FunctionDeclaration.parameters` (`@google/genai` `Schema` with uppercase `Type` enums) into lowercase JSON Schema via `genaiSchemaToJsonSchema` with `input_schema.type` set to `'object'`, or passes `FunctionDeclaration.parametersJsonSchema` through directly.
+2. **Schema conversion**: Converts `FunctionDeclaration.parameters` via `genaiSchemaToJsonSchema` (omitting empty top-level `required` arrays), or clones `FunctionDeclaration.parametersJsonSchema`, then recursively lowercases JSON Schema `type` values across schema keywords with `input_schema.type` set to `'object'`.
 3. **Tool choice**: When `tools` contains one or more function declarations, sets `tool_choice` to `{type: 'auto'}`.
 4. **Tool-use ID preservation and sanitization**: Client-generated `adk-*` function call and response IDs are preserved in `LlmRequest.contents` for Claude requests, and any missing or invalid `tool_use` / `tool_result` IDs (not matching `^[a-zA-Z0-9_-]+$`) are mapped consistently within each request to `toolu_fallback_<N>`.
 5. **Tool result serialization**: Converts each `functionResponse` part into a `tool_result` block:

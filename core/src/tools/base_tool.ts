@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {FunctionDeclaration, Tool} from '@google/genai';
+import {FunctionDeclaration} from '@google/genai';
 
-import {LlmRequest} from '../models/llm_request.js';
+import {appendTools, LlmRequest} from '../models/llm_request.js';
 import {getGoogleLlmVariant} from '../utils/variant_utils.js';
 
 import {Context} from '../agents/context.js';
@@ -163,11 +163,6 @@ export abstract class BaseTool {
    * @param request The request to process the LLM request.
    */
   async processLlmRequest({llmRequest}: ToolProcessLlmRequest): Promise<void> {
-    const functionDeclaration = this._getDeclaration();
-    if (!functionDeclaration) {
-      return;
-    }
-
     // An in-model tool holds the name only so a call naming it can be routed;
     // a callable tool of the same name displaces it rather than colliding.
     // `Object.hasOwn` rather than a plain lookup, so a tool named after an
@@ -175,26 +170,11 @@ export abstract class BaseTool {
     const registered = Object.hasOwn(llmRequest.toolsDict, this.name)
       ? llmRequest.toolsDict[this.name]
       : undefined;
-    if (registered && !isInModelTool(registered)) {
+    if (registered && !isInModelTool(registered) && this._getDeclaration()) {
       throw new Error(`Duplicate tool name: ${this.name}`);
     }
 
-    llmRequest.toolsDict[this.name] = this;
-
-    const tool = findToolWithFunctionDeclarations(llmRequest);
-    if (tool) {
-      if (!tool.functionDeclarations) {
-        tool.functionDeclarations = [];
-      }
-
-      tool.functionDeclarations.push(functionDeclaration);
-    } else {
-      llmRequest.config = llmRequest.config || {};
-      llmRequest.config.tools = llmRequest.config.tools || [];
-      llmRequest.config.tools.push({
-        functionDeclarations: [functionDeclaration],
-      });
-    }
+    appendTools(llmRequest, [this]);
   }
 
   /**
@@ -203,12 +183,4 @@ export abstract class BaseTool {
   get apiVariant() {
     return getGoogleLlmVariant();
   }
-}
-
-function findToolWithFunctionDeclarations(
-  llmRequest: LlmRequest,
-): Tool | undefined {
-  return (llmRequest.config?.tools || []).find(
-    (tool) => 'functionDeclarations' in tool,
-  ) as Tool | undefined;
 }

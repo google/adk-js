@@ -6,7 +6,7 @@
 
 import type {Anthropic} from '@anthropic-ai/sdk';
 import {logger} from '@google/adk';
-import {FinishReason, Type} from '@google/genai';
+import {FinishReason, type Schema, Type} from '@google/genai';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 import {
@@ -1794,6 +1794,335 @@ describe('Claude conversion helpers', () => {
           description: 'Unnamed tool',
         }),
       ).toThrow('FunctionDeclaration must have a name.');
+    });
+
+    it('omits required when parameters contain only optional properties', () => {
+      const tool = functionDeclarationToToolParam({
+        name: 'getWeather',
+        description: 'Gets weather information for a location.',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            location: {
+              type: Type.STRING,
+              description: 'City and state, e.g., San Francisco, CA',
+            },
+          },
+        },
+      });
+
+      expect('required' in tool.input_schema).toBe(false);
+      expect(tool).toEqual({
+        name: 'getWeather',
+        description: 'Gets weather information for a location.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            location: {
+              type: 'string',
+              description: 'City and state, e.g., San Francisco, CA',
+            },
+          },
+        },
+      });
+    });
+
+    it('omits required when parameters specify an empty required array', () => {
+      const tool = functionDeclarationToToolParam({
+        name: 'getWeather',
+        description: 'Gets weather information for a location.',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            location: {type: Type.STRING},
+          },
+          required: [],
+        },
+      });
+
+      expect('required' in tool.input_schema).toBe(false);
+      expect(tool).toEqual({
+        name: 'getWeather',
+        description: 'Gets weather information for a location.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            location: {type: 'string'},
+          },
+        },
+      });
+    });
+
+    it('preserves required alongside optional top-level properties', () => {
+      const tool = functionDeclarationToToolParam({
+        name: 'submitOrder',
+        description: 'Submits a product order.',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            productId: {type: Type.STRING, description: 'The product ID.'},
+            quantity: {type: Type.INTEGER, description: 'The order quantity.'},
+            notes: {type: Type.STRING, description: 'Optional order notes.'},
+          },
+          required: ['productId', 'quantity'],
+        },
+      });
+
+      expect(tool).toEqual({
+        name: 'submitOrder',
+        description: 'Submits a product order.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            productId: {type: 'string', description: 'The product ID.'},
+            quantity: {type: 'integer', description: 'The order quantity.'},
+            notes: {type: 'string', description: 'Optional order notes.'},
+          },
+          required: ['productId', 'quantity'],
+        },
+      });
+    });
+
+    it('preserves required on array items alongside top-level required properties', () => {
+      const tool = functionDeclarationToToolParam({
+        name: 'createPlaylist',
+        description: 'Creates a playlist from a list of songs.',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            playlistName: {
+              type: Type.STRING,
+              description: 'The name for the new playlist.',
+            },
+            songs: {
+              type: Type.ARRAY,
+              description: 'Songs to add to the playlist.',
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  title: {type: Type.STRING},
+                  artist: {type: Type.STRING},
+                },
+                required: ['title', 'artist'],
+              },
+            },
+          },
+          required: ['playlistName', 'songs'],
+        },
+      });
+
+      expect(tool).toEqual({
+        name: 'createPlaylist',
+        description: 'Creates a playlist from a list of songs.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            playlistName: {
+              type: 'string',
+              description: 'The name for the new playlist.',
+            },
+            songs: {
+              type: 'array',
+              description: 'Songs to add to the playlist.',
+              items: {
+                type: 'object',
+                properties: {
+                  title: {type: 'string'},
+                  artist: {type: 'string'},
+                },
+                required: ['title', 'artist'],
+              },
+            },
+          },
+          required: ['playlistName', 'songs'],
+        },
+      });
+    });
+
+    it('lowercases nested schema types in parametersJsonSchema while preserving default literals and caller input', () => {
+      const rawJsonSchema = {
+        type: 'OBJECT',
+        default: {type: 'LITERAL'},
+        $defs: {
+          Address: {
+            type: 'OBJECT',
+            properties: {
+              postalCode: {type: ['STRING', 'NULL']},
+            },
+            additionalProperties: false,
+          },
+        },
+        definitions: {
+          LegacyTag: {type: 'STRING'},
+        },
+        properties: {
+          attributes: {
+            type: 'OBJECT',
+            additionalProperties: {type: 'STRING'},
+          },
+          entries: {
+            type: 'ARRAY',
+            items: [{type: 'STRING'}, {type: 'INTEGER'}],
+            additionalItems: {type: 'BOOLEAN'},
+          },
+          criteria: {
+            allOf: [{type: 'OBJECT', properties: {flag: {type: 'BOOLEAN'}}}],
+            anyOf: [{type: 'STRING'}, {type: 'NUMBER'}],
+            oneOf: [{type: 'INTEGER'}, {type: ['STRING', 'NULL']}],
+            not: {type: 'NULL'},
+          },
+        },
+      };
+      const originalSnapshot = structuredClone(rawJsonSchema);
+
+      const tool = functionDeclarationToToolParam({
+        name: 'updateRecord',
+        description: 'Updates a record.',
+        parametersJsonSchema: rawJsonSchema,
+      });
+
+      expect(tool).toEqual({
+        name: 'updateRecord',
+        description: 'Updates a record.',
+        input_schema: {
+          type: 'object',
+          default: {type: 'LITERAL'},
+          $defs: {
+            Address: {
+              type: 'object',
+              properties: {
+                postalCode: {type: ['string', 'null']},
+              },
+              additionalProperties: false,
+            },
+          },
+          definitions: {
+            LegacyTag: {type: 'string'},
+          },
+          properties: {
+            attributes: {
+              type: 'object',
+              additionalProperties: {type: 'string'},
+            },
+            entries: {
+              type: 'array',
+              items: [{type: 'string'}, {type: 'integer'}],
+              additionalItems: {type: 'boolean'},
+            },
+            criteria: {
+              allOf: [{type: 'object', properties: {flag: {type: 'boolean'}}}],
+              anyOf: [{type: 'string'}, {type: 'number'}],
+              oneOf: [{type: 'integer'}, {type: ['string', 'null']}],
+              not: {type: 'null'},
+            },
+          },
+        },
+      });
+      expect(rawJsonSchema).toEqual(originalSnapshot);
+    });
+
+    it('lowercases schema types across conditional, pattern, and unevaluated keywords in parametersJsonSchema', () => {
+      const rawJsonSchema = {
+        type: 'OBJECT',
+        defs: {Shared: {type: 'STRING'}},
+        dependentSchemas: {
+          mode: {type: 'OBJECT', properties: {detail: {type: 'STRING'}}},
+        },
+        patternProperties: {
+          '^x-': {type: 'STRING'},
+        },
+        propertyNames: {type: 'STRING'},
+        unevaluatedProperties: {type: 'BOOLEAN'},
+        if: {properties: {kind: {type: 'STRING'}}},
+        then: {required: ['kind']},
+        else: {properties: {fallback: {type: 'NUMBER'}}},
+        properties: {
+          tupleList: {
+            type: 'ARRAY',
+            prefixItems: [{type: 'STRING'}],
+            contains: {type: 'INTEGER'},
+            unevaluatedItems: {type: ['STRING', 'NULL']},
+          },
+        },
+        all_of: [{type: 'OBJECT'}],
+        any_of: [{type: 'STRING'}],
+        one_of: [{type: 'BOOLEAN'}],
+        additional_properties: {type: 'NUMBER'},
+      };
+
+      const tool = functionDeclarationToToolParam({
+        name: 'validateShape',
+        parametersJsonSchema: rawJsonSchema,
+      });
+
+      expect(tool.input_schema).toEqual({
+        type: 'object',
+        defs: {Shared: {type: 'string'}},
+        dependentSchemas: {
+          mode: {type: 'object', properties: {detail: {type: 'string'}}},
+        },
+        patternProperties: {
+          '^x-': {type: 'string'},
+        },
+        propertyNames: {type: 'string'},
+        unevaluatedProperties: {type: 'boolean'},
+        if: {properties: {kind: {type: 'string'}}},
+        then: {required: ['kind']},
+        else: {properties: {fallback: {type: 'number'}}},
+        properties: {
+          tupleList: {
+            type: 'array',
+            prefixItems: [{type: 'string'}],
+            contains: {type: 'integer'},
+            unevaluatedItems: {type: ['string', 'null']},
+          },
+        },
+        all_of: [{type: 'object'}],
+        any_of: [{type: 'string'}],
+        one_of: [{type: 'boolean'}],
+        additional_properties: {type: 'number'},
+      });
+    });
+
+    it('lowercases nested additionalProperties in parameters without mutating caller input', () => {
+      interface SchemaWithAdditionalProperties extends Schema {
+        properties?: Record<string, SchemaWithAdditionalProperties>;
+        additionalProperties?: boolean | SchemaWithAdditionalProperties;
+      }
+
+      const parameters: SchemaWithAdditionalProperties = {
+        type: Type.OBJECT,
+        properties: {
+          labels: {
+            type: Type.OBJECT,
+            additionalProperties: {type: Type.STRING},
+          },
+        },
+        additionalProperties: {type: Type.STRING},
+      };
+      const originalParameters = structuredClone(parameters);
+
+      const tool = functionDeclarationToToolParam({
+        name: 'setLabels',
+        description: 'Sets labels.',
+        parameters,
+      });
+
+      expect(tool).toEqual({
+        name: 'setLabels',
+        description: 'Sets labels.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            labels: {
+              type: 'object',
+              additionalProperties: {type: 'string'},
+            },
+          },
+          additionalProperties: {type: 'string'},
+        },
+      });
+      expect(parameters).toEqual(originalParameters);
     });
   });
 

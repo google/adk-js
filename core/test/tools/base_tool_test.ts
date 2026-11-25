@@ -7,6 +7,7 @@
 import {
   BaseTool,
   Context,
+  FunctionTool,
   InMemorySessionService,
   InvocationContext,
   LlmRequest,
@@ -15,6 +16,7 @@ import {
 } from '@google/adk';
 import {FunctionDeclaration, Tool, Type} from '@google/genai';
 import {describe, expect, it} from 'vitest';
+import {z} from 'zod';
 
 class TestingTool extends BaseTool {
   private readonly declaration?: FunctionDeclaration;
@@ -151,6 +153,51 @@ describe('BaseTool.processLlmRequest', () => {
 
     const secondTool = llmRequest.config?.tools?.[1] as Tool | undefined;
     expect(secondTool?.functionDeclarations?.[1]).toEqual(declaration);
+  });
+
+  it('consolidates declarations from sequential calls into a single tool entry', async () => {
+    const toolOne = new FunctionTool({
+      name: 'toolOne',
+      description: 'First tool.',
+      parameters: z.object({query: z.string()}),
+      execute: async () => 'one',
+    });
+    const toolTwo = new FunctionTool({
+      name: 'toolTwo',
+      description: 'Second tool.',
+      parameters: z.object({query: z.string()}),
+      execute: async () => 'two',
+    });
+    const toolThree = new FunctionTool({
+      name: 'toolThree',
+      description: 'Third tool.',
+      parameters: z.object({query: z.string()}),
+      execute: async () => 'three',
+    });
+    const llmRequest: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+    const toolContext = await createToolContext();
+
+    await toolOne.processLlmRequest({toolContext, llmRequest});
+    await toolTwo.processLlmRequest({toolContext, llmRequest});
+    await toolThree.processLlmRequest({toolContext, llmRequest});
+
+    expect(llmRequest.config?.tools).toHaveLength(1);
+    expect(llmRequest.config?.tools?.[0]).toEqual({
+      functionDeclarations: [
+        toolOne._getDeclaration(),
+        toolTwo._getDeclaration(),
+        toolThree._getDeclaration(),
+      ],
+    });
+    expect(llmRequest.toolsDict).toEqual({
+      toolOne,
+      toolTwo,
+      toolThree,
+    });
   });
 });
 
