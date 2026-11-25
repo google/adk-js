@@ -1,10 +1,10 @@
-# Flows Sample (`BaseLlmRequestProcessor`, `BaseLlmResponseProcessor`, Concurrent Parallel Tools, `handleFunctionCallsLive`, `sessionResumption`, and `supportCfc`)
+# Flows Sample (`BaseLlmRequestProcessor`, `BaseLlmResponseProcessor`, Concurrent Parallel Tools, `handleFunctionCallsLive`, `sessionResumption`, `supportCfc`, `SetModelResponseTool`, and `Aclosing`)
 
-This sample demonstrates how the ADK LLM flow subsystem prepares requests (including excluding foreign-agent `thought` parts), transforms responses, executes multiple `functionCall` parts concurrently while preserving call-order responses and out-of-order `toolContext.state` updates, runs live streaming tools with `stop_streaming`, resumes dropped live sessions via `sessionResumption`, and routes Compositional Function Calling (`runConfig.supportCfc`) through the live flow.
+This sample demonstrates how the ADK LLM flow subsystem prepares requests (including excluding foreign-agent `thought` parts), transforms responses, executes multiple `functionCall` parts concurrently while preserving call-order responses and out-of-order `toolContext.state` updates, runs live streaming tools with `stop_streaming`, resumes dropped live sessions via `sessionResumption`, routes Compositional Function Calling (`runConfig.supportCfc`) through the live flow, and combines `outputSchema` with `FunctionTool` calls via `SetModelResponseTool` and `Aclosing` cleanup.
 
 ## Overview
 
-`flowsShowcaseAgent` (`rootAgent`) is an `LlmAgent` configured with a custom `BaseLlmRequestProcessor` (`RequestAuditProcessor`), `CONTENT_REQUEST_PROCESSOR`, and a custom `BaseLlmResponseProcessor` (`ResponseStampProcessor`) backed by a deterministic offline `BaseLlm` (`FlowDemoLlm`). In addition to exporting `rootAgent` for the ADK CLI, the direct `main()` script demonstrates concurrent parallel tool calls (`lookupServiceStatus`), live streaming tool execution and cancellation via `handleFunctionCallsLive` (`monitorMetric` and `stop_streaming`), live session resumption across `goAway` (`createRunConfig({sessionResumption: {transparent: true}})`), and Compositional Function Calling (`createRunConfig({supportCfc: true})`).
+`flowsShowcaseAgent` (`rootAgent`) is an `LlmAgent` configured with a custom `BaseLlmRequestProcessor` (`RequestAuditProcessor`), `CONTENT_REQUEST_PROCESSOR`, and a custom `BaseLlmResponseProcessor` (`ResponseStampProcessor`) backed by a deterministic offline `BaseLlm` (`FlowDemoLlm`). In addition to exporting `rootAgent` for the ADK CLI, the direct `main()` script demonstrates concurrent parallel tool calls (`lookupServiceStatus`), live streaming tool execution and cancellation via `handleFunctionCallsLive` (`monitorMetric` and `stop_streaming`), live session resumption across `goAway` (`createRunConfig({sessionResumption: {transparent: true}})`), Compositional Function Calling (`createRunConfig({supportCfc: true})`), and structured output alongside tools (`outputSchema` + `FunctionTool` + `outputKey` via `set_model_response` wrapped with `Aclosing`).
 
 ## Sample Inputs
 
@@ -97,11 +97,28 @@ const ctx = new InvocationContext({
 });
 ```
 
+**Combine `outputSchema` with tools and `Aclosing` generator cleanup.** Configure `outputSchema`, `outputKey`, and `tools` on `LlmAgent`, and iterate with `new Aclosing(...)` so `set_model_response` synthesizes a validated final JSON event and guarantees deterministic generator cleanup:
+
+```ts
+for await (const event of new Aclosing(
+  runner.runAsync({
+    userId,
+    sessionId: session.id,
+    newMessage: {
+      role: 'user',
+      parts: [{text: 'Generate the SLO report for us-central1.'}],
+    },
+  }),
+)) {
+  void event;
+}
+```
+
 ## Running the Sample
 
-The sample uses offline `BaseLlm` implementations (`FlowDemoLlm` and `ResumableLiveDemoLlm`), so no API key is required.
+The sample uses offline `BaseLlm` implementations (`FlowDemoLlm`, `ResumableLiveDemoLlm`, and `StructuredToolsDemoLlm`), so no API key is required.
 
-Run the self-contained script directly to execute all four flow demos (processors + concurrent parallel tools, live streaming tools + `stop_streaming`, live session resumption, and `supportCfc`):
+Run the self-contained script directly to execute all five flow demos (processors + concurrent parallel tools, live streaming tools + `stop_streaming`, live session resumption, `supportCfc`, and structured output with tools + `Aclosing`):
 
 ```bash
 npm run build
