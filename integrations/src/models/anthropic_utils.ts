@@ -654,6 +654,89 @@ export function messageToGenerateContentResponse(
   };
 }
 
+const SCHEMA_MAP_KEYWORDS = [
+  '$defs',
+  'definitions',
+  'defs',
+  'dependentSchemas',
+  'patternProperties',
+  'properties',
+] as const;
+
+const SCHEMA_SINGLE_KEYWORDS = [
+  'additionalItems',
+  'additionalProperties',
+  'additional_properties',
+  'contains',
+  'else',
+  'if',
+  'items',
+  'not',
+  'propertyNames',
+  'then',
+  'unevaluatedItems',
+  'unevaluatedProperties',
+] as const;
+
+const SCHEMA_LIST_KEYWORDS = [
+  'allOf',
+  'all_of',
+  'anyOf',
+  'any_of',
+  'oneOf',
+  'one_of',
+  'prefixItems',
+] as const;
+
+/**
+ * Recursively lowercases JSON Schema `type` values across schema-bearing
+ * keywords in place while leaving data literals such as `default` untouched.
+ */
+function lowercaseSchemaTypes(value: unknown): void {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      lowercaseSchemaTypes(item);
+    }
+    return;
+  }
+
+  if (!isPlainRecord(value)) {
+    return;
+  }
+
+  const schemaType = Object.hasOwn(value, 'type') ? value['type'] : undefined;
+  if (typeof schemaType === 'string') {
+    value['type'] = schemaType.toLowerCase();
+  } else if (Array.isArray(schemaType)) {
+    value['type'] = schemaType.map((item) =>
+      typeof item === 'string' ? item.toLowerCase() : item,
+    );
+  }
+
+  for (const key of SCHEMA_MAP_KEYWORDS) {
+    const childMap = Object.hasOwn(value, key) ? value[key] : undefined;
+    if (isPlainRecord(childMap)) {
+      for (const childValue of Object.values(childMap)) {
+        lowercaseSchemaTypes(childValue);
+      }
+    }
+  }
+
+  for (const key of SCHEMA_SINGLE_KEYWORDS) {
+    const childValue = Object.hasOwn(value, key) ? value[key] : undefined;
+    if (isPlainRecord(childValue) || Array.isArray(childValue)) {
+      lowercaseSchemaTypes(childValue);
+    }
+  }
+
+  for (const key of SCHEMA_LIST_KEYWORDS) {
+    const childList = Object.hasOwn(value, key) ? value[key] : undefined;
+    if (Array.isArray(childList)) {
+      lowercaseSchemaTypes(childList);
+    }
+  }
+}
+
 /**
  * Converts a `FunctionDeclaration` into an Anthropic `Tool` definition.
  */
@@ -667,12 +750,22 @@ export function functionDeclarationToToolParam(
   let inputSchema: Anthropic.Tool.InputSchema;
   if (isPlainRecord(functionDeclaration.parametersJsonSchema)) {
     const rawSchema = structuredClone(functionDeclaration.parametersJsonSchema);
+    lowercaseSchemaTypes(rawSchema);
     inputSchema = {
       ...rawSchema,
       type: 'object',
     };
   } else if (functionDeclaration.parameters) {
-    const converted = genaiSchemaToJsonSchema(functionDeclaration.parameters);
+    const converted = genaiSchemaToJsonSchema(
+      structuredClone(functionDeclaration.parameters),
+    );
+    lowercaseSchemaTypes(converted);
+    if (
+      Array.isArray(converted['required']) &&
+      converted['required'].length === 0
+    ) {
+      delete converted['required'];
+    }
     inputSchema = {
       properties: {},
       ...converted,

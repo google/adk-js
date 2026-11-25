@@ -22,6 +22,7 @@ import {logger} from '../utils/logger.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
 
 import {AsyncQueue} from '../utils/async_queue.js';
+import {Aclosing} from '../utils/context_utils.js';
 import {GeminiStreamingResponseAggregator} from '../utils/streaming_utils.js';
 import {BaseLlm} from './base_llm.js';
 import {BaseLlmConnection} from './base_llm_connection.js';
@@ -215,8 +216,15 @@ export class Gemini extends BaseLlm {
       const streamResult =
         await this.apiClient.models.generateContentStream(params);
       const aggregator = new GeminiStreamingResponseAggregator();
-      for await (const response of streamResult) {
-        yield* aggregator.processResponse(response);
+      const responses = isAsyncGenerator(streamResult)
+        ? new Aclosing(streamResult)
+        : streamResult;
+      for await (const response of responses) {
+        for await (const llmResponse of new Aclosing(
+          aggregator.processResponse(response),
+        )) {
+          yield llmResponse;
+        }
       }
       const finalResponse = aggregator.close();
       if (finalResponse) {
@@ -451,6 +459,21 @@ function removeDisplayNameIfPresent(
   if (dataObj && (dataObj as FileData).displayName) {
     (dataObj as FileData).displayName = undefined;
   }
+}
+
+function isAsyncGenerator<T>(
+  value: AsyncIterable<T>,
+): value is AsyncGenerator<T, unknown, unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Symbol.asyncIterator in value &&
+    typeof value[Symbol.asyncIterator] === 'function' &&
+    'next' in value &&
+    typeof value.next === 'function' &&
+    'return' in value &&
+    typeof value.return === 'function'
+  );
 }
 
 export function geminiInitParams({

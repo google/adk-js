@@ -30,6 +30,7 @@ import {
   Part,
 } from '@google/genai';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {GeminiStreamingResponseAggregator} from '../../src/utils/streaming_utils.js';
 
 vi.mock('@google/genai', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@google/genai')>();
@@ -1036,6 +1037,239 @@ describe('GoogleLlm', () => {
           }),
         }),
       );
+    });
+
+    it('awaits AsyncGenerator return() on early consumer break during streaming', async () => {
+      const llm = new TestGemini({apiKey: 'test-key'});
+      const returnCalls: unknown[] = [];
+      let returnCompleted = false;
+
+      const chunkOne = new GenerateContentResponse();
+      chunkOne.candidates = [
+        {content: {role: 'model', parts: [{text: 'chunkOne'}]}},
+      ];
+      const chunkTwo = new GenerateContentResponse();
+      chunkTwo.candidates = [
+        {content: {role: 'model', parts: [{text: 'chunkTwo'}]}},
+      ];
+
+      let index = 0;
+      const chunks = [chunkOne, chunkTwo];
+      const streamGenerator: AsyncGenerator<
+        GenerateContentResponse,
+        void,
+        unknown
+      > = {
+        async next() {
+          if (index < chunks.length) {
+            return {value: chunks[index++], done: false};
+          }
+          return {value: undefined, done: true};
+        },
+        async return(value) {
+          returnCalls.push(value);
+          await Promise.resolve();
+          returnCompleted = true;
+          return {value: undefined, done: true};
+        },
+        async throw(err) {
+          throw err;
+        },
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+      };
+
+      llm.apiClient.models.generateContentStream = vi
+        .fn()
+        .mockResolvedValue(streamGenerator);
+
+      const llmRequest: LlmRequest = {
+        contents: [{role: 'user', parts: [{text: 'hello'}]}],
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      const yielded: LlmResponse[] = [];
+      for await (const response of llm.generateContentAsync(llmRequest, true)) {
+        yielded.push(response);
+        break;
+      }
+
+      expect(yielded).toHaveLength(1);
+      expect(returnCalls).toEqual([undefined]);
+      expect(returnCompleted).toBe(true);
+    });
+
+    it('awaits AsyncGenerator return() when stream next() rejects mid-stream', async () => {
+      const llm = new TestGemini({apiKey: 'test-key'});
+      const returnCalls: unknown[] = [];
+      let returnCompleted = false;
+
+      const chunkOne = new GenerateContentResponse();
+      chunkOne.candidates = [
+        {content: {role: 'model', parts: [{text: 'chunkOne'}]}},
+      ];
+
+      let callCount = 0;
+      const streamGenerator: AsyncGenerator<
+        GenerateContentResponse,
+        void,
+        unknown
+      > = {
+        async next() {
+          callCount += 1;
+          if (callCount === 1) {
+            return {value: chunkOne, done: false};
+          }
+          throw new Error('stream read failed');
+        },
+        async return(value) {
+          returnCalls.push(value);
+          await Promise.resolve();
+          returnCompleted = true;
+          return {value: undefined, done: true};
+        },
+        async throw(err) {
+          throw err;
+        },
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+      };
+
+      llm.apiClient.models.generateContentStream = vi
+        .fn()
+        .mockResolvedValue(streamGenerator);
+
+      const llmRequest: LlmRequest = {
+        contents: [{role: 'user', parts: [{text: 'hello'}]}],
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      const yielded: LlmResponse[] = [];
+      await expect(
+        (async () => {
+          for await (const response of llm.generateContentAsync(
+            llmRequest,
+            true,
+          )) {
+            yielded.push(response);
+          }
+        })(),
+      ).rejects.toThrow('stream read failed');
+
+      expect(yielded).toHaveLength(1);
+      expect(returnCalls).toEqual([undefined]);
+      expect(returnCompleted).toBe(true);
+    });
+
+    it('awaits aggregator processResponse return() when processing rejects mid-generator', async () => {
+      const llm = new TestGemini({apiKey: 'test-key'});
+      const aggregatorReturnCalls: unknown[] = [];
+      let aggregatorReturnCompleted = false;
+
+      const chunkOne = new GenerateContentResponse();
+      chunkOne.candidates = [
+        {content: {role: 'model', parts: [{text: 'chunkOne'}]}},
+      ];
+      llm.apiClient.models.generateContentStream = vi
+        .fn()
+        .mockResolvedValue([chunkOne]);
+
+      let callCount = 0;
+      const processSpy = vi
+        .spyOn(GeminiStreamingResponseAggregator.prototype, 'processResponse')
+        .mockImplementation(() => ({
+          async next() {
+            callCount += 1;
+            if (callCount === 1) {
+              return {
+                value: {
+                  content: {role: 'model', parts: [{text: 'chunkOne'}]},
+                  partial: true,
+                },
+                done: false,
+              };
+            }
+            throw new Error('aggregator failed');
+          },
+          async return(value) {
+            aggregatorReturnCalls.push(value);
+            await Promise.resolve();
+            aggregatorReturnCompleted = true;
+            return {value: undefined, done: true};
+          },
+          async throw(err) {
+            throw err;
+          },
+          [Symbol.asyncIterator]() {
+            return this;
+          },
+        }));
+
+      try {
+        const llmRequest: LlmRequest = {
+          contents: [{role: 'user', parts: [{text: 'hello'}]}],
+          liveConnectConfig: {},
+          toolsDict: {},
+        };
+
+        const yielded: LlmResponse[] = [];
+        await expect(
+          (async () => {
+            for await (const response of llm.generateContentAsync(
+              llmRequest,
+              true,
+            )) {
+              yielded.push(response);
+            }
+          })(),
+        ).rejects.toThrow('aggregator failed');
+
+        expect(yielded).toHaveLength(1);
+        expect(aggregatorReturnCalls).toEqual([undefined]);
+        expect(aggregatorReturnCompleted).toBe(true);
+      } finally {
+        processSpy.mockRestore();
+      }
+    });
+
+    it('iterates plain array mocks from generateContentStream without throwing TypeError', async () => {
+      const llm = new TestGemini({apiKey: 'test-key'});
+      const chunkOne = new GenerateContentResponse();
+      chunkOne.candidates = [
+        {content: {role: 'model', parts: [{text: 'Hello'}]}},
+      ];
+      const chunkTwo = new GenerateContentResponse();
+      chunkTwo.candidates = [
+        {
+          content: {role: 'model', parts: [{text: ' world'}]},
+          finishReason: FinishReason.STOP,
+        },
+      ];
+
+      llm.apiClient.models.generateContentStream = vi
+        .fn()
+        .mockResolvedValue([chunkOne, chunkTwo]);
+
+      const llmRequest: LlmRequest = {
+        contents: [{role: 'user', parts: [{text: 'hello'}]}],
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      const responses: LlmResponse[] = [];
+      for await (const response of llm.generateContentAsync(llmRequest, true)) {
+        responses.push(response);
+      }
+
+      expect(responses).toHaveLength(3);
+      expect(responses[0].partial).toBe(true);
+      expect(responses[1].partial).toBe(true);
+      expect(responses[2].partial).toBe(false);
+      expect(responses[2].content?.parts?.[0]?.text).toBe('Hello world');
     });
   });
 
