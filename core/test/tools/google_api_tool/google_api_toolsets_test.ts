@@ -151,4 +151,47 @@ describe('GoogleApiToolset prebuilt service classes', () => {
       configureSaAuthSpy.mockRestore();
     }
   });
+
+  it('forwards toolNamePrefix from each prebuilt toolset and prefixes getToolsWithPrefix', async () => {
+    for (const {ToolsetClass, apiName, apiVersion} of PREBUILT_TOOLSETS) {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(
+          async () =>
+            new Response(
+              JSON.stringify(createDiscoverySpecFor(apiName, apiVersion)),
+              {status: 200, headers: {'Content-Type': 'application/json'}},
+            ),
+        );
+
+      try {
+        const toolset = new ToolsetClass({toolNamePrefix: 'work'});
+        expect(toolset.toolNamePrefix).toBe('work');
+
+        const firstPrefixedTools = await toolset.getToolsWithPrefix();
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        expect(firstPrefixedTools.map((tool) => tool.name)).toEqual([
+          `work_${apiName}_items_list`,
+        ]);
+        expect(firstPrefixedTools[0]?._getDeclaration()?.name).toBe(
+          `work_${apiName}_items_list`,
+        );
+
+        const secondPrefixedTools = await toolset.getToolsWithPrefix();
+        expect(secondPrefixedTools.map((tool) => tool.name)).toEqual([
+          `work_${apiName}_items_list`,
+        ]);
+        expect(secondPrefixedTools[0]?._getDeclaration()?.name).toBe(
+          `work_${apiName}_items_list`,
+        );
+
+        const tools = await toolset.getTools();
+        expect(tools.map((tool) => tool.name)).toEqual([
+          `${apiName}_items_list`,
+        ]);
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    }
+  });
 });

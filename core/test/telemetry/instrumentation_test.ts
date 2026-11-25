@@ -336,6 +336,32 @@ describe('recordInference', () => {
     });
   });
 
+  it('omits gen_ai.usage.output_tokens when candidatesTokenCount and thoughtsTokenCount are absent', async () => {
+    await drain(
+      recordInference(inferenceParams(), () =>
+        streamOf([
+          {
+            content: {role: 'model', parts: [{text: 'done'}]},
+            usageMetadata: {promptTokenCount: 50},
+            finishReason: FinishReason.STOP,
+          },
+        ]),
+      ),
+    );
+
+    const span = onlySpan(`generate_content ${MODEL}`);
+    expect(span.attributes['gen_ai.usage.input_tokens']).toBe(50);
+    expect('gen_ai.usage.output_tokens' in span.attributes).toBe(false);
+    expect(span.attributes['gen_ai.response.finish_reasons']).toEqual(['stop']);
+
+    const records = inferenceLogs();
+    expect(records).toHaveLength(1);
+    expect(records[0]?.attributes['gen_ai.usage.input_tokens']).toBe(50);
+    expect('gen_ai.usage.output_tokens' in (records[0]?.attributes ?? {})).toBe(
+      false,
+    );
+  });
+
   it('names the Vertex AI provider in enterprise mode', async () => {
     vi.stubEnv('GOOGLE_GENAI_USE_ENTERPRISE', 'true');
 

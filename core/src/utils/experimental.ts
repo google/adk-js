@@ -4,17 +4,23 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {isExperimentalWarningSuppressed} from './env_aware_utils.js';
 import {logger} from './logger.js';
 
 const warnedItems = new Set<string>();
 
 /**
- * Decorator to mark classes and methods as experimental.
- * Logs a warning once per item when the class is instantiated or the method is called.
+ * Constructor type accepted by {@link experimental}.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- must return any, unknown does not work.
 export type Constructor = new (...args: unknown[]) => any;
 
+/**
+ * Decorator to mark classes and methods as experimental.
+ *
+ * Logs a warning once per item when the class is instantiated or the method is
+ * called unless `ADK_SUPPRESS_EXPERIMENTAL_FEATURE_WARNINGS` is enabled.
+ */
 export function experimental<
   T extends Constructor | object,
   P extends string | symbol | undefined = undefined,
@@ -29,7 +35,7 @@ export function experimental<
     const className = (target as Function).name;
     const newConstructor = class extends (target as Constructor) {
       constructor(...args: unknown[]) {
-        if (!warnedItems.has(className)) {
+        if (!isExperimentalWarningSuppressed() && !warnedItems.has(className)) {
           logger.warn(
             `Class ${className} is experimental and may change in the future.`,
           );
@@ -62,7 +68,7 @@ export function experimental<
     const originalMethod = descriptor.value;
 
     descriptor.value = function (this: unknown, ...args: unknown[]) {
-      if (!warnedItems.has(identifier)) {
+      if (!isExperimentalWarningSuppressed() && !warnedItems.has(identifier)) {
         logger.warn(
           `Method ${identifier} is experimental and may change in the future.`,
         );

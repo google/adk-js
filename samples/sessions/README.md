@@ -4,14 +4,15 @@ This sample demonstrates how session state is scoped. One agent writes a session
 
 ## Overview
 
-`SessionStateAgent` is a deterministic `BaseAgent` subclass that calls no model. On each turn it reads `ctx.session.state` and emits one event whose `stateDelta` sets:
+`SessionStateAgent` is a deterministic `BaseAgent` subclass that calls no model. On each turn it wraps `ctx.session.state` and an event's `stateDelta` in `new State(...)`, initializes missing defaults with `state.setDefault(...)`, and updates:
 
 - `turnCount`, a session key, so it counts turns in the current session only.
+- `user:locale`, a user key initialized once via `state.setDefault('user:locale', 'en-US')` and preserved without recording a delta on later turns.
 - `user:visits`, a user key, so it counts turns across every session of the user.
 - `app:totalTurns`, an app key, so it counts turns across every user of the app.
 - `temp:lastMessage`, a temporary key, so the session service never stores it.
 
-The `main()` driver creates a session with the padded id `'  first-session  '`, which the service stores as `'first-session'`. It runs two turns in that session and one in a second session for the same user, and prints the state that `getSession` returns after each turn. In the second session, `user:visits` and `app:totalTurns` continue from the first session, `turnCount` starts again at `1`, and `temp:lastMessage` is absent everywhere.
+The `main()` driver creates a session with the padded id `'  first-session  '`, which the service stores as `'first-session'`. It runs two turns in that session and one in a second session for the same user, and prints the state that `getSession` returns after each turn. In the second session, `user:locale`, `user:visits`, and `app:totalTurns` continue from the first session, `turnCount` starts again at `1`, and `temp:lastMessage` is absent everywhere.
 
 ## Sample Inputs
 

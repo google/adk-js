@@ -1539,6 +1539,93 @@ describe('mergeParallelFunctionResponseEvents', () => {
     const merged = mergeParallelFunctionResponseEvents([event]);
     expect(merged).toBe(event);
   });
+
+  it('preserves the base event invocationId when merging events with different invocationIds', () => {
+    const event1 = createEvent({
+      invocationId: 'inv-base-123',
+      author: 'testAgent',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-123',
+              name: 'firstTool',
+              response: {result: 'success-1'},
+            },
+          },
+        ],
+      },
+    });
+    const event2 = createEvent({
+      invocationId: 'inv-other-456',
+      author: 'testAgent',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-456',
+              name: 'secondTool',
+              response: {result: 'success-2'},
+            },
+          },
+        ],
+      },
+    });
+
+    const merged = mergeParallelFunctionResponseEvents([event1, event2]);
+
+    expect(merged.invocationId).toBe('inv-base-123');
+    const responseIds = (merged.content?.parts ?? []).map(
+      (part) => part.functionResponse?.id,
+    );
+    expect(responseIds).toEqual(['fc-123', 'fc-456']);
+  });
+
+  it('preserves author and branch from the base event when merging multiple events', () => {
+    const event1 = createEvent({
+      invocationId: 'inv-base-123',
+      author: 'baseAgent',
+      branch: 'mainBranch',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-123',
+              name: 'firstTool',
+              response: {result: 'success-1'},
+            },
+          },
+        ],
+      },
+    });
+    const event2 = createEvent({
+      invocationId: 'inv-other-456',
+      author: 'otherAgent',
+      branch: 'otherBranch',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-456',
+              name: 'secondTool',
+              response: {result: 'success-2'},
+            },
+          },
+        ],
+      },
+    });
+
+    const merged = mergeParallelFunctionResponseEvents([event1, event2]);
+
+    expect(merged.invocationId).toBe('inv-base-123');
+    expect(merged.author).toBe('baseAgent');
+    expect(merged.branch).toBe('mainBranch');
+    expect(merged.content?.parts).toHaveLength(2);
+  });
 });
 
 describe('findEventByFunctionCallId', () => {

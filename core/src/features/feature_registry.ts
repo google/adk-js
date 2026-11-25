@@ -4,7 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {getBooleanEnvVar} from '../utils/env_aware_utils.js';
+import {
+  isEnvEnabled,
+  isExperimentalWarningSuppressed,
+} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 
 /**
@@ -126,14 +129,14 @@ export function isFeatureEnabled(featureName: FeatureName): boolean {
   const enableVar = `ADK_ENABLE_${featureName}`;
   const disableVar = `ADK_DISABLE_${featureName}`;
 
-  if (getBooleanEnvVar(enableVar)) {
+  if (isEnvEnabled(enableVar)) {
     if (config.stage !== FeatureStage.STABLE) {
       emitNonStableWarningOnce(featureName, config.stage);
     }
     return true;
   }
 
-  if (getBooleanEnvVar(disableVar)) {
+  if (isEnvEnabled(disableVar)) {
     return false;
   }
 
@@ -148,6 +151,13 @@ function emitNonStableWarningOnce(
   featureName: FeatureName,
   featureStage: FeatureStage,
 ): void {
+  if (
+    featureStage === FeatureStage.EXPERIMENTAL &&
+    isExperimentalWarningSuppressed()
+  ) {
+    return;
+  }
+
   if (!WARNED_FEATURES.has(featureName)) {
     WARNED_FEATURES.add(featureName);
     logger.warn(

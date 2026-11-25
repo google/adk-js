@@ -9,6 +9,20 @@ import {logger} from './logger.js';
 
 const ENTERPRISE_MODE_ENV_VAR = 'GOOGLE_GENAI_USE_ENTERPRISE';
 const DEPRECATED_ENTERPRISE_MODE_ENV_VAR = 'GOOGLE_GENAI_USE_VERTEXAI';
+const TRUTHY_ENV_VALUES: ReadonlySet<string> = new Set([
+  '1',
+  'true',
+  'yes',
+  'on',
+]);
+
+/**
+ * Environment variable that suppresses `@experimental` decorator warnings and
+ * `FeatureStage.EXPERIMENTAL` feature-registry warnings when set to `'1'`,
+ * `'true'`, `'yes'`, or `'on'`.
+ */
+export const EXPERIMENTAL_WARNING_SUPPRESSION_ENV_VAR =
+  'ADK_SUPPRESS_EXPERIMENTAL_FEATURE_WARNINGS';
 
 /**
  * Returns true if the environment is a browser.
@@ -163,6 +177,28 @@ export function getBooleanEnvVar(envVar: string): boolean {
   const envVarValue = (getEnvVar(envVar) || '').toLowerCase();
 
   return ['true', '1'].includes(envVarValue);
+}
+
+/**
+ * Checks whether an environment variable is set to a truthy flag value (`'1'`,
+ * `'true'`, `'yes'`, or `'on'`, case-insensitive with surrounding whitespace
+ * ignored).
+ *
+ * @param envVar The environment variable name to read.
+ * @param defaultValue Fallback string used when `envVar` is unset.
+ * @return True if the resolved value is enabled, false otherwise.
+ */
+export function isEnvEnabled(envVar: string, defaultValue = '0'): boolean {
+  const rawValue = getEnvVar(envVar) ?? defaultValue;
+  return TRUTHY_ENV_VALUES.has(rawValue.trim().toLowerCase());
+}
+
+/**
+ * Checks whether experimental feature warnings are suppressed via
+ * {@link EXPERIMENTAL_WARNING_SUPPRESSION_ENV_VAR}.
+ */
+export function isExperimentalWarningSuppressed(): boolean {
+  return isEnvEnabled(EXPERIMENTAL_WARNING_SUPPRESSION_ENV_VAR);
 }
 
 let warnedDeprecatedEnterpriseModeEnvVar = false;

@@ -10,12 +10,13 @@ import {
   isGemini3xFlashLive,
   isGemini3xLive,
 } from '@google/adk';
-import {describe, expect, it} from 'vitest';
+import {afterEach, describe, expect, it} from 'vitest';
 import {
   extractModelName,
   getGeminiMajorVersion,
   isGemini1Model,
   isGeminiModel,
+  isGeminiModelIdCheckDisabled,
 } from '../../src/utils/model_name.js';
 
 const MODEL_PATH_PREFIX =
@@ -377,4 +378,44 @@ describe('model name predicates together', () => {
     expect(isGemini1Model(path)).toBe(isGemini1Model(model));
     expect(isGemini2OrAbove(path)).toBe(isGemini2OrAbove(model));
   });
+});
+
+describe('isGeminiModelIdCheckDisabled', () => {
+  const originalEnv = process.env;
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  it('returns false when ADK_DISABLE_GEMINI_MODEL_ID_CHECK is unset', () => {
+    const cleanEnv = {...originalEnv};
+    delete cleanEnv['ADK_DISABLE_GEMINI_MODEL_ID_CHECK'];
+    process.env = cleanEnv;
+
+    expect(isGeminiModelIdCheckDisabled()).toBe(false);
+  });
+
+  it.each(['1', 'true', 'True', 'TRUE', 'yes', 'YES', 'on', 'ON', ' yes '])(
+    'returns true when ADK_DISABLE_GEMINI_MODEL_ID_CHECK is %j',
+    (value) => {
+      process.env = {
+        ...originalEnv,
+        ADK_DISABLE_GEMINI_MODEL_ID_CHECK: value,
+      };
+
+      expect(isGeminiModelIdCheckDisabled()).toBe(true);
+    },
+  );
+
+  it.each(['0', 'false', 'False', 'FALSE', 'no', 'off', '', '   '])(
+    'returns false when ADK_DISABLE_GEMINI_MODEL_ID_CHECK is %j',
+    (value) => {
+      process.env = {
+        ...originalEnv,
+        ADK_DISABLE_GEMINI_MODEL_ID_CHECK: value,
+      };
+
+      expect(isGeminiModelIdCheckDisabled()).toBe(false);
+    },
+  );
 });

@@ -129,6 +129,51 @@ describe('GoogleApiToolset', () => {
     expect(toolset.scopes).toBeUndefined();
   });
 
+  it('stores toolNamePrefix and prefixes tools via getToolsWithPrefix without mutating getTools', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () =>
+        new Response(JSON.stringify(MOCK_DISCOVERY_SPEC), {
+          status: 200,
+          headers: {'Content-Type': 'application/json'},
+        }),
+    );
+
+    const toolset = new GoogleApiToolset({
+      apiName: 'calendar',
+      apiVersion: 'v3',
+      toolNamePrefix: 'work',
+      toolFilter: ['calendar_calendars_get'],
+    });
+
+    expect(toolset.toolNamePrefix).toBe('work');
+
+    const firstPrefixedTools = await toolset.getToolsWithPrefix();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(firstPrefixedTools).toHaveLength(1);
+    expect(isGoogleApiTool(firstPrefixedTools[0])).toBe(true);
+    expect(firstPrefixedTools[0]?.name).toBe('work_calendar_calendars_get');
+    expect(firstPrefixedTools[0]?._getDeclaration()?.name).toBe(
+      'work_calendar_calendars_get',
+    );
+
+    const secondPrefixedTools = await toolset.getToolsWithPrefix();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(secondPrefixedTools.map((tool) => tool.name)).toEqual([
+      'work_calendar_calendars_get',
+    ]);
+    expect(secondPrefixedTools[0]?._getDeclaration()?.name).toBe(
+      'work_calendar_calendars_get',
+    );
+
+    const unprefixedTools = await toolset.getTools();
+    expect(unprefixedTools.map((tool) => tool.name)).toEqual([
+      'calendar_calendars_get',
+    ]);
+    expect(unprefixedTools[0]?._getDeclaration()?.name).toBe(
+      'calendar_calendars_get',
+    );
+  });
+
   it('throws when apiName or apiVersion is missing', async () => {
     await expect(new GoogleApiToolset().getTools()).rejects.toThrow(
       'Both apiName and apiVersion are required to load a GoogleApiToolset.',
