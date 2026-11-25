@@ -108,6 +108,45 @@ describe('parseWithSchema', () => {
     expect(() => parseWithSchema(schema, 'NORTH')).toThrow();
   });
 
+  it('accepts null for a nullable genai enum', () => {
+    const schema: Schema = {
+      type: Type.STRING,
+      format: 'enum',
+      enum: ['EAST', 'WEST'],
+      nullable: true,
+    };
+    expect(parseWithSchema(schema, null)).toBeNull();
+    expect(parseWithSchema(schema, 'EAST')).toBe('EAST');
+    expect(() => parseWithSchema(schema, 'NORTH')).toThrow();
+  });
+
+  it('accepts null for a nullable genai numeric enum', () => {
+    const schema: Schema = {
+      type: Type.INTEGER,
+      format: 'enum',
+      enum: ['101', '201'],
+      nullable: true,
+    };
+    expect(parseWithSchema(schema, null)).toBeNull();
+    expect(parseWithSchema(schema, 101)).toBe(101);
+    expect(() => parseWithSchema(schema, 301)).toThrow();
+  });
+
+  it('accepts null for a nullable genai anyOf', () => {
+    const schema: Schema = {
+      anyOf: [{type: Type.STRING}, {type: Type.INTEGER}],
+      nullable: true,
+    };
+    expect(parseWithSchema(schema, null)).toBeNull();
+    expect(parseWithSchema(schema, 'text')).toBe('text');
+    expect(() => parseWithSchema(schema, true)).toThrow();
+  });
+
+  it('keeps rejecting null for a genai enum that is not nullable', () => {
+    const schema: Schema = {type: Type.STRING, enum: ['EAST', 'WEST']};
+    expect(() => parseWithSchema(schema, null)).toThrow();
+  });
+
   it('leaves a genai Schema that has no Zod equivalent unenforced', () => {
     // `TYPE_UNSPECIFIED` carries no constraint, so nothing is rejected.
     const schema: Schema = {type: Type.TYPE_UNSPECIFIED};
@@ -120,6 +159,18 @@ describe('parseWithSchema', () => {
     const roundTripped = zodObjectToSchema(zod);
     expect(parseWithSchema(roundTripped, {count: 3})).toEqual({count: 3});
     expect(() => parseWithSchema(roundTripped, {count: 'no'})).toThrow();
+  });
+
+  it('accepts null for a round-tripped nullable Zod enum', () => {
+    const v3 = z3.object({dir: z3.enum(['EAST', 'WEST']).nullable()});
+    const v4 = z4.object({dir: z4.enum(['EAST', 'WEST']).nullable()});
+    for (const roundTripped of [zodObjectToSchema(v3), zodObjectToSchema(v4)]) {
+      expect(parseWithSchema(roundTripped, {dir: null})).toEqual({dir: null});
+      expect(parseWithSchema(roundTripped, {dir: 'EAST'})).toEqual({
+        dir: 'EAST',
+      });
+      expect(() => parseWithSchema(roundTripped, {dir: 'NORTH'})).toThrow();
+    }
   });
 });
 
@@ -155,6 +206,31 @@ describe('toJsonSchema', () => {
         note: {type: ['string', 'null']},
       },
       required: ['count'],
+    });
+  });
+
+  it('admits null in the enum and anyOf of a nullable genai Schema', () => {
+    expect(
+      toJsonSchema({type: Type.STRING, enum: ['EAST', 'WEST'], nullable: true}),
+    ).toEqual({type: ['string', 'null'], enum: ['EAST', 'WEST', null]});
+
+    expect(
+      toJsonSchema({
+        anyOf: [{type: Type.STRING}, {type: Type.INTEGER}],
+        nullable: true,
+      }),
+    ).toEqual({
+      anyOf: [{type: 'string'}, {type: 'integer'}, {type: 'null'}],
+    });
+
+    // A branch that is itself nullable already admits null.
+    expect(
+      toJsonSchema({
+        anyOf: [{type: Type.STRING, nullable: true}, {type: Type.INTEGER}],
+        nullable: true,
+      }),
+    ).toEqual({
+      anyOf: [{type: ['string', 'null']}, {type: 'integer'}],
     });
   });
 });

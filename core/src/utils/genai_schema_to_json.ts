@@ -36,6 +36,12 @@ const TYPE_NAMES: Record<string, string> = {
   NULL: 'null',
 };
 
+/** Whether a converted `anyOf` branch already admits `null` by its type. */
+function acceptsNull(branch: unknown): boolean {
+  const type = (branch as {type?: unknown} | null)?.type;
+  return Array.isArray(type) ? type.includes('null') : type === 'null';
+}
+
 /**
  * Converts a genai `Schema` into a standard JSON Schema object.
  *
@@ -46,7 +52,8 @@ const TYPE_NAMES: Record<string, string> = {
  * - `type` is an uppercase enum (`STRING`) rather than a JSON Schema type name
  *   (`string`). `TYPE_UNSPECIFIED` means "no constraint" and is dropped.
  * - `nullable: true` widens the type, which JSON Schema expresses as a type
- *   union (`['string', 'null']`).
+ *   union (`['string', 'null']`), a `null` enum member and a `null` branch in
+ *   `anyOf`.
  * - Count and length bounds are stringified (`maxItems: '5'`).
  * - `propertyOrdering` and `example` have no JSON Schema equivalent.
  *
@@ -122,6 +129,21 @@ export function genaiSchemaToJsonSchema(
         ? Number(member)
         : member,
     );
+  }
+
+  // `nullable` widens the whole schema, but JSON Schema applies `enum` and
+  // `anyOf` independently of `type`, so a `null` has to be admitted by each of
+  // them as well or it is still rejected.
+  if (schema.nullable) {
+    const members = out['enum'];
+    if (Array.isArray(members) && !members.includes(null)) {
+      out['enum'] = [...members, null];
+    }
+
+    const branches = out['anyOf'];
+    if (Array.isArray(branches) && !branches.some(acceptsNull)) {
+      out['anyOf'] = [...branches, {type: 'null'}];
+    }
   }
 
   return out;
