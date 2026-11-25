@@ -513,6 +513,7 @@ export type {
 export {AsyncQueue} from './utils/async_queue.js';
 export {renameReservedKeywords, toSnakeCaseName} from './utils/case_utils.js';
 export {getClientLabels, runWithClientLabel} from './utils/client_labels.js';
+export {Aclosing, isAclosing} from './utils/context_utils.js';
 export {toGeminiSchema} from './utils/gemini_schema_util.js';
 export type {MCPToolSchema} from './utils/gemini_schema_util.js';
 export {genaiSchemaToJsonSchema} from './utils/genai_schema_to_json.js';
