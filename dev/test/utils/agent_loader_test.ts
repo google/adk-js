@@ -384,7 +384,7 @@ describe('AgentLoader', () => {
         packages: 'bundle',
         bundle: true,
         minify: true,
-        external: expect.arrayContaining(['onnxruntime-node']),
+        external: expect.arrayContaining(['@google/adk', 'onnxruntime-node']),
       });
 
       await agentFile.dispose();
