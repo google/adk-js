@@ -4,7 +4,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {type Context, FunctionTool, State} from '@google/adk';
+import {
+  type Context,
+  FunctionTool,
+  GoogleCredentialsManager,
+  isFunctionTool,
+  isGoogleCredentialsManager,
+  isGoogleTool,
+  State,
+} from '@google/adk';
 import {
   type BigQueryCredentials,
   BigQueryCredentialsConfig,
@@ -14,10 +22,9 @@ import {
   isBigQueryTool,
   WriteMode,
 } from '@google/adk-integrations';
-import {describe, expect, it, vi} from 'vitest';
+import {type Schema, Type} from '@google/genai';
+import {afterEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
-
-import {GoogleCredentialsManager} from '../../src/bigquery/bigquery_credentials.js';
 
 function createMockToolContext(): Context {
   return {
@@ -52,6 +59,10 @@ async function asyncSampleFunction(args: {
 }
 
 describe('BigQueryTool', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   const credentialsConfig = new BigQueryCredentialsConfig({
     clientId: 'test_client_id',
     clientSecret: 'test_client_secret',
@@ -69,6 +80,13 @@ describe('BigQueryTool', () => {
     });
   }
 
+  function getCredentialsManager(tool: BigQueryTool): GoogleCredentialsManager {
+    if (!tool.credentialsManager) {
+      throw new Error('Expected credentialsManager on tool');
+    }
+    return tool.credentialsManager;
+  }
+
   it('identifies BigQueryTool instances via isBigQueryTool', () => {
     const tool = createSampleTool(credentialsConfig);
     const fnTool = new FunctionTool({
@@ -78,6 +96,8 @@ describe('BigQueryTool', () => {
     });
 
     expect(isBigQueryTool(tool)).toBe(true);
+    expect(isGoogleTool(tool)).toBe(true);
+    expect(isFunctionTool(tool)).toBe(true);
     expect(isBigQueryTool(fnTool)).toBe(false);
     expect(isBigQueryTool({})).toBe(false);
     expect(isBigQueryTool(null)).toBe(false);
@@ -87,9 +107,11 @@ describe('BigQueryTool', () => {
     const tool = createSampleTool(credentialsConfig);
 
     expect(tool.name).toBe('sampleFunction');
+    expect(isGoogleCredentialsManager(tool.credentialsManager)).toBe(true);
     expect(tool.credentialsManager).toBeInstanceOf(GoogleCredentialsManager);
     expect(tool.ignoreParams).toContain('credentials');
     expect(tool.ignoreParams).toContain('config');
+    expect(tool.ignoreParams).toContain('settings');
   });
 
   it('has no credentials manager when credentialsConfig is omitted', () => {
@@ -118,10 +140,7 @@ describe('BigQueryTool', () => {
     const mockCreds: GoogleOAuthCredentials = {valid: true, token: 'tok'};
 
     const getCredsSpy = vi
-      .spyOn(
-        tool.credentialsManager as GoogleCredentialsManager,
-        'getValidCredentials',
-      )
+      .spyOn(getCredentialsManager(tool), 'getValidCredentials')
       .mockResolvedValue(mockCreds);
 
     const result = await tool.runAsync({
@@ -149,10 +168,7 @@ describe('BigQueryTool', () => {
     const mockToolContext = createMockToolContext();
 
     const getCredsSpy = vi
-      .spyOn(
-        tool.credentialsManager as GoogleCredentialsManager,
-        'getValidCredentials',
-      )
+      .spyOn(getCredentialsManager(tool), 'getValidCredentials')
       .mockResolvedValue(undefined);
 
     const result = (await tool.runAsync({
@@ -204,7 +220,7 @@ describe('BigQueryTool', () => {
     });
     const mockCreds: GoogleOAuthCredentials = {valid: true, token: 'tok'};
     vi.spyOn(
-      tool.credentialsManager as GoogleCredentialsManager,
+      getCredentialsManager(tool),
       'getValidCredentials',
     ).mockResolvedValue(mockCreds);
 
@@ -230,7 +246,7 @@ describe('BigQueryTool', () => {
       credentialsConfig,
     });
     vi.spyOn(
-      tool.credentialsManager as GoogleCredentialsManager,
+      getCredentialsManager(tool),
       'getValidCredentials',
     ).mockResolvedValue({valid: true, token: 'tok'});
 
@@ -268,7 +284,7 @@ describe('BigQueryTool', () => {
   it('returns a structured error when credential resolution throws', async () => {
     const tool = createSampleTool(credentialsConfig);
     vi.spyOn(
-      tool.credentialsManager as GoogleCredentialsManager,
+      getCredentialsManager(tool),
       'getValidCredentials',
     ).mockRejectedValue(new Error('No access token found'));
 
@@ -306,7 +322,7 @@ describe('BigQueryTool', () => {
       requireConfirmation: true,
     });
     const getCredsSpy = vi.spyOn(
-      tool.credentialsManager as GoogleCredentialsManager,
+      getCredentialsManager(tool),
       'getValidCredentials',
     );
     const mockToolContext = createMockToolContext();
@@ -324,16 +340,17 @@ describe('BigQueryTool', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it('omits credentials and config from the function declaration', () => {
+  it('omits credentials, config, and settings from the function declaration', () => {
     const tool = new BigQueryTool({
       name: 'complex_function',
       description:
-        'A tool with required, optional, credentials, and config parameters',
+        'A tool with required, optional, credentials, config, and settings parameters',
       parameters: z.object({
         requiredParam: z.string(),
         optionalParam: z.string().optional(),
-        credentials: z.unknown().optional(),
-        config: z.unknown().optional(),
+        credentials: z.unknown(),
+        config: z.unknown(),
+        settings: z.unknown(),
       }),
       execute: () => ({success: true}),
       credentialsConfig,
@@ -343,28 +360,56 @@ describe('BigQueryTool', () => {
     const requiredArgs = declaration.parameters?.required ?? [];
     const properties = declaration.parameters?.properties ?? {};
 
-    expect(requiredArgs).toContain('requiredParam');
-    expect(requiredArgs).not.toContain('credentials');
-    expect(requiredArgs).not.toContain('config');
-    expect(requiredArgs).not.toContain('optionalParam');
+    expect(requiredArgs).toEqual(['requiredParam']);
     expect(properties['credentials']).toBeUndefined();
     expect(properties['config']).toBeUndefined();
+    expect(properties['settings']).toBeUndefined();
     expect(properties['requiredParam']).toBeDefined();
     expect(properties['optionalParam']).toBeDefined();
+
+    const baseSchema: Schema = {
+      type: Type.OBJECT,
+      properties: {
+        query: {type: Type.STRING},
+        credentials: {type: Type.OBJECT},
+        config: {type: Type.OBJECT},
+        settings: {type: Type.OBJECT},
+      },
+      required: ['query', 'credentials', 'config', 'settings'],
+    };
+    const schemaTool = new BigQueryTool({
+      name: 'schemaComplexFunction',
+      description: 'Schema-backed tool',
+      parameters: baseSchema,
+      execute: () => ({success: true}),
+    });
+    const schemaDecl = schemaTool._getDeclaration();
+    expect(schemaDecl.parameters?.required).toEqual(['query']);
+    expect(schemaDecl.parameters?.properties?.['credentials']).toBeUndefined();
+    expect(schemaDecl.parameters?.properties?.['config']).toBeUndefined();
+    expect(schemaDecl.parameters?.properties?.['settings']).toBeUndefined();
+    expect(baseSchema.required).toEqual([
+      'query',
+      'credentials',
+      'config',
+      'settings',
+    ]);
   });
 
-  it('forwards toolConfig to the execute function', async () => {
+  it('forwards toolConfig to both config and settings in execute', async () => {
     const customConfig = new BigQueryToolConfig({
       writeMode: WriteMode.ALLOWED,
     });
     let receivedConfig: BigQueryToolConfig | undefined;
+    let receivedSettings: BigQueryToolConfig | undefined;
     const tool = new BigQueryTool({
       name: 'config_tool',
-      description: 'Tool accepting config',
+      description: 'Tool accepting config and settings',
       parameters: sampleParameters,
       toolConfig: customConfig,
-      execute: ({param1, config}) => {
+      execute: ({param1, config, settings}) => {
         receivedConfig = config;
+        receivedSettings = settings;
         return {result: `Processed ${param1}`};
       },
     });
@@ -376,21 +421,28 @@ describe('BigQueryTool', () => {
 
     expect(result).toEqual({result: 'Processed val'});
     expect(receivedConfig).toBe(customConfig);
+    expect(receivedSettings).toBe(customConfig);
     expect(receivedConfig?.writeMode).toBe(WriteMode.ALLOWED);
   });
 
-  it('ignores config supplied in the model arguments', async () => {
+  it('ignores config and settings supplied in the model arguments', async () => {
     const customConfig = new BigQueryToolConfig({
       writeMode: WriteMode.BLOCKED,
     });
     let receivedConfig: BigQueryToolConfig | undefined;
+    let receivedSettings: BigQueryToolConfig | undefined;
     const tool = new BigQueryTool({
       name: 'config_override_tool',
       description: 'Tool testing model argument override protection',
-      parameters: sampleParameters,
+      parameters: z.object({
+        param1: z.string(),
+        config: z.unknown(),
+        settings: z.unknown(),
+      }),
       toolConfig: customConfig,
-      execute: ({param1, config}) => {
+      execute: ({param1, config, settings}) => {
         receivedConfig = config;
+        receivedSettings = settings;
         return {result: `Processed ${param1}`};
       },
     });
@@ -399,13 +451,39 @@ describe('BigQueryTool', () => {
       args: {
         param1: 'val',
         config: {writeMode: 'allowed'},
+        settings: {writeMode: 'allowed'},
       },
       toolContext: createMockToolContext(),
     });
 
     expect(result).toEqual({result: 'Processed val'});
     expect(receivedConfig).toBe(customConfig);
+    expect(receivedSettings).toBe(customConfig);
     expect(receivedConfig?.writeMode).toBe(WriteMode.BLOCKED);
+  });
+
+  it('strips credentials, config, and settings before evaluating requireConfirmation', async () => {
+    const seenArgs: Array<{param1: string}> = [];
+    const tool = new BigQueryTool({
+      name: 'confirmedLegacyTool',
+      description: 'Legacy tool with requireConfirmation',
+      parameters: sampleParameters,
+      requireConfirmation: (args) => {
+        seenArgs.push(args);
+        return args.param1 === 'confirm';
+      },
+      execute: sampleFunction,
+    });
+
+    await expect(
+      tool.checkRequireConfirmation({
+        param1: 'confirm',
+        credentials: {token: 'forged'},
+        config: {writeMode: 'allowed'},
+        settings: {writeMode: 'allowed'},
+      }),
+    ).resolves.toBe(true);
+    expect(seenArgs).toEqual([{param1: 'confirm'}]);
   });
 
   it.each([
@@ -434,5 +512,6 @@ describe('BigQueryTool', () => {
     });
 
     expect(tool.toolConfig).toEqual(expectedConfig);
+    expect(tool.toolSettings).toBe(tool.toolConfig);
   });
 });

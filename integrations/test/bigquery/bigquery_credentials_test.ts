@@ -4,7 +4,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {type AuthConfig, type Context, State} from '@google/adk';
+import {
+  type AuthConfig,
+  type Context,
+  GoogleCredentialsManager,
+  GoogleOAuthRefreshError,
+  isBaseGoogleCredentialsConfig,
+  isGoogleAuthClient,
+  isGoogleCredentialsManager,
+  isGoogleOAuthCredentialsImpl,
+  State,
+} from '@google/adk';
 import {
   BIGQUERY_DEFAULT_SCOPE,
   BIGQUERY_SCOPES,
@@ -19,9 +29,7 @@ import {
   isBigQueryCredentialsConfig,
 } from '@google/adk-integrations';
 import {GoogleAuth, JWT, OAuth2Client} from 'google-auth-library';
-import {describe, expect, it, vi} from 'vitest';
-
-import {GoogleCredentialsManager} from '../../src/bigquery/bigquery_credentials.js';
+import {afterEach, describe, expect, it, vi} from 'vitest';
 
 function createMockToolContext(initialState: Record<string, unknown> = {}): {
   context: Context;
@@ -47,9 +55,14 @@ describe('BigQueryCredentialsConfig', () => {
       clientSecret: 'test_client_secret',
     });
     expect(isBigQueryCredentialsConfig(config)).toBe(true);
+    expect(isBaseGoogleCredentialsConfig(config)).toBe(true);
+    expect(config.tokenCacheKey).toBe(BIGQUERY_TOKEN_CACHE_KEY);
     expect(isBigQueryCredentialsConfig({})).toBe(false);
     expect(isBigQueryCredentialsConfig(null)).toBe(false);
     expect(isBigQueryCredentialsConfig(undefined)).toBe(false);
+
+    const oauthCreds = new BigQueryOAuthCredentials({token: 'tok'});
+    expect(isGoogleOAuthCredentialsImpl(oauthCreds)).toBe(true);
   });
 
   it('exposes default scope constants', () => {
@@ -62,7 +75,6 @@ describe('BigQueryCredentialsConfig', () => {
     ]);
   });
 
-  // reference: test_valid_credentials_object
   it('copies clientId, clientSecret, and scopes from credentials', () => {
     const mockCreds: GoogleOAuthCredentials = {
       clientId: 'test_client_id',
@@ -78,7 +90,6 @@ describe('BigQueryCredentialsConfig', () => {
     expect(config.scopes).toEqual(['https://www.googleapis.com/auth/calendar']);
   });
 
-  // reference: test_valid_credentials_object_auth_credentials
   it('uses default scopes for credentials without scopes', () => {
     const authCreds: GoogleOAuthCredentials = {
       valid: true,
@@ -109,7 +120,6 @@ describe('BigQueryCredentialsConfig', () => {
     expect(config.scopes).toEqual(BIGQUERY_SCOPES);
   });
 
-  // reference: test_valid_credentials_object_oauth2_credentials
   it('accepts BigQueryOAuthCredentials as credentials', () => {
     const oauth2Creds = new BigQueryOAuthCredentials({
       token: 'test_token',
@@ -126,7 +136,6 @@ describe('BigQueryCredentialsConfig', () => {
     expect(config.scopes).toEqual(['https://www.googleapis.com/auth/calendar']);
   });
 
-  // reference: test_valid_client_id_secret_pair
   it('accepts a clientId and clientSecret pair with scopes', () => {
     const config = new BigQueryCredentialsConfig({
       clientId: 'test_client_id',
@@ -140,7 +149,6 @@ describe('BigQueryCredentialsConfig', () => {
     expect(config.scopes).toEqual(['https://www.googleapis.com/auth/bigquery']);
   });
 
-  // reference: test_valid_client_id_secret_pair_default_scope
   it('uses default scopes when scopes are omitted', () => {
     const config = new BigQueryCredentialsConfig({
       clientId: 'test_client_id',
@@ -156,7 +164,6 @@ describe('BigQueryCredentialsConfig', () => {
     ]);
   });
 
-  // reference: test_valid_client_id_secret_pair_w_scope
   it('keeps custom scopes for a clientId and clientSecret pair', () => {
     const config = new BigQueryCredentialsConfig({
       clientId: 'test_client_id',
@@ -176,7 +183,6 @@ describe('BigQueryCredentialsConfig', () => {
     ]);
   });
 
-  // reference: test_valid_client_id_secret_pair_w_empty_scope
   it('uses default scopes when scopes are empty', () => {
     const config = new BigQueryCredentialsConfig({
       clientId: 'test_client_id',
@@ -193,7 +199,6 @@ describe('BigQueryCredentialsConfig', () => {
     ]);
   });
 
-  // reference: test_missing_client_secret_raises_error
   it('throws when clientSecret is missing', () => {
     expect(
       () => new BigQueryCredentialsConfig({clientId: 'test_client_id'}),
@@ -202,7 +207,6 @@ describe('BigQueryCredentialsConfig', () => {
     );
   });
 
-  // reference: test_missing_client_id_raises_error
   it('throws when clientId is missing', () => {
     expect(
       () => new BigQueryCredentialsConfig({clientSecret: 'test_client_secret'}),
@@ -211,7 +215,6 @@ describe('BigQueryCredentialsConfig', () => {
     );
   });
 
-  // reference: test_empty_configuration_raises_error
   it('throws when no credential source is configured', () => {
     expect(() => new BigQueryCredentialsConfig({})).toThrow(
       /Must provide one of credentials, externalAccessTokenKey, or clientId and clientSecret pair/,
@@ -235,13 +238,34 @@ describe('BigQueryCredentialsConfig', () => {
     expect(externalTokenConfig.scopes).toEqual([...BIGQUERY_SCOPES]);
   });
 
-  it('accepts an empty-string clientId and clientSecret pair', () => {
-    const config = new BigQueryCredentialsConfig({
-      clientId: '',
-      clientSecret: '',
-    });
-    expect(config.clientId).toBe('');
-    expect(config.clientSecret).toBe('');
+  it('rejects empty or whitespace clientId and clientSecret values', () => {
+    expect(
+      () =>
+        new BigQueryCredentialsConfig({
+          clientId: '',
+          clientSecret: '',
+        }),
+    ).toThrow(
+      /Must provide one of credentials, externalAccessTokenKey, or clientId and clientSecret pair/,
+    );
+    expect(
+      () =>
+        new BigQueryCredentialsConfig({
+          clientId: '   ',
+          clientSecret: 'testSecret',
+        }),
+    ).toThrow(
+      /Must provide one of credentials, externalAccessTokenKey, or clientId and clientSecret pair/,
+    );
+    expect(
+      () =>
+        new BigQueryCredentialsConfig({
+          clientId: 'testClient',
+          clientSecret: '   ',
+        }),
+    ).toThrow(
+      /Must provide one of credentials, externalAccessTokenKey, or clientId and clientSecret pair/,
+    );
   });
 
   it('rejects mutually exclusive credential options', () => {
@@ -278,6 +302,10 @@ describe('BigQueryCredentialsConfig', () => {
 });
 
 describe('GoogleCredentialsManager', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   function createManager(): GoogleCredentialsManager {
     const config = new BigQueryCredentialsConfig({
       clientId: 'test_client_id',
@@ -287,14 +315,28 @@ describe('GoogleCredentialsManager', () => {
     return new GoogleCredentialsManager(config);
   }
 
-  // reference: test_get_valid_credentials_with_valid_existing_creds
+  function createManagerWithCredentials(
+    credentials: BigQueryCredentials,
+  ): GoogleCredentialsManager {
+    return new GoogleCredentialsManager(
+      new BigQueryCredentialsConfig({credentials}),
+    );
+  }
+
+  function expectOAuthCredentials(
+    credentials: BigQueryCredentials | undefined,
+  ): GoogleOAuthCredentials {
+    if (!credentials || isGoogleAuthClient(credentials)) {
+      throw new Error('Expected GoogleOAuthCredentials');
+    }
+    return credentials;
+  }
+
   it('returns valid configured credentials without the OAuth2 flow', async () => {
-    const manager = createManager();
+    const mockCreds: GoogleOAuthCredentials = {valid: true};
+    const manager = createManagerWithCredentials(mockCreds);
     const {context, getAuthResponse, requestCredential} =
       createMockToolContext();
-
-    const mockCreds: GoogleOAuthCredentials = {valid: true};
-    manager.credentialsConfig.credentials = mockCreds;
 
     const result = await manager.getValidCredentials(context);
 
@@ -303,7 +345,6 @@ describe('GoogleCredentialsManager', () => {
     expect(requestCredential).not.toHaveBeenCalled();
   });
 
-  // reference: test_get_credentials_from_cache_when_none_in_manager
   it('loads credentials from the session cache', async () => {
     const manager = createManager();
     const mockCachedCredsJson = JSON.stringify({
@@ -316,24 +357,17 @@ describe('GoogleCredentialsManager', () => {
       [BIGQUERY_TOKEN_CACHE_KEY]: mockCachedCredsJson,
     });
 
-    const mockCreds: GoogleOAuthCredentials = {valid: true};
-    const fromJsonSpy = vi
-      .spyOn(manager, 'fromAuthorizedUserInfo')
-      .mockReturnValue(mockCreds);
+    const rawResult = await manager.getValidCredentials(context);
+    expect(isGoogleOAuthCredentialsImpl(rawResult)).toBe(true);
+    const result = expectOAuthCredentials(rawResult);
 
-    const result = await manager.getValidCredentials(context);
-
-    expect(fromJsonSpy).toHaveBeenCalledOnce();
-    expect(fromJsonSpy).toHaveBeenCalledWith(
-      JSON.parse(mockCachedCredsJson),
-      manager.credentialsConfig.scopes,
-    );
+    expect(result.token).toBe('cached_token');
+    expect(result.refreshToken).toBe('cached_refresh_token');
+    expect(result.scopes).toEqual(['https://www.googleapis.com/auth/calendar']);
+    expect(result.valid).toBe(true);
     expect(manager.credentialsConfig.credentials).toBeUndefined();
-    expect(result).toBe(mockCreds);
-    fromJsonSpy.mockRestore();
   });
 
-  // reference: test_no_credentials_in_manager_or_cache
   it('requests credentials when none are configured or cached', async () => {
     const manager = createManager();
     const {context, requestCredential} = createMockToolContext();
@@ -344,7 +378,6 @@ describe('GoogleCredentialsManager', () => {
     expect(requestCredential).toHaveBeenCalledOnce();
   });
 
-  // reference: test_refresh_cached_credentials_success
   it('refreshes expired cached credentials and updates the cache', async () => {
     const manager = createManager();
     const mockCachedCredsJson = JSON.stringify({
@@ -352,53 +385,37 @@ describe('GoogleCredentialsManager', () => {
       refresh_token: 'valid_refresh_token',
       client_id: 'test_client_id',
       client_secret: 'test_client_secret',
-    });
-    const mockRefreshedCredsJson = JSON.stringify({
-      token: 'new_token',
-      refresh_token: 'valid_refresh_token',
-      client_id: 'test_client_id',
-      client_secret: 'test_client_secret',
+      expiry: new Date(Date.now() - 10_000).toISOString(),
     });
     const {context, state} = createMockToolContext({
       [BIGQUERY_TOKEN_CACHE_KEY]: mockCachedCredsJson,
     });
 
-    const mockCachedCreds: GoogleOAuthCredentials = {
-      valid: false,
-      expired: true,
-      refreshToken: 'valid_refresh_token',
-      toJson: vi.fn(() => mockRefreshedCredsJson),
-    };
-    mockCachedCreds.refresh = vi.fn(async () => {
-      mockCachedCreds.valid = true;
-    });
-
-    const fromJsonSpy = vi
-      .spyOn(manager, 'fromAuthorizedUserInfo')
-      .mockReturnValue(mockCachedCreds);
-
-    const result = await manager.getValidCredentials(context);
-
-    expect(fromJsonSpy).toHaveBeenCalledOnce();
-    expect(fromJsonSpy).toHaveBeenCalledWith(
-      JSON.parse(mockCachedCredsJson),
-      manager.credentialsConfig.scopes,
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          access_token: 'new_token',
+          expires_in: 3600,
+        }),
+        {status: 200, headers: {'Content-Type': 'application/json'}},
+      ),
     );
-    expect(mockCachedCreds.refresh).toHaveBeenCalledOnce();
+
+    const result = expectOAuthCredentials(
+      await manager.getValidCredentials(context),
+    );
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(result.token).toBe('new_token');
+    expect(result.valid).toBe(true);
     expect(manager.credentialsConfig.credentials).toBeUndefined();
     const cachedAfter = JSON.parse(
       state.get<string>(BIGQUERY_TOKEN_CACHE_KEY) ?? '{}',
     ) as Record<string, unknown>;
     expect(cachedAfter['token']).toBe('new_token');
-    expect(result).toBe(mockCachedCreds);
-    fromJsonSpy.mockRestore();
   });
 
-  // reference: test_get_valid_credentials_with_refresh_success
   it('refreshes expired configured credentials', async () => {
-    const manager = createManager();
-    const {context, state} = createMockToolContext();
-
     const mockCreds: GoogleOAuthCredentials = {
       valid: false,
       expired: true,
@@ -407,7 +424,8 @@ describe('GoogleCredentialsManager', () => {
     mockCreds.refresh = vi.fn(async () => {
       mockCreds.valid = true;
     });
-    manager.credentialsConfig.credentials = mockCreds;
+    const manager = createManagerWithCredentials(mockCreds);
+    const {context, state} = createMockToolContext();
 
     const result = await manager.getValidCredentials(context);
 
@@ -417,14 +435,11 @@ describe('GoogleCredentialsManager', () => {
     expect(state.get(BIGQUERY_TOKEN_CACHE_KEY)).toBeUndefined();
   });
 
-  // reference: test_get_valid_credentials_with_existing_non_oauth_creds
   it('refreshes credentials without a validity flag once and skips the OAuth2 flow', async () => {
-    const manager = createManager();
+    const mockCreds: GoogleOAuthCredentials = {refresh: vi.fn(async () => {})};
+    const manager = createManagerWithCredentials(mockCreds);
     const {context, getAuthResponse, requestCredential} =
       createMockToolContext();
-
-    const mockCreds: GoogleOAuthCredentials = {refresh: vi.fn(async () => {})};
-    manager.credentialsConfig.credentials = mockCreds;
 
     const result = await manager.getValidCredentials(context);
 
@@ -434,18 +449,15 @@ describe('GoogleCredentialsManager', () => {
     expect(requestCredential).not.toHaveBeenCalled();
   });
 
-  // reference: test_get_valid_credentials_with_non_oauth_refresh_failure
   it('returns credentials without a validity flag when their refresh fails', async () => {
-    const manager = createManager();
-    const {context, getAuthResponse, requestCredential} =
-      createMockToolContext();
-
     const mockCreds: GoogleOAuthCredentials = {
       refresh: vi.fn(async () => {
         throw new Error('Refresh failed');
       }),
     };
-    manager.credentialsConfig.credentials = mockCreds;
+    const manager = createManagerWithCredentials(mockCreds);
+    const {context, getAuthResponse, requestCredential} =
+      createMockToolContext();
 
     const result = await manager.getValidCredentials(context);
 
@@ -455,20 +467,47 @@ describe('GoogleCredentialsManager', () => {
     expect(requestCredential).not.toHaveBeenCalled();
   });
 
-  // reference: test_get_valid_credentials_with_refresh_failure
-  it('starts the OAuth2 flow when refresh fails', async () => {
-    const manager = createManager();
-    const {context, requestCredential} = createMockToolContext();
+  it('accepts plain token credentials and refreshes expired non-OAuth credentials without starting the OAuth2 flow', async () => {
+    const plainTokenCreds: GoogleOAuthCredentials = {token: 'plainToken'};
+    const plainManager = createManagerWithCredentials(plainTokenCreds);
+    const {context: plainContext, requestCredential: plainRequest} =
+      createMockToolContext();
+    expect(await plainManager.getValidCredentials(plainContext)).toBe(
+      plainTokenCreds,
+    );
+    expect(plainRequest).not.toHaveBeenCalled();
 
+    const expiredNonOAuthCreds: GoogleOAuthCredentials = {
+      token: 'oldToken',
+      valid: false,
+      expired: true,
+      refresh: vi.fn(async () => {
+        expiredNonOAuthCreds.token = 'refreshedToken';
+        expiredNonOAuthCreds.valid = true;
+        expiredNonOAuthCreds.expired = false;
+      }),
+    };
+    const nonOAuthManager = createManagerWithCredentials(expiredNonOAuthCreds);
+    const {context: nonOAuthContext, requestCredential: nonOAuthRequest} =
+      createMockToolContext();
+    expect(await nonOAuthManager.getValidCredentials(nonOAuthContext)).toBe(
+      expiredNonOAuthCreds,
+    );
+    expect(expiredNonOAuthCreds.refresh).toHaveBeenCalledOnce();
+    expect(nonOAuthRequest).not.toHaveBeenCalled();
+  });
+
+  it('starts the OAuth2 flow when refresh throws GoogleOAuthRefreshError', async () => {
     const mockCreds: GoogleOAuthCredentials = {
       valid: false,
       expired: true,
       refreshToken: 'expired_refresh_token',
       refresh: vi.fn(async () => {
-        throw new Error('Refresh failed');
+        throw new GoogleOAuthRefreshError('Refresh failed', {status: 400});
       }),
     };
-    manager.credentialsConfig.credentials = mockCreds;
+    const manager = createManagerWithCredentials(mockCreds);
+    const {context, requestCredential} = createMockToolContext();
 
     const result = await manager.getValidCredentials(context);
 
@@ -476,7 +515,24 @@ describe('GoogleCredentialsManager', () => {
     expect(requestCredential).toHaveBeenCalledOnce();
   });
 
-  // reference: test_oauth_flow_completion_with_caching
+  it('propagates non-GoogleOAuthRefreshError errors from OAuth token refresh', async () => {
+    const mockCreds: GoogleOAuthCredentials = {
+      valid: false,
+      expired: true,
+      refreshToken: 'refreshToken1',
+      refresh: vi.fn(async () => {
+        throw new Error('Token endpoint unreachable');
+      }),
+    };
+    const manager = createManagerWithCredentials(mockCreds);
+    const {context, requestCredential} = createMockToolContext();
+
+    await expect(manager.getValidCredentials(context)).rejects.toThrow(
+      'Token endpoint unreachable',
+    );
+    expect(requestCredential).not.toHaveBeenCalled();
+  });
+
   it('caches credentials from a completed OAuth2 flow', async () => {
     const manager = createManager();
     const {context, getAuthResponse, state} = createMockToolContext();
@@ -488,7 +544,17 @@ describe('GoogleCredentialsManager', () => {
       },
     });
 
-    const mockCredsJson = JSON.stringify({
+    const rawResult = await manager.getValidCredentials(context);
+    expect(isGoogleOAuthCredentialsImpl(rawResult)).toBe(true);
+    const result = expectOAuthCredentials(rawResult);
+
+    expect(result.token).toBe('new_access_token');
+    expect(result.refreshToken).toBe('new_refresh_token');
+    expect(result.scopes).toEqual(['https://www.googleapis.com/auth/calendar']);
+    expect(manager.credentialsConfig.credentials).toBeUndefined();
+    const cached = state.get<string>(BIGQUERY_TOKEN_CACHE_KEY);
+    expect(cached).toBeDefined();
+    expect(JSON.parse(cached ?? '{}')).toEqual({
       token: 'new_access_token',
       refresh_token: 'new_refresh_token',
       token_uri: 'https://oauth2.googleapis.com/token',
@@ -496,33 +562,8 @@ describe('GoogleCredentialsManager', () => {
       client_secret: 'test_client_secret',
       scopes: ['https://www.googleapis.com/auth/calendar'],
     });
-    const mockCreds: GoogleOAuthCredentials = {
-      token: 'new_access_token',
-      refreshToken: 'new_refresh_token',
-      valid: true,
-      toJson: () => mockCredsJson,
-    };
-
-    const createCredsSpy = vi
-      .spyOn(manager, 'createOAuthCredentials')
-      .mockReturnValue(mockCreds);
-
-    const result = await manager.getValidCredentials(context);
-
-    expect(result).toBe(mockCreds);
-    expect(createCredsSpy).toHaveBeenCalledOnce();
-    expect(createCredsSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        token: 'new_access_token',
-        refreshToken: 'new_refresh_token',
-      }),
-    );
-    expect(manager.credentialsConfig.credentials).toBeUndefined();
-    expect(state.get<string>(BIGQUERY_TOKEN_CACHE_KEY)).toBe(mockCredsJson);
-    createCredsSpy.mockRestore();
   });
 
-  // reference: test_oauth_flow_in_progress
   it('requests OAuth2 credentials with the configured client', async () => {
     const manager = createManager();
     const {context, requestCredential} = createMockToolContext();
@@ -542,7 +583,6 @@ describe('GoogleCredentialsManager', () => {
     );
   });
 
-  // reference: test_cache_persistence_across_manager_instances
   it('shares cached credentials across manager instances', async () => {
     const credentialsConfig = new BigQueryCredentialsConfig({
       clientId: 'test_client_id',
@@ -559,27 +599,27 @@ describe('GoogleCredentialsManager', () => {
       },
     });
 
-    const result1 = (await manager1.getValidCredentials(context)) as
-      GoogleOAuthCredentials | undefined;
-    expect(result1?.token).toBe('cached_access_token');
+    const result1 = expectOAuthCredentials(
+      await manager1.getValidCredentials(context),
+    );
+    expect(result1.token).toBe('cached_access_token');
     const cachedCredsJson = state.get<string>(BIGQUERY_TOKEN_CACHE_KEY);
     expect(cachedCredsJson).toBeDefined();
 
     const manager2 = new GoogleCredentialsManager(credentialsConfig);
     getAuthResponse.mockReturnValue(undefined);
 
-    const fromJsonSpy = vi.spyOn(manager2, 'fromAuthorizedUserInfo');
-    const result2 = (await manager2.getValidCredentials(context)) as
-      GoogleOAuthCredentials | undefined;
+    const rawResult2 = await manager2.getValidCredentials(context);
+    expect(isGoogleOAuthCredentialsImpl(rawResult2)).toBe(true);
+    const result2 = expectOAuthCredentials(rawResult2);
 
-    expect(result2?.token).toBe('cached_access_token');
-    expect(result2?.refreshToken).toBe('cached_refresh_token');
+    expect(result2.token).toBe('cached_access_token');
+    expect(result2.refreshToken).toBe('cached_refresh_token');
+    expect(result2.scopes).toEqual([
+      'https://www.googleapis.com/auth/calendar',
+    ]);
     expect(manager2.credentialsConfig.credentials).toBeUndefined();
     expect(state.get<string>(BIGQUERY_TOKEN_CACHE_KEY)).toBe(cachedCredsJson);
-    expect(fromJsonSpy).toHaveBeenCalledOnce();
-    const actualData = fromJsonSpy.mock.calls[0]?.[0];
-    expect(actualData).toEqual(JSON.parse(cachedCredsJson ?? '{}'));
-    fromJsonSpy.mockRestore();
   });
 
   it('resolves credentials from externalAccessTokenKey when configured', async () => {
@@ -591,10 +631,11 @@ describe('GoogleCredentialsManager', () => {
       external_bq_token: 'ext_token_123',
     });
 
-    const creds = (await manager.getValidCredentials(contextWithToken)) as
-      GoogleOAuthCredentials | undefined;
-    expect(creds?.token).toBe('ext_token_123');
-    expect(creds?.valid).toBe(true);
+    const creds = expectOAuthCredentials(
+      await manager.getValidCredentials(contextWithToken),
+    );
+    expect(creds.token).toBe('ext_token_123');
+    expect(creds.valid).toBe(true);
 
     const {context: emptyContext} = createMockToolContext();
     await expect(manager.getValidCredentials(emptyContext)).rejects.toThrow(
@@ -602,44 +643,62 @@ describe('GoogleCredentialsManager', () => {
     );
   });
 
-  it('marks credentials from fromAuthorizedUserInfo expired when expiry is in the past or within the 60s leeway', () => {
-    const manager = createManager();
+  it('marks credentials expired when expiry is in the past or within the 60s leeway', async () => {
     const pastIso = new Date(Date.now() - 60_000).toISOString();
     const withinLeewayIso = new Date(Date.now() + 30_000).toISOString();
     const futureIso = new Date(Date.now() + 120_000).toISOString();
 
-    const expiredCreds = manager.fromAuthorizedUserInfo({
-      token: 'expired_access_token',
-      refresh_token: 'refresh_token_1',
-      client_id: 'test_client_id',
-      client_secret: 'test_client_secret',
+    const expiredCreds = new BigQueryOAuthCredentials({
+      token: 'expiredAccessToken',
+      refreshToken: 'refreshToken1',
+      clientId: 'testClientId',
+      clientSecret: 'testClientSecret',
       expiry: pastIso,
     });
     expect(expiredCreds.expiry).toBe(pastIso);
     expect(expiredCreds.expired).toBe(true);
     expect(expiredCreds.valid).toBe(false);
 
-    const nearExpiryCreds = manager.fromAuthorizedUserInfo({
-      token: 'near_expiry_access_token',
-      refresh_token: 'refresh_token_1',
-      client_id: 'test_client_id',
-      client_secret: 'test_client_secret',
+    const nearExpiryCreds = new BigQueryOAuthCredentials({
+      token: 'nearExpiryAccessToken',
+      refreshToken: 'refreshToken1',
+      clientId: 'testClientId',
+      clientSecret: 'testClientSecret',
       expiry: withinLeewayIso,
     });
     expect(nearExpiryCreds.expiry).toBe(withinLeewayIso);
     expect(nearExpiryCreds.expired).toBe(true);
     expect(nearExpiryCreds.valid).toBe(false);
 
-    const validCreds = manager.fromAuthorizedUserInfo({
-      token: 'valid_access_token',
-      refresh_token: 'refresh_token_1',
-      client_id: 'test_client_id',
-      client_secret: 'test_client_secret',
+    const validCreds = new BigQueryOAuthCredentials({
+      token: 'validAccessToken',
+      refreshToken: 'refreshToken1',
+      clientId: 'testClientId',
+      clientSecret: 'testClientSecret',
       expiry: futureIso,
     });
     expect(validCreds.expiry).toBe(futureIso);
     expect(validCreds.expired).toBe(false);
     expect(validCreds.valid).toBe(true);
+
+    const manager = createManager();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const {context} = createMockToolContext({
+      [BIGQUERY_TOKEN_CACHE_KEY]: JSON.stringify({
+        token: 'validCachedToken',
+        refresh_token: 'refreshToken1',
+        client_id: 'test_client_id',
+        client_secret: 'test_client_secret',
+        expiry: futureIso,
+      }),
+    });
+    const resolved = expectOAuthCredentials(
+      await manager.getValidCredentials(context),
+    );
+    expect(resolved.token).toBe('validCachedToken');
+    expect(resolved.expired).toBe(false);
+    expect(resolved.valid).toBe(true);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('refreshes cached credentials when the token is 30s from expiry', async () => {
@@ -666,9 +725,9 @@ describe('GoogleCredentialsManager', () => {
       ),
     );
 
-    const refreshedCreds = (await manager.getValidCredentials(
-      context,
-    )) as GoogleOAuthCredentials;
+    const refreshedCreds = expectOAuthCredentials(
+      await manager.getValidCredentials(context),
+    );
     expect(fetchSpy).toHaveBeenCalledOnce();
     expect(refreshedCreds.token).toBe('refreshed_before_flight');
     expect(refreshedCreds.expired).toBe(false);
@@ -695,11 +754,12 @@ describe('GoogleCredentialsManager', () => {
       },
     });
 
-    const initialCreds = (await manager.getValidCredentials(context)) as
-      GoogleOAuthCredentials | undefined;
-    expect(initialCreds?.expiry).toBe(new Date(pastExpiresAt).toISOString());
-    expect(initialCreds?.expired).toBe(true);
-    expect(initialCreds?.valid).toBe(false);
+    const initialCreds = expectOAuthCredentials(
+      await manager.getValidCredentials(context),
+    );
+    expect(initialCreds.expiry).toBe(new Date(pastExpiresAt).toISOString());
+    expect(initialCreds.expired).toBe(true);
+    expect(initialCreds.valid).toBe(false);
 
     const cachedInitial = JSON.parse(
       state.get<string>(BIGQUERY_TOKEN_CACHE_KEY) ?? '{}',
@@ -717,13 +777,14 @@ describe('GoogleCredentialsManager', () => {
       ),
     );
 
-    const refreshedCreds = (await manager.getValidCredentials(context)) as
-      GoogleOAuthCredentials | undefined;
+    const refreshedCreds = expectOAuthCredentials(
+      await manager.getValidCredentials(context),
+    );
     expect(fetchSpy).toHaveBeenCalledOnce();
-    expect(refreshedCreds?.token).toBe('refreshed_token');
-    expect(refreshedCreds?.expired).toBe(false);
-    expect(refreshedCreds?.valid).toBe(true);
-    expect(Date.parse(refreshedCreds?.expiry ?? '')).toBeGreaterThanOrEqual(
+    expect(refreshedCreds.token).toBe('refreshed_token');
+    expect(refreshedCreds.expired).toBe(false);
+    expect(refreshedCreds.valid).toBe(true);
+    expect(Date.parse(refreshedCreds.expiry ?? '')).toBeGreaterThanOrEqual(
       futureExpiresAt - 5_000,
     );
 
@@ -731,7 +792,7 @@ describe('GoogleCredentialsManager', () => {
       state.get<string>(BIGQUERY_TOKEN_CACHE_KEY) ?? '{}',
     ) as Record<string, unknown>;
     expect(cachedAfterRefresh['token']).toBe('refreshed_token');
-    expect(cachedAfterRefresh['expiry']).toBe(refreshedCreds?.expiry);
+    expect(cachedAfterRefresh['expiry']).toBe(refreshedCreds.expiry);
     fetchSpy.mockRestore();
   });
 
@@ -772,6 +833,10 @@ describe('GoogleCredentialsManager', () => {
     expect(isBigQueryAuthClient(oauthCreds)).toBe(true);
     expect(isBigQueryAuthClient(authCreds)).toBe(true);
     expect(isBigQueryAuthClient({token: 'tok'})).toBe(false);
+    expect(isGoogleAuthClient(jwtCreds)).toBe(true);
+    expect(isGoogleAuthClient(oauthCreds)).toBe(true);
+    expect(isGoogleAuthClient(authCreds)).toBe(true);
+    expect(isGoogleAuthClient({token: 'tok'})).toBe(false);
 
     const jwtConfig = new BigQueryCredentialsConfig({credentials: jwtClient});
     const oauthConfig = new BigQueryCredentialsConfig({
@@ -801,6 +866,7 @@ describe('GoogleCredentialsManager', () => {
     expect(bqClientFromGoogleAuth.credentials).toBe(googleAuth);
 
     const manager = new GoogleCredentialsManager(jwtConfig);
+    expect(isGoogleCredentialsManager(manager)).toBe(true);
     const {context, getAuthResponse, requestCredential} =
       createMockToolContext();
     const resolved = await manager.getValidCredentials(context);

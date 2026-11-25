@@ -66,7 +66,7 @@ The `LlmAgent` request/response processor pipeline, concurrent parallel tool-cal
 
 Third-party model and ecosystem integrations packaged in `@google/adk-integrations`.
 
-- [BigQuery toolset](integrations/bigquery/index.md) - `BigQueryToolset`, `BigQueryTool`, `BigQueryCredentialsConfig`, `BigQueryToolConfig`, `getBigQueryClient`, `askDataInsights`, and the first-party BigQuery metadata, SQL query, and data insights tools.
+- [BigQuery toolset](integrations/bigquery/index.md) - `BigQueryToolset`, `GoogleTool`, `BigQueryCredentialsConfig`, `BigQueryToolConfig`, `getBigQueryClient`, `askDataInsights`, and the first-party BigQuery metadata, SQL query, and data insights tools.
 - [Claude on Vertex AI](integrations/models/anthropic_llm/index.md) - `Claude`, `LLMRegistry` registration for `claude-*` models on Vertex AI, and Anthropic message and tool conversion helpers.
 - [CrewAI tool](integrations/crewai/index.md) - `CrewaiTool`, `isCrewaiTool`, and adapting CrewAI tools into ADK tools.
 - [LangChain tool](integrations/langchain/index.md) - `LangchainTool`, `isLangchainTool`, and adapting LangChain structured and simple tools into ADK tools.

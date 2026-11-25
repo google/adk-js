@@ -4,10 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type {Context} from '@google/adk';
+import type {Context, GoogleCredentials} from '@google/adk';
 import {z} from 'zod';
 
-import type {BigQueryCredentials} from './bigquery_credentials.js';
 import {
   type BigQueryConnectionProperty,
   type BigQueryQueryOptions,
@@ -18,6 +17,7 @@ import {
   type BigQueryToolConfigOptions,
   isBigQueryToolConfig,
   resolveMaxQueryResultRows,
+  resolveToolSettings,
   WriteMode,
 } from './config.js';
 import {
@@ -111,12 +111,19 @@ export interface ExecuteSqlArgs {
   query: string;
 
   /**
-   * Credentials injected by {@link BigQueryTool}.
+   * Credentials injected by `GoogleTool`.
    */
-  credentials?: BigQueryCredentials;
+  credentials?: GoogleCredentials;
+
+  /**
+   * Tool settings specifying write mode and query limits.
+   */
+  settings?: BigQueryToolConfig | BigQueryToolConfigOptions;
 
   /**
    * Tool configuration specifying write mode and query settings.
+   *
+   * @deprecated Use {@link settings} instead.
    */
   config?: BigQueryToolConfig | BigQueryToolConfigOptions;
 
@@ -153,13 +160,13 @@ function toJsonSerializableValue(val: unknown): unknown {
 
 /**
  * Runs a BigQuery or BigQuery ML SQL query in the specified project and returns
- * up to `config.maxQueryResultRows` rows (`50` by default).
+ * up to `settings.maxQueryResultRows` rows (`50` by default).
  *
- * In read-only mode (when `config.writeMode` is {@link WriteMode.BLOCKED} or
+ * In read-only mode (when `settings.writeMode` is {@link WriteMode.BLOCKED} or
  * omitted), a dry-run check verifies that the query is a SELECT statement before
  * execution. In {@link WriteMode.PROTECTED}, a BigQuery session is created and
  * reused per ADK session, and only SELECT statements or writes targeting that
- * session's anonymous dataset are permitted. When `config.writeMode` is
+ * session's anonymous dataset are permitted. When `settings.writeMode` is
  * {@link WriteMode.ALLOWED}, all write statements (including DML and DDL) are
  * permitted.
  */
@@ -168,8 +175,9 @@ export async function executeSql(
   toolContext?: Context,
 ): Promise<ExecuteSqlResult> {
   try {
+    const effectiveSettings = resolveToolSettings(args);
     const maxQueryResultRows = resolveMaxQueryResultRows(
-      args.config?.maxQueryResultRows,
+      effectiveSettings?.maxQueryResultRows,
     );
     const bqClient = getBigQueryClient({
       projectId: args.project_id,
@@ -178,7 +186,7 @@ export async function executeSql(
     });
 
     const effectiveToolContext = toolContext ?? args.toolContext;
-    const writeMode = args.config?.writeMode ?? WriteMode.BLOCKED;
+    const writeMode = effectiveSettings?.writeMode ?? WriteMode.BLOCKED;
     let connectionProperties: BigQueryConnectionProperty[] | undefined;
 
     if (writeMode === WriteMode.PROTECTED) {
@@ -336,29 +344,30 @@ const EXECUTE_SQL_PROTECTED_WRITE_EXAMPLES =
  * write mode and `maxQueryResultRows` limit.
  */
 export function getExecuteSqlDescription(
-  config?: BigQueryToolConfig | BigQueryToolConfigOptions,
+  settings?: BigQueryToolConfig | BigQueryToolConfigOptions,
 ): string {
-  const maxRows = resolveMaxQueryResultRows(config?.maxQueryResultRows);
+  const maxRows = resolveMaxQueryResultRows(settings?.maxQueryResultRows);
   const baseDescription = buildExecuteSqlBaseDescription(maxRows);
-  if (config?.writeMode === WriteMode.PROTECTED) {
+  if (settings?.writeMode === WriteMode.PROTECTED) {
     return `${baseDescription}${EXECUTE_SQL_PROTECTED_WRITE_EXAMPLES}`;
   }
-  if (config?.writeMode === WriteMode.ALLOWED) {
+  if (settings?.writeMode === WriteMode.ALLOWED) {
     return `${baseDescription}${EXECUTE_SQL_WRITE_EXAMPLES}`;
   }
   return baseDescription;
 }
 
 /**
- * Returns a configured `execute_sql` function respecting the provided {@link BigQueryToolConfig}.
+ * Returns a configured `execute_sql` function respecting the provided
+ * {@link BigQueryToolConfig} settings.
  */
 export function getExecuteSql(
-  config?: BigQueryToolConfig | BigQueryToolConfigOptions,
+  settings?: BigQueryToolConfig | BigQueryToolConfigOptions,
 ): (args: ExecuteSqlArgs, toolContext?: Context) => Promise<ExecuteSqlResult> {
-  const resolvedConfig = config
-    ? isBigQueryToolConfig(config)
-      ? config
-      : new BigQueryToolConfig(config)
+  const resolvedSettings = settings
+    ? isBigQueryToolConfig(settings)
+      ? settings
+      : new BigQueryToolConfig(settings)
     : undefined;
   return async function execute_sql(
     args: ExecuteSqlArgs,
@@ -367,7 +376,7 @@ export function getExecuteSql(
     return executeSql(
       {
         ...args,
-        config: resolvedConfig ?? args.config,
+        settings: resolvedSettings ?? resolveToolSettings(args),
       },
       toolContext,
     );

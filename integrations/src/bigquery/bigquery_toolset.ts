@@ -7,12 +7,12 @@
 import {
   type BaseTool,
   BaseToolset,
+  GoogleTool,
   type ReadonlyContext,
   type ToolPredicate,
 } from '@google/adk';
 
 import type {BigQueryCredentialsConfig} from './bigquery_credentials.js';
-import {BigQueryTool} from './bigquery_tool.js';
 import {
   BigQueryToolConfig,
   type BigQueryToolConfigOptions,
@@ -79,10 +79,10 @@ export function isBigQueryToolset(obj: unknown): obj is BigQueryToolset {
 
 function createBigQueryTools(
   credentialsConfig?: BigQueryCredentialsConfig,
-  toolConfig?: BigQueryToolConfig,
+  toolSettings?: BigQueryToolConfig,
 ): BaseTool[] {
   return [
-    new BigQueryTool({
+    new GoogleTool({
       name: 'get_dataset_info',
       description:
         'Get metadata information about a BigQuery dataset. Returns an object ' +
@@ -92,9 +92,9 @@ function createBigQueryTools(
       parameters: getDatasetInfoParameters,
       execute: getDatasetInfo,
       credentialsConfig,
-      toolConfig,
+      toolSettings,
     }),
-    new BigQueryTool({
+    new GoogleTool({
       name: 'get_table_info',
       description:
         'Get metadata information about a BigQuery table. Returns an object ' +
@@ -105,9 +105,9 @@ function createBigQueryTools(
       parameters: getTableInfoParameters,
       execute: getTableInfo,
       credentialsConfig,
-      toolConfig,
+      toolSettings,
     }),
-    new BigQueryTool({
+    new GoogleTool({
       name: 'list_dataset_ids',
       description:
         'List BigQuery dataset ids in a Google Cloud project. Returns an ' +
@@ -116,9 +116,9 @@ function createBigQueryTools(
       parameters: listDatasetIdsParameters,
       execute: listDatasetIds,
       credentialsConfig,
-      toolConfig,
+      toolSettings,
     }),
-    new BigQueryTool({
+    new GoogleTool({
       name: 'list_table_ids',
       description:
         'List table ids in a BigQuery dataset. Returns an array of table ' +
@@ -127,23 +127,23 @@ function createBigQueryTools(
       parameters: listTableIdsParameters,
       execute: listTableIds,
       credentialsConfig,
-      toolConfig,
+      toolSettings,
     }),
-    new BigQueryTool({
+    new GoogleTool({
       name: 'execute_sql',
-      description: getExecuteSqlDescription(toolConfig),
+      description: getExecuteSqlDescription(toolSettings),
       parameters: executeSqlParameters,
-      execute: getExecuteSql(toolConfig),
+      execute: getExecuteSql(toolSettings),
       credentialsConfig,
-      toolConfig,
+      toolSettings,
     }),
-    new BigQueryTool({
+    new GoogleTool({
       name: 'ask_data_insights',
       description: ASK_DATA_INSIGHTS_DESCRIPTION,
       parameters: askDataInsightsParameters,
       execute: askDataInsights,
       credentialsConfig,
-      toolConfig,
+      toolSettings,
     }),
   ];
 }
@@ -176,7 +176,7 @@ export class BigQueryToolset extends BaseToolset {
   }
 
   /**
-   * Returns the {@link BigQueryTool} instances selected by `toolFilter`.
+   * Returns the {@link GoogleTool} instances selected by `toolFilter`.
    */
   override async getTools(context?: ReadonlyContext): Promise<BaseTool[]> {
     return createBigQueryTools(this.credentialsConfig, this.toolConfig).filter(
