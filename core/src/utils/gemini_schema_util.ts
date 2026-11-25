@@ -206,7 +206,10 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
       if (nonNullTypes.length === 1) {
         const nonNullType = nonNullTypes[0];
         if (typeof nonNullType === 'object') {
-          mcp = nonNullType;
+          // The keys beside `anyOf` (description, bounds) describe the
+          // property itself, so they are kept and win over the branch's own.
+          const {type: _removed, anyOf: _removedAnyOf, ...rest} = mcp;
+          mcp = {...nonNullType, ...rest};
         } else {
           const {type: _removed, anyOf: _removedAnyOf, ...rest} = mcp;
           mcp = {...rest, type: nonNullType};

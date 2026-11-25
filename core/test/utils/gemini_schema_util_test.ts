@@ -97,6 +97,60 @@ describe('toGeminiSchema', () => {
     });
   });
 
+  it('keeps the description beside an optional anyOf', () => {
+    // The shape Pydantic emits for an `Optional[str] = None` parameter.
+    const input = {
+      type: 'object',
+      properties: {
+        pageToken: {
+          anyOf: [{type: 'string'}, {type: 'null'}],
+          default: null,
+          description: 'Token of the page to fetch.',
+          title: 'Page Token',
+        },
+      },
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema?.properties?.pageToken).toEqual({
+      type: Type.STRING,
+      description: 'Token of the page to fetch.',
+      nullable: true,
+    });
+  });
+
+  it('keeps the constraints beside an optional anyOf', () => {
+    const input = {
+      anyOf: [{type: 'array', items: {type: 'string'}}, {type: 'null'}],
+      description: 'Tags to filter by.',
+      maxItems: 3,
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.ARRAY,
+      items: {type: Type.STRING},
+      description: 'Tags to filter by.',
+      maxItems: '3',
+      nullable: true,
+    });
+  });
+
+  it('prefers the description beside an optional anyOf over the branch', () => {
+    const fromBranch = toGeminiSchema({
+      anyOf: [{type: 'string', description: 'branch'}, {type: 'null'}],
+    } as unknown as MCPToolSchema);
+    expect(fromBranch?.description).toBe('branch');
+
+    const fromParent = toGeminiSchema({
+      anyOf: [{type: 'string', description: 'branch'}, {type: 'null'}],
+      description: 'parent',
+    } as unknown as MCPToolSchema);
+    expect(fromParent?.description).toBe('parent');
+  });
+
   it('handles anyOf with null only', () => {
     const input = {
       anyOf: [{type: 'null'}],
