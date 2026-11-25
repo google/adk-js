@@ -2156,6 +2156,155 @@ describe('LlmAgent unresolvable tool calls', () => {
 
     expect(parts.some((p) => p.text === 'Recovered.')).toBe(true);
   });
+
+  it('propagates unhandled tool exceptions out of runAsync without invoking onModelErrorCallback', async () => {
+    class ToolCallingLlm extends BaseLlm {
+      calls = 0;
+
+      constructor() {
+        super({model: 'mock-llm'});
+      }
+
+      async *generateContentAsync(): AsyncGenerator<LlmResponse, void, void> {
+        this.calls++;
+        yield {
+          content: {
+            role: 'model',
+            parts: [
+              {functionCall: {id: 'call-1', name: 'boom_tool', args: {}}},
+            ],
+          },
+        };
+      }
+
+      async connect(): Promise<BaseLlmConnection> {
+        return new MockLlmConnection();
+      }
+    }
+
+    const mockLlm = new ToolCallingLlm();
+    let onModelErrorCalled = false;
+    class ThrowingToolPlugin extends BasePlugin {
+      override async onToolErrorCallback({
+        error,
+      }: {
+        error: Error;
+      }): Promise<Record<string, unknown> | undefined> {
+        throw error;
+      }
+
+      override async onModelErrorCallback(): Promise<LlmResponse | undefined> {
+        onModelErrorCalled = true;
+        return undefined;
+      }
+    }
+
+    const agent = new LlmAgent({
+      name: 'boom_agent',
+      model: mockLlm,
+      tools: [
+        new FunctionTool({
+          name: 'boom_tool',
+          description: 'Throws an unhandled error.',
+          parameters: z3.object({}),
+          execute: async () => {
+            throw new Error('fatal tool failure');
+          },
+        }),
+      ],
+    });
+
+    const sessionService = new InMemorySessionService();
+    const runner = new Runner({
+      appName: 'test_app',
+      agent,
+      sessionService,
+      plugins: [new ThrowingToolPlugin('throwing_tool_plugin')],
+    });
+    const session = await sessionService.createSession({
+      appName: 'test_app',
+      userId: 'test_user',
+    });
+
+    await expect(async () => {
+      for await (const _event of runner.runAsync({
+        userId: session.userId,
+        sessionId: session.id,
+        newMessage: {role: 'user', parts: [{text: 'go'}]},
+        runConfig: {maxLlmCalls: 5},
+      })) {
+        // Consume events until tool error is thrown.
+      }
+    }).rejects.toThrow(/fatal tool failure/);
+
+    expect(mockLlm.calls).toBe(1);
+    expect(onModelErrorCalled).toBe(false);
+  });
+
+  it('stops the step loop when a step with tool calls ends on a model error event', async () => {
+    class PartialCallThenErrorLlm extends BaseLlm {
+      calls = 0;
+
+      constructor() {
+        super({model: 'mock-llm'});
+      }
+
+      async *generateContentAsync(): AsyncGenerator<LlmResponse, void, void> {
+        this.calls++;
+        yield {
+          partial: true,
+          content: {
+            role: 'model',
+            parts: [
+              {functionCall: {id: 'call-1', name: 'noop_tool', args: {}}},
+            ],
+          },
+        };
+        throw new Error('stream interrupted by upstream error');
+      }
+
+      async connect(): Promise<BaseLlmConnection> {
+        return new MockLlmConnection();
+      }
+    }
+
+    const mockLlm = new PartialCallThenErrorLlm();
+    const agent = new LlmAgent({
+      name: 'stream_error_agent',
+      model: mockLlm,
+      tools: [
+        new FunctionTool({
+          name: 'noop_tool',
+          description: 'No-op tool.',
+          parameters: z3.object({}),
+          execute: async () => ({ok: true}),
+        }),
+      ],
+    });
+
+    const sessionService = new InMemorySessionService();
+    const runner = new Runner({appName: 'test_app', agent, sessionService});
+    const session = await sessionService.createSession({
+      appName: 'test_app',
+      userId: 'test_user',
+    });
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'go'}]},
+      runConfig: {maxLlmCalls: 5},
+    })) {
+      events.push(event);
+    }
+
+    expect(mockLlm.calls).toBe(1);
+    expect(events[events.length - 1]?.errorCode).toBe('UNKNOWN_ERROR');
+    expect(events[events.length - 1]?.errorMessage).toContain(
+      'stream interrupted by upstream error',
+    );
+  });
 });
 
 /**

@@ -993,6 +993,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       const isEmptyMetadataEvent =
         lastEvent.author === this.name &&
         !lastEvent.partial &&
+        !lastEvent.errorCode &&
         (!lastEvent.content?.parts || lastEvent.content.parts.length === 0) &&
         isDefaultEventActions(lastEvent.actions);
 
@@ -1702,53 +1703,47 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // =========================================================================
     // Calls the LLM
     // =========================================================================
-    const responsesGenerator = async function* (this: LlmAgent) {
-      for await (const llmResponse of this.callLlmAsync(
+    const llmResponsesGenerator = this.runAndHandleError<LlmResponse | Event>(
+      this.callLlmAsync(invocationContext, llmRequest, modelResponseEvent),
+      invocationContext,
+      llmRequest,
+      modelResponseEvent,
+    );
+
+    for await (const llmResponse of llmResponsesGenerator) {
+      if (invocationContext.abortSignal?.aborted) {
+        return;
+      }
+
+      if (isEvent(llmResponse)) {
+        modelResponseEvent.id = createNewEventId();
+        modelResponseEvent.timestamp = Date.now();
+        yield llmResponse;
+        continue;
+      }
+
+      // ======================================================================
+      // Postprocess after calling the LLM
+      // ======================================================================
+      for await (const event of this.postprocess(
         invocationContext,
         llmRequest,
+        llmResponse,
         modelResponseEvent,
       )) {
         if (invocationContext.abortSignal?.aborted) {
           return;
         }
 
-        if (invocationContext.runConfig?.supportCfc && isEvent(llmResponse)) {
+        // Partial chunks of one streaming response share the base id;
+        // mint a fresh id only after a complete event so distinct
+        // responses differ.
+        if (!event.partial) {
           modelResponseEvent.id = createNewEventId();
-          modelResponseEvent.timestamp = Date.now();
-          yield llmResponse;
-          continue;
         }
-
-        // ======================================================================
-        // Postprocess after calling the LLM
-        // ======================================================================
-        for await (const event of this.postprocess(
-          invocationContext,
-          llmRequest,
-          llmResponse,
-          modelResponseEvent,
-        )) {
-          if (invocationContext.abortSignal?.aborted) {
-            return;
-          }
-
-          // Partial chunks of one streaming response share the base id;
-          // mint a fresh id only after a complete event so distinct
-          // responses differ.
-          if (!event.partial) {
-            modelResponseEvent.id = createNewEventId();
-          }
-          yield event;
-        }
+        yield event;
       }
-    };
-
-    yield* this.runAndHandleError(
-      responsesGenerator.call(this),
-      invocationContext,
-      llmRequest,
-      modelResponseEvent,
-    );
+    }
   }
 
   private async *postprocess(
