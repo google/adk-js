@@ -528,7 +528,10 @@ export abstract class BaseAgent<
       });
     }
 
-    if (callbackContext.state.hasDelta()) {
+    if (
+      callbackContext.state.hasDelta() ||
+      Object.keys(callbackContext.eventActions.artifactDelta).length > 0
+    ) {
       return createEvent({
         invocationId: invocationContext.invocationId,
         author: this.name,
@@ -591,7 +594,10 @@ export abstract class BaseAgent<
       });
     }
 
-    if (callbackContext.state.hasDelta()) {
+    if (
+      callbackContext.state.hasDelta() ||
+      Object.keys(callbackContext.eventActions.artifactDelta).length > 0
+    ) {
       return createEvent({
         invocationId: invocationContext.invocationId,
         author: this.name,
