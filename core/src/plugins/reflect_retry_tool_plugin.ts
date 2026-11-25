@@ -272,6 +272,28 @@ export class ReflectAndRetryToolPlugin extends BasePlugin {
   }
 
   /**
+   * Resolves the error type name, unwrapping `error.cause` when a generic
+   * `Error` wrapper (such as `FunctionTool.runAsync`) carries the underlying
+   * `Error` instance.
+   *
+   * @param error - The error object.
+   * @returns The resolved error type name.
+   */
+  protected getErrorType(error: unknown): string {
+    if (!(error instanceof Error)) {
+      return 'ToolError';
+    }
+    const outerName = getErrorName(error);
+    if (outerName !== 'Error') {
+      return outerName;
+    }
+    if (error.cause instanceof Error) {
+      return getErrorName(error.cause);
+    }
+    return outerName;
+  }
+
+  /**
    * Formats error details for inclusion in the reflection message.
    *
    * @param error - The error object.
@@ -279,7 +301,7 @@ export class ReflectAndRetryToolPlugin extends BasePlugin {
    */
   protected formatErrorDetails(error: unknown): string {
     if (error instanceof Error) {
-      const name = error.name || 'Error';
+      const name = this.getErrorType(error);
       return `${name}: ${error.message}`;
     }
     return String(error);
@@ -330,7 +352,7 @@ Formulate a new plan based on your analysis and try a corrected or different app
 
     const response: ToolFailureResponse = {
       response_type: REFLECT_AND_RETRY_RESPONSE_TYPE,
-      error_type: error instanceof Error ? error.name || 'Error' : 'ToolError',
+      error_type: this.getErrorType(error),
       error_details: error instanceof Error ? error.message : String(error),
       retry_count: retryCount,
       reflection_guidance: reflectionMessage,
@@ -374,7 +396,7 @@ ${argsSummary}
 
     const response: ToolFailureResponse = {
       response_type: REFLECT_AND_RETRY_RESPONSE_TYPE,
-      error_type: error instanceof Error ? error.name || 'Error' : 'ToolError',
+      error_type: this.getErrorType(error),
       error_details: error instanceof Error ? error.message : String(error),
       retry_count: this.maxRetries,
       reflection_guidance: reflectionMessage,
@@ -382,4 +404,14 @@ ${argsSummary}
 
     return response;
   }
+}
+
+function getErrorName(error: Error): string {
+  if (error.name && error.name !== 'Error') {
+    return error.name;
+  }
+  if (error.constructor?.name && error.constructor.name !== 'Error') {
+    return error.constructor.name;
+  }
+  return error.name || 'Error';
 }

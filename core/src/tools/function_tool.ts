@@ -285,8 +285,9 @@ export class FunctionTool<
    *
    * @param req The tool request containing arguments and tool context.
    * @returns A promise resolving to the function's return value.
-   * @throws {Error} Wrapped as `Error in tool '<name>': …` when a Zod
-   *     `parameters` schema rejects the arguments or `execute` throws.
+   * @throws {Error} Wrapped as `Error in tool '<name>': …` with `cause` set to
+   *     the thrown value when a Zod `parameters` schema rejects the arguments
+   *     or `execute` throws.
    */
   override async runAsync(req: RunAsyncToolRequest): Promise<unknown> {
     try {
@@ -304,7 +305,9 @@ export class FunctionTool<
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
-      throw new Error(`Error in tool '${this.name}': ${errorMessage}`);
+      throw new Error(`Error in tool '${this.name}': ${errorMessage}`, {
+        cause: error,
+      });
     }
   }
 

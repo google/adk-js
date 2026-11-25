@@ -510,25 +510,60 @@ describe('FunctionTool', () => {
       expect(result).toEqual(3);
     });
 
-    it('wraps errors from execute function', async () => {
+    it('wraps errors from execute function and preserves cause', async () => {
+      class TimeoutError extends Error {
+        override name = 'TimeoutError';
+        code = 'ETIMEDOUT';
+      }
+      const originalError = new TimeoutError(
+        'upstream timed out after 30000ms',
+      );
       const tool = new FunctionTool({
         name: 'errorTool',
         description: 'Throws an error.',
         parameters: z4.object({}),
         execute: async () => {
-          throw new Error('Test error');
+          throw originalError;
         },
       });
+      let caughtError: unknown;
       try {
         await tool.runAsync({
           args: {},
           toolContext: emptyContext,
         });
       } catch (e) {
-        expect((e as Error).message).toContain(
-          "Error in tool 'errorTool': Test error",
-        );
+        caughtError = e;
       }
+      expect(caughtError).toBeInstanceOf(Error);
+      expect((caughtError as Error).message).toContain(
+        "Error in tool 'errorTool': upstream timed out after 30000ms",
+      );
+      expect((caughtError as Error).cause).toBe(originalError);
+      expect((caughtError as Error).cause).toBeInstanceOf(TimeoutError);
+      expect(((caughtError as Error).cause as TimeoutError).code).toBe(
+        'ETIMEDOUT',
+      );
+    });
+
+    it('preserves ZodError as cause when parameter validation fails', async () => {
+      const tool = new FunctionTool({
+        name: 'validatedTool',
+        description: 'Validates args.',
+        parameters: z4.object({amount: z4.number()}),
+        execute: async ({amount}) => amount,
+      });
+      let caughtError: unknown;
+      try {
+        await tool.runAsync({
+          args: {amount: 'not-a-number'},
+          toolContext: emptyContext,
+        });
+      } catch (e) {
+        caughtError = e;
+      }
+      expect(caughtError).toBeInstanceOf(Error);
+      expect((caughtError as Error).cause).toBeInstanceOf(z4.ZodError);
     });
   });
 

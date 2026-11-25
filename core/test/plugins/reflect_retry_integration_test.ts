@@ -11,9 +11,11 @@ import {
   REFLECT_AND_RETRY_RESPONSE_TYPE,
   TrackingScope,
 } from '../../src/plugins/_reflect_retry_utils.js';
+import {BasePlugin} from '../../src/plugins/base_plugin.js';
 import {PluginManager} from '../../src/plugins/plugin_manager.js';
 import {ReflectAndRetryToolPlugin} from '../../src/plugins/reflect_retry_tool_plugin.js';
 import {BaseTool, RunAsyncToolRequest} from '../../src/tools/base_tool.js';
+import {FunctionTool} from '../../src/tools/function_tool.js';
 
 class MockWeatherTool extends BaseTool {
   callCount = 0;
@@ -251,6 +253,59 @@ describe('ReflectAndRetryToolPlugin Integration Flow', () => {
     expect(f3!['retry_count']).toBe(2);
     expect(f3!['reflection_guidance']).toContain(
       'Do not attempt to use the `book_flight` tool again',
+    );
+  });
+
+  it('should expose original FunctionTool error via error.cause and report its error_type in ReflectAndRetryToolPlugin', async () => {
+    class TimeoutError extends Error {
+      override name = 'TimeoutError';
+      code = 'ETIMEDOUT';
+    }
+
+    let spyObservedError: Error | undefined;
+    class SpyPlugin extends BasePlugin {
+      constructor() {
+        super('spy');
+      }
+      override async onToolErrorCallback({error}: {error: Error}) {
+        spyObservedError = error;
+        return undefined;
+      }
+    }
+
+    const refundTool = new FunctionTool({
+      name: 'refund',
+      description: 'Refunds an order',
+      execute: async () => {
+        throw new TimeoutError('upstream timed out after 30000ms');
+      },
+    });
+
+    const pluginManager = new PluginManager([
+      new SpyPlugin(),
+      new ReflectAndRetryToolPlugin({maxRetries: 3}),
+    ]);
+    const {toolContext} = createTestContext('inv-function-tool-cause');
+
+    let toolResult: Record<string, unknown> | undefined;
+    try {
+      await refundTool.runAsync({args: {}, toolContext});
+    } catch (err) {
+      toolResult = await pluginManager.runOnToolErrorCallback({
+        tool: refundTool,
+        toolArgs: {},
+        toolContext,
+        error: err as Error,
+      });
+    }
+
+    expect(spyObservedError).toBeDefined();
+    expect(spyObservedError!.cause).toBeInstanceOf(TimeoutError);
+    expect((spyObservedError!.cause as TimeoutError).code).toBe('ETIMEDOUT');
+    expect(toolResult).toBeDefined();
+    expect(toolResult!['error_type']).toBe('TimeoutError');
+    expect(toolResult!['error_details']).toBe(
+      "Error in tool 'refund': upstream timed out after 30000ms",
     );
   });
 });
