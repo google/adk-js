@@ -143,6 +143,27 @@ describe('createLlmResponse', () => {
       const result = createLlmResponse(response);
       expect(result.content).toBeUndefined();
     });
+
+    it('sets finishReason when candidate content parts are absent', () => {
+      const emptyPartsResult = createLlmResponse(
+        makeResponse({
+          candidates: [
+            {
+              content: {parts: [], role: 'model'},
+              finishReason: FinishReason.MAX_TOKENS,
+            },
+          ],
+        }),
+      );
+      expect(emptyPartsResult.finishReason).toBe(FinishReason.MAX_TOKENS);
+
+      const omittedContentResult = createLlmResponse(
+        makeResponse({
+          candidates: [{finishReason: FinishReason.SAFETY}],
+        }),
+      );
+      expect(omittedContentResult.finishReason).toBe(FinishReason.SAFETY);
+    });
   });
 
   describe('prompt feedback block', () => {

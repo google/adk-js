@@ -10,9 +10,11 @@ import {
   GenerateContentConfig,
   LiveConnectConfig,
   SchemaUnion,
+  Tool,
 } from '@google/genai';
 
-import {BaseTool} from '../tools/base_tool.js';
+import type {BaseTool} from '../tools/base_tool.js';
+import {logger} from '../utils/logger.js';
 
 /**
  * LLM request class that allows passing in tools, output schema and system
@@ -72,6 +74,34 @@ export function appendInstructions(
   }
 }
 
+const IN_MODEL_TOOL_SYMBOL = Symbol.for('google.adk.inModelTool');
+
+function isInModelToolEntry(tool: unknown): boolean {
+  return (
+    typeof tool === 'object' &&
+    tool !== null &&
+    IN_MODEL_TOOL_SYMBOL in tool &&
+    tool[IN_MODEL_TOOL_SYMBOL] === true
+  );
+}
+
+function isToolWithFunctionDeclarations(
+  tool: unknown,
+): tool is Tool & {functionDeclarations: FunctionDeclaration[]} {
+  return (
+    typeof tool === 'object' &&
+    tool !== null &&
+    'functionDeclarations' in tool &&
+    Array.isArray(tool.functionDeclarations)
+  );
+}
+
+function findToolWithFunctionDeclarations(
+  llmRequest: LlmRequest,
+): (Tool & {functionDeclarations: FunctionDeclaration[]}) | undefined {
+  return llmRequest.config?.tools?.find(isToolWithFunctionDeclarations);
+}
+
 /**
  * Appends tools to the request.
  * @param tools The tools to append.
@@ -86,18 +116,28 @@ export function appendTools(llmRequest: LlmRequest, tools: BaseTool[]): void {
     const declaration = tool._getDeclaration();
     if (declaration) {
       functionDeclarations.push(declaration);
+      if (
+        Object.hasOwn(llmRequest.toolsDict, tool.name) &&
+        !isInModelToolEntry(llmRequest.toolsDict[tool.name])
+      ) {
+        logger.warn(
+          `Duplicate tool name "${tool.name}": the previously registered tool is shadowed and can no longer be called.`,
+        );
+      }
       llmRequest.toolsDict[tool.name] = tool;
     }
   }
 
   if (functionDeclarations.length) {
-    if (!llmRequest.config) {
-      llmRequest.config = {};
+    llmRequest.config ??= {};
+    llmRequest.config.tools ??= [];
+
+    const existingTool = findToolWithFunctionDeclarations(llmRequest);
+    if (existingTool) {
+      existingTool.functionDeclarations.push(...functionDeclarations);
+    } else {
+      llmRequest.config.tools.push({functionDeclarations});
     }
-    if (!llmRequest.config.tools) {
-      llmRequest.config.tools = [];
-    }
-    llmRequest.config.tools.push({functionDeclarations});
   }
 }
 
