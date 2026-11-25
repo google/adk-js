@@ -74,6 +74,12 @@ export interface EventActions {
    * execution for this invocation. Mirrors Python `EventActions.end_of_agent`.
    */
   endOfAgent?: boolean;
+
+  /**
+   * Structured response validated by `SetModelResponseTool` when combining
+   * `outputSchema` with other tools.
+   */
+  setModelResponse?: unknown;
 }
 
 /**
@@ -83,8 +89,8 @@ export interface EventActions {
  * @param state - Optional partial {@link EventActions} whose properties
  *   override the defaults. Dictionary fields (`stateDelta`, `artifactDelta`,
  *   `requestedAuthConfigs`, `requestedToolConfirmations`) default to `{}`;
- *   scalar fields (`skipSummarization`, `transferToAgent`, `escalate`) default
- *   to `undefined`.
+ *   scalar fields (`skipSummarization`, `transferToAgent`, `escalate`,
+ *   `endOfAgent`, `setModelResponse`) default to `undefined`.
  * @returns A fully populated {@link EventActions} object.
  */
 export function createEventActions(
@@ -102,7 +108,8 @@ export function createEventActions(
 /**
  * Returns whether the given {@link EventActions} still holds only its default
  * values, i.e. the event carries no state, artifact, auth, confirmation,
- * transfer, escalation, summarization, agent state, or end-of-agent signal.
+ * transfer, escalation, summarization, agent state, end-of-agent, or structured
+ * model-response payload.
  *
  * An actions object is considered non-default when any record field has at
  * least one entry, or when any scalar field has been explicitly set (including
@@ -121,7 +128,8 @@ export function isDefaultEventActions(actions: EventActions): boolean {
     actions.skipSummarization === undefined &&
     actions.transferToAgent === undefined &&
     actions.escalate === undefined &&
-    actions.endOfAgent === undefined
+    actions.endOfAgent === undefined &&
+    actions.setModelResponse === undefined
   );
 }
 
@@ -204,8 +212,8 @@ function carryStateDeltaStamps(
  * 2. **Nested record fields** (`stateDelta`, `agentState`) — nested plain
  *    objects are merged recursively; arrays and class instances are replaced.
  * 3. **Scalar fields** (`skipSummarization`, `transferToAgent`, `escalate`,
- *    `endOfAgent`) — last-writer-wins: the value from the last source that
- *    sets the field is kept.
+ *    `endOfAgent`, `setModelResponse`) — last-writer-wins: the value from the
+ *    last source that sets the field is kept.
  *
  * @param sources - Ordered list of partial {@link EventActions} to merge.
  *   Falsy entries are silently skipped.
@@ -271,6 +279,9 @@ export function mergeEventActions(
     }
     if (source.endOfAgent !== undefined) {
       result.endOfAgent = source.endOfAgent;
+    }
+    if (source.setModelResponse !== undefined) {
+      result.setModelResponse = source.setModelResponse;
     }
   }
   return result;

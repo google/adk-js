@@ -79,15 +79,17 @@ import {State} from '@google/adk';
 
 const state = new State({'user:language': 'en'});
 state.set('step', 1);
+state.setDefault('user:language', 'fr'); // 'en' (existing stored key is kept without recording a delta)
+state.setDefault('retries', 0); // 0 (sets missing key in both value and delta)
 state.update({[`${State.APP_PREFIX}theme`]: 'dark'});
 
 state.get('step'); // 1
 state.get('missing', 'fallback'); // 'fallback'
 state.has('toString'); // false
-state.toRecord(); // {'user:language': 'en', step: 1, 'app:theme': 'dark'}
+state.toRecord(); // {'user:language': 'en', step: 1, retries: 0, 'app:theme': 'dark'}
 ```
 
-`get(key, defaultValue)` looks in the pending delta first and then in the stored value, and returns `defaultValue`, which is `undefined` when omitted, if neither holds the key. `has(key)` reports whether either one holds it. Both look at keys the state holds itself, so a name inherited from `Object.prototype`, such as `toString` or `constructor`, is a missing key rather than a built-in function. `set` and `update` write to both the value and the delta, `hasDelta()` reports whether anything is pending, and `toRecord()` returns the value and the delta merged into one plain object.
+`get(key, defaultValue)` looks in the pending delta first and then in the stored value, and returns `defaultValue`, which is `undefined` when omitted, if neither holds the key. `has(key)` reports whether either one holds it. Both look at keys the state holds itself, so a name inherited from `Object.prototype`, such as `toString` or `constructor`, is a missing key rather than a built-in function. `setDefault(key, defaultValue)` returns the existing value when `has(key)` is `true` without modifying the delta or validating `defaultValue`, and otherwise validates and writes `defaultValue` (`undefined` when omitted) to both the value and the delta. `set` and `update` write to both the value and the delta, `hasDelta()` reports whether anything is pending, and `toRecord()` returns the value and the delta merged into one plain object.
 
 Inside an agent, the delta is what reaches storage. The `stateDelta` on an event's actions is the set of changes the service applies when it appends the event. A service splits the delta by prefix: `app:` keys go to the application's state, `user:` keys go to the user's state, `temp:` keys are dropped, and the rest go to the session. `temp:` keys are dropped from the initial state of `createSession` as well, so they are useful for values that only need to live during one invocation.
 

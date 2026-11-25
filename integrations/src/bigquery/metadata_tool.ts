@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import type {GoogleCredentials} from '@google/adk';
 import {z} from 'zod';
 
-import type {BigQueryCredentials} from './bigquery_credentials.js';
 import {getBigQueryClient} from './client.js';
 import {
   type BigQueryToolErrorResult,
@@ -31,9 +31,9 @@ export interface ListDatasetIdsArgs {
   project_id?: string;
 
   /**
-   * Credentials injected by {@link BigQueryTool}.
+   * Credentials injected by `GoogleTool`.
    */
-  credentials?: BigQueryCredentials;
+  credentials?: GoogleCredentials;
 }
 
 /**

@@ -1539,6 +1539,93 @@ describe('mergeParallelFunctionResponseEvents', () => {
     const merged = mergeParallelFunctionResponseEvents([event]);
     expect(merged).toBe(event);
   });
+
+  it('preserves the base event invocationId when merging events with different invocationIds', () => {
+    const event1 = createEvent({
+      invocationId: 'inv-base-123',
+      author: 'testAgent',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-123',
+              name: 'firstTool',
+              response: {result: 'success-1'},
+            },
+          },
+        ],
+      },
+    });
+    const event2 = createEvent({
+      invocationId: 'inv-other-456',
+      author: 'testAgent',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-456',
+              name: 'secondTool',
+              response: {result: 'success-2'},
+            },
+          },
+        ],
+      },
+    });
+
+    const merged = mergeParallelFunctionResponseEvents([event1, event2]);
+
+    expect(merged.invocationId).toBe('inv-base-123');
+    const responseIds = (merged.content?.parts ?? []).map(
+      (part) => part.functionResponse?.id,
+    );
+    expect(responseIds).toEqual(['fc-123', 'fc-456']);
+  });
+
+  it('preserves author and branch from the base event when merging multiple events', () => {
+    const event1 = createEvent({
+      invocationId: 'inv-base-123',
+      author: 'baseAgent',
+      branch: 'mainBranch',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-123',
+              name: 'firstTool',
+              response: {result: 'success-1'},
+            },
+          },
+        ],
+      },
+    });
+    const event2 = createEvent({
+      invocationId: 'inv-other-456',
+      author: 'otherAgent',
+      branch: 'otherBranch',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-456',
+              name: 'secondTool',
+              response: {result: 'success-2'},
+            },
+          },
+        ],
+      },
+    });
+
+    const merged = mergeParallelFunctionResponseEvents([event1, event2]);
+
+    expect(merged.invocationId).toBe('inv-base-123');
+    expect(merged.author).toBe('baseAgent');
+    expect(merged.branch).toBe('mainBranch');
+    expect(merged.content?.parts).toHaveLength(2);
+  });
 });
 
 describe('findEventByFunctionCallId', () => {
@@ -5175,5 +5262,482 @@ describe('concurrent parallel function-call execution and state ordering', () =>
       setTimeout(resolve, 0);
     });
     expect(runnerInvocationState).toEqual(stateAfterRun);
+  });
+});
+
+describe('live streaming generator cleanup and sequential function calls', () => {
+  it('awaits return(undefined) once when tool._callLive next() rejects before settling task.promise', async () => {
+    class RejectingLiveStreamTool extends BaseTool {
+      readonly execute = async function* (): AsyncGenerator<
+        unknown,
+        void,
+        unknown
+      > {
+        yield* [];
+      };
+      returnFinished = false;
+      readonly returnSpy = vi.fn(
+        async (): Promise<IteratorResult<unknown, void>> => {
+          await Promise.resolve();
+          this.returnFinished = true;
+          return {value: undefined, done: true};
+        },
+      );
+
+      constructor() {
+        super({
+          name: 'rejectingStreamTool',
+          description: 'rejects from _callLive next()',
+        });
+      }
+
+      override async runAsync(): Promise<unknown> {
+        return {};
+      }
+
+      _callLive(): AsyncGenerator<unknown, void, unknown> {
+        return {
+          next: async () => {
+            throw new Error('live stream next failed');
+          },
+          return: this.returnSpy,
+          throw: async (error: unknown) => {
+            throw error;
+          },
+          [Symbol.asyncIterator]() {
+            return this;
+          },
+        };
+      }
+    }
+
+    const tool = new RejectingLiveStreamTool();
+    const agent = new LlmAgent({
+      name: 'liveStreamCleanupAgent',
+      model: 'gemini-flash-latest',
+      tools: [tool],
+    });
+    const liveRequestQueue = new LiveRequestQueue();
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv-live-next-reject',
+      agent,
+      session: createSession({
+        id: 'sess-live-next-reject',
+        appName: 'live-stream-app',
+        userId: 'user-1',
+      }),
+      liveRequestQueue,
+      pluginManager: new PluginManager(),
+    });
+
+    await handleFunctionCallsLive({
+      invocationContext,
+      functionCallEvent: createEvent({
+        invocationId: invocationContext.invocationId,
+        author: agent.name,
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-reject-1',
+                name: 'rejectingStreamTool',
+                args: {},
+              },
+            },
+          ],
+        },
+      }),
+      toolsDict: {rejectingStreamTool: tool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const activeTask =
+      invocationContext.activeStreamingTools?.['rejectingStreamTool']?.task;
+    expect(activeTask).toBeDefined();
+    await expect(activeTask?.promise).rejects.toThrow(
+      'live stream next failed',
+    );
+    expect(tool.returnFinished).toBe(true);
+    expect(tool.returnSpy).toHaveBeenCalledTimes(1);
+    expect(tool.returnSpy).toHaveBeenCalledWith(undefined);
+    liveRequestQueue.close();
+  });
+
+  it('awaits generator cleanup before rejecting task.promise when liveRequestQueue.sendContent throws', async () => {
+    let cleanupFinished = false;
+    const streamTool = new FunctionTool({
+      name: 'queueFailureStream',
+      description: 'streams values into a closed queue',
+      parameters: z.object({}),
+      execute: async function* () {
+        try {
+          yield 'chunk-1';
+          yield 'chunk-2';
+        } finally {
+          await Promise.resolve();
+          cleanupFinished = true;
+        }
+      },
+    });
+
+    const agent = new LlmAgent({
+      name: 'queueFailureAgent',
+      model: 'gemini-flash-latest',
+      tools: [streamTool],
+    });
+    const liveRequestQueue = new LiveRequestQueue();
+    const sendSpy = vi
+      .spyOn(liveRequestQueue, 'sendContent')
+      .mockImplementation(() => {
+        throw new Error('live queue is closed');
+      });
+    try {
+      const invocationContext = new InvocationContext({
+        invocationId: 'inv-queue-throw',
+        agent,
+        session: createSession({
+          id: 'sess-queue-throw',
+          appName: 'live-stream-app',
+          userId: 'user-1',
+        }),
+        liveRequestQueue,
+        pluginManager: new PluginManager(),
+      });
+
+      await handleFunctionCallsLive({
+        invocationContext,
+        functionCallEvent: createEvent({
+          invocationId: invocationContext.invocationId,
+          author: agent.name,
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  id: 'fc-queue-1',
+                  name: 'queueFailureStream',
+                  args: {},
+                },
+              },
+            ],
+          },
+        }),
+        toolsDict: {queueFailureStream: streamTool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+
+      const activeTask =
+        invocationContext.activeStreamingTools?.['queueFailureStream']?.task;
+      expect(activeTask).toBeDefined();
+      let cleanupStateAtReject = false;
+      await expect(
+        activeTask?.promise.catch((err: unknown) => {
+          cleanupStateAtReject = cleanupFinished;
+          throw err;
+        }),
+      ).rejects.toThrow('live queue is closed');
+      expect(cleanupStateAtReject).toBe(true);
+      expect(cleanupFinished).toBe(true);
+    } finally {
+      sendSpy.mockRestore();
+      liveRequestQueue.close();
+    }
+  });
+
+  it('settles stop_streaming promptly while a generator awaits, runs finally on resolution, and suppresses post-cancel yields', async () => {
+    let releasePendingStep: (() => void) | undefined;
+    let generatorFinalized = false;
+    let reachedSubsequentStep = false;
+    const streamTool = new FunctionTool({
+      name: 'cancellableMetricStream',
+      description: 'yields a sample and suspends on an external promise',
+      parameters: z.object({}),
+      execute: async function* () {
+        try {
+          yield 'sample-1';
+          await new Promise<void>((resolve) => {
+            releasePendingStep = resolve;
+          });
+          yield 'sample-2';
+          reachedSubsequentStep = true;
+          yield 'sample-3';
+        } finally {
+          generatorFinalized = true;
+        }
+      },
+    });
+    const stopStreamingTool = new FunctionTool({
+      name: 'stop_streaming',
+      description: 'stops an active streaming tool',
+      parameters: z.object({function_name: z.string()}),
+      execute: async () => ({}),
+    });
+
+    const agent = new LlmAgent({
+      name: 'stopStreamCleanupAgent',
+      model: 'gemini-flash-latest',
+      tools: [streamTool, stopStreamingTool],
+    });
+    const liveRequestQueue = new LiveRequestQueue();
+    const forwardedTexts: string[] = [];
+    const originalSendContent =
+      liveRequestQueue.sendContent.bind(liveRequestQueue);
+    const sendSpy = vi
+      .spyOn(liveRequestQueue, 'sendContent')
+      .mockImplementation((content: Content) => {
+        const text = content.parts?.[0]?.text;
+        if (text !== undefined) {
+          forwardedTexts.push(text);
+        }
+        originalSendContent(content);
+      });
+
+    try {
+      const invocationContext = new InvocationContext({
+        invocationId: 'inv-stop-cleanup',
+        agent,
+        session: createSession({
+          id: 'sess-stop-cleanup',
+          appName: 'live-stream-app',
+          userId: 'user-1',
+        }),
+        liveRequestQueue,
+        pluginManager: new PluginManager(),
+      });
+
+      await handleFunctionCallsLive({
+        invocationContext,
+        functionCallEvent: createEvent({
+          invocationId: invocationContext.invocationId,
+          author: agent.name,
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  id: 'fc-start-stream',
+                  name: 'cancellableMetricStream',
+                  args: {},
+                },
+              },
+            ],
+          },
+        }),
+        toolsDict: {
+          cancellableMetricStream: streamTool,
+          stop_streaming: stopStreamingTool,
+        },
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+
+      const firstMessage = await liveRequestQueue.get();
+      expect(firstMessage.content?.parts?.[0]?.text).toBe(
+        'Function cancellableMetricStream returned: sample-1',
+      );
+      expect(generatorFinalized).toBe(false);
+
+      const stopEvent = await handleFunctionCallsLive({
+        invocationContext,
+        functionCallEvent: createEvent({
+          invocationId: invocationContext.invocationId,
+          author: agent.name,
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  id: 'fc-stop-stream',
+                  name: 'stop_streaming',
+                  args: {function_name: 'cancellableMetricStream'},
+                },
+              },
+            ],
+          },
+        }),
+        toolsDict: {
+          cancellableMetricStream: streamTool,
+          stop_streaming: stopStreamingTool,
+        },
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+
+      expect(stopEvent ? getFunctionResponses(stopEvent) : []).toEqual([
+        {
+          id: 'fc-stop-stream',
+          name: 'stop_streaming',
+          response: {
+            status:
+              'Successfully stopped streaming function cancellableMetricStream',
+          },
+        },
+      ]);
+      expect(generatorFinalized).toBe(false);
+
+      releasePendingStep?.();
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 0);
+      });
+
+      expect(generatorFinalized).toBe(true);
+      expect(reachedSubsequentStep).toBe(false);
+      expect(forwardedTexts).toEqual([
+        'Function cancellableMetricStream returned: sample-1',
+      ]);
+    } finally {
+      sendSpy.mockRestore();
+      liveRequestQueue.close();
+    }
+  });
+
+  it('accumulates conversation history across three sequential FunctionTool calls in Runner.runAsync', async () => {
+    class CapturingSequentialLlm extends BaseLlm {
+      readonly capturedContents: Content[][] = [];
+      private turnIndex = 0;
+
+      constructor(private readonly responses: LlmResponse[]) {
+        super({model: 'gemini-flash-latest'});
+      }
+
+      override async *generateContentAsync(
+        llmRequest: LlmRequest,
+      ): AsyncGenerator<LlmResponse, void, void> {
+        this.capturedContents.push(structuredClone(llmRequest.contents));
+        const response = this.responses[this.turnIndex];
+        this.turnIndex += 1;
+        if (response) {
+          yield response;
+        }
+      }
+
+      override async connect(): Promise<BaseLlmConnection> {
+        throw new Error('Live connection is not exercised in this test.');
+      }
+    }
+
+    let callCount = 0;
+    const increaseByOne = new FunctionTool({
+      name: 'increaseByOne',
+      description: 'Increments x by one.',
+      parameters: z.object({x: z.number()}),
+      execute: ({x}) => {
+        callCount += 1;
+        return x + 1;
+      },
+    });
+
+    const model = new CapturingSequentialLlm([
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {functionCall: {id: 'fc-1', name: 'increaseByOne', args: {x: 1}}},
+          ],
+        },
+      },
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {functionCall: {id: 'fc-2', name: 'increaseByOne', args: {x: 2}}},
+          ],
+        },
+      },
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {functionCall: {id: 'fc-3', name: 'increaseByOne', args: {x: 3}}},
+          ],
+        },
+      },
+      {
+        content: {
+          role: 'model',
+          parts: [{text: 'response1'}],
+        },
+      },
+    ]);
+
+    const agent = new LlmAgent({
+      name: 'rootAgent',
+      model,
+      tools: [increaseByOne],
+    });
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'sequential-tools-app',
+      userId: 'user-1',
+    });
+    const runner = new Runner({
+      appName: 'sequential-tools-app',
+      agent,
+      sessionService,
+    });
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: 'user-1',
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'test'}]},
+    })) {
+      events.push(event);
+    }
+
+    expect(callCount).toBe(3);
+    expect(events).toHaveLength(7);
+    expect(
+      events.map((event) => ({
+        author: event.author,
+        call: getFunctionCalls(event)[0]?.args,
+        response: getFunctionResponses(event)[0]?.response,
+        text: event.content?.parts?.[0]?.text,
+      })),
+    ).toEqual([
+      {author: 'rootAgent', call: {x: 1}, response: undefined, text: undefined},
+      {
+        author: 'rootAgent',
+        call: undefined,
+        response: {result: 2},
+        text: undefined,
+      },
+      {author: 'rootAgent', call: {x: 2}, response: undefined, text: undefined},
+      {
+        author: 'rootAgent',
+        call: undefined,
+        response: {result: 3},
+        text: undefined,
+      },
+      {author: 'rootAgent', call: {x: 3}, response: undefined, text: undefined},
+      {
+        author: 'rootAgent',
+        call: undefined,
+        response: {result: 4},
+        text: undefined,
+      },
+      {
+        author: 'rootAgent',
+        call: undefined,
+        response: undefined,
+        text: 'response1',
+      },
+    ]);
+
+    expect(model.capturedContents.map((items) => items.length)).toEqual([
+      1, 3, 5, 7,
+    ]);
+    expect(model.capturedContents[3]?.map((content) => content.role)).toEqual([
+      'user',
+      'model',
+      'user',
+      'model',
+      'user',
+      'model',
+      'user',
+    ]);
   });
 });

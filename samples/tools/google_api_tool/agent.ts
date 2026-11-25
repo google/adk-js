@@ -130,13 +130,23 @@ async function describeCalendarToolset(
     saToolset.configureSaAuth(serviceAccount);
     const saTools = await saToolset.getTools();
 
-    await unfilteredToolset.close();
-    await toolset.close();
-    await saToolset.close();
+    const prefixedToolset = new CalendarToolset({
+      toolFilter: ['calendar_calendars_get'],
+      toolNamePrefix: 'work',
+    });
+    const prefixedTools = await prefixedToolset.getToolsWithPrefix();
+
+    await Promise.allSettled([
+      unfilteredToolset.close(),
+      toolset.close(),
+      saToolset.close(),
+      prefixedToolset.close(),
+    ]);
 
     return [
       `All tools (${allTools.length}): ${allTools.map((t) => t.name).join(', ')}`,
       `Filtered tools (${filteredTools.length}): ${filteredTools.map((t) => t.name).join(', ')}`,
+      `Prefixed tools (${prefixedTools.length}): ${prefixedTools.map((t) => t.name).join(', ')}`,
       `isGoogleApiToolset(toolset): ${isGoogleApiToolset(toolset)}`,
       `isGoogleApiTool(getCalendarTool): ${isGoogleApiTool(getCalendarTool)}`,
       `calendar_calendars_get parameters: ${paramNames.join(', ')}`,

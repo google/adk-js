@@ -58,19 +58,20 @@ Few-shot example structures (`Example`), dynamic example providers (`BaseExample
 
 ### Flows
 
-The `LlmAgent` request/response processor pipeline, concurrent parallel tool-call execution and `stateDelta` merging, live session resumption (`sessionResumption`), live streaming function-call dispatch (`handleFunctionCallsLive` and `stop_streaming`), and Compositional Function Calling (`supportCfc`).
+The `LlmAgent` request/response processor pipeline, structured output alongside tools (`SetModelResponseTool`), deterministic async-generator cleanup (`Aclosing`), concurrent parallel tool-call execution and `stateDelta` merging, live session resumption (`sessionResumption`), live streaming function-call dispatch (`handleFunctionCallsLive` and `stop_streaming`), and Compositional Function Calling (`supportCfc`).
 
-- [Flows](flows/index.md) - `BaseLlmRequestProcessor`, `BaseLlmResponseProcessor`, `CONTENT_REQUEST_PROCESSOR`, `AgentTransferLlmRequestProcessor`, `CodeExecutionResponseProcessor`, `injectSessionState`, `handleFunctionCallsLive`, `sessionResumption`, and `supportCfc`.
+- [Flows](flows/index.md) - `BaseLlmRequestProcessor`, `BaseLlmResponseProcessor`, `CONTENT_REQUEST_PROCESSOR`, `AgentTransferLlmRequestProcessor`, `CodeExecutionResponseProcessor`, `SetModelResponseTool`, `Aclosing`, `injectSessionState`, `handleFunctionCallsLive`, `sessionResumption`, and `supportCfc`.
 
 ### Integrations
 
 Third-party model and ecosystem integrations packaged in `@google/adk-integrations`.
 
-- [BigQuery toolset](integrations/bigquery/index.md) - `BigQueryToolset`, `BigQueryTool`, `BigQueryCredentialsConfig`, `BigQueryToolConfig`, `getBigQueryClient`, `askDataInsights`, and the first-party BigQuery metadata, SQL query, and data insights tools.
+- [BigQuery toolset](integrations/bigquery/index.md) - `BigQueryToolset`, `GoogleTool`, `BigQueryCredentialsConfig`, `BigQueryToolConfig`, `getBigQueryClient`, `askDataInsights`, and the first-party BigQuery metadata, SQL query, and data insights tools.
 - [Claude on Vertex AI](integrations/models/anthropic_llm/index.md) - `Claude`, `LLMRegistry` registration for `claude-*` models on Vertex AI, and Anthropic message and tool conversion helpers.
 - [CrewAI tool](integrations/crewai/index.md) - `CrewaiTool`, `isCrewaiTool`, and adapting CrewAI tools into ADK tools.
 - [LangChain tool](integrations/langchain/index.md) - `LangchainTool`, `isLangchainTool`, and adapting LangChain structured and simple tools into ADK tools.
 - [BigQuery agent analytics](integrations/plugins/bigquery_agent_analytics_plugin/index.md) - `BigQueryAgentAnalyticsPlugin` from `@google/adk-integrations/bigquery`, logging agent events to BigQuery through the Storage Write API.
+- [Spanner toolset](integrations/spanner/index.md) - `SpannerToolset`, `SpannerCredentialsConfig`, `SpannerToolSettings`, `SpannerCapabilities`, `getSpannerClient`, and the first-party Cloud Spanner metadata and read-only SQL query tools.
 
 ### Memory
 
@@ -108,9 +109,9 @@ Conversations and their state: the events of each session, and the `app:`, `user
 
 ### Tools
 
-Function, authenticated, agent, ecosystem-adapter, and built-in model tools (`BaseTool`, `BaseAuthenticatedTool`, `FunctionTool`, `AuthenticatedFunctionTool`, `LongRunningFunctionTool`, `AgentTool`, `ToolContext`, `ToolboxToolset`, and built-in grounding and control-flow tools).
+Function, authenticated, Google API, structured-response, agent, ecosystem-adapter, and built-in model tools (`BaseTool`, `BaseToolset`, `BaseAuthenticatedTool`, `FunctionTool`, `AuthenticatedFunctionTool`, `LongRunningFunctionTool`, `GoogleTool`, `BaseGoogleCredentialsConfig`, `GoogleCredentialsManager`, `SetModelResponseTool`, `AgentTool`, `ToolContext`, `ToolboxToolset`, and built-in grounding and control-flow tools).
 
-- [Tools](tools/index.md) - `BaseTool`, `BaseAuthenticatedTool`, `FunctionTool` (with `response` schema and `_callLive` streaming), `AuthenticatedFunctionTool`, `LongRunningFunctionTool`, `AgentTool` (with `inputSchema` and `outputSchema`), `ToolContext`, `ToolboxToolset`, and built-in utility tools.
+- [Tools](tools/index.md) - `BaseTool`, `BaseToolset` (`toolNamePrefix`, `getToolsWithPrefix`, optional `close()`), `BaseAuthenticatedTool`, `FunctionTool` (with `response` schema and `_callLive` streaming), `AuthenticatedFunctionTool`, `LongRunningFunctionTool`, `GoogleTool`, `BaseGoogleCredentialsConfig`, `GoogleCredentialsManager`, `SetModelResponseTool`, `AgentTool` (with `inputSchema` and `outputSchema`), `ToolContext`, `ToolboxToolset`, and built-in utility tools.
 
 #### Retrieval
 

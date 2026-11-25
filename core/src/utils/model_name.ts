@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {getBooleanEnvVar} from './env_aware_utils.js';
+import {isEnvEnabled} from './env_aware_utils.js';
 
 const MODEL_NAME_PATTERN =
   '^projects/[^/]+/locations/[^/]+/publishers/[^/]+/models/(.+)$';
@@ -183,8 +183,8 @@ export function isGemini3xFlashLive(modelString: string | undefined): boolean {
 }
 
 /**
- * Returns True when Gemini model-id validation should be bypassed.
+ * Returns true when Gemini model-id validation should be bypassed.
  */
 export function isGeminiModelIdCheckDisabled(): boolean {
-  return getBooleanEnvVar('ADK_DISABLE_GEMINI_MODEL_ID_CHECK');
+  return isEnvEnabled('ADK_DISABLE_GEMINI_MODEL_ID_CHECK');
 }

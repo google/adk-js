@@ -6,8 +6,13 @@
 
 import {GenerateContentConfig, Modality, Schema} from '@google/genai';
 import {FinishTaskTool} from '../tools/finish_task_tool.js';
-import {FunctionTool} from '../tools/function_tool.js';
+import {
+  isSetModelResponseTool,
+  SET_MODEL_RESPONSE_TOOL_NAME,
+  SetModelResponseTool,
+} from '../tools/set_model_response_tool.js';
 import {AsyncQueue} from '../utils/async_queue.js';
+import {Aclosing} from '../utils/context_utils.js';
 import {isBaseNode, type BaseNode} from '../workflow/base_node.js';
 import {NodeContext} from '../workflow/node_context.js';
 import {NodeTool} from '../workflow/nodes/node_tool.js';
@@ -24,7 +29,6 @@ import {
   Event,
   getFunctionCalls,
   getFunctionResponses,
-  hasTrailingCodeExecutionResult,
   isEvent,
   isFinalResponse,
   populateClientFunctionCallId,
@@ -76,7 +80,10 @@ import {AUTH_PREPROCESSOR} from '../auth/auth_preprocessor.js';
 import {BaseContextCompactor} from '../context/base_context_compactor.js';
 import {InvocationContext, requireAgent} from './invocation_context.js';
 import {LiveRequest, LiveRequestQueue} from './live_request_queue.js';
-import {AGENT_TRANSFER_LLM_REQUEST_PROCESSOR} from './processors/agent_transfer_llm_request_processor.js';
+import {
+  AGENT_TRANSFER_LLM_REQUEST_PROCESSOR,
+  hasFunctionTools,
+} from './processors/agent_transfer_llm_request_processor.js';
 import {BASIC_LLM_REQUEST_PROCESSOR} from './processors/basic_llm_request_processor.js';
 import {
   CODE_EXECUTION_REQUEST_PROCESSOR,
@@ -143,6 +150,14 @@ function isRecoverableLiveError(err: unknown): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function* closeableStream<T>(
+  generator: AsyncGenerator<T, void>,
+): AsyncGenerator<T, void, void> {
+  for await (const item of new Aclosing(generator)) {
+    yield item;
+  }
 }
 
 /**
@@ -389,7 +404,14 @@ export interface LlmAgentConfig extends BaseAgentConfig {
   /** The input schema when agent is used as a tool. */
   inputSchema?: LlmAgentSchema;
 
-  /** The output schema when agent replies. */
+  /**
+   * The output schema when the agent replies.
+   *
+   * Can be configured alongside {@link tools}: Vertex AI Gemini 2.0+ models use
+   * native `responseSchema`, while other models attach
+   * {@link SetModelResponseTool} automatically in turn-by-turn runs. Setting
+   * `outputSchema` disables parent and peer agent transfer.
+   */
   outputSchema?: LlmAgentSchema;
 
   /**
@@ -455,6 +477,41 @@ export interface LlmAgentConfig extends BaseAgentConfig {
   planner?: BasePlanner;
 }
 
+function getStructuredModelResponse(
+  functionResponseEvent: Event,
+): string | undefined {
+  const functionResponses = getFunctionResponses(functionResponseEvent);
+  if (!functionResponses.length) {
+    return undefined;
+  }
+  for (const funcResponse of functionResponses) {
+    if (funcResponse.name === SET_MODEL_RESPONSE_TOOL_NAME) {
+      const response = functionResponseEvent.actions.setModelResponse;
+      if (response === undefined) {
+        return undefined;
+      }
+      return JSON.stringify(response);
+    }
+  }
+  return undefined;
+}
+
+function createFinalModelResponseEvent(
+  invocationContext: InvocationContext,
+  agentName: string,
+  jsonResponse: string,
+): Event {
+  return createEvent({
+    invocationId: invocationContext.invocationId,
+    author: agentName,
+    branch: invocationContext.branch,
+    content: {
+      role: 'model',
+      parts: [{text: jsonResponse}],
+    },
+  });
+}
+
 async function convertToolUnionToTools(
   toolUnion: ToolUnion,
   context?: ReadonlyContext,
@@ -467,7 +524,9 @@ async function convertToolUnionToTools(
     // model can call it (mirrors Python's Agent(tools=[node/workflow])).
     return [new NodeTool(toolUnion)];
   }
-  return await toolUnion.getTools(context);
+  return typeof toolUnion.getToolsWithPrefix === 'function'
+    ? await toolUnion.getToolsWithPrefix(context)
+    : await toolUnion.getTools(context);
 }
 
 /**
@@ -960,27 +1019,22 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
   ): AsyncGenerator<Event, void, void> {
     while (true) {
       let lastEvent: Event | undefined = undefined;
-      let stepHadToolCalls = false;
-      let stepTransferred = false;
-      for await (const event of this.runOneStepAsync(context)) {
+      let lastMeaningfulEvent: Event | undefined = undefined;
+      for await (const event of new Aclosing(this.runOneStepAsync(context))) {
         if (context.abortSignal?.aborted) {
           return;
         }
 
         lastEvent = event;
-        // A code execution result needs another model call to be answered,
-        // the same as a function response. Only a complete event counts: a
-        // streamed chunk that ends in a result can still be followed by the
-        // model's answer in the same response.
-        if (
-          getFunctionCalls(event).length > 0 ||
-          getFunctionResponses(event).length > 0 ||
-          (!event.partial && hasTrailingCodeExecutionResult(event))
-        ) {
-          stepHadToolCalls = true;
-        }
-        if (event.author === this.name && event.actions.transferToAgent) {
-          stepTransferred = true;
+        const isEmptyMetadataEvent =
+          event.author === this.name &&
+          !event.partial &&
+          !event.errorCode &&
+          !event.interrupted &&
+          (!event.content?.parts || event.content.parts.length === 0) &&
+          isDefaultEventActions(event.actions);
+        if (!isEmptyMetadataEvent) {
+          lastMeaningfulEvent = event;
         }
         this.maybeSaveOutputToState(event);
         yield event;
@@ -990,20 +1044,22 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         break;
       }
 
-      const isEmptyMetadataEvent =
-        lastEvent.author === this.name &&
-        !lastEvent.partial &&
-        (!lastEvent.content?.parts || lastEvent.content.parts.length === 0) &&
-        isDefaultEventActions(lastEvent.actions);
-
+      const terminalEvent = lastMeaningfulEvent ?? lastEvent;
+      // Preserve existing behavior for long-running tool calls followed by a
+      // trailing empty metadata chunk with default actions.
+      const trailingEmptyAfterLongRunningCall =
+        lastMeaningfulEvent !== undefined &&
+        lastMeaningfulEvent !== lastEvent &&
+        (lastMeaningfulEvent.longRunningToolIds?.length ?? 0) > 0 &&
+        getFunctionCalls(lastMeaningfulEvent).length > 0;
       if (
-        isFinalResponse(lastEvent) &&
-        !(isEmptyMetadataEvent && stepHadToolCalls && !stepTransferred)
+        isFinalResponse(terminalEvent) &&
+        !trailingEmptyAfterLongRunningCall
       ) {
         break;
       }
 
-      if (lastEvent.partial) {
+      if (terminalEvent.partial) {
         logger.warn('The last event is partial, which is not expected.');
         break;
       }
@@ -1013,7 +1069,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
   protected async *runLiveImpl(
     context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    for await (const event of this.runLiveFlow(context)) {
+    for await (const event of new Aclosing(this.runLiveFlow(context))) {
       if (context.abortSignal?.aborted) {
         return;
       }
@@ -1060,9 +1116,8 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // Preprocess: same processors as runAsync. Yields agent-emitted events
     // (e.g. instruction injection metadata events) to the caller.
     // =========================================================================
-    for await (const event of this.runLivePreprocess(
-      invocationContext,
-      llmRequest,
+    for await (const event of new Aclosing(
+      this.runLivePreprocess(invocationContext, llmRequest),
     )) {
       yield event;
     }
@@ -1072,6 +1127,12 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       invocationContext.abortSignal?.aborted
     ) {
       return;
+    }
+
+    if (this.outputSchema && this.mode !== 'task') {
+      logger.warn(
+        `Agent ${this.name} sets outputSchema, which is not supported in live mode and will be ignored. To capture structured data during a live session, give the agent a tool that writes it to session state.`,
+      );
     }
 
     // =========================================================================
@@ -1178,12 +1239,16 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
 
       let reconnect = false;
       try {
-        yield* this.runReceiveLoop(
-          invocationContext,
-          connection,
-          llmRequest,
-          sendAbort,
-        );
+        for await (const event of new Aclosing(
+          this.runReceiveLoop(
+            invocationContext,
+            connection,
+            llmRequest,
+            sendAbort,
+          ),
+        )) {
+          yield event;
+        }
       } catch (err) {
         const canReconnect =
           !!invocationContext.liveSessionResumptionHandle &&
@@ -1230,9 +1295,8 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     llmRequest: LlmRequest,
   ): AsyncGenerator<Event, void, void> {
     for (const processor of this.requestProcessors) {
-      for await (const event of processor.runAsync(
-        invocationContext,
-        llmRequest,
+      for await (const event of new Aclosing(
+        processor.runAsync(invocationContext, llmRequest),
       )) {
         if (invocationContext.abortSignal?.aborted) {
           return;
@@ -1373,7 +1437,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     let receivedAny = true;
     while (receivedAny) {
       receivedAny = false;
-      for await (const llmResponse of connection.receive()) {
+      for await (const llmResponse of new Aclosing(connection.receive())) {
         receivedAny = true;
         if (invocationContext.abortSignal?.aborted) {
           return;
@@ -1413,11 +1477,13 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
           branch: invocationContext.branch,
         });
 
-        for await (const event of this.postprocessLive(
-          invocationContext,
-          llmRequest,
-          llmResponse,
-          modelResponseEvent,
+        for await (const event of new Aclosing(
+          this.postprocessLive(
+            invocationContext,
+            llmRequest,
+            llmResponse,
+            modelResponseEvent,
+          ),
         )) {
           yield event;
 
@@ -1474,8 +1540,8 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
                 };
               }
               try {
-                for await (const subEvent of subAgent.runLive(
-                  invocationContext,
+                for await (const subEvent of new Aclosing(
+                  subAgent.runLive(invocationContext),
                 )) {
                   yield subEvent;
                 }
@@ -1499,9 +1565,8 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     modelResponseEvent: Event,
   ): AsyncGenerator<Event, void, void> {
     for (const processor of this.responseProcessors) {
-      for await (const event of processor.runAsync(
-        invocationContext,
-        llmResponse,
+      for await (const event of new Aclosing(
+        processor.runAsync(invocationContext, llmResponse),
       )) {
         yield event;
       }
@@ -1605,9 +1670,8 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // =========================================================================
     // Runs request processors.
     for (const processor of this.requestProcessors) {
-      for await (const event of processor.runAsync(
-        invocationContext,
-        llmRequest,
+      for await (const event of new Aclosing(
+        processor.runAsync(invocationContext, llmRequest),
       )) {
         if (invocationContext.abortSignal?.aborted) {
           return;
@@ -1625,22 +1689,17 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       allTools.push(this.finishTaskTool);
     } else if (
       this.outputSchema &&
-      allTools.length > 0 &&
+      !invocationContext.liveRequestQueue &&
+      !invocationContext.runConfig?.supportCfc &&
+      (allTools.length > 0 ||
+        hasFunctionTools(this) ||
+        Object.keys(llmRequest.toolsDict).length > 0) &&
+      !allTools.some(isSetModelResponseTool) &&
       !canUseOutputSchemaWithTools(this.canonicalModel)
     ) {
-      const setModelResponseTool = new FunctionTool({
-        name: 'set_model_response',
-        description:
-          'Call this tool to submit your final response conforming to the output schema. Use this tool only when you have collected all the information and are ready to return the final answer.',
-        parameters: this.outputSchema,
-        execute: async (args, toolContext) => {
-          if (toolContext) {
-            toolContext.actions.skipSummarization = true;
-          }
-          return JSON.stringify(args);
-        },
-      });
-      allTools.push(setModelResponseTool);
+      allTools.push(
+        new SetModelResponseTool(this.outputSchemaSource ?? this.outputSchema),
+      );
     }
     // Collect turn metadata and event actions
     // TODO - b/425992518: misleading, this is passing metadata.
@@ -1676,7 +1735,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         return (
           !llmRequest.allowedTools ||
           llmRequest.allowedTools.includes(tool.name) ||
-          tool.name === 'set_model_response'
+          tool.name === SET_MODEL_RESPONSE_TOOL_NAME
         );
       });
 
@@ -1703,10 +1762,8 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // Calls the LLM
     // =========================================================================
     const responsesGenerator = async function* (this: LlmAgent) {
-      for await (const llmResponse of this.callLlmAsync(
-        invocationContext,
-        llmRequest,
-        modelResponseEvent,
+      for await (const llmResponse of new Aclosing(
+        this.callLlmAsync(invocationContext, llmRequest, modelResponseEvent),
       )) {
         if (invocationContext.abortSignal?.aborted) {
           return;
@@ -1722,11 +1779,13 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         // ======================================================================
         // Postprocess after calling the LLM
         // ======================================================================
-        for await (const event of this.postprocess(
-          invocationContext,
-          llmRequest,
-          llmResponse,
-          modelResponseEvent,
+        for await (const event of new Aclosing(
+          this.postprocess(
+            invocationContext,
+            llmRequest,
+            llmResponse,
+            modelResponseEvent,
+          ),
         )) {
           if (invocationContext.abortSignal?.aborted) {
             return;
@@ -1743,12 +1802,16 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       }
     };
 
-    yield* this.runAndHandleError(
-      responsesGenerator.call(this),
-      invocationContext,
-      llmRequest,
-      modelResponseEvent,
-    );
+    for await (const event of new Aclosing(
+      this.runAndHandleError(
+        responsesGenerator.call(this),
+        invocationContext,
+        llmRequest,
+        modelResponseEvent,
+      ),
+    )) {
+      yield event;
+    }
   }
 
   private async *postprocess(
@@ -1761,9 +1824,8 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // Runs response processors
     // =========================================================================
     for (const processor of this.responseProcessors) {
-      for await (const event of processor.runAsync(
-        invocationContext,
-        llmResponse,
+      for await (const event of new Aclosing(
+        processor.runAsync(invocationContext, llmResponse),
       )) {
         if (invocationContext.abortSignal?.aborted) {
           return;
@@ -1813,14 +1875,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
 
     if (mergedEvent.content) {
       const functionCalls = getFunctionCalls(mergedEvent);
-      const setModelResponseCall = functionCalls.find(
-        (call) => call.name === 'set_model_response',
-      );
-      if (setModelResponseCall) {
-        const args = setModelResponseCall.args;
-        mergedEvent.content.parts = [{text: JSON.stringify(args)}];
-        mergedEvent.actions.skipSummarization = true;
-      } else if (functionCalls && functionCalls.length) {
+      if (functionCalls && functionCalls.length) {
         populateClientFunctionCallId(mergedEvent);
         // TODO - b/425992518: hacky, transaction log, simplify.
         // Long running is a property of tool in registry.
@@ -1934,11 +1989,24 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
 
     yield functionResponseEvent;
 
+    const structuredResponse = getStructuredModelResponse(
+      functionResponseEvent,
+    );
+    if (structuredResponse !== undefined) {
+      yield createFinalModelResponseEvent(
+        invocationContext,
+        this.name,
+        structuredResponse,
+      );
+    }
+
     // If model instruct to transfer to an agent, run the transferred agent.
     const nextAgentName = functionResponseEvent.actions.transferToAgent;
     if (nextAgentName) {
       const nextAgent = this.getAgentByName(invocationContext, nextAgentName);
-      for await (const event of nextAgent.runAsync(invocationContext)) {
+      for await (const event of new Aclosing(
+        nextAgent.runAsync(invocationContext),
+      )) {
         if (invocationContext.abortSignal?.aborted) {
           return;
         }
@@ -2008,7 +2076,9 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       invocationContext.liveRequestQueue ??= new LiveRequestQueue();
       const liveRequestQueue = invocationContext.liveRequestQueue;
       try {
-        for await (const llmResponse of this.runLiveFlow(invocationContext)) {
+        for await (const llmResponse of new Aclosing(
+          this.runLiveFlow(invocationContext),
+        )) {
           if (invocationContext.abortSignal?.aborted) {
             return;
           }
@@ -2041,15 +2111,17 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       const responsesGenerator = recordInference(
         {invocationContext, llmRequest, modelResponseEvent},
         () =>
-          llm.generateContentAsync(
-            llmRequest,
-            /* stream= */ invocationContext.runConfig?.streamingMode ===
-              StreamingMode.SSE,
-            invocationContext.abortSignal,
+          closeableStream(
+            llm.generateContentAsync(
+              llmRequest,
+              /* stream= */ invocationContext.runConfig?.streamingMode ===
+                StreamingMode.SSE,
+              invocationContext.abortSignal,
+            ),
           ),
       );
 
-      for await (const llmResponse of responsesGenerator) {
+      for await (const llmResponse of new Aclosing(responsesGenerator)) {
         if (invocationContext.abortSignal?.aborted) {
           return;
         }
@@ -2163,7 +2235,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     modelResponseEvent: Event,
   ): AsyncGenerator<T, void, void> {
     try {
-      for await (const response of responseGenerator) {
+      for await (const response of new Aclosing(responseGenerator)) {
         if (invocationContext.abortSignal?.aborted) {
           return;
         }

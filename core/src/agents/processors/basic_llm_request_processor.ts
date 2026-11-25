@@ -9,6 +9,7 @@ import {LlmRequest, setOutputSchema} from '../../models/llm_request.js';
 import {canUseOutputSchemaWithTools} from '../../utils/output_schema_utils.js';
 import {InvocationContext} from '../invocation_context.js';
 import {isLlmAgent} from '../llm_agent.js';
+import {hasFunctionTools} from './agent_transfer_llm_request_processor.js';
 import {BaseLlmRequestProcessor} from './base_llm_processor.js';
 
 /**
@@ -38,16 +39,17 @@ export class BasicLlmRequestProcessor extends BaseLlmRequestProcessor {
     llmRequest.model = agent.canonicalModel.model;
 
     llmRequest.config = {...(agent.generateContentConfig ?? {})};
-    // Models that cannot take an output schema alongside tools get the
-    // prompt-based `set_model_response` workaround instead, injected by
-    // `LlmAgent.runOneStepAsync` and the instructions processor.
+    // Models that cannot take an output schema alongside function tools
+    // (including `transfer_to_agent`) get the prompt-based `set_model_response`
+    // workaround instead, injected by `LlmAgent.runOneStepAsync` and the
+    // instructions processor.
     // Task-mode agents complete via the `finish_task` tool, so the JSON response
     // mode must not be set (function calling is incompatible with a JSON
     // response mime type).
     if (
       agent.outputSchema &&
       agent.mode !== 'task' &&
-      (!agent.tools?.length ||
+      (!hasFunctionTools(agent) ||
         canUseOutputSchemaWithTools(agent.canonicalModel))
     ) {
       setOutputSchema(llmRequest, agent.outputSchema);

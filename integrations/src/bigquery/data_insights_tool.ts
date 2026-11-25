@@ -4,17 +4,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {type GoogleCredentials, isGoogleAuthClient} from '@google/adk';
 import {z} from 'zod';
 
-import {
-  type BigQueryCredentials,
-  isBigQueryAuthClient,
-} from './bigquery_credentials.js';
 import type {BigQueryTableReference} from './client.js';
 import {
   type BigQueryToolConfig,
   type BigQueryToolConfigOptions,
   resolveMaxQueryResultRows,
+  resolveToolSettings,
 } from './config.js';
 import {
   type BigQueryToolErrorResult,
@@ -88,12 +86,19 @@ export interface AskDataInsightsArgs {
   table_references: Array<BigQueryTableReference | Record<string, string>>;
 
   /**
-   * Credentials injected by {@link BigQueryTool}.
+   * Credentials injected by `GoogleTool`.
    */
-  credentials?: BigQueryCredentials;
+  credentials?: GoogleCredentials;
+
+  /**
+   * Tool settings specifying options such as `maxQueryResultRows`.
+   */
+  settings?: BigQueryToolConfig | BigQueryToolConfigOptions;
 
   /**
    * Tool configuration specifying settings such as `maxQueryResultRows`.
+   *
+   * @deprecated Use {@link settings} instead.
    */
   config?: BigQueryToolConfig | BigQueryToolConfigOptions;
 }
@@ -321,13 +326,13 @@ function readAuthHeader(
 }
 
 async function resolveAuthorizationHeader(
-  credentials: BigQueryCredentials | undefined,
+  credentials: GoogleCredentials | undefined,
   url: string,
 ): Promise<string | undefined> {
   if (!credentials) {
     return undefined;
   }
-  if (isBigQueryAuthClient(credentials)) {
+  if (isGoogleAuthClient(credentials)) {
     const requestHeaders = await credentials.getRequestHeaders(url);
     const authHeader = readAuthHeader(requestHeaders);
     if (typeof authHeader === 'string' && authHeader.trim().length > 0) {
@@ -357,8 +362,9 @@ export async function askDataInsights(
   args: AskDataInsightsArgs,
 ): Promise<AskDataInsightsResult> {
   try {
+    const effectiveSettings = resolveToolSettings(args);
     const maxQueryResultRows = resolveMaxQueryResultRows(
-      args.config?.maxQueryResultRows,
+      effectiveSettings?.maxQueryResultRows,
     );
     const projectId = (
       args.project_id ||

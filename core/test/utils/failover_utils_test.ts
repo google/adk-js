@@ -168,6 +168,59 @@ describe('runWithRouting', () => {
         ),
       ).rejects.toThrow('late failure');
     });
+
+    it('awaits return(undefined) on a custom AsyncGenerator whose next() rejects before failing over', async () => {
+      const items = {primary: 'primary-item', secondary: 'secondary-item'};
+      const context: Context = {requestId: 'req-custom-gen-cleanup'};
+      const callOrder: string[] = [];
+
+      const router = vi
+        .fn<Router<string, Context>>()
+        .mockReturnValueOnce('primary')
+        .mockReturnValueOnce('secondary');
+
+      const primaryReturn = vi.fn(
+        async (): Promise<IteratorResult<string, void>> => {
+          callOrder.push('primary-return');
+          return {value: undefined, done: true};
+        },
+      );
+
+      const primaryGenerator: AsyncGenerator<string, void, void> = {
+        next: async () => {
+          callOrder.push('primary-next');
+          throw new Error('primary next failed');
+        },
+        return: primaryReturn,
+        throw: async (error: unknown) => {
+          throw error;
+        },
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+      };
+
+      const results = await collectAsync(
+        runWithRouting(items, context, router, (item) => {
+          if (item === 'primary-item') {
+            return primaryGenerator;
+          }
+          callOrder.push('secondary-run');
+          return (async function* () {
+            yield `ok:${item}`;
+          })();
+        }),
+      );
+
+      expect(results).toEqual(['ok:secondary-item']);
+      expect(primaryReturn).toHaveBeenCalledTimes(1);
+      expect(primaryReturn).toHaveBeenCalledWith(undefined);
+      expect(callOrder).toEqual([
+        'primary-next',
+        'primary-return',
+        'secondary-run',
+      ]);
+    });
   });
 
   describe('router called with async result', () => {

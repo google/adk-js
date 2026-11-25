@@ -35,6 +35,7 @@ export interface GoogleApiToolsetOptions {
   clientId?: string;
   clientSecret?: string;
   toolFilter?: ToolPredicate | string[];
+  toolNamePrefix?: string;
   scopes?: string[];
   serviceAccount?: ServiceAccount;
 }
@@ -73,7 +74,7 @@ export class GoogleApiToolset extends BaseToolset {
 
   constructor(options: GoogleApiToolsetOptions = {}) {
     const toolFilter = options.toolFilter ?? [];
-    super(toolFilter);
+    super({toolFilter, toolNamePrefix: options.toolNamePrefix});
     this.toolFilter = toolFilter;
     this.apiName = options.apiName;
     this.apiVersion = options.apiVersion;

@@ -6,6 +6,7 @@
 import {Event} from '../events/event.js';
 import {FunctionTool} from '../tools/function_tool.js';
 
+import {Aclosing} from '../utils/context_utils.js';
 import {deprecated} from '../utils/deprecated.js';
 import {BaseAgent} from './base_agent.js';
 import {InvocationContext} from './invocation_context.js';
@@ -58,7 +59,7 @@ export class SequentialAgent extends BaseAgent {
     context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
     for (const subAgent of this.subAgents) {
-      for await (const event of subAgent.runAsync(context)) {
+      for await (const event of new Aclosing(subAgent.runAsync(context))) {
         yield event;
       }
     }
@@ -103,7 +104,7 @@ export class SequentialAgent extends BaseAgent {
     }
 
     for (const subAgent of this.subAgents) {
-      for await (const event of subAgent.runLive(context)) {
+      for await (const event of new Aclosing(subAgent.runLive(context))) {
         yield event;
       }
     }

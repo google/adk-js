@@ -5,6 +5,7 @@
  */
 
 import {
+  Aclosing,
   AddSessionToEvalSetRequest,
   type AgentRuntimeRequestHooks,
   App,
@@ -205,6 +206,53 @@ function getBrowserDir(): string {
   return primary;
 }
 
+/**
+ * Resolves the filesystem path to an agent's custom `agent.json` card file
+ * when present, or returns `undefined` when no custom card file exists.
+ *
+ * Path containment is checked lexically with `path.resolve` and
+ * `path.relative` only; this helper does not resolve symlinks and is not a
+ * sandbox.
+ */
+function resolveAgentCardPath({
+  appName,
+  agentsDir,
+  ownsAgentLoader,
+}: {
+  appName: string;
+  agentsDir?: string;
+  ownsAgentLoader: boolean;
+}): string | undefined {
+  const baseDir = agentsDir ?? (ownsAgentLoader ? process.cwd() : undefined);
+  if (!baseDir) {
+    return undefined;
+  }
+  const resolvedBase = path.resolve(baseDir);
+  if (!fs.existsSync(resolvedBase)) {
+    return undefined;
+  }
+  if (fs.statSync(resolvedBase).isFile()) {
+    const singleFileCard = path.join(path.dirname(resolvedBase), 'agent.json');
+    return fs.existsSync(singleFileCard) && fs.statSync(singleFileCard).isFile()
+      ? singleFileCard
+      : undefined;
+  }
+  validatePathSegment(appName, 'appName');
+  const candidate = path.resolve(resolvedBase, appName, 'agent.json');
+  const rel = path.relative(resolvedBase, candidate);
+  if (
+    rel === '' ||
+    rel === '..' ||
+    rel.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(rel)
+  ) {
+    return undefined;
+  }
+  return fs.existsSync(candidate) && fs.statSync(candidate).isFile()
+    ? candidate
+    : undefined;
+}
+
 export class AdkApiServer {
   private readonly host: string;
   private readonly port: number;
@@ -367,29 +415,42 @@ export class AdkApiServer {
       : undefined;
 
     for (const appName of appNames) {
-      const agentFile = await this.agentLoader.getAgentFile(appName);
-      const loaded = await agentFile.load();
-      const agent = isApp(loaded) ? loaded.rootAgent : loaded;
-      const adkApp = isApp(loaded) ? loaded : undefined;
-      const runner = await this.getRunner(adkApp ?? agent, appName);
+      try {
+        const agentFile = await this.agentLoader.getAgentFile(appName);
+        await using _bundleLease = agentFile.retain();
+        const loaded = await agentFile.load();
+        const agent = isApp(loaded) ? loaded.rootAgent : loaded;
+        const adkApp = isApp(loaded) ? loaded : undefined;
+        const runner = await this.getRunner(adkApp ?? agent, appName);
+        const agentCardPath = resolveAgentCardPath({
+          appName,
+          agentsDir: this.agentsDir,
+          ownsAgentLoader: this.ownsAgentLoader,
+        });
 
-      await toA2a(agent, {
-        protocol: 'http',
-        host: this.host,
-        port: this.effectivePort,
-        basePath: `/a2a/${appName}`,
-        sessionService: this.sessionService,
-        memoryService: this.memoryService,
-        artifactService: this.artifactService,
-        runner,
-        app: this.app,
-        // `toA2a` fails closed by default. When the operator configured a
-        // shared bearer token the A2A surface is authenticated with it;
-        // otherwise this local development server explicitly opts out and a
-        // loud warning is logged at startup.
-        authentication,
-        allowUnauthenticated: authentication === undefined,
-      });
+        await toA2a(agent, {
+          protocol: 'http',
+          host: this.host,
+          port: this.effectivePort,
+          basePath: `/a2a/${appName}`,
+          ...(agentCardPath ? {agentCard: agentCardPath} : {}),
+          sessionService: this.sessionService,
+          memoryService: this.memoryService,
+          artifactService: this.artifactService,
+          runner,
+          app: this.app,
+          // `toA2a` fails closed by default. When the operator configured a
+          // shared bearer token the A2A surface is authenticated with it;
+          // otherwise this local development server explicitly opts out and a
+          // loud warning is logged at startup.
+          authentication,
+          allowUnauthenticated: authentication === undefined,
+        });
+      } catch (e: unknown) {
+        this.logger.error(
+          `Failed to setup A2A agent ${appName}: ${getErrorMessage(e)}`,
+        );
+      }
     }
   }
 
@@ -1473,14 +1534,16 @@ export class AdkApiServer {
 
           const runEvalResults: RunEvalResult[] = [];
           const evalCaseResults: EvalCaseResult[] = [];
-          for await (const evalResult of runEvals(
-            {[evalSetId]: evalCases},
-            rootAgent,
-            resetFunc,
-            evalMetrics.length > 0 ? evalMetrics : undefined,
-            /* printDetailedResults= */ false,
-            this.sessionService,
-            this.artifactService,
+          for await (const evalResult of new Aclosing(
+            runEvals(
+              {[evalSetId]: evalCases},
+              rootAgent,
+              resetFunc,
+              evalMetrics.length > 0 ? evalMetrics : undefined,
+              /* printDetailedResults= */ false,
+              this.sessionService,
+              this.artifactService,
+            ),
           )) {
             const sessionDetails =
               evalResult.session_details &&
@@ -1642,15 +1705,17 @@ export class AdkApiServer {
 
       const events: Event[] = [];
       try {
-        for await (const e of this.executeAgentRun({
-          appName,
-          userId,
-          sessionId,
-          newMessage,
-          stateDelta,
-          customMetadata,
-          abortSignal: abortController.signal,
-        })) {
+        for await (const e of new Aclosing(
+          this.executeAgentRun({
+            appName,
+            userId,
+            sessionId,
+            newMessage,
+            stateDelta,
+            customMetadata,
+            abortSignal: abortController.signal,
+          }),
+        )) {
           events.push(e);
         }
 
@@ -2016,18 +2081,20 @@ export class AdkApiServer {
         req.on('close', () => {
           abortController.abort();
         });
-        for await (const e of this.executeAgentRun({
-          appName,
-          userId,
-          sessionId: effectiveSessionId,
-          // `Runner.runAsync` accepts a run with no new message, which this
-          // route has always allowed.
-          newMessage: request.newMessage as Content,
-          stateDelta: request.stateDelta,
-          customMetadata: request.customMetadata,
-          runConfig: request.runConfig,
-          abortSignal: abortController.signal,
-        })) {
+        for await (const e of new Aclosing(
+          this.executeAgentRun({
+            appName,
+            userId,
+            sessionId: effectiveSessionId,
+            // `Runner.runAsync` accepts a run with no new message, which this
+            // route has always allowed.
+            newMessage: request.newMessage as Content,
+            stateDelta: request.stateDelta,
+            customMetadata: request.customMetadata,
+            runConfig: request.runConfig,
+            abortSignal: abortController.signal,
+          }),
+        )) {
           events.push(e);
         }
         res.json({output: events});
@@ -2084,17 +2151,19 @@ export class AdkApiServer {
               res.setHeader('Cache-Control', 'no-cache');
             }
           };
-          for await (const event of this.executeAgentRun({
-            appName,
-            userId,
-            sessionId: session.id,
-            // `Runner.runAsync` accepts a run with no new message.
-            newMessage: request.newMessage as Content,
-            stateDelta: request.stateDelta,
-            customMetadata: request.customMetadata,
-            runConfig: request.runConfig,
-            abortSignal: abortController.signal,
-          })) {
+          for await (const event of new Aclosing(
+            this.executeAgentRun({
+              appName,
+              userId,
+              sessionId: session.id,
+              // `Runner.runAsync` accepts a run with no new message.
+              newMessage: request.newMessage as Content,
+              stateDelta: request.stateDelta,
+              customMetadata: request.customMetadata,
+              runConfig: request.runConfig,
+              abortSignal: abortController.signal,
+            }),
+          )) {
             startStream();
             res.write(`${JSON.stringify(event)}\n`);
           }
@@ -2160,18 +2229,20 @@ export class AdkApiServer {
         res.setHeader('Connection', 'keep-alive');
         res.flushHeaders();
 
-        for await (const event of this.executeAgentRun({
-          appName,
-          userId,
-          sessionId,
-          newMessage,
-          stateDelta,
-          customMetadata,
-          runConfig: {
-            streamingMode: streaming ? StreamingMode.SSE : StreamingMode.NONE,
-          },
-          abortSignal: abortController.signal,
-        })) {
+        for await (const event of new Aclosing(
+          this.executeAgentRun({
+            appName,
+            userId,
+            sessionId,
+            newMessage,
+            stateDelta,
+            customMetadata,
+            runConfig: {
+              streamingMode: streaming ? StreamingMode.SSE : StreamingMode.NONE,
+            },
+            abortSignal: abortController.signal,
+          }),
+        )) {
           res.write(`data: ${JSON.stringify(event)}\n\n`);
         }
 
@@ -2480,12 +2551,14 @@ export class AdkApiServer {
 
       this.beginRunnerRun(runner);
       try {
-        for await (const event of runner.runLive({
-          userId: session.userId,
-          sessionId: session.id,
-          liveRequestQueue,
-          runConfig,
-        })) {
+        for await (const event of new Aclosing(
+          runner.runLive({
+            userId: session.userId,
+            sessionId: session.id,
+            liveRequestQueue,
+            runConfig,
+          }),
+        )) {
           sendWsText(JSON.stringify(publicEvent(event)));
         }
       } finally {
@@ -2674,15 +2747,17 @@ export class AdkApiServer {
     try {
       // Every run endpoint streams through here, so events leave without
       // ADK-internal customMetadata.
-      for await (const event of runner.runAsync({
-        userId: options.userId,
-        sessionId: options.sessionId,
-        newMessage: options.newMessage,
-        runConfig: options.runConfig,
-        stateDelta: options.stateDelta,
-        customMetadata: options.customMetadata,
-        abortSignal: options.abortSignal,
-      })) {
+      for await (const event of new Aclosing(
+        runner.runAsync({
+          userId: options.userId,
+          sessionId: options.sessionId,
+          newMessage: options.newMessage,
+          runConfig: options.runConfig,
+          stateDelta: options.stateDelta,
+          customMetadata: options.customMetadata,
+          abortSignal: options.abortSignal,
+        }),
+      )) {
         yield publicEvent(event);
       }
     } finally {

@@ -25,6 +25,7 @@ import {createEventActions} from '../../events/event_actions.js';
 import {LlmRequest} from '../../models/llm_request.js';
 import {LlmResponse} from '../../models/llm_response.js';
 import {State} from '../../sessions/state.js';
+import {Aclosing} from '../../utils/context_utils.js';
 import {base64Decode, base64Encode} from '../../utils/env_aware_utils.js';
 import {InvocationContext, requireAgent} from '../invocation_context.js';
 import {isLlmAgent} from '../llm_agent.js';
@@ -49,7 +50,9 @@ export class CodeExecutionRequestProcessor extends BaseLlmRequestProcessor {
       return;
     }
 
-    for await (const event of runPreProcessor(invocationContext, llmRequest)) {
+    for await (const event of new Aclosing(
+      runPreProcessor(invocationContext, llmRequest),
+    )) {
       yield event;
     }
 
@@ -159,9 +162,8 @@ export class CodeExecutionResponseProcessor implements BaseLlmResponseProcessor 
     }
 
     // Run the post-processor with standard generator approach
-    for await (const event of runPostProcessor(
-      invocationContext,
-      llmResponse,
+    for await (const event of new Aclosing(
+      runPostProcessor(invocationContext, llmResponse),
     )) {
       yield event;
     }

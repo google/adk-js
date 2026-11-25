@@ -4,10 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {Context} from '../agents/context.js';
 import {ReadonlyContext} from '../agents/readonly_context.js';
 import {LlmRequest} from '../models/llm_request.js';
 
-import {Context} from '../agents/context.js';
 import {BaseTool} from './base_tool.js';
 
 /**
@@ -19,11 +19,74 @@ export type ToolPredicate = {
 }['bivariance'];
 
 /**
- * A unique symbol to identify ADK agent classes.
- * Defined once and shared by all BaseTool instances.
+ * Configuration options for {@link BaseToolset}.
+ */
+export interface BaseToolsetOptions {
+  /**
+   * Filter selecting which tools from the toolset are exposed to the LLM.
+   */
+  toolFilter?: ToolPredicate | string[];
+
+  /**
+   * Prefix prepended as `${toolNamePrefix}_` to tool names returned by
+   * {@link BaseToolset.getToolsWithPrefix}.
+   */
+  toolNamePrefix?: string;
+
+  /**
+   * Legacy prefix used by subclasses that prepend prefixes inside
+   * {@link BaseToolset.getTools}. Kept separate from {@link toolNamePrefix} so
+   * subclass-prefixed tools are not prefixed twice.
+   */
+  prefix?: string;
+}
+
+function isBaseToolsetOptions(
+  value: ToolPredicate | string[] | BaseToolsetOptions | undefined,
+): value is BaseToolsetOptions {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function createPrefixedTool(tool: BaseTool, prefixedName: string): BaseTool {
+  return new Proxy(tool, {
+    get(target, prop, receiver) {
+      if (prop === 'name') {
+        return prefixedName;
+      }
+      if (prop === '_getDeclaration') {
+        return () => {
+          const declaration = target._getDeclaration();
+          return declaration ? {...declaration, name: prefixedName} : undefined;
+        };
+      }
+      const value: unknown = Reflect.get(target, prop, receiver);
+      if (
+        typeof value === 'function' &&
+        prop !== 'constructor' &&
+        !Object.hasOwn(target, prop) &&
+        Object.prototype.toString.call(value) !==
+          '[object AsyncGeneratorFunction]'
+      ) {
+        return (...args: unknown[]) =>
+          Reflect.apply(
+            value as (...fnArgs: unknown[]) => unknown,
+            receiver,
+            args,
+          );
+      }
+      return value;
+    },
+  });
+}
+
+/**
+ * A unique symbol to identify ADK toolset instances.
  */
 const BASE_TOOLSET_SIGNATURE_SYMBOL = Symbol.for('google.adk.baseToolset');
 
+/**
+ * Type guard checking whether an object is an instance of {@link BaseToolset}.
+ */
 export function isBaseToolset(obj: unknown): obj is BaseToolset {
   return (
     typeof obj === 'object' &&
@@ -41,10 +104,31 @@ export function isBaseToolset(obj: unknown): obj is BaseToolset {
 export abstract class BaseToolset {
   readonly [BASE_TOOLSET_SIGNATURE_SYMBOL] = true;
 
+  readonly toolFilter: ToolPredicate | string[];
+  readonly prefix?: string;
+  readonly toolNamePrefix?: string;
+
+  constructor(options?: BaseToolsetOptions);
   constructor(
-    readonly toolFilter: ToolPredicate | string[] = [],
-    readonly prefix?: string,
-  ) {}
+    toolFilter?: ToolPredicate | string[],
+    prefix?: string,
+    toolNamePrefix?: string,
+  );
+  constructor(
+    toolFilterOrOptions: ToolPredicate | string[] | BaseToolsetOptions = [],
+    prefix?: string,
+    toolNamePrefix?: string,
+  ) {
+    if (isBaseToolsetOptions(toolFilterOrOptions)) {
+      this.toolFilter = toolFilterOrOptions.toolFilter ?? [];
+      this.prefix = toolFilterOrOptions.prefix;
+      this.toolNamePrefix = toolFilterOrOptions.toolNamePrefix;
+    } else {
+      this.toolFilter = toolFilterOrOptions;
+      this.prefix = prefix;
+      this.toolNamePrefix = toolNamePrefix;
+    }
+  }
 
   /**
    * Returns the tools that should be exposed to LLM.
@@ -56,16 +140,38 @@ export abstract class BaseToolset {
   abstract getTools(context?: ReadonlyContext): Promise<BaseTool[]>;
 
   /**
-   * Closes the toolset.
+   * Returns all tools from {@link getTools} with {@link toolNamePrefix} applied
+   * when configured, without mutating the underlying tool instances.
    *
-   * NOTE: This method is invoked, for example, at the end of an agent server's
-   * lifecycle or when the toolset is no longer needed. Implementations
-   * should ensure that any open connections, files, or other managed
-   * resources are properly released to prevent leaks.
+   * Subclasses should override {@link getTools} rather than this method.
+   *
+   * @param context Context used to filter tools available to the agent. If
+   *     not defined, all tools in the toolset are returned.
+   * @return A Promise that resolves to the list of tools, wrapped with prefixed
+   *     names and declarations when `toolNamePrefix` is non-empty.
+   */
+  async getToolsWithPrefix(context?: ReadonlyContext): Promise<BaseTool[]> {
+    const tools = await this.getTools(context);
+
+    if (!this.toolNamePrefix) {
+      return tools;
+    }
+
+    const prefix = this.toolNamePrefix;
+    return tools.map((tool) =>
+      createPrefixedTool(tool, `${prefix}_${tool.name}`),
+    );
+  }
+
+  /**
+   * Closes the toolset and releases any managed resources.
+   *
+   * Subclasses that hold open connections, files, or background handles should
+   * override this method; toolsets with no resources to release may omit it.
    *
    * @return A Promise that resolves when the toolset is closed.
    */
-  abstract close(): Promise<void>;
+  async close(): Promise<void> {}
 
   /**
    * Returns whether the tool should be exposed to LLM.

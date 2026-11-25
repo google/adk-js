@@ -8,10 +8,11 @@
  * Sessions (`Session`, `State`, and `InMemorySessionService`)
  * ../../docs/guides/sessions/index.md
  *
- * A deterministic `BaseAgent` that reads `ctx.session.state` and emits one
- * event whose `EventActions.stateDelta` writes four kinds of key: a session
- * key (`turnCount`), a `user:` key (`user:visits`), an `app:` key
- * (`app:totalTurns`) and a `temp:` key (`temp:lastMessage`). The session
+ * A deterministic `BaseAgent` that wraps `ctx.session.state` in `State` and
+ * emits one event whose `EventActions.stateDelta` writes across all four state
+ * scopes: a session key (`turnCount`), `user:` keys (`user:locale`, initialized
+ * once via `state.setDefault`, and `user:visits`), an `app:` key
+ * (`app:totalTurns`), and a `temp:` key (`temp:lastMessage`). The session
  * service stores each scope separately: `user:` and `app:` keys carry over to
  * a new session, the session key starts again, and the `temp:` key is never
  * stored.
@@ -42,11 +43,12 @@ import {fileURLToPath} from 'node:url';
 
 const TURN_COUNT = 'turnCount';
 const USER_VISITS = `${State.USER_PREFIX}visits`;
+const USER_LOCALE = `${State.USER_PREFIX}locale`;
 const APP_TOTAL_TURNS = `${State.APP_PREFIX}totalTurns`;
 const TEMP_LAST_MESSAGE = `${State.TEMP_PREFIX}lastMessage`;
 
-function readCount(state: Record<string, unknown>, key: string): number {
-  const value = state[key];
+function readCount(state: State, key: string): number {
+  const value = state.get(key, 0);
   return typeof value === 'number' ? value : 0;
 }
 
@@ -62,12 +64,21 @@ class SessionStateAgent extends BaseAgent {
   protected override async *runAsyncImpl(
     ctx: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    const state = ctx.session.state;
+    const actions = createEventActions();
+    const state = new State({...ctx.session.state}, actions.stateDelta);
+    const rawLocale = state.setDefault(USER_LOCALE, 'en-US');
+    const locale = typeof rawLocale === 'string' ? rawLocale : 'en-US';
     const turnCount = readCount(state, TURN_COUNT) + 1;
     const userVisits = readCount(state, USER_VISITS) + 1;
     const appTotalTurns = readCount(state, APP_TOTAL_TURNS) + 1;
     const message =
       ctx.userContent?.parts?.map((part) => part.text ?? '').join('') ?? '';
+    state.update({
+      [TURN_COUNT]: turnCount,
+      [USER_VISITS]: userVisits,
+      [APP_TOTAL_TURNS]: appTotalTurns,
+      [TEMP_LAST_MESSAGE]: message,
+    });
 
     yield createEvent({
       invocationId: ctx.invocationId,
@@ -78,20 +89,13 @@ class SessionStateAgent extends BaseAgent {
         parts: [
           {
             text:
-              `Session ${ctx.session.id}: turn ${turnCount} of this session, ` +
+              `Session ${ctx.session.id} (${locale}): turn ${turnCount} of this session, ` +
               `visit ${userVisits} for user ${ctx.session.userId}, ` +
               `turn ${appTotalTurns} for app ${ctx.appName}.`,
           },
         ],
       },
-      actions: createEventActions({
-        stateDelta: {
-          [TURN_COUNT]: turnCount,
-          [USER_VISITS]: userVisits,
-          [APP_TOTAL_TURNS]: appTotalTurns,
-          [TEMP_LAST_MESSAGE]: message,
-        },
-      }),
+      actions,
     });
   }
 

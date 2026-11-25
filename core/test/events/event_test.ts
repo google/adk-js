@@ -418,6 +418,29 @@ describe('Event Utils', () => {
         input: {userId: 42, camelKey: 'v'},
       });
     });
+
+    it('round-trips actions.setModelResponse without mangling camelCase or snake_case schema keys', () => {
+      const structuredPayload = {
+        firstName: 'Ada',
+        account_id: 'acc-1',
+        nestedItem: {snake_flag: true, camelCount: 3},
+      };
+      const original = createEvent({
+        id: '123',
+        invocationId: 'inv1',
+        actions: createEventActions({
+          setModelResponse: structuredPayload,
+        }),
+      });
+
+      const snakeEvent = transformToSnakeCaseEvent(original);
+      expect(
+        (snakeEvent.actions as Record<string, unknown>)['set_model_response'],
+      ).toEqual(structuredPayload);
+
+      const restored = transformToCamelCaseEvent(snakeEvent);
+      expect(restored.actions?.setModelResponse).toEqual(structuredPayload);
+    });
   });
 
   describe('generateClientFunctionCallId', () => {

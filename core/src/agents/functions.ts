@@ -36,6 +36,7 @@ import {isComputerUseTool} from '../tools/computer_use/computer_use_tool.js';
 import {CallLiveToolRequest, isFunctionTool} from '../tools/function_tool.js';
 import {ResumeInputs} from '../tools/resume_inputs.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
+import {Aclosing} from '../utils/context_utils.js';
 import {logger} from '../utils/logger.js';
 import {Task} from '../utils/task.js';
 import {ActiveStreamingTool} from './active_streaming_tool.js';
@@ -1035,7 +1036,7 @@ async function* callToolLive({
     toolContext,
     invocationContext,
   });
-  for await (const result of results) {
+  for await (const result of new Aclosing(results)) {
     yield result;
   }
 }
@@ -1131,12 +1132,14 @@ async function processFunctionLiveHelper({
   } else if (isStreamingTool(tool)) {
     // Case 2: the function is an async generator function (streaming tool).
     const task = new Task<void>(async (abortSignal) => {
-      const generator = callToolLive({
-        tool,
-        args: functionArgs,
-        toolContext,
-        invocationContext,
-      });
+      const generator = new Aclosing(
+        callToolLive({
+          tool,
+          args: functionArgs,
+          toolContext,
+          invocationContext,
+        }),
+      );
       let abortCleanup: (() => void) | undefined;
       const abortPromise = new Promise<IteratorResult<unknown, void>>(
         (resolve) => {
@@ -1170,7 +1173,14 @@ async function processFunctionLiveHelper({
       } finally {
         abortCleanup?.();
         if (abortSignal.aborted) {
-          void generator.return?.(undefined);
+          void generator.close().catch((err: unknown) => {
+            logger.debug(
+              'Error closing aborted streaming tool generator:',
+              err,
+            );
+          });
+        } else {
+          await generator.close();
         }
       }
     });

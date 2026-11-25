@@ -63,6 +63,7 @@
     "@anthropic-ai/vertex-sdk": "^1.0.0",
     "@google-cloud/bigquery": "^9.2.0",
     "@google-cloud/bigquery-storage": "^6.1.0",
+    "@google-cloud/spanner": "^9.1.0",
     "@google-cloud/storage": "^7.17.1"
   },
   "peerDependencies": {
@@ -70,6 +71,7 @@
     "@anthropic-ai/vertex-sdk": "^1.0.0",
     "@google-cloud/bigquery": "^9.2.0",
     "@google-cloud/bigquery-storage": "^6.1.0",
+    "@google-cloud/spanner": "^9.1.0",
     "@google-cloud/storage": "^7.17.1"
   },
   "peerDependenciesMeta": {
@@ -83,6 +85,9 @@
       "optional": true
     },
     "@google-cloud/bigquery-storage": {
+      "optional": true
+    },
+    "@google-cloud/spanner": {
       "optional": true
     },
     "@google-cloud/storage": {

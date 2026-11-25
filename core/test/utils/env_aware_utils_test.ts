@@ -17,9 +17,12 @@ import {randomUUID as shimRandomUUID} from '../../src/utils/crypto_shim.js';
 import {
   base64Decode,
   base64Encode,
+  EXPERIMENTAL_WARNING_SUPPRESSION_ENV_VAR,
   getBooleanEnvVar,
   getEnvVar,
   isBase64Encoded,
+  isEnvEnabled,
+  isExperimentalWarningSuppressed,
   randomUUID,
 } from '../../src/utils/env_aware_utils.js';
 import type {Logger} from '../../src/utils/logger.js';
@@ -121,6 +124,113 @@ describe('env_aware_utils', () => {
     it('should return false without a process global', () => {
       process.env = {...originalEnv, 'TEST_VAR': 'true'};
       expect(withoutProcess(() => getBooleanEnvVar('TEST_VAR'))).toBe(false);
+    });
+
+    it.each(['yes', 'on', ' true '])(
+      'keeps strict parsing and returns false for %j',
+      (value) => {
+        process.env = {...originalEnv, 'TEST_VAR': value};
+        expect(getBooleanEnvVar('TEST_VAR')).toBe(false);
+      },
+    );
+  });
+
+  describe('isEnvEnabled', () => {
+    const originalEnv = process.env;
+
+    afterEach(() => {
+      process.env = originalEnv;
+    });
+
+    it.each([
+      '1',
+      'true',
+      'True',
+      'TRUE',
+      'yes',
+      'Yes',
+      'YES',
+      'on',
+      'On',
+      'ON',
+      ' true ',
+      '\ton\n',
+    ])('returns true when set to %j', (value) => {
+      process.env = {...originalEnv, 'TEST_FLAG': value};
+      expect(isEnvEnabled('TEST_FLAG')).toBe(true);
+    });
+
+    it.each(['0', 'false', 'False', 'FALSE', 'no', 'off', '', '   ', 'maybe'])(
+      'returns false when set to %j',
+      (value) => {
+        process.env = {...originalEnv, 'TEST_FLAG': value};
+        expect(isEnvEnabled('TEST_FLAG')).toBe(false);
+      },
+    );
+
+    it('uses defaultValue only when the variable is unset', () => {
+      const cleanEnv = {...originalEnv};
+      delete cleanEnv['UNSET_FLAG'];
+      process.env = cleanEnv;
+      expect(isEnvEnabled('UNSET_FLAG')).toBe(false);
+      expect(isEnvEnabled('UNSET_FLAG', '1')).toBe(true);
+      expect(isEnvEnabled('UNSET_FLAG', ' true ')).toBe(true);
+
+      process.env = {...cleanEnv, 'SET_FLAG': '0'};
+      expect(isEnvEnabled('SET_FLAG', '1')).toBe(false);
+
+      process.env = {...cleanEnv, 'SET_EMPTY_FLAG': ''};
+      expect(isEnvEnabled('SET_EMPTY_FLAG', '1')).toBe(false);
+    });
+
+    it('falls back to defaultValue without a process global', () => {
+      process.env = {...originalEnv, 'TEST_FLAG': 'true'};
+      expect(withoutProcess(() => isEnvEnabled('TEST_FLAG'))).toBe(false);
+      expect(withoutProcess(() => isEnvEnabled('TEST_FLAG', 'yes'))).toBe(true);
+    });
+  });
+
+  describe('isExperimentalWarningSuppressed', () => {
+    const originalEnv = process.env;
+
+    afterEach(() => {
+      process.env = originalEnv;
+    });
+
+    it('reads ADK_SUPPRESS_EXPERIMENTAL_FEATURE_WARNINGS', () => {
+      expect(EXPERIMENTAL_WARNING_SUPPRESSION_ENV_VAR).toBe(
+        'ADK_SUPPRESS_EXPERIMENTAL_FEATURE_WARNINGS',
+      );
+      const cleanEnv = {...originalEnv};
+      delete cleanEnv[EXPERIMENTAL_WARNING_SUPPRESSION_ENV_VAR];
+      process.env = cleanEnv;
+      expect(isExperimentalWarningSuppressed()).toBe(false);
+
+      for (const value of ['1', 'true', 'yes', 'on', ' TRUE ']) {
+        process.env = {
+          ...cleanEnv,
+          [EXPERIMENTAL_WARNING_SUPPRESSION_ENV_VAR]: value,
+        };
+        expect(isExperimentalWarningSuppressed()).toBe(true);
+      }
+
+      for (const value of ['0', 'false', 'no', 'off', '']) {
+        process.env = {
+          ...cleanEnv,
+          [EXPERIMENTAL_WARNING_SUPPRESSION_ENV_VAR]: value,
+        };
+        expect(isExperimentalWarningSuppressed()).toBe(false);
+      }
+    });
+
+    it('returns false without a process global', () => {
+      process.env = {
+        ...originalEnv,
+        [EXPERIMENTAL_WARNING_SUPPRESSION_ENV_VAR]: 'true',
+      };
+      expect(withoutProcess(() => isExperimentalWarningSuppressed())).toBe(
+        false,
+      );
     });
   });
 

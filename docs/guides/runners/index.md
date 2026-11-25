@@ -101,10 +101,16 @@ the same sentence repeatedly, so only the completed event reaches the session.
 
 The invocation runs inside an OpenTelemetry span named
 `invoke_workflow <entrypoint name>`. Plugin callbacks run within this telemetry
-scope. When the `runAsync` generator finishes, including when the caller closes
-it early, the runner calls `await this.close()` to close every `BaseToolset`
-reachable across the root agent, sub-agents, and workflow nodes with a
-10-second per-toolset timeout. `afterRunCallback` finishes before this cleanup.
+scope. `Runner` consumes the root agent or workflow stream (`runRoot`,
+`agent.runAsync`, `runNodeAsInvocation`, and `agent.runLive`) through
+`Aclosing`, so early iterator exit, cancellation, callback errors, or `next()`
+rejections deterministically await `return(undefined)` on the underlying async
+generator and end active `invoke_agent` spans, while outer `yield*` scopes
+preserve `generator.throw(err)` error propagation to `onRunErrorCallback`. When
+the `runAsync` generator finishes, including when the caller closes it early,
+the runner calls `await this.close()` to close every `BaseToolset` reachable
+across the root agent, sub-agents, and workflow nodes with a 10-second
+per-toolset timeout. `afterRunCallback` finishes before this cleanup.
 
 ### Plugin completion and errors
 

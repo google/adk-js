@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {experimental} from '../../src/utils/experimental.js';
 import {Logger, resetLogger, setLogger} from '../../src/utils/logger.js';
 
@@ -24,10 +24,12 @@ describe('experimental decorator', () => {
 
   beforeEach(() => {
     warnCalls = [];
+    vi.stubEnv('ADK_SUPPRESS_EXPERIMENTAL_FEATURE_WARNINGS', undefined);
     setLogger(mockLogger);
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     resetLogger();
   });
 
@@ -73,6 +75,66 @@ describe('experimental decorator', () => {
       const instance = new ArgClass(42);
       expect(instance.value).toBe(42);
     });
+
+    it('suppresses warnings for truthy ADK_SUPPRESS_EXPERIMENTAL_FEATURE_WARNINGS values and warns once cleared', () => {
+      @experimental
+      class SuppressedExperimentalClass {
+        run(): string {
+          return 'running experimental';
+        }
+      }
+
+      for (const truthyValue of [
+        'true',
+        'True',
+        'TRUE',
+        '1',
+        'yes',
+        'YES',
+        'on',
+        'ON',
+        ' true ',
+      ]) {
+        vi.stubEnv('ADK_SUPPRESS_EXPERIMENTAL_FEATURE_WARNINGS', truthyValue);
+        const instance = new SuppressedExperimentalClass();
+        expect(instance.run()).toBe('running experimental');
+        expect(warnCalls).toHaveLength(0);
+      }
+
+      vi.stubEnv('ADK_SUPPRESS_EXPERIMENTAL_FEATURE_WARNINGS', undefined);
+      new SuppressedExperimentalClass();
+      new SuppressedExperimentalClass();
+      expect(warnCalls).toHaveLength(1);
+      expect(warnCalls[0]).toContain(
+        'Class SuppressedExperimentalClass is experimental',
+      );
+    });
+
+    it.each([
+      ['false', 'FalsyFalseClass'],
+      ['False', 'FalsyTitleFalseClass'],
+      ['FALSE', 'FalsyUpperFalseClass'],
+      ['0', 'FalsyZeroClass'],
+      ['', 'FalsyEmptyClass'],
+      ['no', 'FalsyNoClass'],
+      ['off', 'FalsyOffClass'],
+    ])(
+      'still warns when ADK_SUPPRESS_EXPERIMENTAL_FEATURE_WARNINGS is %j',
+      (falsyValue, className) => {
+        vi.stubEnv('ADK_SUPPRESS_EXPERIMENTAL_FEATURE_WARNINGS', falsyValue);
+        class CandidateClass {}
+        Object.defineProperty(CandidateClass, 'name', {
+          value: className,
+          configurable: true,
+        });
+        const DecoratedClass = experimental(CandidateClass);
+
+        new DecoratedClass();
+
+        expect(warnCalls).toHaveLength(1);
+        expect(warnCalls[0]).toContain(`Class ${className} is experimental`);
+      },
+    );
   });
 
   describe('method decorator', () => {
@@ -136,5 +198,93 @@ describe('experimental decorator', () => {
       const result = instance.add(2, 3);
       expect(result).toBe(5);
     });
+
+    it('suppresses instance and static method warnings for truthy ADK_SUPPRESS_EXPERIMENTAL_FEATURE_WARNINGS values and warns once cleared', () => {
+      class SuppressedMethodClass {
+        @experimental
+        run(): string {
+          return 'executing';
+        }
+
+        @experimental
+        static runStatic(): string {
+          return 'executing static';
+        }
+      }
+
+      const instance = new SuppressedMethodClass();
+      for (const truthyValue of [
+        'true',
+        'True',
+        'TRUE',
+        '1',
+        'yes',
+        'YES',
+        'on',
+        'ON',
+        ' true ',
+      ]) {
+        vi.stubEnv('ADK_SUPPRESS_EXPERIMENTAL_FEATURE_WARNINGS', truthyValue);
+        expect(instance.run()).toBe('executing');
+        expect(SuppressedMethodClass.runStatic()).toBe('executing static');
+        expect(warnCalls).toHaveLength(0);
+      }
+
+      vi.stubEnv('ADK_SUPPRESS_EXPERIMENTAL_FEATURE_WARNINGS', undefined);
+      instance.run();
+      instance.run();
+      SuppressedMethodClass.runStatic();
+      SuppressedMethodClass.runStatic();
+      expect(warnCalls).toHaveLength(2);
+      expect(warnCalls[0]).toContain(
+        'Method SuppressedMethodClass.run is experimental',
+      );
+      expect(warnCalls[1]).toContain(
+        'Method SuppressedMethodClass.runStatic is experimental',
+      );
+    });
+
+    it.each([
+      ['false', 'FalsyFalseMethodHost'],
+      ['False', 'FalsyTitleFalseMethodHost'],
+      ['FALSE', 'FalsyUpperFalseMethodHost'],
+      ['0', 'FalsyZeroMethodHost'],
+      ['', 'FalsyEmptyMethodHost'],
+      ['no', 'FalsyNoMethodHost'],
+      ['off', 'FalsyOffMethodHost'],
+    ])(
+      'still warns on methods when ADK_SUPPRESS_EXPERIMENTAL_FEATURE_WARNINGS is %j',
+      (falsyValue, hostName) => {
+        vi.stubEnv('ADK_SUPPRESS_EXPERIMENTAL_FEATURE_WARNINGS', falsyValue);
+        class CandidateHost {
+          run(): string {
+            return 'executing';
+          }
+        }
+        Object.defineProperty(CandidateHost, 'name', {
+          value: hostName,
+          configurable: true,
+        });
+        const descriptor = Object.getOwnPropertyDescriptor(
+          CandidateHost.prototype,
+          'run',
+        );
+        expect(descriptor).toBeDefined();
+        if (descriptor) {
+          Object.defineProperty(
+            CandidateHost.prototype,
+            'run',
+            experimental(CandidateHost.prototype, 'run', descriptor),
+          );
+        }
+
+        const instance = new CandidateHost();
+        expect(instance.run()).toBe('executing');
+        expect(warnCalls).toHaveLength(1);
+        expect(warnCalls[0]).toContain(
+          `Method ${hostName}.run is experimental`,
+        );
+      },
+    );
   });
 });

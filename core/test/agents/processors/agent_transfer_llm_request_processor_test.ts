@@ -7,14 +7,22 @@
 import {
   AgentTransferLlmRequestProcessor,
   BaseAgent,
+  BaseLlmRequestProcessor,
   Context,
   createSession,
+  Event,
+  FunctionTool,
   InvocationContext,
+  isAgentTransferLlmRequestProcessor,
   LlmAgent,
   LlmRequest,
   PluginManager,
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
+import {
+  getTransferTargets,
+  hasFunctionTools,
+} from '../../../src/agents/processors/agent_transfer_llm_request_processor.js';
 
 const AGENT_TRANSFER_LLM_REQUEST_PROCESSOR =
   new AgentTransferLlmRequestProcessor();
@@ -338,5 +346,118 @@ describe('AgentTransferLlmRequestProcessor', () => {
       }),
     ).rejects.toThrow();
     expect(toolContext.actions.transferToAgent).toBeUndefined();
+  });
+
+  it('identifies AgentTransferLlmRequestProcessor instances with isAgentTransferLlmRequestProcessor', () => {
+    class NoopRequestProcessor extends BaseLlmRequestProcessor {
+      async *runAsync(): AsyncGenerator<Event, void, void> {
+        yield* [];
+      }
+    }
+
+    expect(
+      isAgentTransferLlmRequestProcessor(
+        new AgentTransferLlmRequestProcessor(),
+      ),
+    ).toBe(true);
+    expect(isAgentTransferLlmRequestProcessor(new NoopRequestProcessor())).toBe(
+      false,
+    );
+    expect(isAgentTransferLlmRequestProcessor({})).toBe(false);
+    expect(isAgentTransferLlmRequestProcessor(null)).toBe(false);
+  });
+
+  it('returns reachable sub-agents, parent, and peers from getTransferTargets', () => {
+    const childAgent = new LlmAgent({
+      name: 'childAgent',
+      model: 'gemini-flash-latest',
+    });
+    const activeAgent = new LlmAgent({
+      name: 'activeAgent',
+      model: 'gemini-flash-latest',
+      subAgents: [childAgent],
+    });
+    const peerAgent = new LlmAgent({
+      name: 'peerAgent',
+      model: 'gemini-flash-latest',
+    });
+    const parentAgent = new LlmAgent({
+      name: 'parentAgent',
+      model: 'gemini-flash-latest',
+      subAgents: [activeAgent, peerAgent],
+    });
+
+    expect(getTransferTargets(activeAgent)).toEqual([
+      childAgent,
+      parentAgent,
+      peerAgent,
+    ]);
+
+    const isolatedAgent = new LlmAgent({
+      name: 'isolatedAgent',
+      model: 'gemini-flash-latest',
+      disallowTransferToParent: true,
+      disallowTransferToPeers: true,
+    });
+    expect(getTransferTargets(isolatedAgent)).toEqual([]);
+  });
+
+  it('reports whether an agent declares function tools or transfer targets via hasFunctionTools', () => {
+    const lookupTool = new FunctionTool({
+      name: 'lookupItem',
+      description: 'Looks up an item.',
+      execute: () => 'ok',
+    });
+
+    const toolOnlyAgent = new LlmAgent({
+      name: 'toolOnlyAgent',
+      model: 'gemini-flash-latest',
+      disallowTransferToParent: true,
+      disallowTransferToPeers: true,
+      tools: [lookupTool],
+    });
+    expect(hasFunctionTools(toolOnlyAgent)).toBe(true);
+
+    const subAgent = new LlmAgent({
+      name: 'specialistAgent',
+      model: 'gemini-flash-latest',
+    });
+    const delegatingAgent = new LlmAgent({
+      name: 'delegatingAgent',
+      model: 'gemini-flash-latest',
+      subAgents: [subAgent],
+    });
+    expect(hasFunctionTools(delegatingAgent)).toBe(true);
+
+    const plainAgent = new LlmAgent({
+      name: 'plainAgent',
+      model: 'gemini-flash-latest',
+      disallowTransferToParent: true,
+      disallowTransferToPeers: true,
+    });
+    expect(hasFunctionTools(plainAgent)).toBe(false);
+
+    class CustomRequestProcessor extends BaseLlmRequestProcessor {
+      async *runAsync(): AsyncGenerator<Event, void, void> {
+        yield* [];
+      }
+    }
+    const customProcessorAgent = new LlmAgent({
+      name: 'customProcessorAgent',
+      model: 'gemini-flash-latest',
+      disallowTransferToParent: true,
+      disallowTransferToPeers: true,
+      requestProcessors: [new CustomRequestProcessor()],
+      subAgents: [
+        new LlmAgent({
+          name: 'unreachableWithoutTransferProcessor',
+          model: 'gemini-flash-latest',
+        }),
+      ],
+    });
+    // `LlmAgent` appends `AGENT_TRANSFER_LLM_REQUEST_PROCESSOR` when subAgents
+    // exist; removing it verifies `hasFunctionTools` checks the active chain.
+    customProcessorAgent.requestProcessors = [new CustomRequestProcessor()];
+    expect(hasFunctionTools(customProcessorAgent)).toBe(false);
   });
 });

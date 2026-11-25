@@ -298,6 +298,48 @@ describe('BasicLlmRequestProcessor', () => {
       expect(llmRequest.config?.responseSchema).toBeUndefined();
       expect(llmRequest.config?.responseMimeType).toBeUndefined();
     });
+
+    it('should not set outputSchema when agent has subAgents and no tools outside Vertex AI', async () => {
+      vi.stubEnv(VERTEX_ENV_VAR, undefined);
+
+      const childAgent = new LlmAgent({
+        name: 'childAgent',
+        model: new TestLlmModel({model: 'gemini-2.5-flash'}),
+      });
+      const agent = new LlmAgent({
+        name: 'routerAgent',
+        model: new TestLlmModel({model: 'gemini-2.5-flash'}),
+        outputSchema: OUTPUT_SCHEMA,
+        subAgents: [childAgent],
+      });
+      const llmRequest = makeLlmRequest();
+
+      await runProcessor(createMockInvocationContext(agent), llmRequest);
+
+      expect(llmRequest.config?.responseSchema).toBeUndefined();
+      expect(llmRequest.config?.responseMimeType).toBeUndefined();
+    });
+
+    it('should set outputSchema when agent has subAgents and no tools on Vertex AI Gemini 2.0+', async () => {
+      vi.stubEnv(VERTEX_ENV_VAR, 'true');
+
+      const childAgent = new LlmAgent({
+        name: 'childAgent',
+        model: new TestLlmModel({model: 'gemini-2.5-flash'}),
+      });
+      const agent = new LlmAgent({
+        name: 'routerAgent',
+        model: new TestLlmModel({model: 'gemini-2.5-flash'}),
+        outputSchema: OUTPUT_SCHEMA,
+        subAgents: [childAgent],
+      });
+      const llmRequest = makeLlmRequest();
+
+      await runProcessor(createMockInvocationContext(agent), llmRequest);
+
+      expect(llmRequest.config?.responseSchema).toBeDefined();
+      expect(llmRequest.config?.responseMimeType).toBe('application/json');
+    });
   });
 
   it('should populate liveConnectConfig from runConfig', async () => {

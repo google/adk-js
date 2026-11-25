@@ -10,13 +10,13 @@ Google APIs publish Discovery documents rather than OpenAPI v3 specifications. T
 
 The subsystem exposes nine toolset and tool classes:
 
-| Export                                                                                                                  | Purpose                                                                                                                                                              |
-| :---------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GoogleApiToolset`                                                                                                      | Loads a Google API specification, filters operations exposed to an agent, and configures OAuth 2.0 client or service account credentials.                             |
-| `CalendarToolset`, `BigQueryToolset`, `GmailToolset`, `YoutubeToolset`, `SlidesToolset`, `SheetsToolset`, `DocsToolset` | Service-specific `GoogleApiToolset` subclasses that construct isolated toolset instances with `{clientId, clientSecret, serviceAccount, toolFilter}` options.        |
-| `GoogleApiTool`                                                                                                         | Wraps a single `RestApiTool` and accepts `{clientId, clientSecret, serviceAccount}` in its constructor or via `configureAuth(...)` and `configureSaAuth(...)`.       |
+| Export                                                                                                                  | Purpose                                                                                                                                                                               |
+| :---------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GoogleApiToolset`                                                                                                      | Loads a Google API specification, filters operations exposed to an agent, and configures OAuth 2.0 client or service account credentials.                                             |
+| `CalendarToolset`, `BigQueryToolset`, `GmailToolset`, `YoutubeToolset`, `SlidesToolset`, `SheetsToolset`, `DocsToolset` | Service-specific `GoogleApiToolset` subclasses that construct isolated toolset instances with `{clientId, clientSecret, serviceAccount, scopes, toolFilter, toolNamePrefix}` options. |
+| `GoogleApiTool`                                                                                                         | Wraps a single `RestApiTool` and accepts `{clientId, clientSecret, serviceAccount}` in its constructor or via `configureAuth(...)` and `configureSaAuth(...)`.                        |
 
-All classes in this subsystem carry the `@experimental` decorator and log a one-time warning when instantiated or called.
+All classes in this subsystem carry the `@experimental` decorator and log a one-time warning when instantiated or called unless `ADK_SUPPRESS_EXPERIMENTAL_FEATURE_WARNINGS` is set to `'1'`, `'true'`, `'yes'`, or `'on'`.
 
 ## Get started
 
@@ -46,7 +46,7 @@ When an agent resolves tools from a `GoogleApiToolset`, two stages run in sequen
 
 ### 1. Discovery conversion and OpenID Connect creation
 
-When `getTools()` is called, `GoogleApiToolset` fetches the Discovery document from `https://www.googleapis.com/discovery/v1/apis/{apiName}/{apiVersion}/rest`. It translates the document into OpenAPI v3.0.0 format, selects the first declared OAuth 2.0 scope, and initializes an `OpenAPIToolset` with Google OpenID Connect authentication endpoints. Each Discovery operation `id` is converted to `snake_case`, so `calendar.calendars.get` becomes `calendar_calendars_get`.
+When `getTools()` is called, `GoogleApiToolset` fetches the Discovery document from `https://www.googleapis.com/discovery/v1/apis/{apiName}/{apiVersion}/rest`. It translates the document into OpenAPI v3.0.0 format, uses `options.scopes` when provided or otherwise selects the first declared OAuth 2.0 scope, and initializes an `OpenAPIToolset` with Google OpenID Connect authentication endpoints. Each Discovery operation `id` is converted to `snake_case`, so `calendar.calendars.get` becomes `calendar_calendars_get`.
 
 ### 2. Lazy loading and credential propagation
 
@@ -58,16 +58,18 @@ When `getTools()` is called, `GoogleApiToolset` fetches the Discovery document f
 
 `new GoogleApiToolset(options)` and the seven service-specific toolset classes accept a `GoogleApiToolsetOptions` object.
 
-| Option           | Type                        | Default     | Description                                                                               |
-| :--------------- | :-------------------------- | :---------- | :---------------------------------------------------------------------------------------- |
-| `apiName`        | `string`                    | `undefined` | Google Discovery API identifier, such as `'calendar'` or `'gmail'`.                       |
-| `apiVersion`     | `string`                    | `undefined` | Google Discovery API version string, such as `'v3'` or `'v1'`.                            |
-| `clientId`       | `string`                    | `undefined` | OAuth 2.0 client ID applied to every `GoogleApiTool` in the toolset.                      |
-| `clientSecret`   | `string`                    | `undefined` | OAuth 2.0 client secret applied to every `GoogleApiTool` in the toolset.                  |
-| `serviceAccount` | `ServiceAccount`            | `undefined` | Google service account configuration applied to every `GoogleApiTool` in the toolset.     |
-| `toolFilter`     | `ToolPredicate \| string[]` | `[]`        | Selects which tools `getTools()` exposes to the agent. An empty array exposes every tool. |
+| Option           | Type                        | Default     | Description                                                                                                                  |
+| :--------------- | :-------------------------- | :---------- | :--------------------------------------------------------------------------------------------------------------------------- |
+| `apiName`        | `string`                    | `undefined` | Google Discovery API identifier, such as `'calendar'` or `'gmail'`.                                                          |
+| `apiVersion`     | `string`                    | `undefined` | Google Discovery API version string, such as `'v3'` or `'v1'`.                                                               |
+| `clientId`       | `string`                    | `undefined` | OAuth 2.0 client ID applied to every `GoogleApiTool` in the toolset.                                                         |
+| `clientSecret`   | `string`                    | `undefined` | OAuth 2.0 client secret applied to every `GoogleApiTool` in the toolset.                                                     |
+| `serviceAccount` | `ServiceAccount`            | `undefined` | Google service account configuration applied to every `GoogleApiTool` in the toolset.                                        |
+| `scopes`         | `string[]`                  | `undefined` | Custom OAuth 2.0 scopes for the OpenID Connect scheme; defaults to the first Discovery scope when omitted.                   |
+| `toolFilter`     | `ToolPredicate \| string[]` | `[]`        | Selects which tools `getTools()` exposes to the agent. An empty array exposes every tool.                                    |
+| `toolNamePrefix` | `string`                    | `undefined` | Prefix prepended as `${toolNamePrefix}_` to tool names and declarations returned by `getToolsWithPrefix()` (used by agents). |
 
-`toolFilter` accepts an array of tool names or a `(tool, readonlyContext?) => boolean` predicate function. It can be updated at runtime with `setToolFilter(toolFilter)`.
+`toolFilter` accepts an array of unprefixed tool names or a `(tool, readonlyContext?) => boolean` predicate function. It can be updated at runtime with `setToolFilter(toolFilter)`. When `toolNamePrefix` is set, `getTools()` continues returning unprefixed `GoogleApiTool` instances while `getToolsWithPrefix()` wraps each selected tool non-mutatingly as `${toolNamePrefix}_${tool.name}`.
 
 ### GoogleApiToolOptions
 
@@ -111,7 +113,7 @@ const driveToolset = new GoogleApiToolset({
 ## Limitations
 
 - **Node.js entry point only.** `google_api_tool` is exported from the Node entry point of `@google/adk`, not from the browser bundle `@google/adk/web`.
-- **First scope selection.** `GoogleApiToolset` selects the first OAuth 2.0 scope declared in the Discovery document.
+- **Default scope selection.** When `scopes` is omitted, `GoogleApiToolset` selects only the first OAuth 2.0 scope declared in the Discovery document; pass `scopes` explicitly when your operations require narrower or multiple scopes.
 
 ## Related samples
 

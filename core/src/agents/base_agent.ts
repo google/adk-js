@@ -9,6 +9,7 @@ import {Content} from '@google/genai';
 import {createEvent, Event} from '../events/event.js';
 
 import {recordAgentInvocation} from '../telemetry/api/instrumentation.js';
+import {Aclosing} from '../utils/context_utils.js';
 import {isInvocationCancellation, toError} from '../utils/error_utils.js';
 import {logger} from '../utils/logger.js';
 import {BaseNode, BaseNodeConfig} from '../workflow/base_node.js';
@@ -268,7 +269,9 @@ export abstract class BaseAgent<
             return;
           }
 
-          for await (const event of agentCtx.runAsyncImpl(context)) {
+          for await (const event of new Aclosing(
+            agentCtx.runAsyncImpl(context),
+          )) {
             yield event;
           }
 
@@ -347,7 +350,9 @@ export abstract class BaseAgent<
             return;
           }
 
-          for await (const event of agentCtx.runLiveImpl(context)) {
+          for await (const event of new Aclosing(
+            agentCtx.runLiveImpl(context),
+          )) {
             yield event;
           }
 

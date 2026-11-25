@@ -991,4 +991,118 @@ describe('AgentTool', () => {
       expect(declaration.response).toEqual({type: Type.STRING});
     });
   });
+
+  describe('Aclosing generator cleanup', () => {
+    it('awaits child generator finally cleanup before returning on abort during iteration', async () => {
+      const mockAgent = {name: 'subAgent'} as unknown as LlmAgent;
+      const tool = new AgentTool({agent: mockAgent});
+      const controller = new AbortController();
+      let cleanupDone = false;
+
+      const session = createSession({
+        id: 'parent-session',
+        appName: 'subAgent',
+        userId: 'parent-user',
+      });
+      const invocationContext = new InvocationContext({
+        invocationId: 'inv-abort-cleanup',
+        agent: mockAgent,
+        session,
+        pluginManager: new PluginManager([]),
+        abortSignal: controller.signal,
+      });
+      const toolContext = new Context({invocationContext});
+
+      const mockRunAsync = async function* () {
+        try {
+          yield createEvent({
+            author: 'subAgent',
+            content: {role: 'model', parts: [{text: 'chunk-1'}]},
+          });
+          controller.abort();
+          yield createEvent({
+            author: 'subAgent',
+            content: {role: 'model', parts: [{text: 'chunk-2'}]},
+          });
+        } finally {
+          await Promise.resolve();
+          cleanupDone = true;
+        }
+      };
+
+      vi.mocked(Runner).mockImplementation(function (config) {
+        return {
+          appName: config?.appName,
+          sessionService: config?.sessionService,
+          runAsync: mockRunAsync,
+        } as unknown as Runner;
+      });
+
+      const result = await tool.runAsync({
+        args: {request: 'hello'},
+        toolContext,
+      });
+
+      expect(result).toBeUndefined();
+      expect(cleanupDone).toBe(true);
+    });
+
+    it('calls return(undefined) on child generator when next() rejects', async () => {
+      const mockAgent = {name: 'subAgent'} as unknown as LlmAgent;
+      const tool = new AgentTool({agent: mockAgent});
+      const returnSpy = vi.fn(
+        async (): Promise<
+          IteratorResult<ReturnType<typeof createEvent>, void>
+        > => ({
+          value: undefined,
+          done: true,
+        }),
+      );
+
+      const session = createSession({
+        id: 'parent-session',
+        appName: 'subAgent',
+        userId: 'parent-user',
+      });
+      const invocationContext = new InvocationContext({
+        invocationId: 'inv-next-reject',
+        agent: mockAgent,
+        session,
+        pluginManager: new PluginManager([]),
+      });
+      const toolContext = new Context({invocationContext});
+
+      const failingGenerator: AsyncGenerator<
+        ReturnType<typeof createEvent>,
+        void,
+        void
+      > = {
+        next: async () => {
+          throw new Error('stream failure');
+        },
+        return: returnSpy,
+        throw: async (err: unknown) => {
+          throw err;
+        },
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+      };
+
+      vi.mocked(Runner).mockImplementation(function (config) {
+        return {
+          appName: config?.appName,
+          sessionService: config?.sessionService,
+          runAsync: () => failingGenerator,
+        } as unknown as Runner;
+      });
+
+      await expect(
+        tool.runAsync({args: {request: 'hello'}, toolContext}),
+      ).rejects.toThrow('stream failure');
+
+      expect(returnSpy).toHaveBeenCalledTimes(1);
+      expect(returnSpy).toHaveBeenCalledWith(undefined);
+    });
+  });
 });

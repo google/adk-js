@@ -4,8 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {isStateSchemaError, State, StateSchemaError} from '@google/adk';
 import {describe, expect, it} from 'vitest';
-import {State} from '../../src/sessions/state.js';
+import {z} from 'zod';
+import {
+  getDeltaWriteStamp,
+  getStateWriteStamp,
+} from '../../src/sessions/state_write_order.js';
 
 describe('State', () => {
   describe('update', () => {
@@ -97,6 +102,128 @@ describe('State', () => {
       expect(state.has('key')).toBe(true);
       expect(state.get('key')).toBe('v');
       expect(state.has('toString')).toBe(false);
+    });
+  });
+
+  describe('setDefault', () => {
+    it('returns an existing stored value without mutating delta or recording write stamps', () => {
+      const value: Record<string, unknown> = {count: 4};
+      const delta: Record<string, unknown> = {};
+      const state = new State(value, delta);
+
+      const result = state.setDefault('count', 99);
+
+      expect(result).toBe(4);
+      expect(state.hasDelta()).toBe(false);
+      expect(delta).toEqual({});
+      expect(getStateWriteStamp(value, 'count')).toBeUndefined();
+      expect(getDeltaWriteStamp(delta, 'count')).toBeUndefined();
+    });
+
+    it('prefers a pending delta value over the stored value without advancing write stamps', () => {
+      const value: Record<string, unknown> = {label: 'stored'};
+      const delta: Record<string, unknown> = {label: 'pending'};
+      const state = new State(value, delta);
+
+      const result = state.setDefault('label', 'fallback');
+
+      expect(result).toBe('pending');
+      expect(value['label']).toBe('stored');
+      expect(delta['label']).toBe('pending');
+      expect(getStateWriteStamp(value, 'label')).toBeUndefined();
+      expect(getDeltaWriteStamp(delta, 'label')).toBeUndefined();
+    });
+
+    it.each([
+      ['undefined', undefined],
+      ['null', null],
+      ['zero', 0],
+      ['false', false],
+      ['empty string', ''],
+    ])(
+      'preserves an existing own key set to %s without overwriting it',
+      (_label, stored) => {
+        const value: Record<string, unknown> = {flag: stored};
+        const delta: Record<string, unknown> = {};
+        const state = new State(value, delta);
+
+        const result = state.setDefault('flag', 'replacement');
+
+        expect(result).toBe(stored);
+        expect(value['flag']).toBe(stored);
+        expect(state.hasDelta()).toBe(false);
+      },
+    );
+
+    it('sets a missing key to defaultValue in both value and delta and records write stamps', () => {
+      const value: Record<string, unknown> = {};
+      const delta: Record<string, unknown> = {};
+      const state = new State(value, delta);
+
+      const result = state.setDefault('items', ['a']);
+
+      expect(result).toEqual(['a']);
+      expect(value['items']).toEqual(['a']);
+      expect(delta['items']).toEqual(['a']);
+      expect(state.hasDelta()).toBe(true);
+      const stateStamp = getStateWriteStamp(value, 'items');
+      const deltaStamp = getDeltaWriteStamp(delta, 'items');
+      expect(stateStamp).toBeDefined();
+      expect(deltaStamp).toBe(stateStamp);
+    });
+
+    it('sets a missing key to undefined when defaultValue is omitted', () => {
+      const value: Record<string, unknown> = {};
+      const delta: Record<string, unknown> = {};
+      const state = new State(value, delta);
+
+      const result = state.setDefault('optionalKey');
+
+      expect(result).toBeUndefined();
+      expect(Object.hasOwn(value, 'optionalKey')).toBe(true);
+      expect(Object.hasOwn(delta, 'optionalKey')).toBe(true);
+      expect(state.has('optionalKey')).toBe(true);
+      expect(state.hasDelta()).toBe(true);
+    });
+
+    it.each(['toString', 'constructor', 'hasOwnProperty'])(
+      'treats inherited Object.prototype property %s as missing until set',
+      (name) => {
+        const state = new State();
+
+        expect(state.setDefault(name, 'initialized')).toBe('initialized');
+        expect(state.has(name)).toBe(true);
+        expect(state.setDefault(name, 'later')).toBe('initialized');
+      },
+    );
+
+    it('validates missing keys against schema and throws StateSchemaError without mutating state', () => {
+      const schema = z.object({
+        counter: z.number().positive(),
+        label: z.string(),
+      });
+      const value: Record<string, unknown> = {counter: 3};
+      const delta: Record<string, unknown> = {};
+      const state = new State(value, delta, schema);
+
+      expect(() => state.setDefault('undeclared', 'x')).toThrow(
+        StateSchemaError,
+      );
+      try {
+        state.setDefault('label', 123);
+        expect.fail('Expected setDefault to throw StateSchemaError');
+      } catch (err: unknown) {
+        expect(isStateSchemaError(err)).toBe(true);
+      }
+      expect(state.has('undeclared')).toBe(false);
+      expect(state.has('label')).toBe(false);
+      expect(state.hasDelta()).toBe(false);
+
+      expect(state.setDefault('counter', -10)).toBe(3);
+      expect(state.hasDelta()).toBe(false);
+
+      expect(state.setDefault('label', 'ready')).toBe('ready');
+      expect(delta).toEqual({label: 'ready'});
     });
   });
 });

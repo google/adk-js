@@ -136,6 +136,28 @@ export class State {
   }
 
   /**
+   * Returns the value for the given key if present, or sets and returns
+   * `defaultValue` when the key is missing.
+   *
+   * Only own keys are treated as present. When the key already exists in the
+   * pending delta or stored state, `defaultValue` is neither validated nor
+   * written to the delta.
+   *
+   * @param key The key to look up or initialize.
+   * @param defaultValue The value to store and return if the key is missing.
+   * @return The existing value for `key`, or `defaultValue` when missing.
+   */
+  setDefault<T>(key: string, defaultValue: T): T;
+  setDefault<T = unknown>(key: string, defaultValue?: T): T | undefined;
+  setDefault<T = unknown>(key: string, defaultValue?: T): T | undefined {
+    if (this.has(key)) {
+      return this.get<T>(key);
+    }
+    this.set(key, defaultValue);
+    return defaultValue;
+  }
+
+  /**
    * Whether the state has pending delta.
    */
   hasDelta(): boolean {

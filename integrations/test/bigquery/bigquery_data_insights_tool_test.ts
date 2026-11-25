@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {type Context, GoogleTool, State} from '@google/adk';
 import {
   ASK_DATA_INSIGHTS_DESCRIPTION,
   askDataInsights,
@@ -12,9 +13,11 @@ import {
   type AskDataInsightsResult,
   type AskDataInsightsSuccessResult,
   type BigQueryAuthClient,
+  BigQueryCredentialsConfig,
   BigQueryToolConfig,
   type GoogleOAuthCredentials,
 } from '@google/adk-integrations';
+import {type Schema, Type} from '@google/genai';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 
 import {
@@ -406,6 +409,160 @@ describe('askDataInsights and GDA stream helpers', () => {
         table_references: [],
         credentials: {token: 'fake-token', valid: true},
         config: {maxQueryResultRows: invalidRows},
+      });
+
+      expect(result).toEqual({
+        status: 'ERROR',
+        error_details: 'maxQueryResultRows must be a positive integer.',
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it('forwards settings.maxQueryResultRows and prefers settings over deprecated config', async () => {
+    const streamBody = [
+      '[{',
+      '"systemMessage": {"data": {"result": {"data": [{"id": 1}, {"id": 2}, {"id": 3}], "schema": {"fields": [{"name": "id"}]}}}}',
+      '}]',
+    ].join('\n');
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async () => new Response(streamBody, {status: 200}));
+
+    const settingsOnlyResult = await askDataInsights({
+      project_id: 'test-project',
+      user_query_with_context: 'test query',
+      table_references: [
+        {projectId: 'my-gcp-project', datasetId: 'sales', tableId: 'orders'},
+      ],
+      credentials: {token: 'fake-token', valid: true},
+      settings: new BigQueryToolConfig({maxQueryResultRows: 2}),
+    });
+
+    expect(settingsOnlyResult).toEqual({
+      status: 'SUCCESS',
+      response: [
+        {
+          'Data Retrieved': {
+            headers: ['id'],
+            rows: [[1], [2]],
+            summary: 'Showing the first 2 of 3 total rows.',
+          },
+        },
+      ],
+    });
+
+    const precedenceResult = await askDataInsights({
+      project_id: 'test-project',
+      user_query_with_context: 'test query',
+      table_references: [
+        {projectId: 'my-gcp-project', datasetId: 'sales', tableId: 'orders'},
+      ],
+      credentials: {token: 'fake-token', valid: true},
+      settings: {maxQueryResultRows: 1},
+      config: {maxQueryResultRows: 3},
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(precedenceResult).toEqual({
+      status: 'SUCCESS',
+      response: [
+        {
+          'Data Retrieved': {
+            headers: ['id'],
+            rows: [[1]],
+            summary: 'Showing the first 1 of 3 total rows.',
+          },
+        },
+      ],
+    });
+  });
+
+  it('ignores model-supplied config when GoogleTool injects undefined settings on a raw Schema tool', async () => {
+    const streamBody = [
+      '[{',
+      '"systemMessage": {"data": {"result": {"data": [{"id": 1}, {"id": 2}, {"id": 3}], "schema": {"fields": [{"name": "id"}]}}}}',
+      '}]',
+    ].join('\n');
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async () => new Response(streamBody, {status: 200}));
+
+    const rawSchema: Schema = {
+      type: Type.OBJECT,
+      properties: {
+        project_id: {type: Type.STRING},
+        user_query_with_context: {type: Type.STRING},
+      },
+      required: ['project_id', 'user_query_with_context'],
+    };
+    const rawInsightsTool = new GoogleTool<Schema, BigQueryToolConfig>({
+      name: 'customAskDataInsights',
+      description: 'Custom Schema-backed insights tool without toolSettings',
+      parameters: rawSchema,
+      credentialsConfig: new BigQueryCredentialsConfig({
+        credentials: {token: 'fake-token', valid: true},
+      }),
+      execute: (args) =>
+        askDataInsights({
+          ...args,
+          user_query_with_context: String(
+            args['user_query_with_context'] ?? '',
+          ),
+          table_references: [
+            {
+              projectId: 'my-gcp-project',
+              datasetId: 'sales',
+              tableId: 'orders',
+            },
+          ],
+        }),
+    });
+    const mockContext = {
+      getAuthResponse: vi.fn(() => undefined),
+      requestCredential: vi.fn(),
+      requestConfirmation: vi.fn(),
+      actions: {},
+      state: new State(),
+    } as unknown as Context;
+
+    const result = await rawInsightsTool.runAsync({
+      args: {
+        project_id: 'test-project',
+        user_query_with_context: 'test query',
+        config: {maxQueryResultRows: 0},
+      },
+      toolContext: mockContext,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(result).toEqual({
+      status: 'SUCCESS',
+      response: [
+        {
+          'Data Retrieved': {
+            headers: ['id'],
+            rows: [[1], [2], [3]],
+            summary: 'Showing all 3 rows.',
+          },
+        },
+      ],
+    });
+  });
+
+  it.each([0, -1, 1.5, Number.NaN])(
+    'returns ERROR when settings.maxQueryResultRows is %s',
+    async (invalidRows) => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockRejectedValue(new Error('Unexpected fetch call'));
+
+      const result = await askDataInsights({
+        project_id: 'test-project',
+        user_query_with_context: 'test query',
+        table_references: [],
+        credentials: {token: 'fake-token', valid: true},
+        settings: {maxQueryResultRows: invalidRows},
       });
 
       expect(result).toEqual({

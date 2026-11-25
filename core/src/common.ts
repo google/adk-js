@@ -74,7 +74,10 @@ export type {
 export {LoopAgent, isLoopAgent} from './agents/loop_agent.js';
 export type {LoopAgentConfig} from './agents/loop_agent.js';
 export {ParallelAgent, isParallelAgent} from './agents/parallel_agent.js';
-export {AgentTransferLlmRequestProcessor} from './agents/processors/agent_transfer_llm_request_processor.js';
+export {
+  AgentTransferLlmRequestProcessor,
+  isAgentTransferLlmRequestProcessor,
+} from './agents/processors/agent_transfer_llm_request_processor.js';
 export {
   BaseLlmRequestProcessor,
   BaseLlmResponseProcessor,
@@ -401,7 +404,7 @@ export type {
   ToolProcessLlmRequest,
 } from './tools/base_tool.js';
 export {BaseToolset, isBaseToolset} from './tools/base_toolset.js';
-export type {ToolPredicate} from './tools/base_toolset.js';
+export type {BaseToolsetOptions, ToolPredicate} from './tools/base_toolset.js';
 export {BuiltInTool} from './tools/built_in_tool.js';
 export {
   BaseComputer,
@@ -453,10 +456,35 @@ export type {
 } from './tools/function_tool.js';
 export {getUserChoiceTool} from './tools/get_user_choice_tool.js';
 export {
+  BaseGoogleCredentialsConfig,
+  GoogleCredentialsManager,
+  GoogleOAuthCredentialsImpl,
+  GoogleOAuthRefreshError,
+  isBaseGoogleCredentialsConfig,
+  isGoogleAuthClient,
+  isGoogleCredentialsManager,
+  isGoogleOAuthCredentialsImpl,
+  isGoogleOAuthRefreshError,
+} from './tools/google_credentials.js';
+export type {
+  BaseGoogleCredentialsConfigOptions,
+  GoogleAuthClient,
+  GoogleCredentials,
+  GoogleOAuthCredentials,
+  GoogleOAuthCredentialsOptions,
+} from './tools/google_credentials.js';
+export {
   GOOGLE_MAPS_GROUNDING,
   GoogleMapsGroundingTool,
 } from './tools/google_maps_grounding_tool.js';
 export {GOOGLE_SEARCH, GoogleSearchTool} from './tools/google_search_tool.js';
+export {GoogleTool, isGoogleTool} from './tools/google_tool.js';
+export type {
+  GoogleToolExecuteFunction,
+  GoogleToolExecuteInput,
+  GoogleToolOptions,
+  RunAsyncWithCredentialRequest,
+} from './tools/google_tool.js';
 export {
   LOAD_ARTIFACTS,
   LoadArtifactsTool,
@@ -477,6 +505,11 @@ export type {
   LlamaIndexRetrievalParams,
   LlamaIndexRetriever,
 } from './tools/retrieval/llama_index_retrieval.js';
+export {
+  SET_MODEL_RESPONSE_TOOL_NAME,
+  SetModelResponseTool,
+  isSetModelResponseTool,
+} from './tools/set_model_response_tool.js';
 export {
   IntentMismatchError,
   ToolConfirmation,
@@ -513,6 +546,7 @@ export type {
 export {AsyncQueue} from './utils/async_queue.js';
 export {renameReservedKeywords, toSnakeCaseName} from './utils/case_utils.js';
 export {getClientLabels, runWithClientLabel} from './utils/client_labels.js';
+export {Aclosing, isAclosing} from './utils/context_utils.js';
 export {toGeminiSchema} from './utils/gemini_schema_util.js';
 export type {MCPToolSchema} from './utils/gemini_schema_util.js';
 export {genaiSchemaToJsonSchema} from './utils/genai_schema_to_json.js';
