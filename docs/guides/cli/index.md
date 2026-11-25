@@ -17,10 +17,11 @@ An agent run through `adk run`, `adk web`, `adk api_server`, or `adk eval` needs
 
 ## Get started
 
-This example initializes state placeholders with `createEmptyState`, runs one turn of a deterministic agent with `InMemoryRunner`, converts the resulting session into an `EvalCase` with `convertSessionToEvalInvocations`, and scores it with `runEvals`.
+This example initializes state placeholders with `createEmptyState`, runs one turn of a deterministic agent with `InMemoryRunner` inside `Aclosing`, converts the resulting session into an `EvalCase` with `convertSessionToEvalInvocations`, and scores it with `runEvals`.
 
 ```ts
 import {
+  Aclosing,
   BaseAgent,
   convertSessionToEvalInvocations,
   createEmptyState,
@@ -77,11 +78,13 @@ const session = await runner.sessionService.createSession({
   state: initialState,
 });
 
-for await (const _event of runner.runAsync({
-  userId: 'user-1',
-  sessionId: session.id,
-  newMessage: {role: 'user', parts: [{text: 'check status'}]},
-})) {
+for await (const _event of new Aclosing(
+  runner.runAsync({
+    userId: 'user-1',
+    sessionId: session.id,
+    newMessage: {role: 'user', parts: [{text: 'check status'}]},
+  }),
+)) {
   // Consume events.
 }
 
@@ -92,12 +95,14 @@ const updatedSession = await runner.sessionService.getSession({
 });
 const conversation = convertSessionToEvalInvocations(updatedSession);
 
-for await (const result of runEvals({
-  evalCasesByEvalSetId: {
-    demo_set: [{evalId: 'status_case', conversation}],
-  },
-  rootAgent: agent,
-})) {
+for await (const result of new Aclosing(
+  runEvals({
+    evalCasesByEvalSetId: {
+      demoSet: [{evalId: 'statusCase', conversation}],
+    },
+    rootAgent: agent,
+  }),
+)) {
   process.stdout.write(
     `${result.eval_id}: ${EvalStatus[result.final_eval_status]}\n`,
   );
@@ -145,7 +150,11 @@ An agent that imports a file from the directory of another agent is not reloaded
 adk web path/to/agents --reload_agents
 ```
 
-`adk web` and `adk api_server` accept `--a2a [boolean]` (default `false`). With the option, the server serves each agent that it loaded at startup over the Agent2Agent (A2A) protocol below `/a2a/<appName>`. `--a2a-auth-token, --a2a_auth_token <string>` sets a shared bearer token for these endpoints, and callers must send `Authorization: Bearer <token>`. The `ADK_A2A_AUTH_TOKEN` environment variable sets the same token when the option is absent. Without a token, the server serves the A2A endpoints without authentication.
+`adk web` and `adk api_server` accept `--a2a [boolean]` (default `false`). With the option, `toA2a` mounts each startup agent below `/a2a/<appName>`, serving `GET /a2a/<appName>/.well-known/agent-card.json` alongside `/a2a/<appName>/jsonrpc` (JSON-RPC) and `/a2a/<appName>/rest` (`HTTP+JSON`).
+
+When an `agent.json` file exists at `<agentsDir>/<appName>/agent.json` (or `<dirname(agentsDir)>/agent.json` when `agentsDir` points to a single agent file), `AdkApiServer` passes that file to `toA2a` so `GET /a2a/<appName>/.well-known/agent-card.json` preserves the custom `url` and card metadata instead of overwriting `url` with `--host` and `--port`. `resolveAgentCard` requires an absolute `url` (including scheme and host), and `toA2a` mounts the JSON-RPC and HTTP+JSON handlers at `/a2a/<appName>/jsonrpc` and `/a2a/<appName>/rest` rather than bare `/a2a/<appName>`. Set `url` in `agent.json` to an absolute URL targeting the mounted transport endpoint (for example `https://example.com/a2a/<appName>/jsonrpc`, or `https://example.com/a2a/<appName>/rest` when `preferredTransport` is `'HTTP+JSON'`) so RPC POST requests do not hit 404s. Agents without an `agent.json` file continue to have their `AgentCard` generated automatically from the agent definition. If configuring one A2A agent fails at startup (for example, because `agent.json` is malformed or has a missing or relative `url`), the server logs the error and continues mounting the remaining healthy agents.
+
+`--a2a-auth-token, --a2a_auth_token <string>` sets a shared bearer token for these endpoints, and callers must send `Authorization: Bearer <token>`. The `ADK_A2A_AUTH_TOKEN` environment variable sets the same token when the option is absent. Without a token, the server serves the A2A endpoints without authentication.
 
 ```bash
 export ADK_A2A_AUTH_TOKEN=<token>
@@ -253,7 +262,7 @@ On the CLI, `adk web`, `adk api_server` (`api-server`), `adk run`, `adk eval`, `
 
 1. Calls `resetFunc()` when provided.
 2. Creates an isolated session whose id starts with `EVAL_SESSION_ID_PREFIX` (`'___eval___session___'`) and whose state is populated via `createEmptyState`.
-3. Runs every user turn in the case through a `Runner` and converts the recorded session with `convertSessionToEvalFormat`.
+3. Runs every user turn in the case through a `Runner` wrapped in `Aclosing` (as `adk run`, `adk eval`, and `AdkApiServer` also do for run and evaluation streams so generator `finally` blocks and active OpenTelemetry spans close deterministically) and converts the recorded session with `convertSessionToEvalFormat`.
 4. Scores each requested `EvalMetric`:
    - `TOOL_TRAJECTORY_SCORE_KEY` (`'tool_trajectory_avg_score'`): `1.0` for a turn when the actual `expected_tool_use` list matches the expected list in length, `tool_name`, and deep `tool_input`; `0.0` otherwise.
    - `RESPONSE_MATCH_SCORE_KEY` (`'response_match_score'`) and `RESPONSE_EVALUATION_SCORE_KEY` (`'response_evaluation_score'`): unigram ROUGE-1 F1 score in `[0, 1]` between the expected `reference` and the actual `reference`.

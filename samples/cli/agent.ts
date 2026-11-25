@@ -27,6 +27,7 @@
  */
 
 import {
+  Aclosing,
   BaseAgent,
   closeRunners,
   convertSessionToEvalInvocations,
@@ -182,11 +183,13 @@ async function main() {
 
   const queries = ['Check my order status', 'Thank you'];
   for (const text of queries) {
-    for await (const event of runner.runAsync({
-      userId,
-      sessionId: session.id,
-      newMessage: {role: 'user', parts: [{text}]},
-    })) {
+    for await (const event of new Aclosing(
+      runner.runAsync({
+        userId,
+        sessionId: session.id,
+        newMessage: {role: 'user', parts: [{text}]},
+      }),
+    )) {
       const rendered = stringifyContent(event);
       if (rendered) {
         process.stdout.write(`[${event.author}]: ${rendered}\n`);
@@ -227,12 +230,14 @@ async function main() {
   );
 
   const evalResults: EvalResult[] = [];
-  for await (const result of runEvals({
-    evalCasesByEvalSetId: {
-      'support.evalset.json': [orderFlowCase],
-    },
-    rootAgent,
-  })) {
+  for await (const result of new Aclosing(
+    runEvals({
+      evalCasesByEvalSetId: {
+        'support.evalset.json': [orderFlowCase],
+      },
+      rootAgent,
+    }),
+  )) {
     evalResults.push(result);
     process.stdout.write(
       `Eval ${result.eval_id}: ${EvalStatus[result.final_eval_status]}\n`,

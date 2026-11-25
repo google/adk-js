@@ -8,6 +8,7 @@ import {
   BaseAgent,
   BaseCredentialService,
   BaseSessionService,
+  type Event,
   InMemoryCredentialService,
   InMemorySessionService,
   INTERNAL_METADATA_PREFIX,
@@ -46,6 +47,8 @@ const runnerState = vi.hoisted(() => ({
   events: [
     {author: 'model', content: {parts: [{text: 'Response from model'}]}},
   ] as unknown[],
+  createRunAsync: undefined as
+    (() => AsyncGenerator<Event, void, undefined>) | undefined,
 }));
 
 // Only the Runner and services are faked, so interrupt detection under test is
@@ -137,16 +140,22 @@ describe('cli_run', () => {
     runnerState.events = [
       {author: 'model', content: {parts: [{text: 'Response from model'}]}},
     ];
+    runnerState.createRunAsync = undefined;
 
     // Re-established every test: `restoreAllMocks` drops the implementations
     // set in the module factory, which would otherwise leave the runner and
     // the session service inert from the second test onwards.
     (Runner as unknown as Mock).mockImplementation(function () {
       return {
-        runAsync: async function* () {
-          for (const event of runnerState.events) {
-            yield event;
+        runAsync: () => {
+          if (runnerState.createRunAsync) {
+            return runnerState.createRunAsync();
           }
+          return (async function* () {
+            for (const event of runnerState.events) {
+              yield event;
+            }
+          })();
         },
         close: vi.fn().mockResolvedValue(undefined),
       };
@@ -1293,6 +1302,66 @@ describe('cli_run', () => {
       expect(
         (Runner as unknown as Mock).mock.calls[1][0].credentialService,
       ).toBe(customCredentialService);
+    });
+  });
+
+  describe('async generator cleanup', () => {
+    function createRejectingEventGenerator(message: string) {
+      const returnSpy = vi.fn<
+        (
+          value?: void | PromiseLike<void>,
+        ) => Promise<IteratorResult<Event, void>>
+      >(() => Promise.resolve({value: undefined, done: true as const}));
+      const generator: AsyncGenerator<Event, void, undefined> = {
+        next: () => Promise.reject(new Error(message)),
+        return: returnSpy,
+        throw: (err: unknown) => Promise.reject(err),
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+      };
+      return {generator, returnSpy};
+    }
+
+    it('closes the runner generator via return when a replay turn rejects', async () => {
+      vi.mocked(loadFileData).mockResolvedValue({
+        state: {},
+        queries: ['check status'],
+      });
+      const {generator, returnSpy} = createRejectingEventGenerator(
+        'replay stream failure',
+      );
+      runnerState.createRunAsync = () => generator;
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        inputFile: 'replay.json',
+        sessionService: createMockSessionService(),
+      });
+
+      expect(returnSpy).toHaveBeenCalledTimes(1);
+      expect(returnSpy).toHaveBeenCalledWith(undefined);
+      expect(process.exitCode).toBe(1);
+    });
+
+    it('closes the runner generator via return when an interactive turn rejects', async () => {
+      const {generator, returnSpy} = createRejectingEventGenerator(
+        'interactive stream failure',
+      );
+      runnerState.createRunAsync = () => generator;
+      answerWith('hello', 'exit');
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        sessionService: createMockSessionService(),
+      });
+
+      expect(returnSpy).toHaveBeenCalledTimes(1);
+      expect(returnSpy).toHaveBeenCalledWith(undefined);
+      expect(
+        errorSpy.mock.calls.map((call) => call.join(' ')).join('\n'),
+      ).toContain('[ADK CLI] Turn failed: interactive stream failure');
+      expect(mockRl.close).toHaveBeenCalledTimes(1);
     });
   });
 });

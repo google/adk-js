@@ -26,6 +26,7 @@ import {Runner} from '../runner/runner.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {InMemorySessionService} from '../sessions/in_memory_session_service.js';
 import {Session} from '../sessions/session.js';
+import {Aclosing} from '../utils/context_utils.js';
 import {logger} from '../utils/logger.js';
 import {
   convertSessionToEvalFormat,
@@ -780,14 +781,16 @@ async function generateActualInvocations(
 
   try {
     for (const turn of evalCase.data) {
-      for await (const _event of runner.runAsync({
-        userId,
-        sessionId,
-        newMessage: {
-          role: 'user',
-          parts: [{text: turn.query}],
-        },
-      })) {
+      for await (const _event of new Aclosing(
+        runner.runAsync({
+          userId,
+          sessionId,
+          newMessage: {
+            role: 'user',
+            parts: [{text: turn.query}],
+          },
+        }),
+      )) {
         // Consume all events produced for this turn.
       }
     }
