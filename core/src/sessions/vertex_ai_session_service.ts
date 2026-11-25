@@ -163,7 +163,10 @@ export class VertexAiSessionService extends BaseSessionService {
       (useEnvironment ? process.env['GOOGLE_CLOUD_PROJECT'] : undefined);
     this.location =
       options.location ||
-      (useEnvironment ? process.env['GOOGLE_CLOUD_LOCATION'] : undefined);
+      (useEnvironment
+        ? process.env['GOOGLE_CLOUD_AGENT_ENGINE_LOCATION'] ||
+          process.env['GOOGLE_CLOUD_LOCATION']
+        : undefined);
 
     // sessions is primarily for testing to inject a mock client.
     if (options.sessions) {
