@@ -3,7 +3,9 @@
 The LLM flow pipeline in the Agent Development Kit builds each `LlmRequest`, invokes the model, processes each `LlmResponse`, executes tool calls concurrently across turn-by-turn and live streaming sessions, reconnects dropped live sessions via resumption handles, and routes agent transfers. In `@google/adk`, the flow engine is integrated directly into `LlmAgent`, while processors and function-call helpers are exposed as composable units:
 
 - `BaseLlmRequestProcessor` and `BaseLlmResponseProcessor` - Abstract base classes for processors that inspect or mutate `LlmRequest` before the model call and `LlmResponse` after the model call, optionally yielding `Event` objects.
-- `CONTENT_REQUEST_PROCESSOR`, `INTERACTIONS_REQUEST_PROCESSOR`, `AgentTransferLlmRequestProcessor`, `ContextCompactorRequestProcessor`, `CodeExecutionResponseProcessor`, and `injectSessionState` - Built-in request and response processors and instruction state-interpolation utility exported from `@google/adk`.
+- `CONTENT_REQUEST_PROCESSOR`, `INTERACTIONS_REQUEST_PROCESSOR`, `AgentTransferLlmRequestProcessor`, `isAgentTransferLlmRequestProcessor`, `ContextCompactorRequestProcessor`, `CodeExecutionResponseProcessor`, and `injectSessionState` - Built-in request and response processors, type guard, and instruction state-interpolation utility exported from `@google/adk`.
+- `SetModelResponseTool`, `SET_MODEL_RESPONSE_TOOL_NAME`, and `isSetModelResponseTool` - Structured-response tool and type guard used by `LlmAgent` when `outputSchema` and tools are configured together on models that do not natively combine `responseSchema` with function declarations.
+- `Aclosing` and `isAclosing` - Async-generator lifecycle wrapper and type guard guaranteeing `return(undefined)` runs on early exit, consumer errors, and `next()` rejections across flow steps, processors, and live tool streams.
 - `handleFunctionCallsLive`, `findEventByFunctionCallId`, `findMatchingFunctionCall`, and `isToolNotFound` - Function-calling helpers for live sessions, event correlation, and unresolvable tool detection.
 - `createRunConfig` and `StreamingMode` - Runtime configuration helpers for `supportCfc`, `sessionResumption`, SSE streaming, and LLM call limits.
 
@@ -74,10 +76,10 @@ export const agent = new LlmAgent({
 ## How it works
 
 1. **Default request processor chain**: When `config.requestProcessors` is omitted, `LlmAgent` initializes `this.requestProcessors` in this order:
-   - `BASIC_LLM_REQUEST_PROCESSOR`: Copies `agent.generateContentConfig`, sets `llmRequest.model`, and applies `agent.outputSchema` when tools are not combined with an unsupported model. When `invocationContext.runConfig` is set, it also copies `responseModalities`, `speechConfig`, `inputAudioTranscription`, `outputAudioTranscription`, `realtimeInputConfig`, `enableAffectiveDialog`, `proactivity`, and `sessionResumption` onto `llmRequest.liveConnectConfig`.
+   - `BASIC_LLM_REQUEST_PROCESSOR`: Copies `agent.generateContentConfig`, sets `llmRequest.model`, and sets native `responseSchema` (`application/json`) when `agent.outputSchema` is configured (`agent.mode !== 'task'`) and either no function tools (including `transfer_to_agent` when reachable transfer targets exist) are declared or `canUseOutputSchemaWithTools(agent.canonicalModel)` is `true` (Gemini 2.0+ on Vertex AI). When `invocationContext.runConfig` is set, it also copies `responseModalities`, `speechConfig`, `inputAudioTranscription`, `outputAudioTranscription`, `realtimeInputConfig`, `enableAffectiveDialog`, `proactivity`, and `sessionResumption` onto `llmRequest.liveConnectConfig`.
    - `AUTH_PREPROCESSOR`: Resumes pending credential requests for `adk_request_credential` from user responses.
    - `IDENTITY_LLM_REQUEST_PROCESSOR`: Appends the agent `name` and `description` to the system instruction.
-   - `INSTRUCTIONS_LLM_REQUEST_PROCESSOR`: Resolves `agent.globalInstruction` and `agent.instruction` as a string or `InstructionProvider`, interpolates `{state}` and `{artifact.*}` placeholders on string instructions via `injectSessionState(template, readonlyContext)` (or lets custom `InstructionProvider` functions call `injectSessionState` directly), and appends them to `llmRequest`.
+   - `INSTRUCTIONS_LLM_REQUEST_PROCESSOR`: Resolves `agent.globalInstruction` and `agent.instruction` as a string or `InstructionProvider`, interpolates `{state}` and `{artifact.*}` placeholders on string instructions via `injectSessionState(template, readonlyContext)` (or lets custom `InstructionProvider` functions call `injectSessionState` directly), and appends them to `llmRequest`. In non-live, non-CFC turn-by-turn mode (`!invocationContext.liveRequestQueue && !invocationContext.runConfig?.supportCfc`), when `agent.outputSchema` (`agent.mode !== 'task'`) is configured alongside function tools (including reachable `transfer_to_agent` targets) and the model cannot combine native `responseSchema` with tools, it also appends the `set_model_response` final-output instruction.
    - `REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR`: Resumes tool calls gated by `adk_request_confirmation`.
    - `REQUEST_INPUT_LLM_REQUEST_PROCESSOR`: Resumes workflow and tool input interrupts for `adk_request_input`.
    - `ContextCompactorRequestProcessor`: Inserted immediately before `CONTENT_REQUEST_PROCESSOR` when `config.contextCompactors` is non-empty, compacting older session events.
@@ -95,7 +97,7 @@ export const agent = new LlmAgent({
    - Each call receives its own deep-cloned `functionCall.args` and `Context` (`toolContext`), runs plugin and canonical `beforeToolCallbacks`, invokes the tool (converting unhandled tool errors into `{error}` response payloads after `onToolErrorCallback`), and runs plugin and canonical `afterToolCallbacks`.
    - Regardless of completion order, `functionResponse` parts in the merged `Event` preserve the model's original `functionCall` order.
    - `EventActions` from parallel calls are merged in call order, and when multiple parallel calls read and write the same key through `toolContext.state` and finish out of call order, the latest value recorded on `session.state` (along with its write-order stamp) is re-applied so out-of-order scalar, array, or nested-array updates are never overwritten by an earlier stale snapshot. Direct writes to `toolContext.actions.stateDelta` that bypass `toolContext.state` keep call-order precedence.
-   - Custom TypeScript tools, parameters, and agent names use `camelCase` or `kebab-case`, whereas ADK framework built-in control tools (`transfer_to_agent` with `{agent_name}`, `stop_streaming` with `{function_name}`, `adk_request_credential`, `adk_request_confirmation`, and `adk_request_input`) use `snake_case` wire schemas shared across ADK runtimes.
+   - Custom TypeScript tools, parameters, and agent names use `camelCase` or `kebab-case`, whereas ADK framework built-in control tools (`set_model_response`, `transfer_to_agent` with `{agent_name}`, `stop_streaming` with `{function_name}`, `adk_request_credential`, `adk_request_confirmation`, and `adk_request_input`) use `snake_case` wire schemas shared across ADK runtimes.
 4. **Live session resumption and multi-agent transfers (`runLiveFlow`)**:
    - `LlmAgent` seeds `invocationContext.liveSessionResumptionHandle` from `runConfig.sessionResumption?.handle` (or `Runner.runLive({liveSessionResumptionHandle})`) and updates it whenever the server emits `liveSessionResumptionUpdate.newHandle`.
    - When a resumption handle is active, `runLiveFlow` attaches `{handle, transparent: sessionResumption?.transparent ?? true}` to `llmRequest.liveConnectConfig.sessionResumption` and skips `connection.sendHistory(...)` because the server already holds the conversation state.
@@ -111,6 +113,13 @@ export const agent = new LlmAgent({
    - Async-generator `FunctionTool` instances where `execute` is an `async function*` are launched in a background `Task` via `tool._callLive({args, toolContext, invocationContext})` and registered in `invocationContext.activeStreamingTools[tool.name]`. Each yielded value is pushed to `invocationContext.liveRequestQueue` as a user `Content` message formatted as `"Function <name> returned: <value>"`, while the initial function call immediately returns `{status: 'The function is running asynchronously and the results are pending.'}`.
    - During `runSendLoop`, every incoming `LiveRequest` on `invocationContext.liveRequestQueue` is also forwarded to `activeStreamingTool.stream.send(liveRequest)` for any active tool with an input `stream` queue.
    - A function call with `name: 'stop_streaming'` and `args: {function_name: '<toolName>'}` cancels the active `Task` for `toolName`, waits up to 1 second for it to finish, and clears the stored task reference only if a concurrent call has not already replaced it with a newer `Task`.
+7. **Structured output alongside tools (`SetModelResponseTool`) and live-mode handling**:
+   - In `LlmAgent.runOneStepAsync` (`mode !== 'task'`, `!invocationContext.liveRequestQueue && !invocationContext.runConfig?.supportCfc`), when `outputSchema` is configured alongside function tools (`this.tools`, reachable `transfer_to_agent` targets, or processor-registered `llmRequest.toolsDict` entries) and `!canUseOutputSchemaWithTools(this.canonicalModel)`, `LlmAgent` appends `new SetModelResponseTool(this.outputSchemaSource ?? this.outputSchema)` unless `tools` already contains an instance matching `isSetModelResponseTool` (preventing duplicate `set_model_response` registration). During `allowedTools` filtering, `SET_MODEL_RESPONSE_TOOL_NAME` (`'set_model_response'`) is always retained so tool filters cannot block final structured responses.
+   - In `LlmAgent.postprocess`, after yielding the `functionResponse` event for `set_model_response`, `LlmAgent` reads `functionResponseEvent.actions.setModelResponse` and yields a synthesized final model-authored text event containing `JSON.stringify(response)` (stamped with `invocationContext.invocationId` and `invocationContext.branch`). `maybeSaveOutputToState` parses and validates that JSON payload against `outputSchemaSource ?? outputSchema` and writes it to `event.actions.stateDelta[outputKey]`.
+   - In `LlmAgent.runLiveFlow` (and when `runConfig.supportCfc` routes `callLlmAsync` through `runLiveFlow`), when `outputSchema` is set and `mode !== 'task'`, `LlmAgent` logs a `logger.warn` notice stating that `outputSchema` is not supported in live mode and will be ignored, and both `InstructionsLlmRequestProcessor` and `LlmAgent.runOneStepAsync` skip `set_model_response` instruction and tool injection so the live model is not told to call an unregistered tool.
+8. **Deterministic async-generator cleanup (`Aclosing`)**:
+   - `LlmAgent` flow loops (`runAsyncImpl`, `runLiveImpl`, `runLiveFlow`, `runLivePreprocess`, `runReceiveLoop`, `postprocessLive`, `runOneStepAsync`, `postprocess`, `callLlmAsync`, and `runAndHandleError`), `CodeExecutionRequestProcessor`, `CodeExecutionResponseProcessor`, and live streaming tool helpers (`callToolLive` and `processFunctionLiveHelper`) wrap `AsyncGenerator` consumers in `new Aclosing(...)`.
+   - Unlike bare `for await...of` (which does not invoke `return()` when `generator.next()` itself rejects), `Aclosing` awaits `return(undefined)` at most once on early `break`/`return`, downstream consumer errors (such as `liveRequestQueue.sendContent` throwing), and `next()` rejections. When `stop_streaming` aborts a suspended live streaming tool, `processFunctionLiveHelper` triggers `generator.close()` non-blockingly so `stop_streaming` settles within its 1-second timeout while still finalizing the generator once its pending `await` settles.
 
 ## Configuration options
 
@@ -395,9 +404,70 @@ export async function runWithCfc(agent: LlmAgent): Promise<void> {
 }
 ```
 
+### Structured output alongside tools (`SetModelResponseTool`)
+
+Configure `outputSchema`, `outputKey`, and `tools` together on an `LlmAgent` so turn-by-turn flows automatically inject `SetModelResponseTool` (`set_model_response`) when needed, validate the structured payload, emit a final model JSON event, and persist the validated value under `outputKey`:
+
+```ts
+import {Aclosing, FunctionTool, InMemoryRunner, LlmAgent} from '@google/adk';
+import {z} from 'zod';
+
+const lookupServiceLatency = new FunctionTool({
+  name: 'lookupServiceLatency',
+  description: 'Returns the p95 latency in milliseconds for a service.',
+  parameters: z.object({serviceName: z.string()}),
+  execute: async ({serviceName}) => ({serviceName, p95Ms: 42}),
+});
+
+const reportSchema = z.object({
+  serviceName: z.string(),
+  p95Ms: z.number(),
+  withinSlo: z.boolean(),
+});
+
+export const structuredOpsAgent = new LlmAgent({
+  name: 'structuredOpsAgent',
+  model: 'gemini-flash-latest',
+  instruction:
+    'Inspect latency with lookupServiceLatency and report SLO compliance.',
+  tools: [lookupServiceLatency],
+  outputSchema: reportSchema,
+  outputKey: 'sloReport',
+});
+
+export async function runStructuredReport(): Promise<unknown> {
+  const runner = new InMemoryRunner({
+    agent: structuredOpsAgent,
+    appName: 'structured-ops-app',
+  });
+  const session = await runner.sessionService.createSession({
+    appName: 'structured-ops-app',
+    userId: 'u-1',
+  });
+
+  let report: unknown;
+  for await (const event of new Aclosing(
+    runner.runAsync({
+      userId: 'u-1',
+      sessionId: session.id,
+      newMessage: {
+        role: 'user',
+        parts: [{text: 'Check SLO status for checkout.'}],
+      },
+    }),
+  )) {
+    if (event.actions.stateDelta['sloReport'] !== undefined) {
+      report = event.actions.stateDelta['sloReport'];
+    }
+  }
+  return report;
+}
+```
+
 ## Limitations
 
 - **Custom `requestProcessors` and `responseProcessors` replace the defaults**: Passing `requestProcessors` or `responseProcessors` to `new LlmAgent({...})` replaces the default processor array rather than appending to it. Because several internal processors such as `BASIC_LLM_REQUEST_PROCESSOR`, `IDENTITY_LLM_REQUEST_PROCESSOR`, `INSTRUCTIONS_LLM_REQUEST_PROCESSOR`, and `NL_PLANNING_REQUEST_PROCESSOR` are not exported from the root `@google/adk` barrel, use `beforeModelCallback` and `afterModelCallback` when you want to keep the full default chain intact, or mutate `agent.requestProcessors.push(...)` and `agent.responseProcessors.push(...)` after constructing the `LlmAgent`.
+- **Live sessions ignore `outputSchema`**: Bidirectional live streaming (`Runner.runLive` / `LlmAgent.runLive`) has no single final structured turn; when `outputSchema` is set with `mode !== 'task'`, `LlmAgent` logs a warning, omits the `set_model_response` instruction, and does not auto-inject `SetModelResponseTool`. To capture structured values during a live session, expose a `FunctionTool` that writes to `toolContext.state`.
 - **Synchronous CPU work blocks sibling parallel tools on the single-threaded event loop**: Although `Promise.allSettled` starts every filtered tool call in a batch concurrently, synchronous functions and `async` functions that do not `await` block the Node.js or browser event loop until they return or reach an `await` point.
 - **Live session reconnects are bounded**: `runLiveFlow` retries recoverable live connection drops and `goAway` signals up to 5 times when a resumption handle is present, and throws once the cap is exceeded.
 - **`supportCfc` requires Gemini 2.0 or newer and forces text modality**: `Runner.runAsync` throws if `runConfig.supportCfc` is enabled on a model earlier than Gemini 2.0 (requiring a numeric major version `>= 2` such as `gemini-2.5-flash`), and `applyLiveRunConfig` overrides `liveConnectConfig.responseModalities` to `[Modality.TEXT]`.
@@ -406,7 +476,7 @@ export async function runWithCfc(agent: LlmAgent): Promise<void> {
 
 ## Related samples
 
-- [samples/flows/](../../../samples/flows/README.md) - Runnable offline sample demonstrating custom `BaseLlmRequestProcessor` and `BaseLlmResponseProcessor` stages with concurrent parallel tool execution and foreign-agent thought filtering, live streaming tool execution and `stop_streaming` via `handleFunctionCallsLive`, live session resumption on `goAway`, and Compositional Function Calling (`supportCfc`).
+- [samples/flows/](../../../samples/flows/README.md) - Runnable offline sample demonstrating custom `BaseLlmRequestProcessor` and `BaseLlmResponseProcessor` stages with concurrent parallel tool execution and foreign-agent thought filtering, live streaming tool execution and `stop_streaming` via `handleFunctionCallsLive`, live session resumption on `goAway`, Compositional Function Calling (`supportCfc`), and structured output alongside tools via `SetModelResponseTool` with `Aclosing` cleanup.
 
 ## Related guides
 

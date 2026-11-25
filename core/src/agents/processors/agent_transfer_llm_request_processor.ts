@@ -11,8 +11,67 @@ import {FunctionTool} from '../../tools/function_tool.js';
 import {BaseAgent} from '../base_agent.js';
 import {Context} from '../context.js';
 import {InvocationContext} from '../invocation_context.js';
-import {isLlmAgent, LlmAgent} from '../llm_agent.js';
+import {isLlmAgent, type LlmAgent} from '../llm_agent.js';
 import {BaseLlmRequestProcessor} from './base_llm_processor.js';
+
+const AGENT_TRANSFER_LLM_REQUEST_PROCESSOR_SIGNATURE_SYMBOL = Symbol.for(
+  'google.adk.agentTransferLlmRequestProcessor',
+);
+
+/**
+ * Type guard to check if an object is an instance of
+ * {@link AgentTransferLlmRequestProcessor}.
+ */
+export function isAgentTransferLlmRequestProcessor(
+  obj: unknown,
+): obj is AgentTransferLlmRequestProcessor {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    AGENT_TRANSFER_LLM_REQUEST_PROCESSOR_SIGNATURE_SYMBOL in obj &&
+    obj[AGENT_TRANSFER_LLM_REQUEST_PROCESSOR_SIGNATURE_SYMBOL] === true
+  );
+}
+
+/**
+ * Returns the agents that `agent` can transfer control to, including
+ * sub-agents, its parent `LlmAgent` (when allowed), and peer sub-agents
+ * (when allowed).
+ */
+export function getTransferTargets(agent: LlmAgent): BaseAgent[] {
+  const targets: BaseAgent[] = [];
+  targets.push(...agent.subAgents);
+
+  if (!agent.parentAgent || !isLlmAgent(agent.parentAgent)) {
+    return targets;
+  }
+
+  if (!agent.disallowTransferToParent) {
+    targets.push(agent.parentAgent);
+  }
+
+  if (!agent.disallowTransferToPeers) {
+    targets.push(
+      ...agent.parentAgent.subAgents.filter(
+        (peerAgent) => peerAgent.name !== agent.name,
+      ),
+    );
+  }
+
+  return targets;
+}
+
+/**
+ * Returns whether the agent's requests declare function tools, including
+ * `transfer_to_agent` when agent transfer is active and targets exist.
+ */
+export function hasFunctionTools(agent: LlmAgent): boolean {
+  return (
+    Boolean(agent.tools?.length) ||
+    (agent.requestProcessors.some(isAgentTransferLlmRequestProcessor) &&
+      getTransferTargets(agent).length > 0)
+  );
+}
 
 /**
  * Augments the {@link LlmRequest} to support agent transfer. When the current
@@ -22,6 +81,7 @@ import {BaseLlmRequestProcessor} from './base_llm_processor.js';
  * hand off control.
  */
 export class AgentTransferLlmRequestProcessor extends BaseLlmRequestProcessor {
+  readonly [AGENT_TRANSFER_LLM_REQUEST_PROCESSOR_SIGNATURE_SYMBOL] = true;
   private readonly toolName = 'transfer_to_agent' as const;
 
   /**
@@ -75,7 +135,7 @@ export class AgentTransferLlmRequestProcessor extends BaseLlmRequestProcessor {
       return;
     }
 
-    const transferTargets = this.getTransferTargets(invocationContext.agent);
+    const transferTargets = getTransferTargets(invocationContext.agent);
     if (!transferTargets.length) {
       return;
     }
@@ -131,29 +191,6 @@ to your parent agent.
 `;
     }
     return instructions;
-  }
-
-  private getTransferTargets(agent: LlmAgent): BaseAgent[] {
-    const targets: BaseAgent[] = [];
-    targets.push(...agent.subAgents);
-
-    if (!agent.parentAgent || !isLlmAgent(agent.parentAgent)) {
-      return targets;
-    }
-
-    if (!agent.disallowTransferToParent) {
-      targets.push(agent.parentAgent);
-    }
-
-    if (!agent.disallowTransferToPeers) {
-      targets.push(
-        ...agent.parentAgent.subAgents.filter(
-          (peerAgent) => peerAgent.name !== agent.name,
-        ),
-      );
-    }
-
-    return targets;
   }
 }
 

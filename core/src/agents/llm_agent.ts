@@ -7,10 +7,12 @@
 import {GenerateContentConfig, Modality, Schema} from '@google/genai';
 import {FinishTaskTool} from '../tools/finish_task_tool.js';
 import {
+  isSetModelResponseTool,
   SET_MODEL_RESPONSE_TOOL_NAME,
   SetModelResponseTool,
 } from '../tools/set_model_response_tool.js';
 import {AsyncQueue} from '../utils/async_queue.js';
+import {Aclosing} from '../utils/context_utils.js';
 import {isBaseNode, type BaseNode} from '../workflow/base_node.js';
 import {NodeContext} from '../workflow/node_context.js';
 import {NodeTool} from '../workflow/nodes/node_tool.js';
@@ -78,7 +80,10 @@ import {AUTH_PREPROCESSOR} from '../auth/auth_preprocessor.js';
 import {BaseContextCompactor} from '../context/base_context_compactor.js';
 import {InvocationContext, requireAgent} from './invocation_context.js';
 import {LiveRequest, LiveRequestQueue} from './live_request_queue.js';
-import {AGENT_TRANSFER_LLM_REQUEST_PROCESSOR} from './processors/agent_transfer_llm_request_processor.js';
+import {
+  AGENT_TRANSFER_LLM_REQUEST_PROCESSOR,
+  hasFunctionTools,
+} from './processors/agent_transfer_llm_request_processor.js';
 import {BASIC_LLM_REQUEST_PROCESSOR} from './processors/basic_llm_request_processor.js';
 import {
   CODE_EXECUTION_REQUEST_PROCESSOR,
@@ -145,6 +150,14 @@ function isRecoverableLiveError(err: unknown): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function* closeableStream<T>(
+  generator: AsyncGenerator<T, void>,
+): AsyncGenerator<T, void, void> {
+  for await (const item of new Aclosing(generator)) {
+    yield item;
+  }
 }
 
 /**
@@ -1000,7 +1013,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     while (true) {
       let lastEvent: Event | undefined = undefined;
       let lastMeaningfulEvent: Event | undefined = undefined;
-      for await (const event of this.runOneStepAsync(context)) {
+      for await (const event of new Aclosing(this.runOneStepAsync(context))) {
         if (context.abortSignal?.aborted) {
           return;
         }
@@ -1049,7 +1062,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
   protected async *runLiveImpl(
     context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    for await (const event of this.runLiveFlow(context)) {
+    for await (const event of new Aclosing(this.runLiveFlow(context))) {
       if (context.abortSignal?.aborted) {
         return;
       }
@@ -1096,9 +1109,8 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // Preprocess: same processors as runAsync. Yields agent-emitted events
     // (e.g. instruction injection metadata events) to the caller.
     // =========================================================================
-    for await (const event of this.runLivePreprocess(
-      invocationContext,
-      llmRequest,
+    for await (const event of new Aclosing(
+      this.runLivePreprocess(invocationContext, llmRequest),
     )) {
       yield event;
     }
@@ -1108,6 +1120,12 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       invocationContext.abortSignal?.aborted
     ) {
       return;
+    }
+
+    if (this.outputSchema && this.mode !== 'task') {
+      logger.warn(
+        `Agent ${this.name} sets outputSchema, which is not supported in live mode and will be ignored. To capture structured data during a live session, give the agent a tool that writes it to session state.`,
+      );
     }
 
     // =========================================================================
@@ -1214,12 +1232,16 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
 
       let reconnect = false;
       try {
-        yield* this.runReceiveLoop(
-          invocationContext,
-          connection,
-          llmRequest,
-          sendAbort,
-        );
+        for await (const event of new Aclosing(
+          this.runReceiveLoop(
+            invocationContext,
+            connection,
+            llmRequest,
+            sendAbort,
+          ),
+        )) {
+          yield event;
+        }
       } catch (err) {
         const canReconnect =
           !!invocationContext.liveSessionResumptionHandle &&
@@ -1266,9 +1288,8 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     llmRequest: LlmRequest,
   ): AsyncGenerator<Event, void, void> {
     for (const processor of this.requestProcessors) {
-      for await (const event of processor.runAsync(
-        invocationContext,
-        llmRequest,
+      for await (const event of new Aclosing(
+        processor.runAsync(invocationContext, llmRequest),
       )) {
         if (invocationContext.abortSignal?.aborted) {
           return;
@@ -1409,7 +1430,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     let receivedAny = true;
     while (receivedAny) {
       receivedAny = false;
-      for await (const llmResponse of connection.receive()) {
+      for await (const llmResponse of new Aclosing(connection.receive())) {
         receivedAny = true;
         if (invocationContext.abortSignal?.aborted) {
           return;
@@ -1449,11 +1470,13 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
           branch: invocationContext.branch,
         });
 
-        for await (const event of this.postprocessLive(
-          invocationContext,
-          llmRequest,
-          llmResponse,
-          modelResponseEvent,
+        for await (const event of new Aclosing(
+          this.postprocessLive(
+            invocationContext,
+            llmRequest,
+            llmResponse,
+            modelResponseEvent,
+          ),
         )) {
           yield event;
 
@@ -1510,8 +1533,8 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
                 };
               }
               try {
-                for await (const subEvent of subAgent.runLive(
-                  invocationContext,
+                for await (const subEvent of new Aclosing(
+                  subAgent.runLive(invocationContext),
                 )) {
                   yield subEvent;
                 }
@@ -1535,9 +1558,8 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     modelResponseEvent: Event,
   ): AsyncGenerator<Event, void, void> {
     for (const processor of this.responseProcessors) {
-      for await (const event of processor.runAsync(
-        invocationContext,
-        llmResponse,
+      for await (const event of new Aclosing(
+        processor.runAsync(invocationContext, llmResponse),
       )) {
         yield event;
       }
@@ -1641,9 +1663,8 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // =========================================================================
     // Runs request processors.
     for (const processor of this.requestProcessors) {
-      for await (const event of processor.runAsync(
-        invocationContext,
-        llmRequest,
+      for await (const event of new Aclosing(
+        processor.runAsync(invocationContext, llmRequest),
       )) {
         if (invocationContext.abortSignal?.aborted) {
           return;
@@ -1661,7 +1682,12 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       allTools.push(this.finishTaskTool);
     } else if (
       this.outputSchema &&
-      allTools.length > 0 &&
+      !invocationContext.liveRequestQueue &&
+      !invocationContext.runConfig?.supportCfc &&
+      (allTools.length > 0 ||
+        hasFunctionTools(this) ||
+        Object.keys(llmRequest.toolsDict).length > 0) &&
+      !allTools.some(isSetModelResponseTool) &&
       !canUseOutputSchemaWithTools(this.canonicalModel)
     ) {
       allTools.push(
@@ -1729,10 +1755,8 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // Calls the LLM
     // =========================================================================
     const responsesGenerator = async function* (this: LlmAgent) {
-      for await (const llmResponse of this.callLlmAsync(
-        invocationContext,
-        llmRequest,
-        modelResponseEvent,
+      for await (const llmResponse of new Aclosing(
+        this.callLlmAsync(invocationContext, llmRequest, modelResponseEvent),
       )) {
         if (invocationContext.abortSignal?.aborted) {
           return;
@@ -1748,11 +1772,13 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         // ======================================================================
         // Postprocess after calling the LLM
         // ======================================================================
-        for await (const event of this.postprocess(
-          invocationContext,
-          llmRequest,
-          llmResponse,
-          modelResponseEvent,
+        for await (const event of new Aclosing(
+          this.postprocess(
+            invocationContext,
+            llmRequest,
+            llmResponse,
+            modelResponseEvent,
+          ),
         )) {
           if (invocationContext.abortSignal?.aborted) {
             return;
@@ -1769,12 +1795,16 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       }
     };
 
-    yield* this.runAndHandleError(
-      responsesGenerator.call(this),
-      invocationContext,
-      llmRequest,
-      modelResponseEvent,
-    );
+    for await (const event of new Aclosing(
+      this.runAndHandleError(
+        responsesGenerator.call(this),
+        invocationContext,
+        llmRequest,
+        modelResponseEvent,
+      ),
+    )) {
+      yield event;
+    }
   }
 
   private async *postprocess(
@@ -1787,9 +1817,8 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // Runs response processors
     // =========================================================================
     for (const processor of this.responseProcessors) {
-      for await (const event of processor.runAsync(
-        invocationContext,
-        llmResponse,
+      for await (const event of new Aclosing(
+        processor.runAsync(invocationContext, llmResponse),
       )) {
         if (invocationContext.abortSignal?.aborted) {
           return;
@@ -1968,7 +1997,9 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     const nextAgentName = functionResponseEvent.actions.transferToAgent;
     if (nextAgentName) {
       const nextAgent = this.getAgentByName(invocationContext, nextAgentName);
-      for await (const event of nextAgent.runAsync(invocationContext)) {
+      for await (const event of new Aclosing(
+        nextAgent.runAsync(invocationContext),
+      )) {
         if (invocationContext.abortSignal?.aborted) {
           return;
         }
@@ -2038,7 +2069,9 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       invocationContext.liveRequestQueue ??= new LiveRequestQueue();
       const liveRequestQueue = invocationContext.liveRequestQueue;
       try {
-        for await (const llmResponse of this.runLiveFlow(invocationContext)) {
+        for await (const llmResponse of new Aclosing(
+          this.runLiveFlow(invocationContext),
+        )) {
           if (invocationContext.abortSignal?.aborted) {
             return;
           }
@@ -2071,15 +2104,17 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       const responsesGenerator = recordInference(
         {invocationContext, llmRequest, modelResponseEvent},
         () =>
-          llm.generateContentAsync(
-            llmRequest,
-            /* stream= */ invocationContext.runConfig?.streamingMode ===
-              StreamingMode.SSE,
-            invocationContext.abortSignal,
+          closeableStream(
+            llm.generateContentAsync(
+              llmRequest,
+              /* stream= */ invocationContext.runConfig?.streamingMode ===
+                StreamingMode.SSE,
+              invocationContext.abortSignal,
+            ),
           ),
       );
 
-      for await (const llmResponse of responsesGenerator) {
+      for await (const llmResponse of new Aclosing(responsesGenerator)) {
         if (invocationContext.abortSignal?.aborted) {
           return;
         }
@@ -2193,7 +2228,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     modelResponseEvent: Event,
   ): AsyncGenerator<T, void, void> {
     try {
-      for await (const response of responseGenerator) {
+      for await (const response of new Aclosing(responseGenerator)) {
         if (invocationContext.abortSignal?.aborted) {
           return;
         }
