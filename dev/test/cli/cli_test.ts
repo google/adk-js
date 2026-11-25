@@ -8,6 +8,7 @@ import {
   createEvent,
   DatabaseSessionService,
   type DatabaseSessionServiceOptions,
+  type EvalResult,
   GcsArtifactService,
   InMemoryMemoryService,
   InMemorySessionService,
@@ -95,6 +96,7 @@ const {
   getSessionServiceFromUriCalls,
   getEvaluationCriteriaOrDefaultCalls,
   runEvalsCalls,
+  runEvalsOverride,
   agentFileCalls,
   agentFileDisposeCalls,
 } = vi.hoisted(() => ({
@@ -104,6 +106,13 @@ const {
   getSessionServiceFromUriCalls: vi.fn(),
   getEvaluationCriteriaOrDefaultCalls: vi.fn(),
   runEvalsCalls: vi.fn(),
+  runEvalsOverride: {
+    current: undefined as
+      | ((
+          ...args: Parameters<typeof import('@google/adk').runEvals>
+        ) => AsyncGenerator<EvalResult, void, undefined>)
+      | undefined,
+  },
   agentFileCalls: vi.fn(),
   agentFileDisposeCalls: vi.fn(),
 }));
@@ -177,9 +186,15 @@ vi.mock('@google/adk', async (importOriginal) => {
       getEvaluationCriteriaOrDefaultCalls(...args);
       return actual.getEvaluationCriteriaOrDefault(...args);
     },
-    runEvals: async function* (...args: Parameters<typeof actual.runEvals>) {
-      runEvalsCalls(...args);
-      yield* actual.runEvals(...args);
+    runEvals: (...args: Parameters<typeof actual.runEvals>) => {
+      if (runEvalsOverride.current) {
+        runEvalsCalls(...args);
+        return runEvalsOverride.current(...args);
+      }
+      return (async function* () {
+        runEvalsCalls(...args);
+        yield* actual.runEvals(...args);
+      })();
     },
     setupAdkLogger: vi.fn(),
     logToTmpFolder: vi.fn(),
@@ -2054,6 +2069,59 @@ describe('CLI Entrypoint', () => {
 
         expect(process.exitCode).toBe(1);
         expect(evalSetsManager.getEvalSet).not.toHaveBeenCalled();
+      });
+
+      it('closes the runEvals generator via return when evaluation rejects', async () => {
+        evalSetsManager.getEvalSet.mockResolvedValue({
+          evalSetId: 'remoteSet',
+          evalCases: [
+            {
+              evalId: 'caseOne',
+              conversation: [
+                {
+                  invocationId: 'inv-1',
+                  userContent: {role: 'user', parts: [{text: 'ping'}]},
+                  finalResponse: {role: 'model', parts: [{text: 'pong'}]},
+                  creationTimestamp: 1,
+                },
+              ],
+            },
+          ],
+        });
+        const returnSpy = vi.fn<
+          (
+            value?: void | PromiseLike<void>,
+          ) => Promise<IteratorResult<EvalResult, void>>
+        >(() => Promise.resolve({value: undefined, done: true as const}));
+        const rejectingEvalGenerator: AsyncGenerator<
+          EvalResult,
+          void,
+          undefined
+        > = {
+          next: () => Promise.reject(new Error('eval stream failure')),
+          return: returnSpy,
+          throw: (err: unknown) => Promise.reject(err),
+          [Symbol.asyncIterator]() {
+            return this;
+          },
+        };
+        runEvalsOverride.current = () => rejectingEvalGenerator;
+
+        try {
+          await parse([
+            'eval',
+            agentDir,
+            'remoteSet',
+            '--eval_storage_uri',
+            'gs://eval-bucket',
+          ]);
+        } finally {
+          runEvalsOverride.current = undefined;
+        }
+
+        expect(returnSpy).toHaveBeenCalledTimes(1);
+        expect(returnSpy).toHaveBeenCalledWith(undefined);
+        expect(process.exitCode).toBe(1);
       });
     });
   });

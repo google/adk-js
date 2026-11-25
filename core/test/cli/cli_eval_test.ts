@@ -43,6 +43,7 @@ import {
   RESPONSE_EVALUATION_SCORE_KEY,
   RESPONSE_MATCH_SCORE_KEY,
   runEvals,
+  Runner,
   TOOL_TRAJECTORY_SCORE_KEY,
   tryGetResetFunc,
 } from '@google/adk';
@@ -619,6 +620,53 @@ describe('cli/cli_eval', () => {
       expect(results[0].session_details?.appName).toBe('EvaluationGenerator');
       expect(results[0].user_id).toBe('test_user_id');
       expect(results[0].session_details?.state['foo']).toBe('bar');
+    });
+
+    it('closes the runner event generator via return when next rejects', async () => {
+      const returnSpy = vi.fn<
+        (
+          value?: void | PromiseLike<void>,
+        ) => Promise<IteratorResult<Event, void>>
+      >(() => Promise.resolve({value: undefined, done: true as const}));
+      const rejectingGenerator: AsyncGenerator<Event, void, undefined> = {
+        next: () => Promise.reject(new Error('inference stream failure')),
+        return: returnSpy,
+        throw: (err: unknown) => Promise.reject(err),
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+      };
+      const runAsyncSpy = vi
+        .spyOn(Runner.prototype, 'runAsync')
+        .mockReturnValue(rejectingGenerator);
+
+      const structuredCase: EvalCase = {
+        evalId: 'failingStreamCase',
+        conversation: [
+          {
+            userContent: {role: 'user', parts: [{text: 'hello'}]},
+            finalResponse: {role: 'model', parts: [{text: 'Echo: hello'}]},
+          },
+        ],
+      };
+
+      try {
+        await expect(
+          (async () => {
+            for await (const _res of runEvals(
+              {evalSetOne: [structuredCase]},
+              new DeterministicEvalAgent(),
+            )) {
+              // Expect stream rejection before yielding a result.
+            }
+          })(),
+        ).rejects.toThrow('inference stream failure');
+
+        expect(returnSpy).toHaveBeenCalledTimes(1);
+        expect(returnSpy).toHaveBeenCalledWith(undefined);
+      } finally {
+        runAsyncSpy.mockRestore();
+      }
     });
   });
 

@@ -35,6 +35,7 @@ import {
   LlmAgent,
   LocalEvalSetResultsManager,
   LocalEvalSetsManager,
+  type Logger,
   type MetricInfo,
   node,
   NotFoundError,
@@ -2452,6 +2453,469 @@ describe('AdkWebServer', () => {
 
       expect(response.status).toBe(200);
       expect(response.body.result).toBeDefined();
+    });
+
+    it('preserves the custom agent.json card URL when serving a directory of agents', async () => {
+      const tempAgentsDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-a2a-card-dir-'),
+      );
+      const customAppDir = path.join(tempAgentsDir, 'customCardApp');
+      fs.mkdirSync(customAppDir, {recursive: true});
+      fs.writeFileSync(
+        path.join(customAppDir, 'agent.mjs'),
+        [
+          `import {BaseAgent, createEvent} from '@google/adk';`,
+          `class CustomCardDirectoryAgent extends BaseAgent {`,
+          `  constructor() { super({name: 'customCardDirectoryAgent'}); }`,
+          `  async *runAsyncImpl(ctx) {`,
+          `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'card reply'}]}});`,
+          `  }`,
+          `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+          `}`,
+          `export const rootAgent = new CustomCardDirectoryAgent();`,
+        ].join('\n'),
+        'utf-8',
+      );
+      const customRpcUrl =
+        'https://public.example.com/a2a/customCardApp/jsonrpc';
+      fs.writeFileSync(
+        path.join(customAppDir, 'agent.json'),
+        JSON.stringify({
+          name: 'customCardDirectoryAgent',
+          description: 'Custom directory agent card',
+          url: customRpcUrl,
+          version: '2.1.0',
+          protocolVersion: '0.3.0',
+          capabilities: {streaming: true},
+          defaultInputModes: ['text/plain'],
+          defaultOutputModes: ['text/plain'],
+          skills: [],
+        }),
+        'utf-8',
+      );
+
+      const customServer = new AdkApiServer({
+        agentsDir: tempAgentsDir,
+        host: '127.0.0.1',
+        port: 0,
+        a2a: true,
+        agentFileLoadOptions: {compile: false, bundle: false},
+      });
+      try {
+        await customServer.start();
+        const customClient = new HttpClient(customServer.url);
+        const cardResponse = await customClient.get<AgentCard>(
+          `/a2a/customCardApp/${AGENT_CARD_PATH}`,
+        );
+        expect(cardResponse.status).toBe(200);
+        expect(cardResponse.data?.url).toBe(customRpcUrl);
+        expect(cardResponse.data?.version).toBe('2.1.0');
+
+        const rpcResponse = await fetch(
+          `${customServer.url}/a2a/customCardApp/jsonrpc`,
+          {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: 'custom-card-rpc',
+              method: 'message/send',
+              params: {
+                message: {
+                  kind: 'message',
+                  messageId: 'custom-card-msg',
+                  role: 'user',
+                  parts: [{kind: 'text', text: 'ping'}],
+                },
+              },
+            }),
+          },
+        );
+        const rpcBody = (await rpcResponse.json()) as JsonRpcResponse;
+        expect(rpcResponse.status).toBe(200);
+        expect(rpcBody.error).toBeUndefined();
+        expect(rpcBody.result).toBeDefined();
+      } finally {
+        await customServer.stop();
+        fs.rmSync(tempAgentsDir, {recursive: true, force: true});
+      }
+    });
+
+    it('preserves a sibling agent.json card URL when agentsDir points to a single agent file', async () => {
+      const tempSingleDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-a2a-card-single-'),
+      );
+      const singleAgentFile = path.join(tempSingleDir, 'singleCardAgent.mjs');
+      fs.writeFileSync(
+        singleAgentFile,
+        [
+          `import {BaseAgent, createEvent} from '@google/adk';`,
+          `class SingleCardFileAgent extends BaseAgent {`,
+          `  constructor() { super({name: 'singleCardFileAgent'}); }`,
+          `  async *runAsyncImpl(ctx) {`,
+          `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'single reply'}]}});`,
+          `  }`,
+          `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+          `}`,
+          `export const rootAgent = new SingleCardFileAgent();`,
+        ].join('\n'),
+        'utf-8',
+      );
+      const customSingleUrl =
+        'https://single.example.com/a2a/singleCardAgent/jsonrpc';
+      fs.writeFileSync(
+        path.join(tempSingleDir, 'agent.json'),
+        JSON.stringify({
+          name: 'singleCardFileAgent',
+          description: 'Single file custom card',
+          url: customSingleUrl,
+          version: '1.2.0',
+          protocolVersion: '0.3.0',
+          capabilities: {streaming: true},
+          defaultInputModes: ['text/plain'],
+          defaultOutputModes: ['text/plain'],
+          skills: [],
+        }),
+        'utf-8',
+      );
+
+      const singleServer = new AdkApiServer({
+        agentsDir: singleAgentFile,
+        host: '127.0.0.1',
+        port: 0,
+        a2a: true,
+        agentFileLoadOptions: {compile: false, bundle: false},
+      });
+      try {
+        await singleServer.start();
+        const singleClient = new HttpClient(singleServer.url);
+        const cardResponse = await singleClient.get<AgentCard>(
+          `/a2a/singleCardAgent/${AGENT_CARD_PATH}`,
+        );
+        expect(cardResponse.status).toBe(200);
+        expect(cardResponse.data?.url).toBe(customSingleUrl);
+      } finally {
+        await singleServer.stop();
+        fs.rmSync(tempSingleDir, {recursive: true, force: true});
+      }
+    });
+
+    it('logs a setup error for a malformed agent.json and still mounts healthy A2A agents', async () => {
+      const tempMixedDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-a2a-card-mixed-'),
+      );
+      const brokenDir = path.join(tempMixedDir, 'brokenCardApp');
+      const healthyDir = path.join(tempMixedDir, 'healthyApp');
+      fs.mkdirSync(brokenDir, {recursive: true});
+      fs.mkdirSync(healthyDir, {recursive: true});
+      fs.writeFileSync(
+        path.join(brokenDir, 'agent.mjs'),
+        [
+          `import {BaseAgent, createEvent} from '@google/adk';`,
+          `class BrokenCardAgent extends BaseAgent {`,
+          `  constructor() { super({name: 'brokenCardAgent'}); }`,
+          `  async *runAsyncImpl(ctx) {`,
+          `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'broken'}]}});`,
+          `  }`,
+          `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+          `}`,
+          `export const rootAgent = new BrokenCardAgent();`,
+        ].join('\n'),
+        'utf-8',
+      );
+      fs.writeFileSync(
+        path.join(brokenDir, 'agent.json'),
+        '{not valid json',
+        'utf-8',
+      );
+      fs.writeFileSync(
+        path.join(healthyDir, 'agent.mjs'),
+        [
+          `import {BaseAgent, createEvent} from '@google/adk';`,
+          `class HealthyCardAgent extends BaseAgent {`,
+          `  constructor() { super({name: 'healthyCardAgent'}); }`,
+          `  async *runAsyncImpl(ctx) {`,
+          `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'healthy'}]}});`,
+          `  }`,
+          `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+          `}`,
+          `export const rootAgent = new HealthyCardAgent();`,
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const errorLogSpy = vi.fn();
+      const testLogger: Logger = {
+        setLogLevel: vi.fn(),
+        log: vi.fn(),
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: errorLogSpy,
+      };
+      const mixedServer = new AdkApiServer({
+        agentsDir: tempMixedDir,
+        host: '127.0.0.1',
+        port: 0,
+        a2a: true,
+        logger: testLogger,
+        agentFileLoadOptions: {compile: false, bundle: false},
+      });
+      try {
+        await mixedServer.start();
+        expect(errorLogSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Failed to setup A2A agent brokenCardApp:'),
+        );
+
+        const mixedClient = new HttpClient(mixedServer.url);
+        const healthyCard = await mixedClient.get<AgentCard>(
+          `/a2a/healthyApp/${AGENT_CARD_PATH}`,
+        );
+        expect(healthyCard.status).toBe(200);
+        expect(healthyCard.data?.url).toBe(
+          `${mixedServer.url}/a2a/healthyApp/jsonrpc`,
+        );
+
+        await expect(
+          mixedClient.get(`/a2a/brokenCardApp/${AGENT_CARD_PATH}`),
+        ).rejects.toMatchObject({response: {status: 404}});
+      } finally {
+        await mixedServer.stop();
+        fs.rmSync(tempMixedDir, {recursive: true, force: true});
+      }
+    });
+
+    it('ignores cwd agent.json files and mounts non-segment app names for a custom agentLoader without agentsDir', async () => {
+      const tempCwdDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-a2a-custom-cwd-'),
+      );
+      const incidentalDir = path.join(tempCwdDir, 'incidentalApp');
+      fs.mkdirSync(incidentalDir, {recursive: true});
+      fs.writeFileSync(
+        path.join(incidentalDir, 'agent.json'),
+        JSON.stringify({
+          name: 'incidentalCardAgent',
+          description: 'Incidental cwd card that must be ignored',
+          url: 'https://incidental.example.com/a2a/incidentalApp/jsonrpc',
+          version: '9.9.9',
+          protocolVersion: '0.3.0',
+          capabilities: {streaming: true},
+          defaultInputModes: ['text/plain'],
+          defaultOutputModes: ['text/plain'],
+          skills: [],
+        }),
+        'utf-8',
+      );
+
+      class CustomMapAgentLoader extends BaseAgentLoader {
+        private readonly agents = new Map<string, LlmAgent>([
+          ['incidentalApp', TEST_AGENT],
+          ['team/nonSegmentApp', TEST_AGENT],
+        ]);
+
+        override async listAgents(): Promise<string[]> {
+          return [...this.agents.keys()];
+        }
+
+        override async getAgentFile(
+          agentName: string,
+        ): Promise<AgentFileHandle> {
+          const agent = this.agents.get(agentName);
+          if (!agent) {
+            throw new NotFoundError(`Agent not found: ${agentName}`);
+          }
+          return {
+            load: async () => agent,
+            retain: () => ({
+              async [Symbol.asyncDispose](): Promise<void> {},
+            }),
+            async [Symbol.asyncDispose](): Promise<void> {},
+          };
+        }
+      }
+
+      const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tempCwdDir);
+      const errorLogSpy = vi.fn();
+      const testLogger: Logger = {
+        setLogLevel: vi.fn(),
+        log: vi.fn(),
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: errorLogSpy,
+      };
+      const customLoaderServer = new AdkApiServer({
+        agentLoader: new CustomMapAgentLoader(),
+        host: '127.0.0.1',
+        port: 0,
+        a2a: true,
+        logger: testLogger,
+      });
+      try {
+        await customLoaderServer.start();
+        expect(errorLogSpy).not.toHaveBeenCalled();
+
+        const customClient = new HttpClient(customLoaderServer.url);
+        const incidentalCard = await customClient.get<AgentCard>(
+          `/a2a/incidentalApp/${AGENT_CARD_PATH}`,
+        );
+        expect(incidentalCard.status).toBe(200);
+        expect(incidentalCard.data?.url).toBe(
+          `${customLoaderServer.url}/a2a/incidentalApp/jsonrpc`,
+        );
+
+        const nestedCard = await customClient.get<AgentCard>(
+          `/a2a/team/nonSegmentApp/${AGENT_CARD_PATH}`,
+        );
+        expect(nestedCard.status).toBe(200);
+        expect(nestedCard.data?.url).toBe(
+          `${customLoaderServer.url}/a2a/team/nonSegmentApp/jsonrpc`,
+        );
+
+        const rpcResponse = await fetch(
+          `${customLoaderServer.url}/a2a/team/nonSegmentApp/jsonrpc`,
+          {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: 'nested-app-rpc',
+              method: 'message/send',
+              params: {
+                message: {
+                  kind: 'message',
+                  messageId: 'nested-app-msg',
+                  role: 'user',
+                  parts: [{kind: 'text', text: 'ping'}],
+                },
+              },
+            }),
+          },
+        );
+        const rpcBody = (await rpcResponse.json()) as JsonRpcResponse;
+        expect(rpcResponse.status).toBe(200);
+        expect(rpcBody.error).toBeUndefined();
+        expect(rpcBody.result).toBeDefined();
+      } finally {
+        await customLoaderServer.stop();
+        cwdSpy.mockRestore();
+        fs.rmSync(tempCwdDir, {recursive: true, force: true});
+      }
+    });
+
+    it('logs setup errors for agent.json cards with a missing or relative url and still mounts healthy A2A agents', async () => {
+      const tempInvalidUrlDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-a2a-card-invalid-url-'),
+      );
+      const missingUrlDir = path.join(tempInvalidUrlDir, 'missingUrlApp');
+      const relativeUrlDir = path.join(tempInvalidUrlDir, 'relativeUrlApp');
+      const healthySiblingDir = path.join(
+        tempInvalidUrlDir,
+        'healthySiblingApp',
+      );
+      fs.mkdirSync(missingUrlDir, {recursive: true});
+      fs.mkdirSync(relativeUrlDir, {recursive: true});
+      fs.mkdirSync(healthySiblingDir, {recursive: true});
+
+      const writeAgentModule = (dir: string, agentName: string) => {
+        fs.writeFileSync(
+          path.join(dir, 'agent.mjs'),
+          [
+            `import {BaseAgent, createEvent} from '@google/adk';`,
+            `class CardValidationAgent extends BaseAgent {`,
+            `  constructor() { super({name: '${agentName}'}); }`,
+            `  async *runAsyncImpl(ctx) {`,
+            `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'ok'}]}});`,
+            `  }`,
+            `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+            `}`,
+            `export const rootAgent = new CardValidationAgent();`,
+          ].join('\n'),
+          'utf-8',
+        );
+      };
+
+      writeAgentModule(missingUrlDir, 'missingUrlAgent');
+      fs.writeFileSync(
+        path.join(missingUrlDir, 'agent.json'),
+        JSON.stringify({
+          name: 'missingUrlAgent',
+          description: 'Syntactically valid card missing url',
+          version: '1.0.0',
+          protocolVersion: '0.3.0',
+          capabilities: {streaming: true},
+          defaultInputModes: ['text/plain'],
+          defaultOutputModes: ['text/plain'],
+          skills: [],
+        }),
+        'utf-8',
+      );
+
+      writeAgentModule(relativeUrlDir, 'relativeUrlAgent');
+      fs.writeFileSync(
+        path.join(relativeUrlDir, 'agent.json'),
+        JSON.stringify({
+          name: 'relativeUrlAgent',
+          description: 'Syntactically valid card with relative url',
+          url: '/a2a/relativeUrlApp/jsonrpc',
+          version: '1.0.0',
+          protocolVersion: '0.3.0',
+          capabilities: {streaming: true},
+          defaultInputModes: ['text/plain'],
+          defaultOutputModes: ['text/plain'],
+          skills: [],
+        }),
+        'utf-8',
+      );
+
+      writeAgentModule(healthySiblingDir, 'healthySiblingAgent');
+
+      const errorLogSpy = vi.fn();
+      const testLogger: Logger = {
+        setLogLevel: vi.fn(),
+        log: vi.fn(),
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: errorLogSpy,
+      };
+      const invalidUrlServer = new AdkApiServer({
+        agentsDir: tempInvalidUrlDir,
+        host: '127.0.0.1',
+        port: 0,
+        a2a: true,
+        logger: testLogger,
+        agentFileLoadOptions: {compile: false, bundle: false},
+      });
+      try {
+        await invalidUrlServer.start();
+        expect(errorLogSpy).toHaveBeenCalledTimes(2);
+        expect(errorLogSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Failed to setup A2A agent missingUrlApp:'),
+        );
+        expect(errorLogSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Failed to setup A2A agent relativeUrlApp:'),
+        );
+
+        const invalidUrlClient = new HttpClient(invalidUrlServer.url);
+        const healthyCard = await invalidUrlClient.get<AgentCard>(
+          `/a2a/healthySiblingApp/${AGENT_CARD_PATH}`,
+        );
+        expect(healthyCard.status).toBe(200);
+        expect(healthyCard.data?.url).toBe(
+          `${invalidUrlServer.url}/a2a/healthySiblingApp/jsonrpc`,
+        );
+
+        await expect(
+          invalidUrlClient.get(`/a2a/missingUrlApp/${AGENT_CARD_PATH}`),
+        ).rejects.toMatchObject({response: {status: 404}});
+        await expect(
+          invalidUrlClient.get(`/a2a/relativeUrlApp/${AGENT_CARD_PATH}`),
+        ).rejects.toMatchObject({response: {status: 404}});
+      } finally {
+        await invalidUrlServer.stop();
+        fs.rmSync(tempInvalidUrlDir, {recursive: true, force: true});
+      }
     });
   });
 
@@ -5066,6 +5530,83 @@ describe('AdkWebServer', () => {
       } finally {
         listSpy.mockRestore();
         await evalServer.stop();
+      }
+    });
+
+    it('closes runner async generators via return when /run, /run_sse, or /run_live rejects', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'session-aclosing',
+      });
+
+      const createRejectingStream = (message: string) => {
+        const returnSpy = vi.fn<
+          (
+            value?: void | PromiseLike<void>,
+          ) => Promise<IteratorResult<Event, void>>
+        >(() => Promise.resolve({value: undefined, done: true as const}));
+        const generator: AsyncGenerator<Event, void, undefined> = {
+          next: () => Promise.reject(new Error(message)),
+          return: returnSpy,
+          throw: (err: unknown) => Promise.reject(err),
+          [Symbol.asyncIterator]() {
+            return this;
+          },
+        };
+        return {generator, returnSpy};
+      };
+
+      const runStream = createRejectingStream('run stream rejected');
+      const sseStream = createRejectingStream('sse stream rejected');
+      const runAsyncSpy = vi
+        .spyOn(Runner.prototype, 'runAsync')
+        .mockReturnValueOnce(runStream.generator)
+        .mockReturnValueOnce(sseStream.generator);
+
+      const liveStream = createRejectingStream('live stream rejected');
+      const runLiveSpy = vi
+        .spyOn(Runner.prototype, 'runLive')
+        .mockReturnValueOnce(liveStream.generator);
+
+      try {
+        await expect(
+          client.post('/run', {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'session-aclosing',
+            newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+          }),
+        ).rejects.toMatchObject({response: {status: 500}});
+        expect(runStream.returnSpy).toHaveBeenCalledTimes(1);
+        expect(runStream.returnSpy).toHaveBeenCalledWith(undefined);
+
+        const sseResponse = await fetch(`${server.url}/run_sse`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'session-aclosing',
+            newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+            streaming: true,
+          }),
+        });
+        const sseBody = await sseResponse.text();
+        expect(sseBody).toContain('sse stream rejected');
+        expect(sseStream.returnSpy).toHaveBeenCalledTimes(1);
+        expect(sseStream.returnSpy).toHaveBeenCalledWith(undefined);
+
+        const closeCode = await getRunLiveCloseCode(
+          server.url,
+          'app_name=testApp&user_id=testUser&session_id=session-aclosing',
+        );
+        expect(closeCode).toBe(1011);
+        expect(liveStream.returnSpy).toHaveBeenCalledTimes(1);
+        expect(liveStream.returnSpy).toHaveBeenCalledWith(undefined);
+      } finally {
+        runAsyncSpy.mockRestore();
+        runLiveSpy.mockRestore();
       }
     });
   });

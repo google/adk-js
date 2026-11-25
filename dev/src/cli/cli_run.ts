@@ -5,6 +5,7 @@
  */
 
 import {
+  Aclosing,
   App,
   BaseArtifactService,
   BaseCredentialService,
@@ -261,7 +262,7 @@ async function runFromInputFile(
     };
 
     waitingOnUser = false;
-    for await (const event of runner.runAsync(runOptions)) {
+    for await (const event of new Aclosing(runner.runAsync(runOptions))) {
       printEvent(event);
       // A scripted run has no prompt to answer at: whatever the pause asked
       // for has to be the next query in the file.
@@ -351,14 +352,16 @@ async function runInteractively(
 
       turnInFlight = true;
       try {
-        for await (const event of runner.runAsync({
-          userId: options.session.userId,
-          sessionId: options.session.id,
-          newMessage: {role: 'user', parts: [{text: query}]},
-          // Interactive CLI: let a plain-text "yes"/"no" resolve a pending tool
-          // confirmation (opt-in; off by default on non-interactive surfaces).
-          runConfig: {plainTextToolConfirmation: true},
-        })) {
+        for await (const event of new Aclosing(
+          runner.runAsync({
+            userId: options.session.userId,
+            sessionId: options.session.id,
+            newMessage: {role: 'user', parts: [{text: query}]},
+            // Interactive CLI: let a plain-text "yes"/"no" resolve a pending tool
+            // confirmation (opt-in; off by default on non-interactive surfaces).
+            runConfig: {plainTextToolConfirmation: true},
+          }),
+        )) {
           printEvent(event);
         }
       } catch (error) {
