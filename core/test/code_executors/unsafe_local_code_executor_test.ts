@@ -15,6 +15,7 @@ import {
   createSession,
 } from '@google/adk';
 import {EventEmitter} from 'node:events';
+import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
@@ -104,30 +105,46 @@ describe('UnsafeLocalCodeExecutor', () => {
     // `fs.rm` retry loop in `finally` can remove the temp dir once it exits.
     const survivorLifetimeMs = 2_000;
     const timedOutExecutor = new UnsafeLocalCodeExecutor({timeoutSeconds});
-    const params: ExecuteCodeParams = {
-      invocationContext,
-      codeExecutionInput: {
-        code: [
-          'const {spawn} = require("node:child_process");',
-          `spawn(process.execPath, ['-e', 'setTimeout(() => {}, ${survivorLifetimeMs})'], {`,
-          '  stdio: "inherit",',
-          '});',
-          `setTimeout(() => {}, ${survivorLifetimeMs});`,
-        ].join('\n'),
-        language: CodeExecutionLanguage.JAVASCRIPT,
-        inputFiles: [],
-      },
-    };
-
-    const startedAt = Date.now();
-    const result = await timedOutExecutor.executeCode(params);
-
-    expect(result.stderr).toContain(
-      `Code execution timed out after ${timeoutSeconds} seconds.`,
+    const markerDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'adk-executor-process-tree-test-'),
     );
-    // Comfortably under the survivor's lifetime: the point is that the wait is
-    // bounded by our timer rather than by the survivor exiting on its own.
-    expect(Date.now() - startedAt).toBeLessThan(15_000);
+    const markerPath = path.join(markerDir, 'survivor.marker');
+    const survivorCode = `require('node:fs').appendFileSync(${JSON.stringify(markerPath)}, 'started'); setInterval(() => require('node:fs').appendFileSync(${JSON.stringify(markerPath)}, 'x'), 50)`;
+
+    try {
+      const params: ExecuteCodeParams = {
+        invocationContext,
+        codeExecutionInput: {
+          code: [
+            'const {spawn} = require("node:child_process");',
+            `spawn(process.execPath, ['-e', ${JSON.stringify(survivorCode)}], {`,
+            '  stdio: "inherit",',
+            '});',
+            `setTimeout(() => {}, ${survivorLifetimeMs});`,
+          ].join('\n'),
+          language: CodeExecutionLanguage.JAVASCRIPT,
+          inputFiles: [],
+        },
+      };
+
+      const startedAt = Date.now();
+      const result = await timedOutExecutor.executeCode(params);
+
+      expect(result.stderr).toContain(
+        `Code execution timed out after ${timeoutSeconds} seconds.`,
+      );
+      // The returned result is bounded by the timer, and the descendant must
+      // stop writing rather than merely losing access to its inherited pipes.
+      expect(Date.now() - startedAt).toBeLessThan(15_000);
+      const sizeAfterTimeout = (await fs.stat(markerPath)).size;
+      expect(sizeAfterTimeout).toBeGreaterThan(0);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect((await fs.stat(markerPath)).size).toBe(sizeAfterTimeout);
+    } finally {
+      // Removing the marker directory also stops a survivor if this regression
+      // test detects a broken process-tree kill.
+      await fs.rm(markerDir, {recursive: true, force: true});
+    }
   });
 
   // The script runs with the temporary directory as its cwd, so it can report
