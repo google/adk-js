@@ -20,6 +20,7 @@ import {Context} from '../agents/context.js';
 import {BaseTool, RunAsyncToolRequest} from './base_tool.js';
 
 import {InvocationContext} from '../agents/invocation_context.js';
+import {Aclosing} from '../utils/context_utils.js';
 import {toGeminiSchema} from '../utils/gemini_schema_util.js';
 import {SchemaLike, toJsonSchema} from '../utils/schema.js';
 
@@ -179,6 +180,18 @@ function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
     typeof (value as {[Symbol.asyncIterator]?: unknown})[
       Symbol.asyncIterator
     ] === 'function'
+  );
+}
+
+function isAsyncGenerator(
+  value: unknown,
+): value is AsyncGenerator<unknown, unknown, unknown> {
+  return (
+    isAsyncIterable(value) &&
+    'next' in value &&
+    typeof value.next === 'function' &&
+    'return' in value &&
+    typeof value.return === 'function'
   );
 }
 
@@ -347,21 +360,18 @@ export class FunctionTool<
       argsToCall as ToolExecuteArgument<TParameters>,
       req.toolContext,
     );
-    if (isAsyncIterable(rawResult)) {
-      for await (const item of rawResult) {
+    const resolved = isAsyncIterable(rawResult) ? rawResult : await rawResult;
+    if (isAsyncIterable(resolved)) {
+      const iterable = isAsyncGenerator(resolved)
+        ? new Aclosing(resolved)
+        : resolved;
+      for await (const item of iterable) {
         yield item;
       }
       return;
     }
-    const awaited = await rawResult;
-    if (isAsyncIterable(awaited)) {
-      for await (const item of awaited) {
-        yield item;
-      }
-      return;
-    }
-    if (awaited !== undefined) {
-      yield awaited;
+    if (resolved !== undefined) {
+      yield resolved;
     }
   }
 

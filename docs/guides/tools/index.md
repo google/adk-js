@@ -4,9 +4,11 @@ Tools in the Agent Development Kit expose TypeScript functions, child agents, ex
 
 The `tools` subsystem provides core abstractions, ecosystem adapters, built-in model tools, and specialized tool families:
 
-- `BaseTool`, `BaseAuthenticatedTool`, and `BaseToolset` - Abstract contracts for individual tools, credential-resolving tools, and dynamic collections of tools passed in an `LlmAgent` `tools` array.
-- `FunctionTool`, `AuthenticatedFunctionTool`, and `LongRunningFunctionTool` - Wrap synchronous, asynchronous, or async-generator TypeScript functions with Zod or `@google/genai` `Schema` declarations, optional `response` schemas, `CredentialManager` authentication, human-in-the-loop `requireConfirmation`, and live streaming via `_callLive`.
-- `AgentTool` - Wraps any `BaseAgent` as a callable tool, validating arguments and outputs against `inputSchema` and `outputSchema` when wrapping an `LlmAgent` and forwarding session state and artifacts.
+- `BaseTool`, `BaseAuthenticatedTool`, and `BaseToolset` - Abstract contracts for individual tools, credential-resolving tools, and dynamic collections of tools passed in an `LlmAgent` `tools` array (including `toolNamePrefix` and optional `close()`).
+- `FunctionTool`, `AuthenticatedFunctionTool`, and `LongRunningFunctionTool` - Wrap synchronous, asynchronous, or async-generator TypeScript functions with Zod or `@google/genai` `Schema` declarations, optional `response` schemas, `CredentialManager` authentication, human-in-the-loop `requireConfirmation`, and live streaming via `_callLive` with deterministic `Aclosing` cleanup.
+- `GoogleTool`, `BaseGoogleCredentialsConfig`, and `GoogleCredentialsManager` - Handcrafted Google API tools with OAuth2 token caching, 60-second expiry leeway refresh, `externalAccessTokenKey` state lookup, `GoogleAuthClient` structural support, injected `toolSettings`, and structured `{status: 'ERROR', error_details}` error reporting.
+- `SetModelResponseTool` (`SET_MODEL_RESPONSE_TOOL_NAME`) - Internal schema-validated tool attached by `LlmAgent` when `outputSchema` is combined with tools on models that do not support both natively, persisting validated results on `EventActions.setModelResponse` and returning validation errors for retry.
+- `AgentTool` - Wraps any `BaseAgent` as a callable tool, validating arguments and outputs against `inputSchema` and `outputSchema` when wrapping an `LlmAgent`, forwarding session state and artifacts, and wrapping the nested stream with `Aclosing`.
 - `ToolContext` and `Context` - Provide tool callbacks with access to session `state`, `EventActions` mutations, `saveArtifact` and `loadArtifact`, `searchMemory`, credential exchange, and tool confirmation.
 - `ToolboxToolset` - Adapt Google GenAI Toolbox toolsets into ADK tools.
 - `GoogleSearchTool`, `EnterpriseWebSearchTool`, `UrlContextTool`, `VertexAiSearchTool`, `ExitLoopTool`, `ExampleTool`, `LoadArtifactsTool`, `LoadMemoryTool`, `PreloadMemoryTool`, `loadWebPage`, and `getUserChoiceTool` - Built-in and utility tools for grounding, URL context retrieval, loop control, few-shot prompting, artifact and memory injection, web page text extraction, and interactive user choice.
@@ -19,7 +21,9 @@ The `tools` subsystem provides core abstractions, ecosystem adapters, built-in m
 
 ## Introduction
 
-An `LlmAgent` accepts a `tools` array whose entries can be `BaseTool` instances, `BaseToolset` providers, plain functions, or workflow nodes. Before each model call, the agent resolves its tools and invokes `toolset.processLlmRequest(toolContext, llmRequest)` on each `BaseToolset` (so a toolset can customize `llmRequest` once across all its tools) followed by `tool.processLlmRequest({toolContext, llmRequest})` on each active tool. Standard function-based tools append their `@google/genai` `FunctionDeclaration` from `_getDeclaration()` into `llmRequest.config.tools` and register themselves in `llmRequest.toolsDict` by tool name. Request-mutating tools such as `ExampleTool`, `PreloadMemoryTool`, `GoogleSearchTool`, `EnterpriseWebSearchTool`, `UrlContextTool`, and `VertexAiSearchTool` customize system instructions or built-in retrieval configurations directly on `llmRequest`.
+An `LlmAgent` accepts a `tools` array whose entries can be `BaseTool` instances, `BaseToolset` providers, plain functions, or workflow nodes. Before each model call, the agent resolves its tools (invoking `toolset.getToolsWithPrefix(context)` when `BaseToolset` provides it) and runs `toolset.processLlmRequest(toolContext, llmRequest)` on each `BaseToolset` followed by `tool.processLlmRequest({toolContext, llmRequest})` on each active tool. Standard function-based tools append their `@google/genai` `FunctionDeclaration` from `_getDeclaration()` into `llmRequest.config.tools` and register themselves in `llmRequest.toolsDict` by tool name. Request-mutating tools such as `ExampleTool`, `PreloadMemoryTool`, `GoogleSearchTool`, `EnterpriseWebSearchTool`, `UrlContextTool`, and `VertexAiSearchTool` customize system instructions or built-in retrieval configurations directly on `llmRequest`.
+
+When an `LlmAgent` configures `outputSchema` alongside other tools on a model where `canUseOutputSchemaWithTools` returns `false`, it injects `SetModelResponseTool` (`SET_MODEL_RESPONSE_TOOL_NAME = 'set_model_response'`), executes the tool's schema validation on tool call, feeds validation errors back for retry, and emits the final model-authored JSON event once `EventActions.setModelResponse` is populated.
 
 When the model responds with a `FunctionCall` part, the ADK tool execution pipeline looks up the matching tool in `llmRequest.toolsDict`, constructs a `Context` aliased as `ToolContext` bound to the current `InvocationContext` and `functionCall.id`, and calls `tool.runAsync({args, toolContext})`. Any changes the tool makes to `toolContext.state` or `toolContext.actions` are packaged into the resulting `functionResponse` event and persisted by the runner.
 
@@ -69,10 +73,13 @@ export const currencyAgent = new LlmAgent({
 
 1. **Declaration generation and schema conversion**: `FunctionTool._getDeclaration()` converts the configured `parameters` and optional `response` schemas into a `@google/genai` `FunctionDeclaration`. Callers can supply a Zod object schema or a `@google/genai` `Schema` for `parameters`, and any `SchemaLike` value for `response`. When `parameters` is omitted, `_getDeclaration()` emits `{type: Type.OBJECT, properties: {}}`. The exported helpers `buildFunctionDeclarationUtil`, `buildFunctionDeclarationForLangchain`, and `buildFunctionDeclarationForParamsForCrewai` build `FunctionDeclaration` objects from normalized parameter schemas, mapping property type names to `@google/genai` `Type` enum values, annotating `nullable` and `required` fields from `anyOf` and `default` descriptors, stripping `anyOf`, `default`, `nullable`, and `title` when `vertexai` is `false`, and setting `declaration.response` when `vertexai` is `true`.
 2. **Function execution, authentication, and confirmation**: When `FunctionTool.runAsync({args, toolContext})` runs, it validates `args` with `parameters.parse(args)` when `parameters` is a Zod object schema and evaluates `requireConfirmation`. If confirmation is required and not yet granted on `toolContext.toolConfirmation`, the tool requests confirmation through `toolContext.requestConfirmation` and sets `toolContext.actions.skipSummarization = true`. `BaseAuthenticatedTool` and `AuthenticatedFunctionTool` resolve credentials via `CredentialManager` before executing tool logic: when `authConfig?.authScheme` is configured, `runAsync` calls `credentialsManager.getAuthCredential(toolContext)`, requests credentials with `credentialsManager.requestCredential(toolContext)` and returns `responseForAuthRequired ?? 'Pending User Authorization.'` when no credential is available, or passes the resolved `AuthCredential` to `runAsyncImpl` or the `execute(input, toolContext, credential)` callback (while removing any `credential` property from the parameter schema). For asynchronous operations whose result arrives out of band, `LongRunningFunctionTool` sets `isLongRunning: true` and appends a warning note to the declaration description instructing the model not to re-invoke the tool while a call is already pending.
-3. **Live streaming tool execution**: During bidirectional live runs, `FunctionTool._callLive({args, toolContext, invocationContext})` validates `args`, checks `invocationContext.activeStreamingTools[this.name]` for an active `stream`, and injects that stream as `inputStream` into a shallow copy of the arguments object when present. The tool `execute` callback yields incremental updates as an `AsyncGenerator` or `AsyncIterable`, or resolves a single value that `_callLive` yields once.
-4. **Child agent delegation**: `AgentTool` exposes a child `BaseAgent` as a tool. Its declaration uses `agent.inputSchema` when the child is an `LlmAgent` with an explicit `inputSchema`, or defaults to `{type: Type.OBJECT, properties: {request: {type: Type.STRING}}, required: ['request']}`, and populates `declaration.response` on non-Gemini API variants. On `runAsync`, when the child `LlmAgent` has an `inputSchema`, `AgentTool` validates `args` with `parseWithSchema` and strips `null` and `undefined` fields before serializing the user message. It runs a child `Runner` with `ForwardingArtifactService`, `toolContext.invocationContext.credentialService`, and `sessionService.getOrCreateSession` seeded with `toolContext.state.toRecord()`, forwards non-`temp:` `stateDelta` entries back to `toolContext.state`, and merges non-thought text parts from the last event. When the child `LlmAgent` defines an `outputSchema`, `AgentTool` parses the merged JSON text, validates it against `outputSchema`, and strips `null` and `undefined` values before returning the structured object.
-5. **Ecosystem adapters**: `ToolboxToolset` adapts Google GenAI Toolbox toolsets into ADK tools. To adapt tools from external ecosystems such as CrewAI and LangChain, see the [CrewAI guide](../integrations/crewai/index.md) and [LangChain guide](../integrations/langchain/index.md) in `@google/adk-integrations`.
-6. **Built-in model and control-flow tools**:
+3. **Live streaming tool execution and cleanup**: During bidirectional live runs, `FunctionTool._callLive({args, toolContext, invocationContext})` validates `args`, checks `invocationContext.activeStreamingTools[this.name]` for an active `stream`, and injects that stream as `inputStream` into a shallow copy of the arguments object when present. The tool `execute` callback yields incremental updates as an `AsyncGenerator` or `AsyncIterable`, or resolves a single value that `_callLive` yields once. Both `FunctionTool._callLive` and `AgentTool.runAsync` wrap `AsyncGenerator` streams in `Aclosing` so early exit, abort signals, or `next()` rejections await `generator.return(undefined)` deterministically.
+4. **Google API credential management and `GoogleTool`**: `BaseGoogleCredentialsConfig` configures one of three mutually exclusive sources: pre-existing `credentials` (either `GoogleOAuthCredentials` / `GoogleOAuthCredentialsImpl` or a `GoogleAuthClient` such as `google-auth-library` `JWT`, `OAuth2Client`, or `GoogleAuth`), `externalAccessTokenKey` (read from `toolContext.state`), or an OAuth2 `clientId` and `clientSecret` pair. `GoogleCredentialsManager.getValidCredentials(toolContext)` reads and writes cached OAuth2 tokens in `toolContext.state[tokenCacheKey]` only when `tokenCacheKey` is set (and only persists refreshed tokens that originated `fromCache`), discards corrupted cache JSON with a warning, applies a 60-second expiry leeway, performs a single pass-through refresh attempt for non-OAuth credentials, propagates unexpected errors while falling back to interactive OAuth on `GoogleOAuthRefreshError`, and requests OAuth authorization when no token is ready. `GoogleTool` extends `FunctionTool` to strip `credentials` and `settings` from `_getDeclaration()`, evaluate Zod validation and `requireConfirmation` before resolving credentials, overwrite any model-supplied `credentials` or `settings` keys, return an authorization prompt while OAuth is pending, and catch failures into `{status: 'ERROR', error_details}`.
+5. **Toolset prefixing and optional `close()`**: `BaseToolset.getToolsWithPrefix(context)` invokes `getTools(context)` and, when `toolNamePrefix` is non-empty, returns `Proxy` wrappers whose `name` and non-mutating `_getDeclaration().name` are prefixed with `${toolNamePrefix}_` without modifying the underlying tools or double-prefixing legacy `prefix` subclasses. `BaseToolset.close()` provides a default resolved no-op for toolsets that hold no resources.
+6. **Structured responses with tools (`SetModelResponseTool`)**: `SetModelResponseTool` accepts a `SchemaLike` value (Zod object, `@google/genai` `Type.OBJECT` `Schema`, array-of-object schemas wrapped under `{items}`, or other non-object schemas wrapped under `{response}`), validates tool call arguments with `parseWithSchema`, returns `{error: 'Validation Error found: ...'}` for model self-correction when invalid, omits `undefined` values and optional `null` fields on object results (preserving required `.nullable()` fields, `z.record` entries, and non-plain objects such as `Date`), and records the validated payload on `toolContext.actions.setModelResponse` so `LlmAgent` emits the final model event and populates `outputKey`.
+7. **Child agent delegation**: `AgentTool` exposes a child `BaseAgent` as a tool. Its declaration uses `agent.inputSchema` when the child is an `LlmAgent` with an explicit `inputSchema`, or defaults to `{type: Type.OBJECT, properties: {request: {type: Type.STRING}}, required: ['request']}`, and populates `declaration.response` on non-Gemini API variants. On `runAsync`, when the child `LlmAgent` has an `inputSchema`, `AgentTool` validates `args` with `parseWithSchema` and strips `null` and `undefined` fields before serializing the user message. It runs a child `Runner` with `ForwardingArtifactService`, `toolContext.invocationContext.credentialService`, and `sessionService.getOrCreateSession` seeded with `toolContext.state.toRecord()`, forwards non-`temp:` `stateDelta` entries back to `toolContext.state`, wraps `runner.runAsync` with `Aclosing`, and merges non-thought text parts from the last event. When the child `LlmAgent` defines an `outputSchema`, `AgentTool` parses the merged JSON text, validates it against `outputSchema`, and strips `null` and `undefined` values before returning the structured object.
+8. **Ecosystem adapters**: `ToolboxToolset` adapts Google GenAI Toolbox toolsets into ADK tools. To adapt tools from external ecosystems such as CrewAI and LangChain, see the [CrewAI guide](../integrations/crewai/index.md) and [LangChain guide](../integrations/langchain/index.md) in `@google/adk-integrations`.
+9. **Built-in model and control-flow tools**:
    - `GoogleSearchTool` (`GOOGLE_SEARCH`), `EnterpriseWebSearchTool` (`ENTERPRISE_WEB_SEARCH`), `UrlContextTool` (`URL_CONTEXT`), and `VertexAiSearchTool` extend `BuiltInTool` and attach model-native grounding or URL-context configurations to `llmRequest.config.tools`, recognizing both simple (`gemini-2.5-flash`) and Vertex AI resource-path (`projects/.../locations/.../publishers/.../models/gemini-*`) model names.
    - `ExitLoopTool` and `EXIT_LOOP` set `toolContext.actions.escalate = true` and `toolContext.actions.skipSummarization = true` so a surrounding `LoopAgent` stops iterating.
    - `ExampleTool` validates an array of `Example` items or a `BaseExampleProvider` at construction time and appends few-shot examples to `llmRequest` system instructions on each turn.
@@ -117,13 +124,71 @@ When `parameters` is a Zod object, `FunctionTool` parses incoming `args` before 
 
 The `BaseAuthenticatedToolParams` interface configures `BaseAuthenticatedTool` subclasses, and `AuthenticatedFunctionToolOptions<TParameters>` extends `ToolOptions<TParameters>` for `new AuthenticatedFunctionTool(options)`.
 
-| Option                    | Type                                         | Default                           | Description                                                                                                                   |
-| :------------------------ | :------------------------------------------- | :-------------------------------- | :---------------------------------------------------------------------------------------------------------------------------- |
-| `authConfig`              | `AuthConfig`                                 | `undefined`                       | Authentication scheme and raw/exchanged credentials managed by `CredentialManager`; authentication is skipped when undefined. |
-| `responseForAuthRequired` | `Record<string, unknown> \| string`          | `'Pending User Authorization.'`   | Value returned by `runAsync` after calling `requestCredential(toolContext)` when no credential is available.                  |
+| Option                    | Type                                            | Default                                | Description                                                                                                                    |
+| :------------------------ | :---------------------------------------------- | :------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------- |
+| `authConfig`              | `AuthConfig`                                    | `undefined`                            | Authentication scheme and raw/exchanged credentials managed by `CredentialManager`; authentication is skipped when undefined.  |
+| `responseForAuthRequired` | `Record<string, unknown> \| string`             | `'Pending User Authorization.'`        | Value returned by `runAsync` after calling `requestCredential(toolContext)` when no credential is available.                   |
 | `execute`                 | `AuthenticatedToolExecuteFunction<TParameters>` | Required (`AuthenticatedFunctionTool`) | Callback invoked as `(input, toolContext, credential)` after credential resolution and `FunctionTool` validation/confirmation. |
 
 When `authConfig?.authScheme` is present, `BaseAuthenticatedTool` and `AuthenticatedFunctionTool` construct a `CredentialManager` and resolve an `AuthCredential` before running tool logic. `AuthenticatedFunctionTool` removes any `credential` property from `parameters` (a Zod object or a `@google/genai` `Schema`), so the model is never asked to supply credentials and Zod validation does not require one; the credential reaches `execute` as its third argument. The credential travels with each call rather than on the tool instance, so concurrent calls on one tool, even with a shared `toolContext`, each get their own credential.
+
+### `BaseToolsetOptions`
+
+The `BaseToolsetOptions` interface configures `BaseToolset` subclasses via `super(options)` (alongside the positional `(toolFilter?, prefix?, toolNamePrefix?)` signature).
+
+| Option           | Type                        | Default     | Description                                                                                         |
+| :--------------- | :-------------------------- | :---------- | :-------------------------------------------------------------------------------------------------- |
+| `toolFilter`     | `ToolPredicate \| string[]` | `[]`        | Tool names or predicate selecting which tools from `getTools(context)` are exposed.                 |
+| `toolNamePrefix` | `string`                    | `undefined` | Prefix prepended as `${toolNamePrefix}_` by `getToolsWithPrefix()` without mutating original tools. |
+| `prefix`         | `string`                    | `undefined` | Legacy prefix used by subclasses that prefix tool names directly inside `getTools()`.               |
+
+### `BaseGoogleCredentialsConfigOptions` and `GoogleOAuthCredentialsOptions`
+
+The `BaseGoogleCredentialsConfigOptions` interface configures `new BaseGoogleCredentialsConfig(options)`. Exactly one of `credentials`, `externalAccessTokenKey`, or the `clientId` and `clientSecret` pair is required.
+
+| Option                   | Type                | Default     | Description                                                                                            |
+| :----------------------- | :------------------ | :---------- | :----------------------------------------------------------------------------------------------------- |
+| `credentials`            | `GoogleCredentials` | `undefined` | Pre-existing `GoogleOAuthCredentials` or `GoogleAuthClient` (`JWT`, `OAuth2Client`, `GoogleAuth`).     |
+| `externalAccessTokenKey` | `string`            | `undefined` | Non-empty session state key storing an externally managed OAuth2 access token.                         |
+| `clientId`               | `string`            | `undefined` | OAuth2 client ID for interactive authorization code flow.                                              |
+| `clientSecret`           | `string`            | `undefined` | OAuth2 client secret for interactive authorization code flow.                                          |
+| `scopes`                 | `readonly string[]` | `undefined` | OAuth2 scopes requested during authorization; empty arrays are treated as unset.                       |
+| `tokenCacheKey`          | `string`            | `undefined` | Optional session state key for caching serialized OAuth2 credentials; omitted skips state read/writes. |
+
+The `GoogleOAuthCredentialsOptions` interface configures `new GoogleOAuthCredentialsImpl(options)`.
+
+| Option           | Type                                                                  | Default                                 | Description                                                                |
+| :--------------- | :-------------------------------------------------------------------- | :-------------------------------------- | :------------------------------------------------------------------------- |
+| `token`          | `string`                                                              | `undefined`                             | OAuth2 access token.                                                       |
+| `refreshToken`   | `string`                                                              | `undefined`                             | OAuth2 refresh token used when renewing expired access tokens.             |
+| `tokenUri`       | `string`                                                              | `'https://oauth2.googleapis.com/token'` | Token endpoint URI posted to during `refresh()`.                           |
+| `clientId`       | `string`                                                              | `undefined`                             | OAuth2 client ID sent on refresh requests.                                 |
+| `clientSecret`   | `string`                                                              | `undefined`                             | OAuth2 client secret sent on refresh requests.                             |
+| `scopes`         | `readonly string[]`                                                   | `undefined`                             | OAuth2 scopes granted to the credential.                                   |
+| `expiry`         | `string \| number \| Date`                                            | `undefined`                             | Token expiration timestamp checked with a 60-second leeway.                |
+| `expiresAt`      | `number`                                                              | `undefined`                             | Token expiration timestamp in epoch milliseconds (`OAuth2Auth.expiresAt`). |
+| `valid`          | `boolean`                                                             | `undefined`                             | Explicit validity override for testing or custom wrappers.                 |
+| `expired`        | `boolean`                                                             | `undefined`                             | Explicit expiration override.                                              |
+| `refreshHandler` | `() => Promise<{token: string; refreshToken?: string; expiry?: ...}>` | `undefined`                             | Custom async refresh callback replacing the default `fetch` request.       |
+
+### `GoogleToolOptions` and `RunAsyncWithCredentialRequest`
+
+The `GoogleToolOptions<TParameters, TSettings>` interface configures `new GoogleTool(options)`.
+
+| Option                | Type                                                | Default        | Description                                                                                             |
+| :-------------------- | :-------------------------------------------------- | :------------- | :------------------------------------------------------------------------------------------------------ |
+| `name`                | `string`                                            | `execute.name` | Tool name exposed to the model; required when `execute` is anonymous.                                   |
+| `description`         | `string`                                            | Required       | Natural-language description exposed in `FunctionDeclaration`.                                          |
+| `parameters`          | `TParameters`                                       | `undefined`    | Zod object or `@google/genai` `Schema`; `credentials` and `settings` are stripped automatically.        |
+| `response`            | `SchemaLike`                                        | `undefined`    | Optional return-value schema attached to `FunctionDeclaration.response`.                                |
+| `execute`             | `GoogleToolExecuteFunction<TParameters, TSettings>` | Required       | Callback receiving validated arguments alongside injected `credentials`, `settings`, and `toolContext`. |
+| `credentialsConfig`   | `BaseGoogleCredentialsConfig`                       | `undefined`    | Optional credentials configuration managed through `GoogleCredentialsManager`.                          |
+| `toolSettings`        | `TSettings`                                         | `undefined`    | Tool-specific settings object forwarded as `settings` (and `toolSettings` in subclasses).               |
+| `isLongRunning`       | `boolean`                                           | `false`        | Marks the tool as a long-running operation.                                                             |
+| `customMetadata`      | `Record<string, unknown>`                           | `undefined`    | Optional JSON-serializable metadata stored on the tool instance.                                        |
+| `requireConfirmation` | `RequireConfirmation<TParameters>`                  | `false`        | Boolean or predicate evaluated before credential resolution.                                            |
+
+Subclasses overriding `protected runAsyncWithCredential(request)` receive `RunAsyncWithCredentialRequest<TParameters, TSettings>` containing `{credentials, toolSettings, args, toolContext}`.
 
 ### `AgentToolConfig`
 
@@ -231,6 +296,57 @@ export const liveSensorMonitor = new FunctionTool({
 });
 ```
 
+### Credential-managed Google tools with `GoogleTool` and `toolNamePrefix`
+
+Configure `GoogleTool` with `BaseGoogleCredentialsConfig` and group stateless tools in a `BaseToolset` subclass using `toolNamePrefix` (omitting `close()` when no resources need teardown).
+
+```ts
+import {
+  BaseGoogleCredentialsConfig,
+  BaseTool,
+  BaseToolset,
+  GoogleTool,
+} from '@google/adk';
+import {z} from 'zod';
+
+interface DriveSettings {
+  pageSize: number;
+}
+
+class DriveToolset extends BaseToolset {
+  private readonly listFilesTool: GoogleTool<
+    z.ZodObject<{folderId: z.ZodString}>,
+    DriveSettings
+  >;
+
+  constructor(credentialsConfig: BaseGoogleCredentialsConfig) {
+    super({toolNamePrefix: 'drive'});
+    this.listFilesTool = new GoogleTool({
+      name: 'listFiles',
+      description: 'Lists files in a Google Drive folder.',
+      parameters: z.object({folderId: z.string()}),
+      credentialsConfig,
+      toolSettings: {pageSize: 20},
+      execute: async ({folderId, credentials, settings}) => ({
+        folderId,
+        authenticated: credentials !== undefined,
+        pageSize: settings?.pageSize,
+      }),
+    });
+  }
+
+  override async getTools(): Promise<BaseTool[]> {
+    return [this.listFilesTool];
+  }
+}
+
+export const driveToolset = new DriveToolset(
+  new BaseGoogleCredentialsConfig({
+    externalAccessTokenKey: 'googleDriveAccessToken',
+  }),
+);
+```
+
 ### Adapting GenAI Toolbox tools
 
 Wrap GenAI Toolbox clients so they run inside an ADK `LlmAgent` without rewriting their tool handlers. To adapt CrewAI or LangChain tools, see the [CrewAI guide](../integrations/crewai/index.md) and [LangChain guide](../integrations/langchain/index.md) in `@google/adk-integrations`.
@@ -275,7 +391,7 @@ export const asyncToolboxToolset = new ToolboxToolset({
 
 ## Related samples
 
-- [`samples/tools/`](../../../samples/tools/README.md) - Runnable tool samples covering `FunctionTool` with `response` schema and `_callLive` streaming, `AuthenticatedFunctionTool`, `BaseAuthenticatedTool`, `LongRunningFunctionTool`, `AgentTool` with `inputSchema` and `outputSchema`, `ExitLoopTool`, `ToolboxToolset`, `ToolContext` state and artifact operations, retrieval tools, OpenAPI toolsets, and API Hub toolsets.
+- [`samples/tools/`](../../../samples/tools/README.md) - Runnable tool samples covering `FunctionTool` with `response` schema and `_callLive` streaming, `AuthenticatedFunctionTool`, `BaseAuthenticatedTool`, `LongRunningFunctionTool`, `GoogleTool` with `BaseGoogleCredentialsConfig`, `BaseToolset` `toolNamePrefix` and `getToolsWithPrefix()`, `SetModelResponseTool`, `AgentTool` with `inputSchema` and `outputSchema`, `ExitLoopTool`, `ToolboxToolset`, `ToolContext` state and artifact operations, retrieval tools, OpenAPI toolsets, and API Hub toolsets.
 
 ## Related guides
 

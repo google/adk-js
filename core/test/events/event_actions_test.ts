@@ -108,6 +108,10 @@ describe('isDefaultEventActions', () => {
     ['agentState has an entry', {agentState: {nodeA: {step: 1}}}],
     ['endOfAgent is true', {endOfAgent: true}],
     ['endOfAgent is explicitly false', {endOfAgent: false}],
+    ['setModelResponse is an object', {setModelResponse: {answer: 'ok'}}],
+    ['setModelResponse is explicitly null', {setModelResponse: null}],
+    ['setModelResponse is explicitly false', {setModelResponse: false}],
+    ['setModelResponse is explicitly 0', {setModelResponse: 0}],
   ];
 
   it.each(nonDefaults)('returns false when %s', (_label, overrides) => {
@@ -449,5 +453,19 @@ describe('mergeEventActions', () => {
       nodeB: {done: true},
     });
     expect(result.endOfAgent).toBe(false);
+  });
+
+  it('uses last-writer-wins for setModelResponse including falsy scalar values', () => {
+    const objectResult = mergeEventActions([
+      createEventActions({setModelResponse: {step: 1}}),
+      createEventActions({setModelResponse: {step: 2}}),
+    ]);
+    expect(objectResult.setModelResponse).toEqual({step: 2});
+
+    const falseResult = mergeEventActions([
+      createEventActions({setModelResponse: true}),
+      createEventActions({setModelResponse: false}),
+    ]);
+    expect(falseResult.setModelResponse).toBe(false);
   });
 });

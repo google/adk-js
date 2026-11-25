@@ -31,6 +31,7 @@ import {
   InMemorySessionService,
   INTERACTIONS_REQUEST_PROCESSOR,
   InvocationContext,
+  isFinalResponse,
   LiveRequestQueue,
   LlmAgent,
   LlmRequest,
@@ -42,6 +43,8 @@ import {
   RunAsyncToolRequest,
   Runner,
   Session,
+  SET_MODEL_RESPONSE_TOOL_NAME,
+  SetModelResponseTool,
   SingleAfterModelCallback,
   SingleAfterToolCallback,
   SingleBeforeModelCallback,
@@ -4540,5 +4543,365 @@ describe('LlmAgent.runAsync partial-event loop termination', () => {
     expect(events[0].partial).toBe(true);
     expect(events[0].content?.parts?.[0]?.text).toBe('Partial response');
     expect(model.callCount).toBe(1);
+  });
+});
+
+describe('LlmAgent SetModelResponseTool execution', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('retries on validation failure and saves validated outputKey once set_model_response succeeds', async () => {
+    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
+    const refinedOutputSchema = z4.object({
+      answer: z4.string(),
+      score: z4
+        .number()
+        .int()
+        .refine((n) => n >= 10, {message: 'Score must be at least 10'}),
+      note: z4.string().nullable().optional(),
+    });
+    const model = new CountingMockLlm([
+      [
+        {
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  id: 'fc-invalid',
+                  name: SET_MODEL_RESPONSE_TOOL_NAME,
+                  args: {answer: 'draft', score: 3},
+                },
+              },
+            ],
+          },
+        },
+      ],
+      [
+        {
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  id: 'fc-valid',
+                  name: SET_MODEL_RESPONSE_TOOL_NAME,
+                  args: {answer: 'final', score: 15, note: null},
+                },
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    const helperTool = new FunctionTool({
+      name: 'lookupHelper',
+      description: 'Helper tool',
+      execute: () => 'ok',
+    });
+    const agent = new LlmAgent({
+      name: 'structuredAgent',
+      model,
+      tools: [helperTool],
+      outputSchema: refinedOutputSchema,
+      outputKey: 'structuredResult',
+    });
+    const session = createSession({
+      id: 'sess-set-model-response',
+      appName: 'testApp',
+      userId: 'testUser',
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv-set-model-response',
+      agent,
+      session,
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(ctx)) {
+      events.push(event);
+    }
+
+    expect(model.callCount).toBe(2);
+    const firstResponse = getFunctionResponses(events[1])[0];
+    expect(firstResponse?.name).toBe(SET_MODEL_RESPONSE_TOOL_NAME);
+    expect(firstResponse?.response?.['error']).toContain(
+      'Validation Error found:',
+    );
+    expect(firstResponse?.response?.['error']).toContain(
+      'Score must be at least 10',
+    );
+    expect(events[1].actions.setModelResponse).toBeUndefined();
+
+    const validFunctionResponseEvent = events[3];
+    expect(validFunctionResponseEvent.actions.setModelResponse).toEqual({
+      answer: 'final',
+      score: 15,
+    });
+
+    const finalEvent = events[4];
+    expect(finalEvent).toBeDefined();
+    expect(isFinalResponse(finalEvent)).toBe(true);
+    expect(finalEvent.author).toBe('structuredAgent');
+    expect(JSON.parse(finalEvent.content?.parts?.[0]?.text ?? '{}')).toEqual({
+      answer: 'final',
+      score: 15,
+    });
+    expect(finalEvent.actions.stateDelta['structuredResult']).toEqual({
+      answer: 'final',
+      score: 15,
+    });
+  });
+
+  it('executes sibling tool calls alongside set_model_response in the same turn', async () => {
+    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
+    const executedSiblings: string[] = [];
+    const siblingTool = new FunctionTool({
+      name: 'recordMetric',
+      description: 'Records a metric',
+      parameters: z4.object({metric: z4.string()}),
+      execute: ({metric}) => {
+        executedSiblings.push(metric);
+        return {recorded: metric};
+      },
+    });
+    const model = new CountingMockLlm([
+      [
+        {
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  id: 'fc-metric',
+                  name: 'recordMetric',
+                  args: {metric: 'latencyMs'},
+                },
+              },
+              {
+                functionCall: {
+                  id: 'fc-response',
+                  name: SET_MODEL_RESPONSE_TOOL_NAME,
+                  args: {summary: 'done'},
+                },
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    const agent = new LlmAgent({
+      name: 'parallelStructuredAgent',
+      model,
+      tools: [siblingTool],
+      outputSchema: z4.object({summary: z4.string()}),
+    });
+    const session = createSession({
+      id: 'sess-parallel-response',
+      appName: 'testApp',
+      userId: 'testUser',
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv-parallel-response',
+      agent,
+      session,
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(ctx)) {
+      events.push(event);
+    }
+
+    expect(executedSiblings).toEqual(['latencyMs']);
+    const responses = getFunctionResponses(events[1]);
+    expect(responses.map((r) => r.name)).toEqual([
+      'recordMetric',
+      SET_MODEL_RESPONSE_TOOL_NAME,
+    ]);
+    expect(events[2]?.content?.parts?.[0]?.text).toBe('{"summary":"done"}');
+  });
+
+  it('does not synthesize a final model text event during runLive when set_model_response runs', async () => {
+    class LiveModelWithToolCall extends BaseLlm {
+      constructor() {
+        super({model: 'live-mock-llm'});
+      }
+      override async *generateContentAsync(): AsyncGenerator<
+        LlmResponse,
+        void,
+        void
+      > {
+        yield* [];
+      }
+      override async connect(): Promise<BaseLlmConnection> {
+        return new (class extends MockLlmConnection {
+          private served = false;
+          override async *receive(): AsyncGenerator<LlmResponse, void, void> {
+            if (this.served) {
+              return;
+            }
+            this.served = true;
+            yield {
+              content: {
+                role: 'model',
+                parts: [
+                  {
+                    functionCall: {
+                      id: 'fc-live-response',
+                      name: SET_MODEL_RESPONSE_TOOL_NAME,
+                      args: {status: 'ready'},
+                    },
+                  },
+                ],
+              },
+            };
+          }
+        })();
+      }
+    }
+
+    const liveSchema = z4.object({status: z4.string()});
+    const liveQueue = new LiveRequestQueue();
+    liveQueue.close();
+    const agent = new LlmAgent({
+      name: 'liveStructuredAgent',
+      model: new LiveModelWithToolCall(),
+      tools: [new SetModelResponseTool(liveSchema)],
+      outputSchema: liveSchema,
+      outputKey: 'liveResult',
+    });
+    const session = createSession({
+      id: 'sess-live-response',
+      appName: 'testApp',
+      userId: 'testUser',
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv-live-response',
+      agent,
+      session,
+      liveRequestQueue: liveQueue,
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runLive(ctx)) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(2);
+    expect(getFunctionCalls(events[0]).map((c) => c.name)).toEqual([
+      SET_MODEL_RESPONSE_TOOL_NAME,
+    ]);
+    expect(getFunctionResponses(events[1]).map((r) => r.name)).toEqual([
+      SET_MODEL_RESPONSE_TOOL_NAME,
+    ]);
+    expect(events[1].actions.setModelResponse).toEqual({status: 'ready'});
+    expect(
+      events.some(
+        (event) =>
+          event.content?.parts?.some((part) => part.text !== undefined) ??
+          false,
+      ),
+    ).toBe(false);
+    expect(
+      events.every(
+        (event) => event.actions.stateDelta['liveResult'] === undefined,
+      ),
+    ).toBe(true);
+  });
+
+  it('breaks after set_model_response in SSE streaming mode when a trailing usage-only response follows', async () => {
+    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
+    const model = new CountingMockLlm([
+      [
+        {
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  id: 'fc-sse-response',
+                  name: SET_MODEL_RESPONSE_TOOL_NAME,
+                  args: {answer: 'ok', reason: null},
+                },
+              },
+            ],
+          },
+          partial: false,
+        },
+        {
+          content: undefined,
+          usageMetadata: {
+            promptTokenCount: 15,
+            candidatesTokenCount: 5,
+            totalTokenCount: 20,
+          },
+          partial: false,
+        },
+      ],
+      [
+        {
+          content: {
+            role: 'model',
+            parts: [{text: 'unexpected second model call'}],
+          },
+        },
+      ],
+    ]);
+    const helperTool = new FunctionTool({
+      name: 'lookupHelper',
+      description: 'Helper tool',
+      execute: () => 'ok',
+    });
+    const agent = new LlmAgent({
+      name: 'sseStructuredAgent',
+      model,
+      tools: [helperTool],
+      outputSchema: z4.object({
+        answer: z4.string(),
+        reason: z4.string().nullable(),
+      }),
+      outputKey: 'sseResult',
+    });
+    const session = createSession({
+      id: 'sess-sse-response',
+      appName: 'testApp',
+      userId: 'testUser',
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv-sse-response',
+      agent,
+      session,
+      runConfig: createRunConfig({streamingMode: StreamingMode.SSE}),
+      pluginManager: new PluginManager(),
+    });
+    const errorSpy = vi.spyOn(logger, 'error');
+    onTestFinished(() => errorSpy.mockRestore());
+
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(ctx)) {
+      events.push(event);
+    }
+
+    expect(model.callCount).toBe(1);
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(events).toHaveLength(4);
+    expect(getFunctionCalls(events[0]).map((c) => c.name)).toEqual([
+      SET_MODEL_RESPONSE_TOOL_NAME,
+    ]);
+    expect(getFunctionResponses(events[1]).map((r) => r.name)).toEqual([
+      SET_MODEL_RESPONSE_TOOL_NAME,
+    ]);
+    expect(events[2]?.content?.parts?.[0]?.text).toBe(
+      '{"answer":"ok","reason":null}',
+    );
+    expect(events[2]?.actions.stateDelta['sseResult']).toEqual({
+      answer: 'ok',
+      reason: null,
+    });
+    expect(events[3]?.usageMetadata?.totalTokenCount).toBe(20);
   });
 });

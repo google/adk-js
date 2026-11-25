@@ -5,7 +5,7 @@
  */
 
 /**
- * Tools (`FunctionTool`, `AuthenticatedFunctionTool`, `BaseAuthenticatedTool`, `LongRunningFunctionTool`, `AgentTool`, `ExitLoopTool`, `CrewaiTool`, `LangchainTool`, `ToolboxToolset`, and `ToolContext`)
+ * Tools (`FunctionTool`, `AuthenticatedFunctionTool`, `BaseAuthenticatedTool`, `LongRunningFunctionTool`, `GoogleTool`, `BaseGoogleCredentialsConfig`, `BaseToolset`, `SetModelResponseTool`, `AgentTool`, `ExitLoopTool`, `CrewaiTool`, `LangchainTool`, `ToolboxToolset`, and `ToolContext`)
  * ../../docs/guides/tools/index.md
  *
  * A deterministic `BaseAgent` that exercises the `tools` subsystem end-to-end:
@@ -14,6 +14,11 @@
  * - `AuthenticatedFunctionTool` and `BaseAuthenticatedTool` resolving
  *   `AuthCredential` values through `CredentialManager`
  * - `LongRunningFunctionTool` with `isLongRunning: true`
+ * - `GoogleTool` with `BaseGoogleCredentialsConfig` (`externalAccessTokenKey`)
+ *   and `toolSettings`, stripping `credentials` and `settings` from declarations
+ * - `BaseToolset` with `toolNamePrefix`, `getToolsWithPrefix()`, and default `close()`
+ * - `SetModelResponseTool` validating structured output alongside tools with
+ *   retry feedback and `EventActions.setModelResponse`
  * - `AgentTool` wrapping a child `LlmAgent` configured with `inputSchema` and
  *   `outputSchema` (removing nullish fields on both input and output)
  * - `ExitLoopTool` (`EXIT_LOOP`) setting `escalate` and `skipSummarization`
@@ -40,16 +45,21 @@ import {
   AuthSchemeType,
   BaseAgent,
   BaseAuthenticatedTool,
+  BaseGoogleCredentialsConfig,
   BaseLlm,
   BaseLlmConnection,
+  BaseTool,
+  BaseToolset,
   Context,
   createEvent,
   createEventActions,
+  createSession,
   Event,
   EXIT_LOOP,
   FunctionTool,
   getFunctionCalls,
   getFunctionResponses,
+  GoogleTool,
   InMemoryRunner,
   InvocationContext,
   isFinalResponse,
@@ -58,7 +68,10 @@ import {
   LlmRequest,
   LlmResponse,
   LongRunningFunctionTool,
+  PluginManager,
   RunAsyncAuthenticatedToolRequest,
+  SET_MODEL_RESPONSE_TOOL_NAME,
+  SetModelResponseTool,
   stringifyContent,
   ToolboxToolset,
   ToolContext,
@@ -106,6 +119,59 @@ class OfflineQuoteLlm extends BaseLlm {
 
   override async connect(): Promise<BaseLlmConnection> {
     throw new Error('Live connection is not used in OfflineQuoteLlm.');
+  }
+}
+
+class OfflineStructuredRetryLlm extends BaseLlm {
+  private turn = 0;
+
+  constructor() {
+    super({model: 'offline-structured-retry-llm'});
+  }
+
+  override async *generateContentAsync(): AsyncGenerator<
+    LlmResponse,
+    void,
+    void
+  > {
+    this.turn += 1;
+    if (this.turn === 1) {
+      yield {
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'call-structured-invalid',
+                name: SET_MODEL_RESPONSE_TOOL_NAME,
+                args: {sku: 'ADK-PRO-100', approvedCount: -1},
+              },
+            },
+          ],
+        },
+      };
+      return;
+    }
+    yield {
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'call-structured-valid',
+              name: SET_MODEL_RESPONSE_TOOL_NAME,
+              args: {sku: 'ADK-PRO-100', approvedCount: 4, note: null},
+            },
+          },
+        ],
+      },
+    };
+  }
+
+  override async connect(): Promise<BaseLlmConnection> {
+    throw new Error(
+      'Live connection is not used in OfflineStructuredRetryLlm.',
+    );
   }
 }
 
@@ -264,6 +330,73 @@ const quoteSpecialistAgent = new LlmAgent({
 const quoteAgentTool = new AgentTool({
   agent: quoteSpecialistAgent,
 });
+
+interface CalendarSettings {
+  maxEvents: number;
+}
+
+const googleCalendarLookupTool = new GoogleTool<
+  z.ZodObject<{calendarId: z.ZodString}>,
+  CalendarSettings
+>({
+  name: 'listCalendarEvents',
+  description: 'Lists calendar events using managed Google credentials.',
+  parameters: z.object({
+    calendarId: z.string(),
+  }),
+  credentialsConfig: new BaseGoogleCredentialsConfig({
+    externalAccessTokenKey: 'googleCalendarToken',
+  }),
+  toolSettings: {maxEvents: 5},
+  execute: async ({calendarId, credentials, settings}) => ({
+    calendarId,
+    authenticated: credentials !== undefined,
+    maxEvents: settings?.maxEvents,
+  }),
+});
+
+class CatalogToolset extends BaseToolset {
+  private readonly baseTool = new FunctionTool({
+    name: 'findItem',
+    description: 'Finds an item in the product catalog.',
+    parameters: z.object({sku: z.string()}),
+    execute: async ({sku}) => ({sku, available: true}),
+  });
+
+  constructor() {
+    super({toolNamePrefix: 'catalog'});
+  }
+
+  override async getTools(): Promise<BaseTool[]> {
+    return [this.baseTool];
+  }
+}
+
+const catalogToolset = new CatalogToolset();
+
+const structuredOutputSchema = z.object({
+  sku: z.string(),
+  approvedCount: z.number().int().min(1),
+  note: z.string().nullable().optional(),
+});
+
+const structuredOrderAgent = new LlmAgent({
+  name: 'structuredOrderAgent',
+  model: new OfflineStructuredRetryLlm(),
+  tools: [
+    new FunctionTool({
+      name: 'pingWarehouse',
+      description: 'Checks warehouse availability.',
+      execute: () => ({ok: true}),
+    }),
+  ],
+  outputSchema: structuredOutputSchema,
+  outputKey: 'orderSummary',
+});
+
+const standaloneSetResponseTool = new SetModelResponseTool(
+  structuredOutputSchema,
+);
 
 const crewInventoryTool = new CrewaiTool(
   {
@@ -456,6 +589,45 @@ class ToolsShowcaseAgent extends BaseAgent {
     });
     await asyncToolboxCustomsToolset.close();
 
+    toolContext.state.set('googleCalendarToken', 'sample-google-access-token');
+    const calendarResult = await googleCalendarLookupTool.runAsync({
+      args: {calendarId: 'primary'},
+      toolContext,
+    });
+
+    const [prefixedCatalogTool] = await catalogToolset.getToolsWithPrefix();
+    const catalogResult = await prefixedCatalogTool.runAsync({
+      args: {sku},
+      toolContext,
+    });
+    await catalogToolset.close();
+
+    const directStructuredContext = new Context({
+      invocationContext: ctx,
+      functionCallId: 'call-set-response-direct',
+    });
+    const directStructuredResult = await standaloneSetResponseTool.runAsync({
+      args: {sku, approvedCount: quantity, note: null},
+      toolContext: directStructuredContext,
+    });
+
+    const structuredCtx = new InvocationContext({
+      invocationId: 'inv-structured-retry',
+      agent: structuredOrderAgent,
+      session: createSession({
+        id: 'sess-structured-retry',
+        appName: ctx.appName,
+        userId: ctx.userId,
+      }),
+      pluginManager: new PluginManager(),
+    });
+    const structuredEvents: Event[] = [];
+    for await (const event of structuredOrderAgent.runAsync(structuredCtx)) {
+      structuredEvents.push(event);
+    }
+    const structuredSummary =
+      structuredEvents.at(-1)?.actions.stateDelta['orderSummary'];
+
     const exitLoopContext = new Context({
       invocationContext: ctx,
       functionCallId: 'call-exit-loop',
@@ -479,6 +651,11 @@ class ToolsShowcaseAgent extends BaseAgent {
       taxResult,
       shippingResult,
       customsResult,
+      calendarResult,
+      prefixedCatalogToolName: prefixedCatalogTool.name,
+      catalogResult,
+      directStructuredResult,
+      structuredSummary,
       exitLoopActions: {
         escalate: exitLoopContext.actions.escalate,
         skipSummarization: exitLoopContext.actions.skipSummarization,
