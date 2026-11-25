@@ -6,6 +6,7 @@
  */
 
 import {
+  Aclosing,
   BaseArtifactService,
   BaseMemoryService,
   BaseSessionService,
@@ -941,12 +942,14 @@ export function createProgram(): Command {
           });
 
           const evalResults: EvalResult[] = [];
-          for await (const result of runEvals(
-            evalCasesByEvalSetId,
-            rootAgent,
-            resetFunc,
-            evalMetrics,
-            getBoolean(options['print_detailed_results']),
+          for await (const result of new Aclosing(
+            runEvals(
+              evalCasesByEvalSetId,
+              rootAgent,
+              resetFunc,
+              evalMetrics,
+              getBoolean(options['print_detailed_results']),
+            ),
           )) {
             evalResults.push(result);
           }

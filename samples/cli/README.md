@@ -9,7 +9,7 @@ This sample demonstrates how the CLI evaluation utilities prepare state placehol
 - A query containing `'order'` emits a `lookup_order` `functionCall` event, its `functionResponse` event, and the final text `'Order ORD-100 has shipped.'`.
 - Any other query replies with the active `locale` from `ctx.session.state`.
 
-The `main()` driver calls `createEmptyState(rootAgent, {locale: 'en-GB'})` to populate `{department: '', locale: 'en-GB'}`, also inspects a `Workflow` graph via `createEmptyState(triageWorkflow, {priorityLevel: 'high'})` to populate `{ticketId: '', priorityLevel: 'high'}`, lists supported evaluation metric descriptors with `getRegisteredEvalMetrics()`, runs two turns through `InMemoryRunner`, converts the stored session into `EvalInvocation` records with `convertSessionToEvalInvocations`, wraps them in an `EvalCase`, parses evalset file path and ID selectors with `parseAndGetEvalsToRun`, scores the agent against that `EvalCase` with `runEvals`, exercises `LocalEvalSetsManager` case CRUD (`createEvalSet`, `addEvalCase`, `getEvalCase`, `updateEvalCase`, `deleteEvalCase`), persists and reloads the `EvalSetResult` with `LocalEvalSetResultsManager`, and cleans up the runner with `closeRunners`.
+The `main()` driver calls `createEmptyState(rootAgent, {locale: 'en-GB'})` to populate `{department: '', locale: 'en-GB'}`, also inspects a `Workflow` graph via `createEmptyState(triageWorkflow, {priorityLevel: 'high'})` to populate `{ticketId: '', priorityLevel: 'high'}`, lists supported evaluation metric descriptors with `getRegisteredEvalMetrics()`, runs two turns through `InMemoryRunner` inside `Aclosing`, converts the stored session into `EvalInvocation` records with `convertSessionToEvalInvocations`, wraps them in an `EvalCase`, parses evalset file path and ID selectors with `parseAndGetEvalsToRun`, scores the agent against that `EvalCase` with `runEvals` wrapped in `Aclosing`, exercises `LocalEvalSetsManager` case CRUD (`createEvalSet`, `addEvalCase`, `getEvalCase`, `updateEvalCase`, `deleteEvalCase`), persists and reloads the `EvalSetResult` with `LocalEvalSetResultsManager`, and cleans up the runner with `closeRunners`.
 
 ## Sample Inputs
 
@@ -50,7 +50,7 @@ Add `--reload_agents` to pick up edits to `agent.ts` without a server restart. T
 node dev/dist/esm/cli_entrypoint.js web samples/cli/agent.ts --reload_agents
 ```
 
-Add `--a2a` to also serve the agent over the Agent2Agent (A2A) protocol below `/a2a/agent`, and `--a2a_auth_token` to require a bearer token on those endpoints:
+Add `--a2a` to also serve the agent over the Agent2Agent (A2A) protocol below `/a2a/agent`, and `--a2a_auth_token` to require a bearer token on those endpoints. When an `agent.json` card file exists beside `agent.ts`, `AdkApiServer` preserves its custom `url` and metadata instead of generating a card automatically; `resolveAgentCard` requires an absolute `url` (including scheme and host), so set `url` to the mounted transport endpoint (for example `https://example.com/a2a/agent/jsonrpc`, or `https://example.com/a2a/agent/rest` when `preferredTransport` is `'HTTP+JSON'`), rather than bare `/a2a/agent`:
 
 ```bash
 node dev/dist/esm/cli_entrypoint.js web samples/cli/agent.ts --a2a --a2a_auth_token <token>
