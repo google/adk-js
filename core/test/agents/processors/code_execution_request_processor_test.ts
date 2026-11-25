@@ -343,6 +343,34 @@ print(json.dumps([crop('short'), crop('a' * 65), crop('abcd', 3), crop('abcd', 2
         artifact: {inlineData: {data: encoded, mimeType: 'image/png'}},
       });
     });
+
+    it('stops cleanly without invoking executeCode when the consumer breaks after the first yielded event', async () => {
+      const executor = new RecordingCodeExecutor({
+        stdout: 'explored',
+        stderr: '',
+        outputFiles: [],
+      });
+      const {ctx} = createContextWithArtifacts(
+        new LlmAgent({
+          name: 'dataAgent',
+          model: 'gemini-flash-latest',
+          codeExecutor: executor,
+        }),
+      );
+      const llmRequest = createCsvRequest();
+
+      const yieldedEvents = [];
+      for await (const event of CODE_EXECUTION_REQUEST_PROCESSOR.runAsync(
+        ctx,
+        llmRequest,
+      )) {
+        yieldedEvents.push(event);
+        break;
+      }
+
+      expect(yieldedEvents).toHaveLength(1);
+      expect(executor.inputs).toHaveLength(0);
+    });
   });
 });
 
@@ -485,6 +513,37 @@ describe('CodeExecutionResponseProcessor', () => {
         },
       });
       expect(llmResponse.content).toBeUndefined();
+    });
+
+    it('stops cleanly without invoking executeCode or clearing content when the consumer breaks after the first yielded event', async () => {
+      const executor = new RecordingCodeExecutor({
+        stdout: '2',
+        stderr: '',
+        outputFiles: [],
+      });
+      const agent = new LlmAgent({
+        name: 'codeAgent',
+        model: 'gemini-flash-latest',
+        codeExecutor: executor,
+      });
+      const {ctx} = createContextWithArtifacts(agent);
+      const llmResponse = {
+        partial: false,
+        content: {
+          role: 'model',
+          parts: [{text: '```python\nprint(1 + 1)\n```'}],
+        },
+      };
+
+      const yieldedEvents = [];
+      for await (const event of responseProcessor.runAsync(ctx, llmResponse)) {
+        yieldedEvents.push(event);
+        break;
+      }
+
+      expect(yieldedEvents).toHaveLength(1);
+      expect(executor.inputs).toHaveLength(0);
+      expect(llmResponse.content).toBeDefined();
     });
   });
 });

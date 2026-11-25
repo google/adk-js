@@ -11,6 +11,7 @@ import {injectSessionState} from '../instructions.js';
 import {InvocationContext} from '../invocation_context.js';
 import {isLlmAgent} from '../llm_agent.js';
 import {ReadonlyContext} from '../readonly_context.js';
+import {hasFunctionTools} from './agent_transfer_llm_request_processor.js';
 import {BaseLlmRequestProcessor} from './base_llm_processor.js';
 
 export class InstructionsLlmRequestProcessor extends BaseLlmRequestProcessor {
@@ -66,7 +67,9 @@ export class InstructionsLlmRequestProcessor extends BaseLlmRequestProcessor {
     if (
       agent.outputSchema &&
       agent.mode !== 'task' &&
-      agent.tools?.length &&
+      !invocationContext.liveRequestQueue &&
+      !invocationContext.runConfig?.supportCfc &&
+      hasFunctionTools(agent) &&
       !canUseOutputSchemaWithTools(agent.canonicalModel)
     ) {
       appendInstructions(llmRequest, [

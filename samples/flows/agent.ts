@@ -5,10 +5,10 @@
  */
 
 /**
- * Flows (`BaseLlmRequestProcessor`, `BaseLlmResponseProcessor`, concurrent tool execution, `handleFunctionCallsLive`, `sessionResumption`, and `supportCfc`)
+ * Flows (`BaseLlmRequestProcessor`, `BaseLlmResponseProcessor`, concurrent tool execution, `handleFunctionCallsLive`, `sessionResumption`, `supportCfc`, `SetModelResponseTool`, and `Aclosing`)
  * ../../docs/guides/flows/index.md
  *
- * Demonstrates four core parts of the ADK LLM flow subsystem without requiring
+ * Demonstrates five core parts of the ADK LLM flow subsystem without requiring
  * an API key:
  * 1. An `LlmAgent` (`rootAgent`) configured with a custom
  *    `BaseLlmRequestProcessor` (`RequestAuditProcessor`),
@@ -25,6 +25,9 @@
  *    without replaying history.
  * 4. Compositional Function Calling (`runConfig.supportCfc: true`), routing
  *    `LlmAgent.runAsync` through `runLiveFlow` with `StreamingMode.NONE`.
+ * 5. Structured output alongside tools (`outputSchema` + `FunctionTool` +
+ *    `outputKey`) via auto-injected `SetModelResponseTool` (`set_model_response`)
+ *    and deterministic generator cleanup via `Aclosing`.
  *
  * Run (offline, no API key):
  *   npm run build
@@ -33,6 +36,7 @@
  */
 
 import {
+  Aclosing,
   AsyncQueue,
   BaseLlm,
   BaseLlmConnection,
@@ -50,6 +54,7 @@ import {
   LlmResponse,
   PluginManager,
   Runner,
+  SET_MODEL_RESPONSE_TOOL_NAME,
   StreamingMode,
   appendInstructions,
   createEvent,
@@ -593,11 +598,153 @@ async function runSupportCfcDemo(): Promise<void> {
   }
 }
 
+async function runStructuredToolsDemo(): Promise<void> {
+  process.stdout.write(
+    '\n=== 5. Structured Output with Tools & Aclosing Cleanup ===\n',
+  );
+
+  class StructuredToolsDemoLlm extends BaseLlm {
+    readonly registeredToolLists: string[][] = [];
+
+    constructor() {
+      super({model: 'structured-tools-demo-llm'});
+    }
+
+    async *generateContentAsync(
+      llmRequest: LlmRequest,
+    ): AsyncGenerator<LlmResponse, void, void> {
+      this.registeredToolLists.push(Object.keys(llmRequest.toolsDict).sort());
+      const lastContent = llmRequest.contents[llmRequest.contents.length - 1];
+      const functionResponses =
+        lastContent?.parts
+          ?.map((part) => part.functionResponse)
+          .filter((response) => response !== undefined) ?? [];
+
+      const rawResponse = new GenerateContentResponse();
+      if (functionResponses.length === 0) {
+        rawResponse.candidates = [
+          {
+            content: {
+              role: 'model',
+              parts: [
+                {
+                  functionCall: {
+                    id: 'call-region-1',
+                    name: 'fetchRegionSlo',
+                    args: {region: 'us-central1'},
+                  },
+                },
+              ],
+            },
+            finishReason: FinishReason.STOP,
+          },
+        ];
+      } else {
+        const payload = functionResponses[0]?.response ?? {};
+        const region =
+          typeof payload['region'] === 'string'
+            ? payload['region']
+            : 'us-central1';
+        const availabilityPct =
+          typeof payload['availabilityPct'] === 'number'
+            ? payload['availabilityPct']
+            : 99.95;
+        rawResponse.candidates = [
+          {
+            content: {
+              role: 'model',
+              parts: [
+                {
+                  functionCall: {
+                    id: 'call-structured-1',
+                    name: SET_MODEL_RESPONSE_TOOL_NAME,
+                    args: {
+                      region,
+                      availabilityPct,
+                      withinSlo: availabilityPct >= 99.9,
+                    },
+                  },
+                },
+              ],
+            },
+            finishReason: FinishReason.STOP,
+          },
+        ];
+      }
+      yield createLlmResponse(rawResponse);
+    }
+
+    async connect(): Promise<BaseLlmConnection> {
+      throw new Error('Live connection is not used by StructuredToolsDemoLlm.');
+    }
+  }
+
+  const fetchRegionSlo = new FunctionTool({
+    name: 'fetchRegionSlo',
+    description: 'Returns availability percentage for a cloud region.',
+    parameters: z.object({region: z.string()}),
+    execute: async ({region}) => ({region, availabilityPct: 99.98}),
+  });
+
+  const sloReportSchema = z.object({
+    region: z.string(),
+    availabilityPct: z.number(),
+    withinSlo: z.boolean(),
+  });
+
+  const structuredLlm = new StructuredToolsDemoLlm();
+  const structuredAgent = new LlmAgent({
+    name: 'structuredSloAgent',
+    model: structuredLlm,
+    instruction: 'Check availability with fetchRegionSlo and return a report.',
+    tools: [fetchRegionSlo],
+    outputSchema: sloReportSchema,
+    outputKey: 'sloReport',
+  });
+
+  const appName = 'flows-sample-app';
+  const userId = 'user-1';
+  const runner = new InMemoryRunner({agent: structuredAgent, appName});
+  const session = await runner.sessionService.createSession({appName, userId});
+
+  for await (const event of new Aclosing(
+    runner.runAsync({
+      userId,
+      sessionId: session.id,
+      newMessage: {
+        role: 'user',
+        parts: [{text: 'Generate the SLO report for us-central1.'}],
+      },
+    }),
+  )) {
+    const calls = getFunctionCalls(event);
+    const responses = getFunctionResponses(event);
+    if (calls.length > 0) {
+      process.stdout.write(
+        `[${event.author}] tool call: ${calls.map((c) => `${c.name}(${JSON.stringify(c.args)})`).join(', ')}\n`,
+      );
+    } else if (responses.length > 0) {
+      process.stdout.write(
+        `[${event.author}] tool response: ${responses.map((r) => `${r.name} -> ${JSON.stringify(r.response)}`).join(', ')}\n`,
+      );
+    } else {
+      process.stdout.write(
+        `[${event.author}] structured final event: ${stringifyContent(event)} (stateDelta.sloReport=${JSON.stringify(event.actions.stateDelta['sloReport'])})\n`,
+      );
+    }
+  }
+
+  process.stdout.write(
+    `Registered tools per turn: ${JSON.stringify(structuredLlm.registeredToolLists)}\n`,
+  );
+}
+
 async function main(): Promise<void> {
   await runProcessorAndParallelToolsDemo();
   await runLiveStreamingToolsDemo();
   await runLiveSessionResumptionDemo();
   await runSupportCfcDemo();
+  await runStructuredToolsDemo();
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

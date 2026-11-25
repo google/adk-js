@@ -58,9 +58,9 @@ Few-shot example structures (`Example`), dynamic example providers (`BaseExample
 
 ### Flows
 
-The `LlmAgent` request/response processor pipeline, concurrent parallel tool-call execution and `stateDelta` merging, live session resumption (`sessionResumption`), live streaming function-call dispatch (`handleFunctionCallsLive` and `stop_streaming`), and Compositional Function Calling (`supportCfc`).
+The `LlmAgent` request/response processor pipeline, structured output alongside tools (`SetModelResponseTool`), deterministic async-generator cleanup (`Aclosing`), concurrent parallel tool-call execution and `stateDelta` merging, live session resumption (`sessionResumption`), live streaming function-call dispatch (`handleFunctionCallsLive` and `stop_streaming`), and Compositional Function Calling (`supportCfc`).
 
-- [Flows](flows/index.md) - `BaseLlmRequestProcessor`, `BaseLlmResponseProcessor`, `CONTENT_REQUEST_PROCESSOR`, `AgentTransferLlmRequestProcessor`, `CodeExecutionResponseProcessor`, `injectSessionState`, `handleFunctionCallsLive`, `sessionResumption`, and `supportCfc`.
+- [Flows](flows/index.md) - `BaseLlmRequestProcessor`, `BaseLlmResponseProcessor`, `CONTENT_REQUEST_PROCESSOR`, `AgentTransferLlmRequestProcessor`, `CodeExecutionResponseProcessor`, `SetModelResponseTool`, `Aclosing`, `injectSessionState`, `handleFunctionCallsLive`, `sessionResumption`, and `supportCfc`.
 
 ### Integrations
 

@@ -8,10 +8,12 @@ import {
   BaseAgent,
   BaseLlm,
   BaseLlmConnection,
+  createRunConfig,
   createSession,
   FunctionTool,
   Gemini,
   InvocationContext,
+  LiveRequestQueue,
   LlmAgent,
   LlmRequest,
   LlmResponse,
@@ -373,6 +375,134 @@ describe('InstructionsLlmRequestProcessor', () => {
       expect(llmRequest.config?.systemInstruction).toContain(
         SET_MODEL_RESPONSE_INSTRUCTION,
       );
+    });
+
+    it('should not append set_model_response instruction in live mode when liveRequestQueue is present', async () => {
+      vi.stubEnv(VERTEX_ENV_VAR, undefined);
+
+      const agent = new LlmAgent({
+        name: 'liveTestAgent',
+        model: new MockLlm({model: 'gemini-flash-latest'}),
+        instruction: 'Base instruction',
+        outputSchema: OUTPUT_SCHEMA,
+        tools: [
+          new FunctionTool({
+            name: 'lookupItem',
+            description: 'A test tool',
+            execute: () => 'result',
+          }),
+        ],
+      });
+      const liveRequestQueue = new LiveRequestQueue();
+      liveRequestQueue.close();
+      const invocationContext = new InvocationContext({
+        invocationId: 'test-live-invocation',
+        agent,
+        session: createSession({
+          id: 'test-live-session',
+          events: [],
+          appName: 'test-app',
+          userId: 'test-user',
+        }),
+        liveRequestQueue,
+        pluginManager: new PluginManager([]),
+      });
+      const llmRequest: LlmRequest = {
+        contents: [],
+        toolsDict: {},
+        liveConnectConfig: {},
+      };
+
+      for await (const _ of INSTRUCTIONS_LLM_REQUEST_PROCESSOR.runAsync(
+        invocationContext,
+        llmRequest,
+      )) {
+        // intentionally empty
+      }
+
+      expect(llmRequest.config?.systemInstruction).not.toContain(
+        'set_model_response',
+      );
+      expect(llmRequest.config?.systemInstruction).toBe('Base instruction');
+    });
+
+    it('should append set_model_response instruction when outputSchema and subAgents are present without tools', async () => {
+      vi.stubEnv(VERTEX_ENV_VAR, undefined);
+
+      const subAgent = new LlmAgent({
+        name: 'specialistAgent',
+        model: new MockLlm({model: 'gemini-flash-latest'}),
+      });
+      const agent = new LlmAgent({
+        name: 'routerAgent',
+        model: new MockLlm({model: 'gemini-flash-latest'}),
+        instruction: 'Base instruction',
+        outputSchema: OUTPUT_SCHEMA,
+        subAgents: [subAgent],
+      });
+      const llmRequest: LlmRequest = {
+        contents: [],
+        toolsDict: {},
+        liveConnectConfig: {},
+      };
+
+      for await (const _ of INSTRUCTIONS_LLM_REQUEST_PROCESSOR.runAsync(
+        createMockInvocationContext(agent),
+        llmRequest,
+      )) {
+        // intentionally empty
+      }
+
+      expect(llmRequest.config?.systemInstruction).toContain(
+        SET_MODEL_RESPONSE_INSTRUCTION,
+      );
+    });
+
+    it('should not append set_model_response instruction when runConfig.supportCfc is true', async () => {
+      vi.stubEnv(VERTEX_ENV_VAR, undefined);
+
+      const agent = new LlmAgent({
+        name: 'cfcTestAgent',
+        model: new MockLlm({model: 'gemini-flash-latest'}),
+        instruction: 'Base instruction',
+        outputSchema: OUTPUT_SCHEMA,
+        tools: [
+          new FunctionTool({
+            name: 'lookupItem',
+            description: 'A test tool',
+            execute: () => 'result',
+          }),
+        ],
+      });
+      const invocationContext = new InvocationContext({
+        invocationId: 'test-cfc-invocation',
+        agent,
+        session: createSession({
+          id: 'test-cfc-session',
+          events: [],
+          appName: 'test-app',
+          userId: 'test-user',
+        }),
+        runConfig: createRunConfig({supportCfc: true}),
+        pluginManager: new PluginManager([]),
+      });
+      const llmRequest: LlmRequest = {
+        contents: [],
+        toolsDict: {},
+        liveConnectConfig: {},
+      };
+
+      for await (const _ of INSTRUCTIONS_LLM_REQUEST_PROCESSOR.runAsync(
+        invocationContext,
+        llmRequest,
+      )) {
+        // intentionally empty
+      }
+
+      expect(llmRequest.config?.systemInstruction).not.toContain(
+        'set_model_response',
+      );
+      expect(llmRequest.config?.systemInstruction).toBe('Base instruction');
     });
   });
 
