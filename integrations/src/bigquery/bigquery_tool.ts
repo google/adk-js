@@ -6,35 +6,31 @@
 
 import {
   type Context,
-  FunctionTool,
+  GoogleTool,
+  type GoogleToolExecuteInput,
+  isZodObject,
   type RequireConfirmation,
-  type RunAsyncToolRequest,
-  type ToolExecuteArgument,
   type ToolInputParameters,
 } from '@google/adk';
-import type {FunctionDeclaration} from '@google/genai';
 
-import {
-  type BigQueryCredentials,
-  type BigQueryCredentialsConfig,
-  GoogleCredentialsManager,
-} from './bigquery_credentials.js';
+import type {BigQueryCredentialsConfig} from './bigquery_credentials.js';
 import {
   BigQueryToolConfig,
   type BigQueryToolConfigOptions,
   isBigQueryToolConfig,
 } from './config.js';
-import {toBigQueryToolErrorResult} from './tool_error.js';
 
 /**
  * Function wrapped by a {@link BigQueryTool}. It receives the validated model
- * arguments plus the resolved `credentials`, `config`, and the tool context.
+ * arguments plus the resolved `credentials`, `config`, `settings`, and the tool
+ * context.
+ *
+ * @deprecated Use `GoogleToolExecuteFunction` from `@google/adk` instead.
  */
 export type BigQueryToolExecuteFunction<
-  TParameters extends ToolInputParameters,
+  TParameters extends ToolInputParameters = ToolInputParameters,
 > = (
-  input: ToolExecuteArgument<TParameters> & {
-    credentials?: BigQueryCredentials;
+  input: GoogleToolExecuteInput<TParameters, BigQueryToolConfig> & {
     config?: BigQueryToolConfig;
   },
   toolContext?: Context,
@@ -42,6 +38,8 @@ export type BigQueryToolExecuteFunction<
 
 /**
  * Configuration options for {@link BigQueryTool}.
+ *
+ * @deprecated Use `GoogleToolOptions` from `@google/adk` instead.
  */
 export interface BigQueryToolOptions<
   TParameters extends ToolInputParameters = ToolInputParameters,
@@ -58,7 +56,8 @@ export interface BigQueryToolOptions<
 
   /**
    * Zod object schema or `@google/genai` `Schema` describing the model-facing
-   * parameters. Do not declare `credentials` or `config`; the tool injects them.
+   * parameters. Do not declare `credentials`, `config`, or `settings`; the
+   * tool injects them.
    */
   parameters?: TParameters;
 
@@ -95,6 +94,8 @@ const BIGQUERY_TOOL_SIGNATURE_SYMBOL = Symbol.for('google.adk.bigQueryTool');
 
 /**
  * Type guard to check if an object is an instance of {@link BigQueryTool}.
+ *
+ * @deprecated Use `isGoogleTool` from `@google/adk` instead.
  */
 export function isBigQueryTool(obj: unknown): obj is BigQueryTool {
   return (
@@ -105,20 +106,31 @@ export function isBigQueryTool(obj: unknown): obj is BigQueryTool {
   );
 }
 
+function omitConfigParameter<TParameters extends ToolInputParameters>(
+  parameters: TParameters,
+): TParameters {
+  if (!isZodObject(parameters) || !('config' in parameters.shape)) {
+    return parameters;
+  }
+  // Keep TParameters inference on requireConfirmation while stripping config
+  // from runtime Zod parsing.
+  return (
+    '_zod' in parameters
+      ? parameters.omit({config: true})
+      : parameters.omit({config: true})
+  ) as TParameters;
+}
+
 /**
  * Function tool for BigQuery that resolves OAuth2 credentials, caches them in
  * session state, and reports failures as `{status: 'ERROR', error_details}`.
+ *
+ * @deprecated Use {@link GoogleTool} from `@google/adk` instead.
  */
 export class BigQueryTool<
   TParameters extends ToolInputParameters = ToolInputParameters,
-> extends FunctionTool<TParameters> {
+> extends GoogleTool<TParameters, BigQueryToolConfig> {
   readonly [BIGQUERY_TOOL_SIGNATURE_SYMBOL] = true;
-
-  /**
-   * The credential manager used to resolve OAuth2 credentials, or `undefined`
-   * when no credential configuration is provided.
-   */
-  readonly credentialsManager?: GoogleCredentialsManager;
 
   /**
    * The configuration for BigQuery tools. Defaults to `new BigQueryToolConfig()`
@@ -129,9 +141,10 @@ export class BigQueryTool<
   /**
    * Parameter names omitted from the model's function declaration.
    */
-  readonly ignoreParams: readonly string[] = Object.freeze([
+  override readonly ignoreParams: readonly string[] = Object.freeze([
     'credentials',
     'config',
+    'settings',
   ]);
 
   constructor(options: BigQueryToolOptions<TParameters>) {
@@ -141,9 +154,6 @@ export class BigQueryTool<
         'Tool name cannot be empty. Either name the `execute` function or provide a `name`.',
       );
     }
-    const credentialsManager = options.credentialsConfig
-      ? new GoogleCredentialsManager(options.credentialsConfig)
-      : undefined;
     const toolConfig = options.toolConfig
       ? isBigQueryToolConfig(options.toolConfig)
         ? options.toolConfig
@@ -154,69 +164,15 @@ export class BigQueryTool<
     super({
       name,
       description: options.description,
-      parameters: options.parameters,
+      parameters: omitConfigParameter(options.parameters),
+      credentialsConfig: options.credentialsConfig,
+      toolSettings: toolConfig,
       isLongRunning: options.isLongRunning,
       requireConfirmation: options.requireConfirmation,
-      execute: async (input, toolContext) => {
-        try {
-          let credentials: BigQueryCredentials | undefined;
-          if (credentialsManager) {
-            credentials =
-              await credentialsManager.getValidCredentials(toolContext);
-            if (!credentials) {
-              return (
-                `User authorization is required to access Google services for ${name}. ` +
-                'Please complete the authorization flow.'
-              );
-            }
-          }
-          // A parameterless tool's validated input is not an object; it
-          // receives only `credentials` and `config`.
-          const argsToCall = {
-            ...(typeof input === 'object' ? input : {}),
-            credentials,
-            config: toolConfig,
-          } as Parameters<typeof execute>[0];
-          return await execute(argsToCall, toolContext);
-        } catch (error: unknown) {
-          return toBigQueryToolErrorResult(error);
-        }
-      },
+      execute: (input, toolContext) =>
+        execute({...input, config: toolConfig}, toolContext),
     });
 
-    this.credentialsManager = credentialsManager;
     this.toolConfig = toolConfig;
-  }
-
-  /**
-   * Builds the `FunctionDeclaration` with `credentials` and `config` stripped from `properties`
-   * and `required`.
-   */
-  override _getDeclaration(): FunctionDeclaration {
-    const declaration = structuredClone(super._getDeclaration());
-    if (declaration.parameters?.properties) {
-      for (const ignored of this.ignoreParams) {
-        delete declaration.parameters.properties[ignored];
-      }
-    }
-    if (Array.isArray(declaration.parameters?.required)) {
-      declaration.parameters.required = declaration.parameters.required.filter(
-        (param) => !this.ignoreParams.includes(param),
-      );
-    }
-    return declaration;
-  }
-
-  /**
-   * Runs the tool through {@link FunctionTool.runAsync}, so argument
-   * validation and the `requireConfirmation` gate apply. Errors are returned
-   * as `{status: 'ERROR', error_details}` instead of thrown.
-   */
-  override async runAsync(req: RunAsyncToolRequest): Promise<unknown> {
-    try {
-      return await super.runAsync(req);
-    } catch (error: unknown) {
-      return toBigQueryToolErrorResult(error);
-    }
   }
 }

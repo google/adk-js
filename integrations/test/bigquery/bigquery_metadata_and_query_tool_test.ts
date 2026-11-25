@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {type Context, createSession, State} from '@google/adk';
+import {type Context, createSession, GoogleTool, State} from '@google/adk';
 import {
   BIGQUERY_USER_AGENT,
   type BigQueryAuthClient,
@@ -23,6 +23,7 @@ import {
   listTableIds,
   WriteMode,
 } from '@google/adk-integrations';
+import {type Schema, Type} from '@google/genai';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 import type {
@@ -1673,6 +1674,198 @@ describe('executeSql query tool', () => {
       expect(capturedClientOptions?.['authClient']).toBeDefined();
     },
   );
+
+  it('respects settings.maxQueryResultRows and settings.writeMode', async () => {
+    const tenRows = Array.from({length: 10}, (_, index) => ({id: index}));
+    const dryRunSpy = vi
+      .spyOn(BigQueryClient.prototype, 'dryRun')
+      .mockResolvedValue({statementType: 'SELECT'});
+    const querySpy = vi
+      .spyOn(BigQueryClient.prototype, 'query')
+      .mockResolvedValue(tenRows);
+
+    const limitedResult = await executeSql({
+      project_id: 'myProject',
+      query: 'SELECT id FROM largeTable',
+      credentials: mockCredentials,
+      settings: new BigQueryToolConfig({maxQueryResultRows: 10}),
+    });
+
+    expect(dryRunSpy).toHaveBeenCalledOnce();
+    expect(querySpy).toHaveBeenCalledWith({
+      query: 'SELECT id FROM largeTable',
+      projectId: 'myProject',
+      maxResults: 10,
+    });
+    expect(limitedResult).toEqual({
+      status: 'SUCCESS',
+      rows: tenRows,
+      result_is_likely_truncated: true,
+    });
+
+    dryRunSpy.mockClear();
+    querySpy.mockClear();
+    querySpy.mockResolvedValue([]);
+    const allowedResult = await executeSql({
+      project_id: 'myProject',
+      query: 'CREATE TABLE dataset.t AS SELECT 1',
+      credentials: mockCredentials,
+      settings: {writeMode: WriteMode.ALLOWED},
+    });
+    expect(allowedResult).toEqual({status: 'SUCCESS', rows: []});
+    expect(dryRunSpy).not.toHaveBeenCalled();
+    expect(querySpy).toHaveBeenCalledOnce();
+
+    dryRunSpy.mockResolvedValue({statementType: 'CREATE_TABLE'});
+    querySpy.mockClear();
+    const blockedResult = await executeSql({
+      project_id: 'myProject',
+      query: 'CREATE TABLE dataset.t AS SELECT 1',
+      credentials: mockCredentials,
+      settings: {writeMode: WriteMode.BLOCKED},
+    });
+    expect(blockedResult).toEqual({
+      status: 'ERROR',
+      error_details: 'Read-only mode only supports SELECT statements.',
+    });
+    expect(querySpy).not.toHaveBeenCalled();
+  });
+
+  it.each([0, -1, 1.5, Number.NaN])(
+    'returns ERROR when settings.maxQueryResultRows is %s',
+    async (invalidRows) => {
+      const dryRunSpy = vi.spyOn(BigQueryClient.prototype, 'dryRun');
+      const querySpy = vi.spyOn(BigQueryClient.prototype, 'query');
+
+      const result = await executeSql({
+        project_id: 'myProject',
+        query: 'SELECT id FROM largeTable',
+        credentials: mockCredentials,
+        settings: {maxQueryResultRows: invalidRows},
+      });
+
+      expect(result).toEqual({
+        status: 'ERROR',
+        error_details: 'maxQueryResultRows must be a positive integer.',
+      });
+      expect(dryRunSpy).not.toHaveBeenCalled();
+      expect(querySpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it('prefers settings over deprecated config when both are provided', async () => {
+    const dryRunSpy = vi
+      .spyOn(BigQueryClient.prototype, 'dryRun')
+      .mockResolvedValue({statementType: 'DROP_TABLE'});
+    const querySpy = vi
+      .spyOn(BigQueryClient.prototype, 'query')
+      .mockResolvedValue([{id: 1}, {id: 2}]);
+
+    const blockedResult = await executeSql({
+      project_id: 'myProject',
+      query: 'DROP TABLE dataset.t',
+      credentials: mockCredentials,
+      settings: {writeMode: WriteMode.BLOCKED, maxQueryResultRows: 2},
+      config: {writeMode: WriteMode.ALLOWED, maxQueryResultRows: 10},
+    });
+    expect(blockedResult).toEqual({
+      status: 'ERROR',
+      error_details: 'Read-only mode only supports SELECT statements.',
+    });
+    expect(dryRunSpy).toHaveBeenCalledOnce();
+    expect(querySpy).not.toHaveBeenCalled();
+
+    dryRunSpy.mockResolvedValue({statementType: 'SELECT'});
+    const selectResult = await executeSql({
+      project_id: 'myProject',
+      query: 'SELECT id FROM dataset.t',
+      credentials: mockCredentials,
+      settings: {writeMode: WriteMode.BLOCKED, maxQueryResultRows: 2},
+      config: {writeMode: WriteMode.ALLOWED, maxQueryResultRows: 10},
+    });
+    expect(querySpy).toHaveBeenCalledWith({
+      query: 'SELECT id FROM dataset.t',
+      projectId: 'myProject',
+      maxResults: 2,
+    });
+    expect(selectResult).toEqual({
+      status: 'SUCCESS',
+      rows: [{id: 1}, {id: 2}],
+      result_is_likely_truncated: true,
+    });
+  });
+
+  it('ignores model-supplied config when GoogleTool injects undefined settings on a raw Schema tool', async () => {
+    const dryRunSpy = vi
+      .spyOn(BigQueryClient.prototype, 'dryRun')
+      .mockResolvedValue({statementType: 'DROP_TABLE'});
+    const querySpy = vi
+      .spyOn(BigQueryClient.prototype, 'query')
+      .mockResolvedValue([{id: 1}, {id: 2}, {id: 3}]);
+
+    const rawSchema: Schema = {
+      type: Type.OBJECT,
+      properties: {
+        project_id: {type: Type.STRING},
+        query: {type: Type.STRING},
+      },
+      required: ['project_id', 'query'],
+    };
+    const rawSqlTool = new GoogleTool<Schema, BigQueryToolConfig>({
+      name: 'customExecuteSql',
+      description: 'Custom Schema-backed SQL tool without toolSettings',
+      parameters: rawSchema,
+      execute: (args, ctx) =>
+        executeSql({...args, query: String(args['query'] ?? '')}, ctx),
+    });
+
+    const writeAttempt = await rawSqlTool.runAsync({
+      args: {
+        project_id: 'myProject',
+        query: 'DROP TABLE dataset.t',
+        config: {writeMode: WriteMode.ALLOWED, maxQueryResultRows: 1},
+      },
+      toolContext: createSessionToolContext('raw-schema-sql'),
+    });
+    expect(writeAttempt).toEqual({
+      status: 'ERROR',
+      error_details: 'Read-only mode only supports SELECT statements.',
+    });
+    expect(dryRunSpy).toHaveBeenCalledOnce();
+    expect(querySpy).not.toHaveBeenCalled();
+
+    dryRunSpy.mockResolvedValue({statementType: 'SELECT'});
+    const selectAttempt = await rawSqlTool.runAsync({
+      args: {
+        project_id: 'myProject',
+        query: 'SELECT id FROM dataset.t',
+        config: {writeMode: WriteMode.ALLOWED, maxQueryResultRows: 1},
+      },
+      toolContext: createSessionToolContext('raw-schema-sql-select'),
+    });
+    expect(querySpy).toHaveBeenCalledWith({
+      query: 'SELECT id FROM dataset.t',
+      projectId: 'myProject',
+      maxResults: 50,
+    });
+    expect(selectAttempt).toEqual({
+      status: 'SUCCESS',
+      rows: [{id: 1}, {id: 2}, {id: 3}],
+    });
+
+    querySpy.mockClear();
+    const directFallback = await executeSql({
+      project_id: 'myProject',
+      query: 'CREATE TABLE dataset.t AS SELECT 1',
+      settings: undefined,
+      config: {writeMode: WriteMode.ALLOWED},
+    });
+    expect(directFallback).toEqual({
+      status: 'SUCCESS',
+      rows: [{id: 1}, {id: 2}, {id: 3}],
+    });
+    expect(querySpy).toHaveBeenCalledOnce();
+  });
 });
 
 describe('getExecuteSql and getExecuteSqlDescription', () => {
@@ -1828,6 +2021,84 @@ describe('getExecuteSql and getExecuteSqlDescription', () => {
       maxResults: 50,
       connectionProperties: [{key: 'session_id', value: 'executor-bq-session'}],
     });
+  });
+
+  it('enforces bound settings precedence over args.settings and args.config in getExecuteSql', async () => {
+    const dryRunSpy = vi
+      .spyOn(BigQueryClient.prototype, 'dryRun')
+      .mockResolvedValue({statementType: 'DROP_TABLE'});
+    const querySpy = vi.spyOn(BigQueryClient.prototype, 'query');
+
+    const blockedExecutor = getExecuteSql(
+      new BigQueryToolConfig({writeMode: WriteMode.BLOCKED}),
+    );
+    const resultFromSettings = await blockedExecutor({
+      project_id: 'myProject',
+      query: 'DROP TABLE dataset.t',
+      credentials: mockCredentials,
+      settings: {writeMode: WriteMode.ALLOWED},
+      config: {writeMode: WriteMode.ALLOWED},
+    });
+
+    expect(resultFromSettings).toEqual({
+      status: 'ERROR',
+      error_details: 'Read-only mode only supports SELECT statements.',
+    });
+    expect(dryRunSpy).toHaveBeenCalledOnce();
+    expect(querySpy).not.toHaveBeenCalled();
+
+    const unboundExecutor = getExecuteSql();
+    const unboundResult = await unboundExecutor({
+      project_id: 'myProject',
+      query: 'DROP TABLE dataset.t',
+      credentials: mockCredentials,
+      settings: {writeMode: WriteMode.BLOCKED},
+      config: {writeMode: WriteMode.ALLOWED},
+    });
+    expect(unboundResult).toEqual({
+      status: 'ERROR',
+      error_details: 'Read-only mode only supports SELECT statements.',
+    });
+    expect(querySpy).not.toHaveBeenCalled();
+
+    const rawSchema: Schema = {
+      type: Type.OBJECT,
+      properties: {
+        project_id: {type: Type.STRING},
+        query: {type: Type.STRING},
+      },
+      required: ['project_id', 'query'],
+    };
+    const unboundTool = new GoogleTool<Schema, BigQueryToolConfig>({
+      name: 'unboundExecuteSql',
+      description: 'Unbound getExecuteSql wrapped in Schema GoogleTool',
+      parameters: rawSchema,
+      execute: (args, ctx) =>
+        unboundExecutor({...args, query: String(args['query'] ?? '')}, ctx),
+    });
+    const rawToolResult = await unboundTool.runAsync({
+      args: {
+        project_id: 'myProject',
+        query: 'DROP TABLE dataset.t',
+        config: {writeMode: WriteMode.ALLOWED},
+      },
+      toolContext: createSessionToolContext('unbound-raw-schema'),
+    });
+    expect(rawToolResult).toEqual({
+      status: 'ERROR',
+      error_details: 'Read-only mode only supports SELECT statements.',
+    });
+    expect(querySpy).not.toHaveBeenCalled();
+
+    querySpy.mockResolvedValue([]);
+    const legacyUnboundResult = await unboundExecutor({
+      project_id: 'myProject',
+      query: 'DROP TABLE dataset.t',
+      credentials: mockCredentials,
+      config: {writeMode: WriteMode.ALLOWED},
+    });
+    expect(legacyUnboundResult).toEqual({status: 'SUCCESS', rows: []});
+    expect(querySpy).toHaveBeenCalledOnce();
   });
 });
 
