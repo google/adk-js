@@ -48,6 +48,7 @@ import {BaseSessionService} from '../sessions/base_session_service.js';
 import {Session} from '../sessions/session.js';
 import {recordInvocation} from '../telemetry/api/instrumentation.js';
 import {BaseToolset, isBaseToolset} from '../tools/base_toolset.js';
+import {Aclosing} from '../utils/context_utils.js';
 import {
   formatError,
   isInvocationCancellation,
@@ -507,7 +508,9 @@ export class Runner {
         return this.synthesizeAbortEvents(invocationContext);
       };
       try {
-        for await (const event of this.runRoot(invocationContext)) {
+        for await (const event of new Aclosing(
+          this.runRoot(invocationContext),
+        )) {
           if (invocationContext.abortSignal?.aborted) {
             break;
           }
@@ -624,10 +627,18 @@ export class Runner {
     invocationContext: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
     if (isBaseAgent(this.agent)) {
-      yield* requireAgent(invocationContext).runAsync(invocationContext);
+      for await (const event of new Aclosing(
+        requireAgent(invocationContext).runAsync(invocationContext),
+      )) {
+        yield event;
+      }
       return;
     }
-    yield* runNodeAsInvocation(this.agent, invocationContext);
+    for await (const event of new Aclosing(
+      runNodeAsInvocation(this.agent, invocationContext),
+    )) {
+      yield event;
+    }
   }
 
   /**
@@ -944,8 +955,8 @@ export class Runner {
     }
 
     // Step 2: drive the agent's runLive and propagate events.
-    for await (const event of requireAgent(invocationContext).runLive(
-      invocationContext,
+    for await (const event of new Aclosing(
+      requireAgent(invocationContext).runLive(invocationContext),
     )) {
       if (invocationContext.abortSignal?.aborted) {
         return;

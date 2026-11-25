@@ -404,7 +404,14 @@ export interface LlmAgentConfig extends BaseAgentConfig {
   /** The input schema when agent is used as a tool. */
   inputSchema?: LlmAgentSchema;
 
-  /** The output schema when agent replies. */
+  /**
+   * The output schema when the agent replies.
+   *
+   * Can be configured alongside {@link tools}: Vertex AI Gemini 2.0+ models use
+   * native `responseSchema`, while other models attach
+   * {@link SetModelResponseTool} automatically in turn-by-turn runs. Setting
+   * `outputSchema` disables parent and peer agent transfer.
+   */
   outputSchema?: LlmAgentSchema;
 
   /**

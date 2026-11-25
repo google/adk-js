@@ -603,6 +603,55 @@ describe('LlmAgent Schema Initialization', () => {
     expect(agent.disallowTransferToPeers).toBe(true);
     warnSpy.mockRestore();
   });
+
+  it('constructs with both outputSchema and a prefixed BaseToolset without throwing and resolves prefixed tool names', async () => {
+    class WeatherToolset extends BaseToolset {
+      constructor() {
+        super({toolNamePrefix: 'weather'});
+      }
+
+      override async getTools(): Promise<BaseTool[]> {
+        return [
+          new FunctionTool({
+            name: 'lookupForecast',
+            description: 'Looks up the forecast for a city.',
+            parameters: z4.object({city: z4.string()}),
+            execute: async ({city}) => ({city, condition: 'sunny'}),
+          }),
+        ];
+      }
+    }
+
+    const outputSchema = z4.object({
+      summary: z4.string(),
+    });
+    const prefixedToolset = new WeatherToolset();
+
+    const agent = new LlmAgent({
+      name: 'structuredToolAgent',
+      outputSchema,
+      tools: [prefixedToolset],
+    });
+
+    expect(agent.outputSchema).toBeDefined();
+    expect(agent.disallowTransferToParent).toBe(true);
+    expect(agent.disallowTransferToPeers).toBe(true);
+
+    const ctx = new InvocationContext({
+      invocationId: 'inv-structured-tools',
+      agent,
+      session: createSession({
+        id: 'sess-structured-tools',
+        appName: 'test-app',
+        userId: 'user-1',
+      }),
+      pluginManager: new PluginManager(),
+    });
+    const resolvedTools = await agent.canonicalTools(new ReadonlyContext(ctx));
+    expect(resolvedTools.map((tool) => tool.name)).toEqual([
+      'weather_lookupForecast',
+    ]);
+  });
 });
 
 describe('LlmAgent Output Processing', () => {

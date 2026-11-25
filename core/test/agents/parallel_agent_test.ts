@@ -7,6 +7,7 @@
 import {
   BaseAgent,
   BaseAgentConfig,
+  BasePlugin,
   Event,
   InvocationContext,
   ParallelAgent,
@@ -16,7 +17,62 @@ import {
   createSession,
   isParallelAgent,
 } from '@google/adk';
-import {describe, expect, it} from 'vitest';
+import {context as otelContext, trace} from '@opentelemetry/api';
+import {AsyncLocalStorageContextManager} from '@opentelemetry/context-async-hooks';
+import {
+  BasicTracerProvider,
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+} from '@opentelemetry/sdk-trace-base';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+
+interface Deferred<T = void> {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T | PromiseLike<T>) => void;
+  readonly reject: (reason?: unknown) => void;
+}
+
+function createDeferred<T = void>(): Deferred<T> {
+  let resolveFn: (value: T | PromiseLike<T>) => void = () => {};
+  let rejectFn: (reason?: unknown) => void = () => {};
+  const promise = new Promise<T>((resolve, reject) => {
+    resolveFn = resolve;
+    rejectFn = reject;
+  });
+  return {
+    promise,
+    resolve: resolveFn,
+    reject: rejectFn,
+  };
+}
+
+function rejectOnAbort(signal?: AbortSignal): Promise<never> {
+  return new Promise<never>((_resolve, reject) => {
+    if (!signal) {
+      return;
+    }
+    if (signal.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    signal.addEventListener('abort', () => reject(signal.reason), {
+      once: true,
+    });
+  });
+}
+
+function resolveOnAbort(signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (!signal) {
+      return;
+    }
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    signal.addEventListener('abort', () => resolve(), {once: true});
+  });
+}
 
 class MockSubAgent extends BaseAgent {
   private eventsToYield: Event[];
@@ -297,5 +353,441 @@ describe('ParallelAgent', () => {
     await expect(parallelAgent.runLive(context).next()).rejects.toThrow(
       'This is not supported yet for ParallelAgent.',
     );
+  });
+
+  describe('generator and span cleanup', () => {
+    let exporter: InMemorySpanExporter;
+    let contextManager: AsyncLocalStorageContextManager;
+    let provider: BasicTracerProvider;
+
+    beforeEach(() => {
+      trace.disable();
+      otelContext.disable();
+      exporter = new InMemorySpanExporter();
+      contextManager = new AsyncLocalStorageContextManager().enable();
+      provider = new BasicTracerProvider({
+        spanProcessors: [new SimpleSpanProcessor(exporter)],
+      });
+      otelContext.setGlobalContextManager(contextManager);
+      trace.setGlobalTracerProvider(provider);
+    });
+
+    afterEach(async () => {
+      await provider.shutdown();
+      trace.disable();
+      otelContext.disable();
+      contextManager.disable();
+    });
+
+    it('aborts in-flight siblings, closes all sub-agent generators, and ends invoke_agent spans when iteration stops early', async () => {
+      let fastCleanedUp = false;
+      let slowCleanedUp = false;
+      let capturedSlowSignal: AbortSignal | undefined;
+      const reportedErrorAgents: string[] = [];
+
+      class RecordingErrorPlugin extends BasePlugin {
+        constructor() {
+          super('recordingErrorPlugin');
+        }
+
+        override async onAgentErrorCallback({
+          agent,
+        }: {
+          agent: BaseAgent;
+        }): Promise<undefined> {
+          reportedErrorAgents.push(agent.name);
+          return undefined;
+        }
+      }
+
+      class FastSubAgent extends BaseAgent {
+        protected override async *runAsyncImpl(
+          ctx: InvocationContext,
+        ): AsyncGenerator<Event, void, void> {
+          try {
+            yield createEvent({
+              invocationId: ctx.invocationId,
+              author: this.name,
+              branch: ctx.branch,
+              content: {role: 'model', parts: [{text: 'fast first'}]},
+            });
+            await rejectOnAbort(ctx.abortSignal);
+            yield createEvent({
+              invocationId: ctx.invocationId,
+              author: this.name,
+              branch: ctx.branch,
+              content: {role: 'model', parts: [{text: 'fast second'}]},
+            });
+          } finally {
+            fastCleanedUp = true;
+          }
+        }
+
+        protected override async *runLiveImpl(): AsyncGenerator<
+          Event,
+          void,
+          void
+        > {
+          yield* [];
+        }
+      }
+
+      class AbortGatedSubAgent extends BaseAgent {
+        protected override async *runAsyncImpl(
+          ctx: InvocationContext,
+        ): AsyncGenerator<Event, void, void> {
+          capturedSlowSignal = ctx.abortSignal;
+          try {
+            await rejectOnAbort(ctx.abortSignal);
+            yield createEvent({
+              invocationId: ctx.invocationId,
+              author: this.name,
+              branch: ctx.branch,
+              content: {role: 'model', parts: [{text: 'slow first'}]},
+            });
+          } finally {
+            slowCleanedUp = true;
+          }
+        }
+
+        protected override async *runLiveImpl(): AsyncGenerator<
+          Event,
+          void,
+          void
+        > {
+          yield* [];
+        }
+      }
+
+      const fastSub = new FastSubAgent({name: 'fastSub'});
+      const slowSub = new AbortGatedSubAgent({name: 'slowSub'});
+      const parallelAgent = new ParallelAgent({
+        name: 'parallelEarlyExit',
+        subAgents: [fastSub, slowSub],
+      });
+      const parentAbortController = new AbortController();
+
+      const context = new InvocationContext({
+        invocationId: 'inv-parallel-early',
+        agent: parallelAgent,
+        session: createSession({
+          id: 'sess-parallel-early',
+          appName: 'test-app',
+          userId: 'user-1',
+        }),
+        pluginManager: new PluginManager([new RecordingErrorPlugin()]),
+        abortSignal: parentAbortController.signal,
+      });
+
+      const unhandledRejections: unknown[] = [];
+      const onUnhandledRejection = (reason: unknown) => {
+        unhandledRejections.push(reason);
+      };
+      process.on('unhandledRejection', onUnhandledRejection);
+
+      const yieldedEvents: Event[] = [];
+      try {
+        for await (const event of parallelAgent.runAsync(context)) {
+          yieldedEvents.push(event);
+          break;
+        }
+        await Promise.resolve();
+      } finally {
+        process.off('unhandledRejection', onUnhandledRejection);
+      }
+
+      expect(yieldedEvents).toHaveLength(1);
+      expect(yieldedEvents[0].author).toBe('fastSub');
+      expect(fastCleanedUp).toBe(true);
+      expect(slowCleanedUp).toBe(true);
+      expect(capturedSlowSignal?.aborted).toBe(true);
+      expect(parentAbortController.signal.aborted).toBe(false);
+      expect(reportedErrorAgents).toEqual([]);
+      expect(unhandledRejections).toEqual([]);
+
+      const finishedSpanNames = exporter
+        .getFinishedSpans()
+        .map((span) => span.name);
+      expect(finishedSpanNames).toEqual(
+        expect.arrayContaining([
+          'invoke_agent fastSub',
+          'invoke_agent slowSub',
+          'invoke_agent parallelEarlyExit',
+        ]),
+      );
+    });
+
+    it('aborts in-flight siblings, closes sub-agent generators, ends spans, and suppresses late rejections when a sub-agent throws', async () => {
+      let siblingCleanedUp = false;
+      const reportedErrorAgents: string[] = [];
+      const customReturnSpy = vi.fn(
+        async (): Promise<IteratorResult<Event, void>> => ({
+          value: undefined,
+          done: true,
+        }),
+      );
+
+      let startedBranches = 0;
+      const allBranchesStarted = createDeferred();
+      const markBranchStarted = () => {
+        startedBranches += 1;
+        if (startedBranches === 4) {
+          allBranchesStarted.resolve();
+        }
+      };
+
+      const primaryFailureGate = createDeferred();
+      const lateFailureGate = createDeferred();
+
+      class RecordingErrorPlugin extends BasePlugin {
+        constructor() {
+          super('recordingErrorPlugin');
+        }
+
+        override async onAgentErrorCallback({
+          agent,
+        }: {
+          agent: BaseAgent;
+        }): Promise<undefined> {
+          reportedErrorAgents.push(agent.name);
+          return undefined;
+        }
+      }
+
+      class PrimaryFailingSubAgent extends BaseAgent {
+        protected override async *runAsyncImpl(): AsyncGenerator<
+          Event,
+          void,
+          void
+        > {
+          yield* [];
+          markBranchStarted();
+          await primaryFailureGate.promise;
+          throw new Error('primary sub-agent failure');
+        }
+
+        protected override async *runLiveImpl(): AsyncGenerator<
+          Event,
+          void,
+          void
+        > {
+          yield* [];
+        }
+      }
+
+      class LateFailingSubAgent extends BaseAgent {
+        protected override async *runAsyncImpl(): AsyncGenerator<
+          Event,
+          void,
+          void
+        > {
+          yield* [];
+          markBranchStarted();
+          await lateFailureGate.promise;
+          throw new Error('late sibling failure');
+        }
+
+        protected override async *runLiveImpl(): AsyncGenerator<
+          Event,
+          void,
+          void
+        > {
+          yield* [];
+        }
+      }
+
+      class AbortGatedSiblingSubAgent extends BaseAgent {
+        protected override async *runAsyncImpl(
+          ctx: InvocationContext,
+        ): AsyncGenerator<Event, void, void> {
+          markBranchStarted();
+          try {
+            await rejectOnAbort(ctx.abortSignal);
+            yield createEvent({
+              invocationId: ctx.invocationId,
+              author: this.name,
+              branch: ctx.branch,
+              content: {role: 'model', parts: [{text: 'sibling event'}]},
+            });
+          } finally {
+            siblingCleanedUp = true;
+          }
+        }
+
+        protected override async *runLiveImpl(): AsyncGenerator<
+          Event,
+          void,
+          void
+        > {
+          yield* [];
+        }
+      }
+
+      class CustomGeneratorSubAgent extends BaseAgent {
+        protected override async *runAsyncImpl(): AsyncGenerator<
+          Event,
+          void,
+          void
+        > {
+          yield* [];
+        }
+
+        protected override async *runLiveImpl(): AsyncGenerator<
+          Event,
+          void,
+          void
+        > {
+          yield* [];
+        }
+
+        override runAsync(
+          branchCtx: InvocationContext,
+        ): AsyncGenerator<Event, void, void> {
+          let yielded = false;
+          const generator: AsyncGenerator<Event, void, void> = {
+            next: async () => {
+              if (!yielded) {
+                yielded = true;
+                markBranchStarted();
+                await resolveOnAbort(branchCtx.abortSignal);
+                return {
+                  value: createEvent({
+                    author: 'customGenSub',
+                    content: {role: 'model', parts: [{text: 'custom'}]},
+                  }),
+                  done: false,
+                };
+              }
+              return {value: undefined, done: true};
+            },
+            return: customReturnSpy,
+            throw: async (error: unknown) => {
+              throw error;
+            },
+            [Symbol.asyncIterator]() {
+              return this;
+            },
+          };
+          return generator;
+        }
+      }
+
+      const parallelAgent = new ParallelAgent({
+        name: 'parallelFailureRoot',
+        subAgents: [
+          new PrimaryFailingSubAgent({name: 'primaryFailingSub'}),
+          new LateFailingSubAgent({name: 'lateFailingSub'}),
+          new AbortGatedSiblingSubAgent({name: 'siblingSub'}),
+          new CustomGeneratorSubAgent({name: 'customGenSub'}),
+        ],
+      });
+
+      const context = new InvocationContext({
+        invocationId: 'inv-parallel-error',
+        agent: parallelAgent,
+        session: createSession({
+          id: 'sess-parallel-error',
+          appName: 'test-app',
+          userId: 'user-1',
+        }),
+        pluginManager: new PluginManager([new RecordingErrorPlugin()]),
+      });
+
+      const unhandledRejections: unknown[] = [];
+      const onUnhandledRejection = (reason: unknown) => {
+        unhandledRejections.push(reason);
+      };
+      process.on('unhandledRejection', onUnhandledRejection);
+
+      try {
+        const runPromise = (async () => {
+          for await (const _ of parallelAgent.runAsync(context)) {
+            // Consumes merged stream until primary sub-agent rejects.
+          }
+        })();
+
+        await allBranchesStarted.promise;
+        primaryFailureGate.resolve();
+        lateFailureGate.resolve();
+
+        await expect(runPromise).rejects.toThrow('primary sub-agent failure');
+        await Promise.resolve();
+      } finally {
+        process.off('unhandledRejection', onUnhandledRejection);
+      }
+
+      expect(unhandledRejections).toEqual([]);
+      expect(siblingCleanedUp).toBe(true);
+      expect(reportedErrorAgents).not.toContain('siblingSub');
+      expect(reportedErrorAgents).toContain('primaryFailingSub');
+      expect(customReturnSpy).toHaveBeenCalledTimes(1);
+      expect(customReturnSpy).toHaveBeenCalledWith(undefined);
+
+      const finishedSpanNames = exporter
+        .getFinishedSpans()
+        .map((span) => span.name);
+      expect(finishedSpanNames).toEqual(
+        expect.arrayContaining([
+          'invoke_agent primaryFailingSub',
+          'invoke_agent lateFailingSub',
+          'invoke_agent siblingSub',
+          'invoke_agent parallelFailureRoot',
+        ]),
+      );
+    });
+
+    it('leaves branch signals unaborted and detaches the parent abort listener on normal completion', async () => {
+      let capturedBranchSignal: AbortSignal | undefined;
+
+      class SignalCapturingSubAgent extends BaseAgent {
+        protected override async *runAsyncImpl(
+          ctx: InvocationContext,
+        ): AsyncGenerator<Event, void, void> {
+          capturedBranchSignal = ctx.abortSignal;
+          yield createEvent({
+            invocationId: ctx.invocationId,
+            author: this.name,
+            branch: ctx.branch,
+            content: {role: 'model', parts: [{text: 'done'}]},
+          });
+        }
+
+        protected override async *runLiveImpl(): AsyncGenerator<
+          Event,
+          void,
+          void
+        > {
+          yield* [];
+        }
+      }
+
+      const parallelAgent = new ParallelAgent({
+        name: 'parallelCleanFinish',
+        subAgents: [new SignalCapturingSubAgent({name: 'cleanSub'})],
+      });
+      const parentAbortController = new AbortController();
+      const context = new InvocationContext({
+        invocationId: 'inv-parallel-clean',
+        agent: parallelAgent,
+        session: createSession({
+          id: 'sess-parallel-clean',
+          appName: 'test-app',
+          userId: 'user-1',
+        }),
+        pluginManager: new PluginManager(),
+        abortSignal: parentAbortController.signal,
+      });
+
+      const events: Event[] = [];
+      for await (const event of parallelAgent.runAsync(context)) {
+        events.push(event);
+      }
+
+      expect(events).toHaveLength(1);
+      expect(capturedBranchSignal?.aborted).toBe(false);
+
+      parentAbortController.abort();
+      expect(capturedBranchSignal?.aborted).toBe(false);
+    });
   });
 });

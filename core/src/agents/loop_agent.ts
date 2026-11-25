@@ -6,6 +6,7 @@
 
 import {Event} from '../events/event.js';
 
+import {Aclosing} from '../utils/context_utils.js';
 import {deprecated} from '../utils/deprecated.js';
 import {BaseAgent, BaseAgentConfig} from './base_agent.js';
 import {InvocationContext} from './invocation_context.js';
@@ -78,7 +79,7 @@ export class LoopAgent extends BaseAgent<LoopAgentConfig> {
     while (iteration < this.maxIterations) {
       for (const subAgent of this.subAgents) {
         let shouldExit = false;
-        for await (const event of subAgent.runAsync(context)) {
+        for await (const event of new Aclosing(subAgent.runAsync(context))) {
           if (context.abortSignal?.aborted) {
             return;
           }
@@ -106,7 +107,7 @@ export class LoopAgent extends BaseAgent<LoopAgentConfig> {
   ): AsyncGenerator<Event, void, void> {
     for (let iteration = 0; iteration < this.maxIterations; iteration++) {
       for (const subAgent of this.subAgents) {
-        for await (const event of subAgent.runLive(context)) {
+        for await (const event of new Aclosing(subAgent.runLive(context))) {
           if (context.abortSignal?.aborted) {
             return;
           }
