@@ -491,10 +491,6 @@ async function postProcessCodeExecutionResult(
   codeExecutorContext: CodeExecutorContext,
   codeExecutionResult: CodeExecutionResult,
 ): Promise<Event> {
-  if (!invocationContext.artifactService) {
-    throw new Error('Artifact service is not initialized.');
-  }
-
   const resultContent: Content = {
     role: 'model',
     parts: [buildCodeExecutionResultPart(codeExecutionResult)],
@@ -513,6 +509,9 @@ async function postProcessCodeExecutionResult(
 
   // Handle output files
   for (const outputFile of codeExecutionResult.outputFiles) {
+    if (!invocationContext.artifactService) {
+      throw new Error('Artifact service is not initialized.');
+    }
     const version = await invocationContext.artifactService.saveArtifact({
       filename: outputFile.name,
       artifact: {
