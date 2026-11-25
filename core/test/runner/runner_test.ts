@@ -3045,3 +3045,190 @@ describe('Runner credentialService', () => {
     );
   });
 });
+
+describe('Runner Aclosing generator cleanup', () => {
+  function createRejectingGenerator(message: string): {
+    generator: AsyncGenerator<Event, void, void>;
+    returnSpy: ReturnType<
+      typeof vi.fn<() => Promise<IteratorResult<Event, void>>>
+    >;
+  } {
+    const returnSpy = vi.fn(async (): Promise<IteratorResult<Event, void>> => ({
+      value: undefined,
+      done: true,
+    }));
+    const generator: AsyncGenerator<Event, void, void> = {
+      next: async () => {
+        throw new Error(message);
+      },
+      return: returnSpy,
+      throw: async (error: unknown) => {
+        throw error;
+      },
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+    };
+    return {generator, returnSpy};
+  }
+
+  it('closes custom agent runAsync and runLive generators when next() rejects', async () => {
+    const asyncRejected = createRejectingGenerator(
+      'agent runAsync next failed',
+    );
+    const liveRejected = createRejectingGenerator('agent runLive next failed');
+
+    class RejectingRunnerAgent extends BaseAgent {
+      protected override async *runAsyncImpl(): AsyncGenerator<
+        Event,
+        void,
+        void
+      > {
+        yield* [];
+      }
+
+      protected override async *runLiveImpl(): AsyncGenerator<
+        Event,
+        void,
+        void
+      > {
+        yield* [];
+      }
+
+      override runAsync(): AsyncGenerator<Event, void, void> {
+        return asyncRejected.generator;
+      }
+
+      override runLive(): AsyncGenerator<Event, void, void> {
+        return liveRejected.generator;
+      }
+    }
+
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: new RejectingRunnerAgent({name: 'rejectingRunnerAgent'}),
+      sessionService,
+    });
+
+    await expect(
+      (async () => {
+        for await (const _ of runner.runAsync({
+          userId: session.userId,
+          sessionId: session.id,
+          newMessage: {role: 'user', parts: [{text: 'hello'}]},
+        })) {
+          // Unreachable.
+        }
+      })(),
+    ).rejects.toThrow('agent runAsync next failed');
+    expect(asyncRejected.returnSpy).toHaveBeenCalledTimes(1);
+    expect(asyncRejected.returnSpy).toHaveBeenCalledWith(undefined);
+
+    const liveQueue = new LiveRequestQueue();
+    liveQueue.close();
+
+    await expect(
+      (async () => {
+        for await (const _ of runner.runLive({
+          userId: session.userId,
+          sessionId: session.id,
+          liveRequestQueue: liveQueue,
+        })) {
+          // Unreachable.
+        }
+      })(),
+    ).rejects.toThrow('agent runLive next failed');
+    expect(liveRejected.returnSpy).toHaveBeenCalledTimes(1);
+    expect(liveRejected.returnSpy).toHaveBeenCalledWith(undefined);
+  });
+
+  it('closes workflow root execution when onEventCallback throws mid-stream', async () => {
+    let workflowAgentCleanedUp = false;
+
+    class TwoEventWorkflowAgent extends BaseAgent {
+      protected override async *runAsyncImpl(
+        ctx: InvocationContext,
+      ): AsyncGenerator<Event, void, void> {
+        try {
+          yield createEvent({
+            invocationId: ctx.invocationId,
+            author: this.name,
+            content: {role: 'model', parts: [{text: 'first event'}]},
+          });
+          yield createEvent({
+            invocationId: ctx.invocationId,
+            author: this.name,
+            content: {role: 'model', parts: [{text: 'second event'}]},
+          });
+        } finally {
+          workflowAgentCleanedUp = true;
+        }
+      }
+
+      protected override async *runLiveImpl(): AsyncGenerator<
+        Event,
+        void,
+        void
+      > {
+        yield* [];
+      }
+    }
+
+    const stepAgent = new TwoEventWorkflowAgent({name: 'workflowStepAgent'});
+    const workflow = new Workflow({
+      name: 'cleanupWorkflow',
+      edges: [['START', stepAgent]],
+    });
+
+    class ThrowingOnEventPlugin extends BasePlugin {
+      constructor() {
+        super('throwingOnEventPlugin');
+      }
+
+      override async onEventCallback({
+        event,
+      }: {
+        invocationContext: InvocationContext;
+        event: Event;
+      }): Promise<Event | undefined> {
+        if (event.author === 'workflowStepAgent') {
+          throw new Error('onEventCallback failed');
+        }
+        return undefined;
+      }
+    }
+
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: workflow,
+      plugins: [new ThrowingOnEventPlugin()],
+      sessionService,
+    });
+
+    await expect(
+      (async () => {
+        for await (const _ of runner.runAsync({
+          userId: session.userId,
+          sessionId: session.id,
+          newMessage: {role: 'user', parts: [{text: 'start'}]},
+        })) {
+          // Unreachable.
+        }
+      })(),
+    ).rejects.toThrow('onEventCallback failed');
+
+    expect(workflowAgentCleanedUp).toBe(true);
+  });
+});

@@ -9,7 +9,7 @@ This sample demonstrates how to compose model-backed, workflow, and LangGraph-ba
 1. `ParallelAgent` (`parallel_collectors`), running an `LlmAgent` (`topic_summarizer`) and a `LangGraphAgent` (`graph_classifier`) concurrently on isolated branch contexts while sharing `session.state`.
 2. `LoopAgent` (`quality_review_loop`), repeating a custom `BaseAgent` subclass (`QualityCheckAgent`) until it writes an approval artifact via `ctx.artifactService.saveArtifact` and sets `actions.escalate = true`.
 
-In addition to exporting `rootAgent` for `npm run sample` and `adk web`, the direct `main()` driver verifies the agent type guards (`isSequentialAgent`, `isParallelAgent`, `isLlmAgent`, `isLangGraphAgent`, and `isLoopAgent`), triggers `LlmCallsLimitExceededError` via `runConfig: {maxLlmCalls: 1}`, and exercises `ctx.saveCredential` and `ctx.loadCredential` via `Runner` with `InMemoryCredentialService` (while the topic summarizer agent verifies `ctx.listArtifacts()` after `ctx.saveArtifact`).
+In addition to exporting `rootAgent` for `npm run sample` and `adk web`, the direct `main()` driver verifies the agent type guards (`isSequentialAgent`, `isParallelAgent`, `isLlmAgent`, `isLangGraphAgent`, and `isLoopAgent`), triggers `LlmCallsLimitExceededError` via `runConfig: {maxLlmCalls: 1}`, exercises `ctx.saveCredential` and `ctx.loadCredential` via `Runner` with `InMemoryCredentialService` (while the topic summarizer agent verifies `ctx.listArtifacts()` after `ctx.saveArtifact`), and runs an `LlmAgent` configured simultaneously with `outputSchema` and a `BaseToolset` using `toolNamePrefix`.
 
 ## Sample Inputs
 
@@ -76,11 +76,41 @@ try {
 }
 ```
 
+**Combine `outputSchema` with a `BaseToolset` using `toolNamePrefix`.** Configure `toolNamePrefix` on `BaseToolset` and pass it alongside `outputSchema` on `LlmAgent`:
+
+```ts
+class CityGuideToolset extends BaseToolset {
+  constructor() {
+    super({toolNamePrefix: 'cityGuide'});
+  }
+
+  override async getTools(): Promise<BaseTool[]> {
+    return [
+      new FunctionTool({
+        name: 'lookupHighlight',
+        description: 'Returns a landmark highlight for a city.',
+        parameters: z.object({city: z.string()}),
+        execute: async ({city}) => ({city, highlight: `${city} waterfront`}),
+      }),
+    ];
+  }
+}
+
+const structuredBriefAgent = new LlmAgent({
+  name: 'structuredBriefAgent',
+  model: new StructuredToolDemoLlm(),
+  instruction: 'Look up a highlight and return a structured city brief.',
+  tools: [new CityGuideToolset()],
+  outputSchema: z.object({city: z.string(), highlight: z.string()}),
+  outputKey: 'cityBrief',
+});
+```
+
 ## Running the Sample
 
-The sample uses an offline `BaseLlm` (`DeterministicDemoLlm`) and an in-memory `CompiledGraphLike`, so no API key or network access is required.
+The sample uses offline `BaseLlm` implementations (`DeterministicDemoLlm` and `StructuredToolDemoLlm`) and an in-memory `CompiledGraphLike`, so no API key or network access is required.
 
-Run the self-contained script directly to execute all four sections (type guards, multi-agent pipeline execution, `LlmCallsLimitExceededError` enforcement, and callback credential persistence):
+Run the self-contained script directly to execute all five sections (type guards, multi-agent pipeline execution, `LlmCallsLimitExceededError` enforcement, callback credential persistence, and `outputSchema` with a prefixed `BaseToolset`):
 
 ```bash
 npm run build

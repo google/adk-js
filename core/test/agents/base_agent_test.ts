@@ -1614,4 +1614,82 @@ describe('BaseAgent', () => {
       expect(parent.findSubAgent('nonExistentAgent')).toBeUndefined();
     });
   });
+
+  describe('Aclosing generator cleanup', () => {
+    function createRejectingGenerator(message: string): {
+      generator: AsyncGenerator<Event, void, void>;
+      returnSpy: ReturnType<
+        typeof vi.fn<() => Promise<IteratorResult<Event, void>>>
+      >;
+    } {
+      const returnSpy = vi.fn(
+        async (): Promise<IteratorResult<Event, void>> => ({
+          value: undefined,
+          done: true,
+        }),
+      );
+      const generator: AsyncGenerator<Event, void, void> = {
+        next: async () => {
+          throw new Error(message);
+        },
+        return: returnSpy,
+        throw: async (error: unknown) => {
+          throw error;
+        },
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+      };
+      return {generator, returnSpy};
+    }
+
+    it('closes custom runAsyncImpl and runLiveImpl generators when next() rejects', async () => {
+      const asyncRejected = createRejectingGenerator(
+        'runAsyncImpl next failed',
+      );
+      const liveRejected = createRejectingGenerator('runLiveImpl next failed');
+
+      class RejectingImplAgent extends BaseAgent {
+        protected override runAsyncImpl(): AsyncGenerator<Event, void, void> {
+          return asyncRejected.generator;
+        }
+
+        protected override runLiveImpl(): AsyncGenerator<Event, void, void> {
+          return liveRejected.generator;
+        }
+      }
+
+      const agent = new RejectingImplAgent({name: 'rejectingImplAgent'});
+      const context = new InvocationContext({
+        invocationId: 'inv-base-aclosing',
+        agent,
+        session: createSession({
+          id: 'sess-base-aclosing',
+          appName: 'test-app',
+          userId: 'user-1',
+        }),
+        pluginManager: new PluginManager(),
+      });
+
+      await expect(
+        (async () => {
+          for await (const _ of agent.runAsync(context)) {
+            // Unreachable.
+          }
+        })(),
+      ).rejects.toThrow('runAsyncImpl next failed');
+      expect(asyncRejected.returnSpy).toHaveBeenCalledTimes(1);
+      expect(asyncRejected.returnSpy).toHaveBeenCalledWith(undefined);
+
+      await expect(
+        (async () => {
+          for await (const _ of agent.runLive(context)) {
+            // Unreachable.
+          }
+        })(),
+      ).rejects.toThrow('runLiveImpl next failed');
+      expect(liveRejected.returnSpy).toHaveBeenCalledTimes(1);
+      expect(liveRejected.returnSpy).toHaveBeenCalledWith(undefined);
+    });
+  });
 });

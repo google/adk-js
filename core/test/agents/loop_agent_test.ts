@@ -465,4 +465,173 @@ describe('LoopAgent', () => {
 
     expect(yieldedEvents.length).toBe(0);
   });
+
+  describe('Aclosing generator cleanup', () => {
+    function createRejectingGenerator(message: string): {
+      generator: AsyncGenerator<Event, void, void>;
+      returnSpy: ReturnType<
+        typeof vi.fn<() => Promise<IteratorResult<Event, void>>>
+      >;
+    } {
+      const returnSpy = vi.fn(
+        async (): Promise<IteratorResult<Event, void>> => ({
+          value: undefined,
+          done: true,
+        }),
+      );
+      const generator: AsyncGenerator<Event, void, void> = {
+        next: async () => {
+          throw new Error(message);
+        },
+        return: returnSpy,
+        throw: async (error: unknown) => {
+          throw error;
+        },
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+      };
+      return {generator, returnSpy};
+    }
+
+    it('closes sub-agent runAsync and runLive generators when next() rejects or iteration stops early', async () => {
+      const asyncRejected = createRejectingGenerator(
+        'loop sub-agent runAsync next failed',
+      );
+      const liveRejected = createRejectingGenerator(
+        'loop sub-agent runLive next failed',
+      );
+
+      class RejectingLoopSubAgent extends BaseAgent {
+        protected override async *runAsyncImpl(): AsyncGenerator<
+          Event,
+          void,
+          void
+        > {
+          yield* [];
+        }
+
+        protected override async *runLiveImpl(): AsyncGenerator<
+          Event,
+          void,
+          void
+        > {
+          yield* [];
+        }
+
+        override runAsync(): AsyncGenerator<Event, void, void> {
+          return asyncRejected.generator;
+        }
+
+        override runLive(): AsyncGenerator<Event, void, void> {
+          return liveRejected.generator;
+        }
+      }
+
+      const rejectingLoop = new LoopAgent({
+        name: 'rejectingLoop',
+        subAgents: [new RejectingLoopSubAgent({name: 'rejectingSub'})],
+        maxIterations: 2,
+      });
+      const rejectingCtx = new InvocationContext({
+        invocationId: 'inv-loop-reject',
+        agent: rejectingLoop,
+        session: createSession({
+          id: 'sess-loop-reject',
+          appName: 'test-app',
+          userId: 'user-1',
+        }),
+        pluginManager: new PluginManager(),
+      });
+
+      await expect(
+        (async () => {
+          for await (const _ of rejectingLoop.runAsync(rejectingCtx)) {
+            // Unreachable.
+          }
+        })(),
+      ).rejects.toThrow('loop sub-agent runAsync next failed');
+      expect(asyncRejected.returnSpy).toHaveBeenCalledTimes(1);
+      expect(asyncRejected.returnSpy).toHaveBeenCalledWith(undefined);
+
+      await expect(
+        (async () => {
+          for await (const _ of rejectingLoop.runLive(rejectingCtx)) {
+            // Unreachable.
+          }
+        })(),
+      ).rejects.toThrow('loop sub-agent runLive next failed');
+      expect(liveRejected.returnSpy).toHaveBeenCalledTimes(1);
+      expect(liveRejected.returnSpy).toHaveBeenCalledWith(undefined);
+
+      let asyncCleanedUp = false;
+      let liveCleanedUp = false;
+
+      class CleanupTrackingSubAgent extends BaseAgent {
+        protected override async *runAsyncImpl(
+          ctx: InvocationContext,
+        ): AsyncGenerator<Event, void, void> {
+          try {
+            yield createEvent({
+              invocationId: ctx.invocationId,
+              author: this.name,
+              content: {role: 'model', parts: [{text: 'first'}]},
+            });
+            yield createEvent({
+              invocationId: ctx.invocationId,
+              author: this.name,
+              content: {role: 'model', parts: [{text: 'second'}]},
+            });
+          } finally {
+            asyncCleanedUp = true;
+          }
+        }
+
+        protected override async *runLiveImpl(
+          ctx: InvocationContext,
+        ): AsyncGenerator<Event, void, void> {
+          try {
+            yield createEvent({
+              invocationId: ctx.invocationId,
+              author: this.name,
+              content: {role: 'model', parts: [{text: 'live first'}]},
+            });
+            yield createEvent({
+              invocationId: ctx.invocationId,
+              author: this.name,
+              content: {role: 'model', parts: [{text: 'live second'}]},
+            });
+          } finally {
+            liveCleanedUp = true;
+          }
+        }
+      }
+
+      const earlyExitLoop = new LoopAgent({
+        name: 'earlyExitLoop',
+        subAgents: [new CleanupTrackingSubAgent({name: 'trackedSub'})],
+        maxIterations: 3,
+      });
+      const earlyExitCtx = new InvocationContext({
+        invocationId: 'inv-loop-early',
+        agent: earlyExitLoop,
+        session: createSession({
+          id: 'sess-loop-early',
+          appName: 'test-app',
+          userId: 'user-1',
+        }),
+        pluginManager: new PluginManager(),
+      });
+
+      for await (const _ of earlyExitLoop.runAsync(earlyExitCtx)) {
+        break;
+      }
+      expect(asyncCleanedUp).toBe(true);
+
+      for await (const _ of earlyExitLoop.runLive(earlyExitCtx)) {
+        break;
+      }
+      expect(liveCleanedUp).toBe(true);
+    });
+  });
 });

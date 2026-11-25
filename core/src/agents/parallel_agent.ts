@@ -6,6 +6,7 @@
 
 import {Event} from '../events/event.js';
 
+import {Aclosing} from '../utils/context_utils.js';
 import {deprecated} from '../utils/deprecated.js';
 import {BaseAgent} from './base_agent.js';
 import {InvocationContext} from './invocation_context.js';
@@ -57,16 +58,30 @@ export class ParallelAgent extends BaseAgent {
   protected async *runAsyncImpl(
     context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    const agentRuns = this.subAgents.map((subAgent) =>
-      subAgent.runAsync(createBranchCtxForSubAgent(this, subAgent, context)),
-    );
+    const branchAbort = createBranchAbort(context.abortSignal);
+    try {
+      const agentRuns = this.subAgents.map((subAgent) =>
+        subAgent.runAsync(
+          createBranchCtxForSubAgent({
+            agent: this,
+            subAgent,
+            originalContext: context,
+            abortSignal: branchAbort.controller.signal,
+          }),
+        ),
+      );
 
-    for await (const event of mergeAgentRuns(agentRuns)) {
-      if (context.abortSignal?.aborted) {
-        return;
+      for await (const event of new Aclosing(
+        mergeAgentRuns(agentRuns, branchAbort.controller),
+      )) {
+        if (context.abortSignal?.aborted) {
+          return;
+        }
+
+        yield event;
       }
-
-      yield event;
+    } finally {
+      branchAbort.dispose();
     }
   }
 
@@ -78,21 +93,59 @@ export class ParallelAgent extends BaseAgent {
   }
 }
 
+interface BranchAbort {
+  readonly controller: AbortController;
+  readonly dispose: () => void;
+}
+
 /**
- * Create isolated branch for every sub-agent.
+ * Creates a branch-scoped {@link AbortController} chained to `parentSignal` so
+ * in-flight sibling branches abort cooperatively on early exit or sibling error
+ * without leaking the parent listener.
  */
-function createBranchCtxForSubAgent(
-  agent: BaseAgent,
-  subAgent: BaseAgent,
-  originalContext: InvocationContext,
-): InvocationContext {
-  const invocationContext = new InvocationContext(originalContext);
+function createBranchAbort(parentSignal?: AbortSignal): BranchAbort {
+  const controller = new AbortController();
+  if (!parentSignal) {
+    return {controller, dispose: () => {}};
+  }
+  if (parentSignal.aborted) {
+    controller.abort(parentSignal.reason);
+    return {controller, dispose: () => {}};
+  }
+  const onParentAbort = () => controller.abort(parentSignal.reason);
+  parentSignal.addEventListener('abort', onParentAbort, {once: true});
+  return {
+    controller,
+    dispose: () => parentSignal.removeEventListener('abort', onParentAbort),
+  };
+}
+
+interface CreateBranchContextParams {
+  readonly agent: BaseAgent;
+  readonly subAgent: BaseAgent;
+  readonly originalContext: InvocationContext;
+  readonly abortSignal: AbortSignal;
+}
+
+/**
+ * Creates an isolated branch context for a sub-agent bound to `abortSignal`.
+ */
+function createBranchCtxForSubAgent({
+  agent,
+  subAgent,
+  originalContext,
+  abortSignal,
+}: CreateBranchContextParams): InvocationContext {
   const branchSuffix = `${agent.name}.${subAgent.name}`;
-  invocationContext.branch = invocationContext.branch
-    ? `${invocationContext.branch}.${branchSuffix}`
+  const branch = originalContext.branch
+    ? `${originalContext.branch}.${branchSuffix}`
     : branchSuffix;
 
-  return invocationContext;
+  return new InvocationContext({
+    ...originalContext,
+    branch,
+    abortSignal,
+  });
 }
 
 /**
@@ -103,37 +156,52 @@ function createBranchCtxForSubAgent(
  *
  * @param agentRuns A list of async generators that yield events from each
  *     agent.
- *
- * @returns A list of async generators that yield events from each agent.
- *
+ * @param branchAbortController Branch-scoped controller aborted when iteration
+ *     terminates before all sub-agents finish normally.
  * @yield The next event from the merged generator.
  */
 async function* mergeAgentRuns(
   agentRuns: AsyncGenerator<Event, void, void>[],
+  branchAbortController: AbortController,
 ): AsyncGenerator<Event, void, void> {
+  const closingRuns = agentRuns.map((run) => new Aclosing(run));
   const pendingPromises = new Map<
     number,
     Promise<{result: IteratorResult<Event>; index: number}>
   >();
+  let completedNormally = false;
 
-  for (const [index, generator] of agentRuns.entries()) {
-    const promise = generator.next().then((result) => ({result, index}));
-    pendingPromises.set(index, promise);
-  }
-
-  while (pendingPromises.size > 0) {
-    const {result, index} = await Promise.race(pendingPromises.values());
-
-    if (result.done) {
-      pendingPromises.delete(index);
-      continue;
+  try {
+    for (const [index, run] of closingRuns.entries()) {
+      const promise = run.next().then((result) => ({result, index}));
+      pendingPromises.set(index, promise);
     }
 
-    yield result.value;
+    while (pendingPromises.size > 0) {
+      const {result, index} = await Promise.race(pendingPromises.values());
 
-    const nextPromise = agentRuns[index]
-      .next()
-      .then((result) => ({result, index}));
-    pendingPromises.set(index, nextPromise);
+      if (result.done) {
+        pendingPromises.delete(index);
+        await closingRuns[index].close();
+        continue;
+      }
+
+      yield result.value;
+
+      const nextPromise = closingRuns[index]
+        .next()
+        .then((result) => ({result, index}));
+      pendingPromises.set(index, nextPromise);
+    }
+
+    completedNormally = true;
+  } finally {
+    for (const pending of pendingPromises.values()) {
+      void pending.catch(() => {});
+    }
+    if (!completedNormally) {
+      branchAbortController.abort();
+    }
+    await Promise.allSettled(closingRuns.map((run) => run.close()));
   }
 }

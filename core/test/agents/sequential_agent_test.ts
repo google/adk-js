@@ -20,7 +20,7 @@ import {
   ReadonlyContext,
   SequentialAgent,
 } from '@google/adk';
-import {describe, expect, it} from 'vitest';
+import {describe, expect, it, vi} from 'vitest';
 
 class MockSubAgent extends BaseAgent {
   private eventsToYield: Event[];
@@ -360,6 +360,181 @@ describe('SequentialAgent', () => {
       }
 
       expect(authors).toEqual(['base_sub1', 'base_sub2']);
+    });
+  });
+
+  describe('Aclosing generator cleanup', () => {
+    function createRejectingGenerator(message: string): {
+      generator: AsyncGenerator<Event, void, void>;
+      returnSpy: ReturnType<
+        typeof vi.fn<() => Promise<IteratorResult<Event, void>>>
+      >;
+    } {
+      const returnSpy = vi.fn(
+        async (): Promise<IteratorResult<Event, void>> => ({
+          value: undefined,
+          done: true,
+        }),
+      );
+      const generator: AsyncGenerator<Event, void, void> = {
+        next: async () => {
+          throw new Error(message);
+        },
+        return: returnSpy,
+        throw: async (error: unknown) => {
+          throw error;
+        },
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+      };
+      return {generator, returnSpy};
+    }
+
+    it('closes sub-agent runAsync and runLive generators when next() rejects or iteration stops early', async () => {
+      const asyncRejected = createRejectingGenerator(
+        'sequential sub-agent runAsync next failed',
+      );
+      const liveRejected = createRejectingGenerator(
+        'sequential sub-agent runLive next failed',
+      );
+
+      class RejectingSequentialSubAgent extends BaseAgent {
+        protected override async *runAsyncImpl(): AsyncGenerator<
+          Event,
+          void,
+          void
+        > {
+          yield* [];
+        }
+
+        protected override async *runLiveImpl(): AsyncGenerator<
+          Event,
+          void,
+          void
+        > {
+          yield* [];
+        }
+
+        override runAsync(): AsyncGenerator<Event, void, void> {
+          return asyncRejected.generator;
+        }
+
+        override runLive(): AsyncGenerator<Event, void, void> {
+          return liveRejected.generator;
+        }
+      }
+
+      const rejectingSeq = new SequentialAgent({
+        name: 'rejectingSeq',
+        subAgents: [new RejectingSequentialSubAgent({name: 'rejectingSub'})],
+      });
+      const rejectingCtx = makeContext(rejectingSeq);
+
+      await expect(
+        (async () => {
+          for await (const _ of rejectingSeq.runAsync(rejectingCtx)) {
+            // Unreachable.
+          }
+        })(),
+      ).rejects.toThrow('sequential sub-agent runAsync next failed');
+      expect(asyncRejected.returnSpy).toHaveBeenCalledTimes(1);
+      expect(asyncRejected.returnSpy).toHaveBeenCalledWith(undefined);
+
+      await expect(
+        (async () => {
+          for await (const _ of rejectingSeq.runLive(rejectingCtx)) {
+            // Unreachable.
+          }
+        })(),
+      ).rejects.toThrow('sequential sub-agent runLive next failed');
+      expect(liveRejected.returnSpy).toHaveBeenCalledTimes(1);
+      expect(liveRejected.returnSpy).toHaveBeenCalledWith(undefined);
+
+      let firstAsyncCleanedUp = false;
+      let firstLiveCleanedUp = false;
+      let secondStarted = false;
+
+      class FirstCleanupSubAgent extends BaseAgent {
+        protected override async *runAsyncImpl(
+          ctx: InvocationContext,
+        ): AsyncGenerator<Event, void, void> {
+          try {
+            yield createEvent({
+              invocationId: ctx.invocationId,
+              author: this.name,
+              content: {role: 'model', parts: [{text: 'first'}]},
+            });
+            yield createEvent({
+              invocationId: ctx.invocationId,
+              author: this.name,
+              content: {role: 'model', parts: [{text: 'second'}]},
+            });
+          } finally {
+            firstAsyncCleanedUp = true;
+          }
+        }
+
+        protected override async *runLiveImpl(
+          ctx: InvocationContext,
+        ): AsyncGenerator<Event, void, void> {
+          try {
+            yield createEvent({
+              invocationId: ctx.invocationId,
+              author: this.name,
+              content: {role: 'model', parts: [{text: 'live first'}]},
+            });
+            yield createEvent({
+              invocationId: ctx.invocationId,
+              author: this.name,
+              content: {role: 'model', parts: [{text: 'live second'}]},
+            });
+          } finally {
+            firstLiveCleanedUp = true;
+          }
+        }
+      }
+
+      class UnreachedSecondSubAgent extends BaseAgent {
+        protected override async *runAsyncImpl(): AsyncGenerator<
+          Event,
+          void,
+          void
+        > {
+          secondStarted = true;
+          yield* [];
+        }
+
+        protected override async *runLiveImpl(): AsyncGenerator<
+          Event,
+          void,
+          void
+        > {
+          secondStarted = true;
+          yield* [];
+        }
+      }
+
+      const earlyExitSeq = new SequentialAgent({
+        name: 'earlyExitSeq',
+        subAgents: [
+          new FirstCleanupSubAgent({name: 'firstSub'}),
+          new UnreachedSecondSubAgent({name: 'secondSub'}),
+        ],
+      });
+      const earlyExitCtx = makeContext(earlyExitSeq);
+
+      for await (const _ of earlyExitSeq.runAsync(earlyExitCtx)) {
+        break;
+      }
+      expect(firstAsyncCleanedUp).toBe(true);
+      expect(secondStarted).toBe(false);
+
+      for await (const _ of earlyExitSeq.runLive(earlyExitCtx)) {
+        break;
+      }
+      expect(firstLiveCleanedUp).toBe(true);
+      expect(secondStarted).toBe(false);
     });
   });
 });
