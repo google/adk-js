@@ -244,7 +244,10 @@ export class SkillToolset extends BaseToolset {
 
         candidateTools[toolUnion.name] = toolUnion;
       } else if (toolUnion instanceof BaseToolset) {
-        const tsTools = await toolUnion.getTools(context);
+        const tsTools =
+          typeof toolUnion.getToolsWithPrefix === 'function'
+            ? await toolUnion.getToolsWithPrefix(context)
+            : await toolUnion.getTools(context);
 
         for (const t of tsTools) {
           if (candidateTools[t.name]) {

@@ -317,6 +317,58 @@ describe('skill_toolset', () => {
       expect(mockInnerGetTools).toHaveBeenCalledTimes(1);
     });
 
+    it('resolves additional tools from BaseToolset with toolNamePrefix applied', async () => {
+      class AddTool extends BaseTool {
+        constructor() {
+          super({name: 'add', description: 'adds numbers'});
+        }
+        _getDeclaration() {
+          return {name: this.name, description: this.description};
+        }
+        async runAsync() {
+          return {sum: 3};
+        }
+      }
+
+      class MathToolset extends BaseToolset {
+        constructor() {
+          super({toolNamePrefix: 'math'});
+        }
+        override async getTools() {
+          return [new AddTool()];
+        }
+      }
+
+      const skillWithPrefixedTools: Skill = {
+        frontmatter: {
+          name: 'skill-with-prefixed-tools',
+          description: 'desc',
+          metadata: {
+            adk_additional_tools: ['math_add'],
+          },
+        },
+        instructions: 'instructions',
+      };
+
+      const toolset = new SkillToolset([skillWithPrefixedTools], {
+        additionalTools: [new MathToolset()],
+      });
+
+      const mockState = {
+        get: vi.fn().mockReturnValue(['skill-with-prefixed-tools']),
+      };
+
+      const context = {
+        agentName: 'test-agent',
+        state: mockState,
+      } as unknown as ReadonlyContext;
+
+      const tools = await toolset.getTools(context);
+      const toolNames = tools.map((t) => t.name);
+      expect(toolNames).toContain('math_add');
+      expect(toolNames).not.toContain('add');
+    });
+
     describe('SkillToolset close', () => {
       const remoteSkill: Skill = {
         frontmatter: {

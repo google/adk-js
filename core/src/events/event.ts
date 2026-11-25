@@ -397,6 +397,7 @@ const PRESERVE_KEYS_CAMEL_CASE = [
   'output',
   'route',
   'actions.agentState',
+  'actions.setModelResponse',
 ];
 
 /**
@@ -421,6 +422,7 @@ const PRESERVE_KEYS_SNAKE_CASE = [
   'output',
   'route',
   'actions.agent_state',
+  'actions.set_model_response',
 ];
 
 /**
