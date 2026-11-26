@@ -119,7 +119,12 @@ export class Context extends ReadonlyContext {
       filename,
       artifact,
     });
-    this.eventActions.artifactDelta[filename] = version;
+    Object.defineProperty(this.eventActions.artifactDelta, filename, {
+      value: version,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
 
     return version;
   }
@@ -163,8 +168,16 @@ export class Context extends ReadonlyContext {
     }
 
     const authHandler = new AuthHandler(authConfig);
-    this.eventActions.requestedAuthConfigs[this.functionCallId] =
-      authHandler.generateAuthRequest();
+    Object.defineProperty(
+      this.eventActions.requestedAuthConfigs,
+      this.functionCallId,
+      {
+        value: authHandler.generateAuthRequest(),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      },
+    );
   }
 
   /**
@@ -218,11 +231,19 @@ export class Context extends ReadonlyContext {
     if (!this.functionCallId) {
       throw new Error('functionCallId is not set.');
     }
-    this.eventActions.requestedToolConfirmations[this.functionCallId] =
-      new ToolConfirmation({
-        hint: hint,
-        confirmed: false,
-        payload: payload,
-      });
+    Object.defineProperty(
+      this.eventActions.requestedToolConfirmations,
+      this.functionCallId,
+      {
+        value: new ToolConfirmation({
+          hint: hint,
+          confirmed: false,
+          payload: payload,
+        }),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      },
+    );
   }
 }
