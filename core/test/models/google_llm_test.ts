@@ -152,8 +152,8 @@ describe('GoogleLlm', () => {
     );
   });
 
-  it('should initialize liveApiClient with only tracking headers and apiVersion', () => {
-    const userHeaders = {'x-custom-header': 'should-not-be-here'};
+  it('should initialize liveApiClient with merged tracking headers, user headers, and apiVersion', () => {
+    const userHeaders = {'x-custom-header': 'custom-value'};
     const llm = new TestGemini({apiKey: 'test-key', headers: userHeaders});
     const liveOptions = llm.liveApiClient['apiClient']['clientOptions'][
       'httpOptions'
@@ -161,9 +161,59 @@ describe('GoogleLlm', () => {
 
     expect(liveOptions).toBeDefined();
     expect(liveOptions.headers).toBeDefined();
-    expect(liveOptions.headers!['x-custom-header']).toBeUndefined();
+    expect(liveOptions.headers!['x-custom-header']).toEqual('custom-value');
     expect(liveOptions.headers!['x-goog-api-client']).toContain('google-adk/');
-    expect(liveOptions.apiVersion).toBeDefined();
+    expect(liveOptions.headers!['user-agent']).toContain('google-adk/');
+    expect(liveOptions.apiVersion).toBe(llm.liveApiVersion);
+  });
+
+  it('should merge case-insensitive user tracking headers into liveApiClient without mutating input', () => {
+    const userHeaders = {
+      'x-custom-auth': 'proxy-token',
+      'User-Agent': 'ctor-agent/1.0',
+      'X-Goog-Api-Client': 'ctor-client/1.0',
+    };
+    const originalSnapshot = {...userHeaders};
+    const llm = new TestGemini({apiKey: 'test-key', headers: userHeaders});
+    const baseTracking = llm.getTrackingHeaders();
+    const liveOptions = llm.liveApiClient['apiClient']['clientOptions'][
+      'httpOptions'
+    ] as HttpOptions;
+
+    expect(liveOptions.headers).toEqual({
+      'x-custom-auth': 'proxy-token',
+      'x-goog-api-client': `${baseTracking['x-goog-api-client']} ctor-client/1.0`,
+      'user-agent': `${baseTracking['user-agent']} ctor-agent/1.0`,
+    });
+    expect(userHeaders).toEqual(originalSnapshot);
+  });
+
+  it('should initialize liveApiClient with tracking headers and apiVersion when user headers are omitted', () => {
+    const llm = new TestGemini({apiKey: 'test-key'});
+    const baseTracking = llm.getTrackingHeaders();
+    const liveOptions = llm.liveApiClient['apiClient']['clientOptions'][
+      'httpOptions'
+    ] as HttpOptions;
+
+    expect(liveOptions.headers).toEqual(baseTracking);
+    expect(liveOptions.apiVersion).toBe(llm.liveApiVersion);
+  });
+
+  it('should forward merged user headers to Vertex AI liveApiClient', () => {
+    const llm = new TestGemini({
+      model: 'projects/p/locations/us-central1/models/gemini-2.5-flash',
+      vertexai: true,
+      project: 'p',
+      location: 'us-central1',
+      headers: {'x-custom-auth': 'vertex-proxy-token'},
+    });
+    const liveOptions = llm.liveApiClient['apiClient']['clientOptions'][
+      'httpOptions'
+    ] as HttpOptions;
+
+    expect(liveOptions.headers!['x-custom-auth']).toBe('vertex-proxy-token');
+    expect(liveOptions.headers!['x-goog-api-client']).toContain('google-adk/');
+    expect(liveOptions.apiVersion).toBe('v1beta1');
   });
 
   it('should respect configured location for Vertex AI liveApiClient', () => {
