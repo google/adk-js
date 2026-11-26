@@ -10,6 +10,8 @@ import {
   Context,
   convertEvalSetToSchema,
   createEvent,
+  DatabaseSessionService,
+  type DatabaseSessionServiceOptions,
   DEFAULT_CRITERIA,
   EVAL_SESSION_ID_PREFIX,
   EvalCase,
@@ -20,27 +22,35 @@ import {
   EvalStatus,
   Event,
   getEvaluationCriteriaOrDefault,
+  getRegisteredEvalMetrics,
   getRootAgent,
+  getSessionServiceFromUri,
   InMemorySessionService,
   InputValidationError,
   INTERNAL_METADATA_PREFIX,
   InvocationContext,
+  type ListMetricsInfoResponse,
   LlmAgent,
   loadEvalSetFromFile,
   LocalEvalSetResultsManager,
   LocalEvalSetsManager,
+  type MetricInfo,
+  type MetricInterval,
+  type MetricValueInfo,
   MISSING_EVAL_DEPENDENCIES_MESSAGE,
   NotFoundError,
   parseAndGetEvalsToRun,
+  RESPONSE_EVALUATION_SCORE_KEY,
   RESPONSE_MATCH_SCORE_KEY,
   runEvals,
   TOOL_TRAJECTORY_SCORE_KEY,
   tryGetResetFunc,
 } from '@google/adk';
+import {MikroORM} from '@mikro-orm/core';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 import {
   createEvalSetResult,
@@ -131,6 +141,62 @@ describe('cli/cli_eval', () => {
     expect(EvalStatus.NOT_EVALUATED).toBe(3);
   });
 
+  describe('getRegisteredEvalMetrics', () => {
+    it('returns descriptors for the three registered evaluation metrics', () => {
+      const metrics: MetricInfo[] = getRegisteredEvalMetrics();
+      const closedUnitInterval: MetricInterval = {
+        minValue: 0,
+        openAtMin: false,
+        maxValue: 1,
+        openAtMax: false,
+      };
+      const expectedValueInfo: MetricValueInfo = {
+        interval: closedUnitInterval,
+      };
+      const responsePayload: ListMetricsInfoResponse = {metricsInfo: metrics};
+
+      expect(responsePayload.metricsInfo).toHaveLength(3);
+      expect(metrics.map((m) => m.metricName)).toEqual([
+        TOOL_TRAJECTORY_SCORE_KEY,
+        RESPONSE_MATCH_SCORE_KEY,
+        RESPONSE_EVALUATION_SCORE_KEY,
+      ]);
+
+      for (const metric of metrics) {
+        expect(metric.description).toEqual(expect.any(String));
+        expect((metric.description ?? '').length).toBeGreaterThan(0);
+        expect(metric.requiresThreshold).toBe(true);
+        expect(metric.metricValueInfo).toEqual(expectedValueInfo);
+      }
+    });
+
+    it('returns fresh copies so mutating a returned descriptor does not affect subsequent calls', () => {
+      const first = getRegisteredEvalMetrics();
+      const firstMetric = first[0];
+      expect(firstMetric).toBeDefined();
+      if (firstMetric) {
+        firstMetric.metricName = 'mutated-metric';
+        firstMetric.requiresThreshold = false;
+        if (firstMetric.metricValueInfo.interval) {
+          firstMetric.metricValueInfo.interval.minValue = -10;
+          firstMetric.metricValueInfo.interval.maxValue = 999;
+        }
+      }
+      first.pop();
+
+      const second = getRegisteredEvalMetrics();
+      expect(second).toHaveLength(3);
+      expect(second[0]?.metricName).toBe(TOOL_TRAJECTORY_SCORE_KEY);
+      expect(second[0]?.requiresThreshold).toBe(true);
+      expect(second[0]?.metricValueInfo.interval).toEqual({
+        minValue: 0,
+        openAtMin: false,
+        maxValue: 1,
+        openAtMax: false,
+      });
+    });
+  });
+
   describe('getEvaluationCriteriaOrDefault', () => {
     it('returns DEFAULT_CRITERIA when no config file is provided', () => {
       expect(getEvaluationCriteriaOrDefault()).toEqual(DEFAULT_CRITERIA);
@@ -191,6 +257,83 @@ describe('cli/cli_eval', () => {
         'C:\\evals\\set2.evalset.json': ['case_a', 'case_b'],
         'd:/evals/set3.evalset.json': ['case_c'],
       });
+    });
+
+    it('trims eval case IDs and omits empty or whitespace-only entries in comma-separated lists', () => {
+      const parsed = parseAndGetEvalsToRun([
+        'set1: caseA , , caseB ,   ,',
+        'set2: ,  ',
+      ]);
+
+      expect(parsed).toEqual({
+        set1: ['caseA', 'caseB'],
+        set2: [],
+      });
+    });
+
+    it('handles eval set IDs matching Object.prototype property names safely', () => {
+      const parsed = parseAndGetEvalsToRun([
+        'constructor:caseA',
+        'toString:caseB',
+        'constructor:caseC',
+      ]);
+
+      expect(parsed).toEqual({
+        constructor: ['caseA', 'caseC'],
+        toString: ['caseB'],
+      });
+    });
+  });
+
+  describe('getSessionServiceFromUri', () => {
+    it('forwards DatabaseSessionServiceOptions to DatabaseSessionService', async () => {
+      const initSpy = vi.spyOn(MikroORM, 'init');
+      try {
+        const dbOptions: DatabaseSessionServiceOptions = {
+          debug: false,
+          allowGlobalContext: true,
+          staleSession: 'reload',
+        };
+        const service = getSessionServiceFromUri(
+          'sqlite:///:memory:',
+          dbOptions,
+        );
+
+        expect(service).toBeInstanceOf(DatabaseSessionService);
+
+        const key = {
+          appName: 'evalApp',
+          userId: 'user-1',
+          sessionId: 'session-1',
+        };
+        const session = await service.createSession(key);
+        const concurrentSession = await service.getSession(key);
+        expect(concurrentSession).toBeDefined();
+        if (concurrentSession) {
+          await service.appendEvent({
+            session: concurrentSession,
+            event: createEvent({timestamp: Date.now() + 10}),
+          });
+        }
+        await expect(
+          service.appendEvent({
+            session,
+            event: createEvent({timestamp: Date.now() + 20}),
+          }),
+        ).resolves.toBeDefined();
+
+        expect(initSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            dbName: ':memory:',
+            debug: false,
+            allowGlobalContext: true,
+          }),
+        );
+        const orm = await initSpy.mock.results[0]?.value;
+        await orm?.close();
+      } finally {
+        initSpy.mockRestore();
+      }
     });
   });
 

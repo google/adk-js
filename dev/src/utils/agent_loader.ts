@@ -19,6 +19,7 @@ import {createRequire} from 'node:module';
 import * as path from 'node:path';
 import {pathToFileURL} from 'node:url';
 
+import {type AgentFileHandle, BaseAgentLoader} from './base_agent_loader.js';
 import {
   createTempDir,
   isFile,
@@ -113,8 +114,8 @@ export interface AgentFileOptions {
    * A debug build is ~3.5x larger than a minified one (23.6 MB -> 83.1 MB
    * across the four agents in the app_loader fixture) and costs roughly a
    * second of extra load time per agent, so it is opt-in per call site. The
-   * interactive commands — `adk run`, `adk web`, `adk api_server` — ask for
-   * it because a human reads their output. Deployment bundles and
+   * local commands — `adk run`, `adk eval`, `adk web`, `adk api_server` — ask
+   * for it because a human reads their output. Deployment bundles and
    * programmatic callers leave it unset and keep the small artifact.
    *
    * When unset, a bundled file is minified, which is the historical
@@ -194,7 +195,7 @@ export function replaceDirnamePlugin(
  * .ts) and has a dispose function to cleanup the compiled artifact after file
  * usage.
  */
-export class AgentFile {
+export class AgentFile implements AgentFileHandle {
   private cleanupFilePath: string | undefined;
   private cleanupDirPath: string | undefined;
   private disposed = false;
@@ -208,6 +209,7 @@ export class AgentFile {
   };
   private agent?: RunnableRoot;
   private app?: App;
+  private resetFunc?: () => void | Promise<void>;
 
   constructor(
     private readonly filePath: string,
@@ -332,6 +334,24 @@ export class AgentFile {
     const jsModule = await import(importUrl);
 
     if (jsModule) {
+      const nestedAgents = [
+        jsModule.agent,
+        jsModule.default?.agent,
+        jsModule.default?.default?.agent,
+      ].filter(isObjectRecord);
+      this.resetFunc = [
+        jsModule.resetData,
+        jsModule.reset_data,
+        jsModule.default?.resetData,
+        jsModule.default?.default?.resetData,
+        jsModule.default?.reset_data,
+        jsModule.default?.default?.reset_data,
+        ...nestedAgents.flatMap((nested) => [
+          nested['resetData'],
+          nested['reset_data'],
+        ]),
+      ].find(isResetFunc);
+
       if (isApp(jsModule.app)) {
         this.app = jsModule.app;
         this.agent = jsModule.app.rootAgent;
@@ -370,15 +390,22 @@ export class AgentFile {
       // A bare `Workflow` counts as a root: the runner drives it as a node, so
       // a sample can export a graph directly rather than dressing it as an
       // agent.
-      if (isRunnableRoot(jsModule.rootAgent)) {
-        return (this.agent = jsModule.rootAgent);
-      }
-
-      const defaultAgent = [jsModule.default, jsModule.default?.default].find(
-        isRunnableRoot,
-      );
-      if (defaultAgent) {
-        return (this.agent = defaultAgent);
+      const explicitAgent = [
+        jsModule.rootAgent,
+        jsModule.root_agent,
+        jsModule.default,
+        jsModule.default?.default,
+        jsModule.default?.rootAgent,
+        jsModule.default?.default?.rootAgent,
+        jsModule.default?.root_agent,
+        jsModule.default?.default?.root_agent,
+        ...nestedAgents.flatMap((nested) => [
+          nested['rootAgent'],
+          nested['root_agent'],
+        ]),
+      ].find(isRunnableRoot);
+      if (explicitAgent) {
+        return (this.agent = explicitAgent);
       }
 
       const rootAgents = Object.values(jsModule).filter(isRunnableRoot);
@@ -394,6 +421,7 @@ export class AgentFile {
       }
     }
 
+    this.resetFunc = undefined;
     await this.dispose();
     throw new AgentFileLoadingError(
       `Failed to load agent ${
@@ -419,6 +447,14 @@ export class AgentFile {
       });
     }
     return this.app!;
+  }
+
+  /**
+   * Returns the optional reset hook exported by the loaded agent module, or
+   * `undefined` when none was exported.
+   */
+  getResetFunc(): (() => void | Promise<void>) | undefined {
+    return this.resetFunc;
   }
 
   getFilePath(): string {
@@ -573,7 +609,7 @@ export class AgentFile {
  * Agent/App file should have export of the rootAgent as instance of BaseAgent
  * (or a Workflow, which is adapted into one) or app/rootApp as instance of App.
  */
-export class AgentLoader {
+export class AgentLoader extends BaseAgentLoader {
   private agentsAlreadyPreloaded = false;
   private preloadInFlight?: Promise<void>;
   private invalidationGeneration = 0;
@@ -593,6 +629,7 @@ export class AgentLoader {
     private readonly options = DEFAULT_AGENT_FILE_OPTIONS,
     private readonly watchForChanges = false,
   ) {
+    super();
     // Do cleanups on exit
     const exitHandler = async ({
       exit,
@@ -755,7 +792,7 @@ export class AgentLoader {
     );
   }
 
-  async listAgents(): Promise<string[]> {
+  override async listAgents(): Promise<string[]> {
     await this.preloadAgents();
 
     return Object.keys(this.preloadedAgents).sort();
@@ -784,7 +821,7 @@ export class AgentLoader {
    * directly; use {@link AgentFile.retain} while a request is using the bundle
    * so invalidation defers cleanup until active users finish.
    */
-  async getAgentFile(agentName: string): Promise<AgentFile> {
+  override async getAgentFile(agentName: string): Promise<AgentFile> {
     await this.preloadAgents();
 
     // `Object.hasOwn` rather than a plain lookup, so a request-supplied name
@@ -814,7 +851,7 @@ export class AgentLoader {
     return this.getAgentFile(appName);
   }
 
-  async disposeAll(): Promise<void> {
+  override async disposeAll(): Promise<void> {
     this.watcher?.close();
     this.watcher = undefined;
     const filesToDispose = [
@@ -971,6 +1008,14 @@ export class AgentLoader {
         `Skipping it; the other agents are unaffected.`,
     );
   }
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isResetFunc(value: unknown): value is () => void | Promise<void> {
+  return typeof value === 'function';
 }
 
 function toLoadError(e: unknown): Error {

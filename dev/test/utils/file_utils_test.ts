@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 
 import {
+  createFolder,
   createTempDir,
   isFile,
   isFileExists,
@@ -83,6 +84,35 @@ describe('file_utils', () => {
   it('isFolderExists returns false when access rejects', async () => {
     fsPromises.access.mockRejectedValue(new Error('no access'));
     await expect(isFolderExists('/no/dir')).resolves.toBe(false);
+  });
+
+  it('createFolder creates the folder via mkdir', async () => {
+    fsPromises.mkdir.mockResolvedValue(undefined);
+    await expect(createFolder('/new/dir')).resolves.toBeUndefined();
+    expect(fsPromises.mkdir).toHaveBeenCalledWith('/new/dir');
+  });
+
+  it('createFolder logs and rethrows when mkdir rejects', async () => {
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => {});
+    const permissionError = Object.assign(
+      new Error('EACCES: permission denied'),
+      {code: 'EACCES'},
+    );
+    fsPromises.mkdir.mockRejectedValue(permissionError);
+
+    try {
+      await expect(createFolder('/protected/dir')).rejects.toThrow(
+        'EACCES: permission denied',
+      );
+      expect(consoleError).toHaveBeenCalledWith(
+        'Failed to create folder /protected/dir',
+        permissionError,
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it('isFile returns true when stat.isFile is true', async () => {

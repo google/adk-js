@@ -24,15 +24,18 @@ import {
   EvalStatus,
   Event,
   FunctionTool,
+  getRegisteredEvalMetrics,
   InMemoryArtifactService,
   InMemoryCredentialService,
   InMemoryMemoryService,
   InMemorySessionService,
   INTERNAL_METADATA_PREFIX,
   InvocationContext,
+  type ListMetricsInfoResponse,
   LlmAgent,
   LocalEvalSetResultsManager,
   LocalEvalSetsManager,
+  type MetricInfo,
   node,
   NotFoundError,
   RESTORED_EVENT_KEY,
@@ -41,7 +44,12 @@ import {
   StreamingMode,
   Workflow,
 } from '@google/adk';
-import {context, type SpanContext, trace} from '@opentelemetry/api';
+import {
+  context,
+  type SpanContext,
+  trace,
+  type TracerProvider,
+} from '@opentelemetry/api';
 import {AsyncLocalStorageContextManager} from '@opentelemetry/context-async-hooks';
 import {emptyResource} from '@opentelemetry/resources';
 import {ReadableSpan, SpanProcessor} from '@opentelemetry/sdk-trace-base';
@@ -65,9 +73,16 @@ import {z} from 'zod';
 import {
   A2A_AUTH_TOKEN_ENV_VAR,
   AdkApiServer,
+  type ServerOptions,
 } from '../../src/server/adk_api_server.js';
+import type {CachingAgentLoader} from '../../src/utils/agent_change_handler.js';
 import {AgentLoader} from '../../src/utils/agent_loader.js';
+import {
+  type AgentFileHandle,
+  BaseAgentLoader,
+} from '../../src/utils/base_agent_loader.js';
 import {AdkLogger} from '../../src/utils/logger.js';
+import {isSharedValue} from '../../src/utils/shared_value.js';
 import {version} from '../../src/version.js';
 
 interface JsonRpcResponse {
@@ -4959,6 +4974,22 @@ describe('AdkWebServer', () => {
       }
     });
 
+    it('lists registered evaluation metrics from /apps/:appName/eval_metrics and /dev/apps/:appName/metrics-info', async () => {
+      const expectedMetrics = getRegisteredEvalMetrics();
+
+      const evalMetricsRes = await client.get<MetricInfo[]>(
+        '/apps/testApp/eval_metrics',
+      );
+      expect(evalMetricsRes.status).toBe(200);
+      expect(evalMetricsRes.data).toEqual(expectedMetrics);
+
+      const devMetricsInfoRes = await client.get<ListMetricsInfoResponse>(
+        '/dev/apps/testApp/metrics-info',
+      );
+      expect(devMetricsInfoRes.status).toBe(200);
+      expect(devMetricsInfoRes.data).toEqual({metricsInfo: expectedMetrics});
+    });
+
     it('does not load the .env file of an app that the loader does not know', async () => {
       const tempAgentsDir = fs.mkdtempSync(
         path.join(os.tmpdir(), 'adk-unknown-app-env-test-'),
@@ -5284,6 +5315,32 @@ describe('AdkApiServer path validation', () => {
         const response = await sendRawRequest(server.url, {
           method: 'GET',
           rawPath: `/apps/${appName}/eval_sets`,
+        });
+
+        expect(response.status).toBe(400);
+        expect(JSON.parse(response.body).error).toMatch(/appName/);
+      },
+    );
+
+    it.each(invalidAppNames)(
+      'returns 400 from GET eval_metrics for appName %s',
+      async (appName) => {
+        const response = await sendRawRequest(server.url, {
+          method: 'GET',
+          rawPath: `/apps/${appName}/eval_metrics`,
+        });
+
+        expect(response.status).toBe(400);
+        expect(JSON.parse(response.body).error).toMatch(/appName/);
+      },
+    );
+
+    it.each(invalidAppNames)(
+      'returns 400 from GET /dev/apps/:appName/metrics-info for appName %s',
+      async (appName) => {
+        const response = await sendRawRequest(server.url, {
+          method: 'GET',
+          rawPath: `/dev/apps/${appName}/metrics-info`,
         });
 
         expect(response.status).toBe(400);
@@ -5624,5 +5681,623 @@ describe('AdkApiServer path validation', () => {
         },
       );
     });
+  });
+});
+
+class MapAgentLoader extends BaseAgentLoader implements CachingAgentLoader {
+  readonly evictedNames: string[] = [];
+  private readonly cache = new Map<string, adk.RunnableRoot | App>();
+
+  constructor(private readonly entries: Map<string, adk.RunnableRoot | App>) {
+    super();
+  }
+
+  removeAgentFromCache(agentName: string): void {
+    this.evictedNames.push(agentName);
+    this.cache.delete(agentName);
+  }
+
+  override async listAgents(): Promise<string[]> {
+    return [...this.entries.keys()].sort();
+  }
+
+  override async getAgentFile(agentName: string): Promise<AgentFileHandle> {
+    let entry = this.cache.get(agentName);
+    if (!entry) {
+      entry = this.entries.get(agentName);
+      if (!entry) {
+        throw new Error(`Agent '${agentName}' not found.`);
+      }
+      this.cache.set(agentName, entry);
+    }
+    const resolvedEntry = entry;
+    return {
+      load: async () => resolvedEntry,
+      retain: () => ({
+        async [Symbol.asyncDispose](): Promise<void> {},
+      }),
+      async [Symbol.asyncDispose](): Promise<void> {},
+    };
+  }
+}
+
+class ReplyAgent extends LlmAgent {
+  constructor(
+    name: string,
+    private readonly replyText: string,
+    tools: adk.ToolUnion[] = [],
+  ) {
+    super({
+      name,
+      model: 'gemini-flash-latest',
+      instruction: 'Reply deterministically.',
+      tools,
+    });
+  }
+
+  override async *runAsyncImpl(
+    context: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
+    yield createEvent({
+      invocationId: context.invocationId,
+      author: this.name,
+      branch: context.branch,
+      content: {role: 'model', parts: [{text: this.replyText}]},
+    });
+  }
+
+  override async *runLiveImpl(
+    context: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
+    yield* this.runAsyncImpl(context);
+  }
+}
+
+class CountingToolset extends BaseToolset {
+  closeCalls = 0;
+
+  override async getTools(): Promise<adk.BaseTool[]> {
+    return [];
+  }
+
+  override async close(): Promise<void> {
+    this.closeCalls += 1;
+  }
+}
+
+describe('AdkApiServer custom BaseAgentLoader and reload support', () => {
+  const tempDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      fs.rmSync(dir, {recursive: true, force: true});
+    }
+  });
+
+  it('serves a custom BaseAgentLoader without readReadme and updates currentAppNameRef', async () => {
+    const alphaAgent = new ReplyAgent('alphaAgent', 'alpha reply');
+    const betaAgent = new ReplyAgent('betaAgent', 'beta reply');
+    const customLoader = new MapAgentLoader(
+      new Map<string, adk.RunnableRoot | App>([
+        ['alphaApp', alphaAgent],
+        ['betaApp', betaAgent],
+      ]),
+    );
+    const sessionService = new InMemorySessionService();
+    const serverOptions: ServerOptions = {
+      agentLoader: customLoader,
+      sessionService,
+    };
+    const apiServer = new AdkApiServer(serverOptions);
+    await apiServer.start();
+    const client = new HttpClient(apiServer.url);
+
+    try {
+      expect(isSharedValue(apiServer.currentAppNameRef)).toBe(true);
+      expect(apiServer.currentAppNameRef.value).toBe('');
+
+      const listRes = await client.get<string[]>('/list-apps');
+      expect(listRes.data).toEqual(['alphaApp', 'betaApp']);
+
+      const graphRes = await client.get<{
+        name: string;
+        readme?: string;
+        root_agent: {name: string};
+      }>('/dev/apps/alphaApp/build_graph');
+      expect(graphRes.data).toMatchObject({
+        name: 'alphaApp',
+        root_agent: {name: 'alphaAgent'},
+      });
+      expect(graphRes.data?.readme).toBeUndefined();
+
+      await sessionService.createSession({
+        appName: 'alphaApp',
+        userId: 'user-1',
+        sessionId: 'sess-alpha',
+      });
+      const alphaRun = await client.post<Event[]>('/run', {
+        appName: 'alphaApp',
+        userId: 'user-1',
+        sessionId: 'sess-alpha',
+        newMessage: {role: 'user', parts: [{text: 'hi'}]},
+      });
+      expect(alphaRun.data?.[0]?.content?.parts?.[0]?.text).toBe('alpha reply');
+      expect(apiServer.currentAppNameRef.value).toBe('alphaApp');
+
+      await sessionService.createSession({
+        appName: 'betaApp',
+        userId: 'user-1',
+        sessionId: 'sess-beta',
+      });
+      await client.post<Event[]>('/run', {
+        appName: 'betaApp',
+        userId: 'user-1',
+        sessionId: 'sess-beta',
+        newMessage: {role: 'user', parts: [{text: 'hi'}]},
+      });
+      expect(apiServer.currentAppNameRef.value).toBe('betaApp');
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it('retires and recreates a cached Runner when runnersToClean or file reload fires', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'adk-custom-loader-reload-'),
+    );
+    tempDirs.push(tempDir);
+    // Keep appDir empty until the file-reload step so macOS FSEvents cannot
+    // deliver a coalesced pre-startup write notification during turns 1-3.
+    const appDir = path.join(tempDir, 'hotApp');
+    fs.mkdirSync(appDir, {recursive: true});
+    const entryFile = path.join(appDir, 'agent.ts');
+
+    const firstToolset = new CountingToolset();
+    const firstAgent = new ReplyAgent('hotAgent', 'version one', [
+      firstToolset,
+    ]);
+    const entries = new Map<string, adk.RunnableRoot | App>([
+      ['hotApp', firstAgent],
+    ]);
+    const customLoader = new MapAgentLoader(entries);
+    const sessionService = new InMemorySessionService();
+    const apiServer = new AdkApiServer({
+      agentsDir: tempDir,
+      agentLoader: customLoader,
+      reloadAgents: true,
+      sessionService,
+    });
+    await apiServer.start();
+    const client = new HttpClient(apiServer.url);
+
+    try {
+      await sessionService.createSession({
+        appName: 'hotApp',
+        userId: 'user-1',
+        sessionId: 'sess-1',
+      });
+
+      const initialRun = await client.post<Event[]>('/run', {
+        appName: 'hotApp',
+        userId: 'user-1',
+        sessionId: 'sess-1',
+        newMessage: {role: 'user', parts: [{text: 'turn 1'}]},
+      });
+      expect(initialRun.data?.[0]?.content?.parts?.[0]?.text).toBe(
+        'version one',
+      );
+      // Runner.runAsync closes toolsets once at the end of each turn.
+      expect(firstToolset.closeCalls).toBe(1);
+
+      // A second turn with runnersToClean empty reuses the cached Runner, so
+      // close() runs only once for the turn itself (1 -> 2).
+      await client.post<Event[]>('/run', {
+        appName: 'hotApp',
+        userId: 'user-1',
+        sessionId: 'sess-1',
+        newMessage: {role: 'user', parts: [{text: 'turn 2'}]},
+      });
+      expect(firstToolset.closeCalls).toBe(2);
+
+      // Even with the same agent instance, marking runnersToClean retires and
+      // closes the previous Runner (+1) before the new Runner executes its turn
+      // (+1), advancing closeCalls by 2 (2 -> 4).
+      apiServer.runnersToClean.add('hotApp');
+      await client.post<Event[]>('/run', {
+        appName: 'hotApp',
+        userId: 'user-1',
+        sessionId: 'sess-1',
+        newMessage: {role: 'user', parts: [{text: 'turn 3'}]},
+      });
+      expect(firstToolset.closeCalls).toBe(4);
+      expect(apiServer.runnersToClean.has('hotApp')).toBe(false);
+
+      // Writing a watched agent file evicts the loader cache and marks the
+      // runner for cleanup so the previous Runner is retired (+1 -> 5) and the
+      // updated agent runs on the next request.
+      const updatedAgent = new ReplyAgent('hotAgent', 'version two');
+      entries.set('hotApp', updatedAgent);
+      let pollCount = 0;
+      fs.writeFileSync(entryFile, '// v2\n');
+
+      await vi.waitFor(
+        () => {
+          if (!apiServer.runnersToClean.has('hotApp')) {
+            pollCount += 1;
+            if (pollCount % 10 === 0) {
+              fs.writeFileSync(entryFile, `// v2-${pollCount}\n`);
+            }
+          }
+          expect(customLoader.evictedNames).toContain('hotApp');
+          expect(apiServer.runnersToClean.has('hotApp')).toBe(true);
+        },
+        {timeout: 5000, interval: 25},
+      );
+
+      const reloadedRun = await client.post<Event[]>('/run', {
+        appName: 'hotApp',
+        userId: 'user-1',
+        sessionId: 'sess-1',
+        newMessage: {role: 'user', parts: [{text: 'turn 4'}]},
+      });
+      expect(reloadedRun.data?.[0]?.content?.parts?.[0]?.text).toBe(
+        'version two',
+      );
+      expect(firstToolset.closeCalls).toBe(5);
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it('reloads a single-file agentsDir across consecutive atomic saves while ignoring sibling files', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'adk-single-file-atomic-reload-'),
+    );
+    tempDirs.push(tempDir);
+    const watchedFile = path.join(tempDir, 'singleAgent.ts');
+    const siblingFile = path.join(tempDir, 'siblingAgent.ts');
+    fs.writeFileSync(watchedFile, '// v1\n');
+    fs.writeFileSync(siblingFile, '// sibling v1\n');
+
+    const entries = new Map<string, adk.RunnableRoot | App>([
+      ['singleAgent', new ReplyAgent('singleAgent', 'atomic one')],
+      ['siblingAgent', new ReplyAgent('siblingAgent', 'sibling one')],
+    ]);
+    const customLoader = new MapAgentLoader(entries);
+    const sessionService = new InMemorySessionService();
+    const apiServer = new AdkApiServer({
+      agentsDir: watchedFile,
+      agentLoader: customLoader,
+      reloadAgents: true,
+      sessionService,
+    });
+    await apiServer.start();
+    const client = new HttpClient(apiServer.url);
+
+    try {
+      // Wait for one initial watch delivery so macOS FSEvents' startup batch
+      // flushes before tracking per-save evictions.
+      let warmupPolls = 0;
+      fs.writeFileSync(watchedFile, '// v1-ready\n');
+      await vi.waitFor(
+        () => {
+          if (!apiServer.runnersToClean.has('singleAgent')) {
+            warmupPolls += 1;
+            if (warmupPolls % 10 === 0) {
+              fs.writeFileSync(watchedFile, `// v1-ready-${warmupPolls}\n`);
+            }
+          }
+          expect(apiServer.runnersToClean.has('singleAgent')).toBe(true);
+        },
+        {timeout: 5000, interval: 25},
+      );
+
+      await sessionService.createSession({
+        appName: 'singleAgent',
+        userId: 'user-1',
+        sessionId: 'sess-atomic',
+      });
+      await sessionService.createSession({
+        appName: 'siblingAgent',
+        userId: 'user-1',
+        sessionId: 'sess-sibling',
+      });
+
+      const initialRun = await client.post<Event[]>('/run', {
+        appName: 'singleAgent',
+        userId: 'user-1',
+        sessionId: 'sess-atomic',
+        newMessage: {role: 'user', parts: [{text: 'turn 1'}]},
+      });
+      expect(initialRun.data?.[0]?.content?.parts?.[0]?.text).toBe(
+        'atomic one',
+      );
+      const initialSiblingRun = await client.post<Event[]>('/run', {
+        appName: 'siblingAgent',
+        userId: 'user-1',
+        sessionId: 'sess-sibling',
+        newMessage: {role: 'user', parts: [{text: 'sibling turn 1'}]},
+      });
+      expect(initialSiblingRun.data?.[0]?.content?.parts?.[0]?.text).toBe(
+        'sibling one',
+      );
+
+      customLoader.evictedNames.length = 0;
+      apiServer.runnersToClean.clear();
+
+      entries.set(
+        'siblingAgent',
+        new ReplyAgent('siblingAgent', 'sibling two'),
+      );
+      const siblingTempOne = path.join(tempDir, 'siblingAgent.save1.tmp.ts');
+      fs.writeFileSync(siblingTempOne, '// sibling v2\n');
+      fs.renameSync(siblingTempOne, siblingFile);
+
+      entries.set('singleAgent', new ReplyAgent('singleAgent', 'atomic two'));
+      const atomicTempOne = path.join(tempDir, '.singleAgent.ts.save1.tmp');
+      fs.writeFileSync(atomicTempOne, '// v2\n');
+      fs.renameSync(atomicTempOne, watchedFile);
+
+      await vi.waitFor(
+        () => {
+          expect(customLoader.evictedNames).toContain('singleAgent');
+          expect(apiServer.runnersToClean.has('singleAgent')).toBe(true);
+        },
+        {timeout: 5000, interval: 25},
+      );
+      expect(new Set(customLoader.evictedNames)).toEqual(
+        new Set(['singleAgent']),
+      );
+      expect([...apiServer.runnersToClean]).toEqual(['singleAgent']);
+
+      const secondRun = await client.post<Event[]>('/run', {
+        appName: 'singleAgent',
+        userId: 'user-1',
+        sessionId: 'sess-atomic',
+        newMessage: {role: 'user', parts: [{text: 'turn 2'}]},
+      });
+      expect(secondRun.data?.[0]?.content?.parts?.[0]?.text).toBe('atomic two');
+      const secondSiblingRun = await client.post<Event[]>('/run', {
+        appName: 'siblingAgent',
+        userId: 'user-1',
+        sessionId: 'sess-sibling',
+        newMessage: {role: 'user', parts: [{text: 'sibling turn 2'}]},
+      });
+      expect(secondSiblingRun.data?.[0]?.content?.parts?.[0]?.text).toBe(
+        'sibling one',
+      );
+
+      customLoader.evictedNames.length = 0;
+      apiServer.runnersToClean.clear();
+      fs.writeFileSync(siblingFile, '// sibling v3\n');
+
+      entries.set('singleAgent', new ReplyAgent('singleAgent', 'atomic three'));
+      const atomicTempTwo = path.join(tempDir, '.singleAgent.ts.save2.tmp');
+      fs.writeFileSync(atomicTempTwo, '// v3\n');
+      fs.renameSync(atomicTempTwo, watchedFile);
+
+      await vi.waitFor(
+        () => {
+          expect(customLoader.evictedNames).toContain('singleAgent');
+          expect(apiServer.runnersToClean.has('singleAgent')).toBe(true);
+        },
+        {timeout: 5000, interval: 25},
+      );
+      expect(new Set(customLoader.evictedNames)).toEqual(
+        new Set(['singleAgent']),
+      );
+      expect([...apiServer.runnersToClean]).toEqual(['singleAgent']);
+
+      const thirdRun = await client.post<Event[]>('/run', {
+        appName: 'singleAgent',
+        userId: 'user-1',
+        sessionId: 'sess-atomic',
+        newMessage: {role: 'user', parts: [{text: 'turn 3'}]},
+      });
+      expect(thirdRun.data?.[0]?.content?.parts?.[0]?.text).toBe(
+        'atomic three',
+      );
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it('seeds Workflow instruction placeholders when adding a session to an eval set', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'adk-workflow-eval-add-session-'),
+    );
+    tempDirs.push(tempDir);
+
+    const stepAgent = new LlmAgent({
+      name: 'workflowStep',
+      model: 'gemini-flash-latest',
+      instruction: 'Handle {workflowTopic} in {workflowTone} tone.',
+    });
+    const rootWorkflow = new Workflow({
+      name: 'supportWorkflow',
+      edges: [[adk.START, stepAgent]],
+    });
+    const customLoader = new MapAgentLoader(
+      new Map<string, adk.RunnableRoot | App>([['workflowApp', rootWorkflow]]),
+    );
+    const sessionService = new InMemorySessionService();
+    const apiServer = new AdkApiServer({
+      agentsDir: tempDir,
+      agentLoader: customLoader,
+      sessionService,
+    });
+    await apiServer.start();
+    const client = new HttpClient(apiServer.url);
+
+    try {
+      await client.post('/apps/workflowApp/eval_sets/workflowSet', {});
+      const created = await sessionService.createSession({
+        appName: 'workflowApp',
+        userId: 'user-1',
+        sessionId: 'sess-wf',
+        state: {workflowTone: 'friendly'},
+      });
+      await sessionService.appendEvent({
+        session: created,
+        event: createEvent({
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'Help me'}]},
+        }),
+      });
+
+      const addRes = await client.post(
+        '/apps/workflowApp/eval_sets/workflowSet/add_session',
+        {
+          evalId: 'caseOne',
+          sessionId: 'sess-wf',
+          userId: 'user-1',
+        },
+      );
+      expect(addRes.status).toBe(200);
+
+      const getCaseRes = await client.get<{
+        sessionInput?: {state: Record<string, unknown>};
+      }>('/apps/workflowApp/eval_sets/workflowSet/evals/caseOne');
+      expect(getCaseRes.data?.sessionInput?.state).toEqual({
+        workflowTopic: '',
+        workflowTone: 'friendly',
+      });
+    } finally {
+      await apiServer.stop();
+    }
+  });
+
+  it('invokes registerProcessors once with the active TracerProvider during start', async () => {
+    const customLoader = new MapAgentLoader(
+      new Map<string, adk.RunnableRoot | App>([
+        ['traceApp', new ReplyAgent('traceAgent', 'ok')],
+      ]),
+    );
+    const activeProvider = trace.getTracerProvider();
+    const getProviderSpy = vi
+      .spyOn(trace, 'getTracerProvider')
+      .mockReturnValue(activeProvider);
+    const receivedProviders: TracerProvider[] = [];
+    const apiServer = new AdkApiServer({
+      agentLoader: customLoader,
+      registerProcessors: (provider) => {
+        receivedProviders.push(provider);
+      },
+    });
+
+    try {
+      await apiServer.start();
+      expect(receivedProviders).toEqual([activeProvider]);
+    } finally {
+      getProviderSpy.mockRestore();
+      await apiServer.stop();
+    }
+  });
+
+  it('invokes the loaded agent module resetData hook between run_eval cases', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'adk-run-eval-reset-'),
+    );
+    tempDirs.push(tempDir);
+
+    fs.writeFileSync(
+      path.join(tempDir, 'package.json'),
+      JSON.stringify({name: 'run-eval-reset-fixture', type: 'module'}),
+      'utf-8',
+    );
+    fs.symlinkSync(
+      path.resolve(process.cwd(), 'node_modules'),
+      path.join(tempDir, 'node_modules'),
+      'dir',
+    );
+
+    const appDir = path.join(tempDir, 'statefulApp');
+    fs.mkdirSync(appDir, {recursive: true});
+    fs.writeFileSync(
+      path.join(appDir, 'agent.ts'),
+      [
+        `import {BaseAgent, createEvent, type Event, type InvocationContext} from '@google/adk';`,
+        `let turnCount = 0;`,
+        `class StatefulEvalAgent extends BaseAgent {`,
+        `  constructor() { super({name: 'statefulEvalAgent'}); }`,
+        `  protected override async *runAsyncImpl(ctx: InvocationContext): AsyncGenerator<Event, void, void> {`,
+        `    turnCount += 1;`,
+        `    yield createEvent({`,
+        `      invocationId: ctx.invocationId,`,
+        `      author: this.name,`,
+        `      content: {role: 'model', parts: [{text: 'Turn ' + turnCount}]},`,
+        `    });`,
+        `  }`,
+        `  protected override async *runLiveImpl(ctx: InvocationContext): AsyncGenerator<Event, void, void> {`,
+        `    yield* this.runAsyncImpl(ctx);`,
+        `  }`,
+        `}`,
+        `export const rootAgent = new StatefulEvalAgent();`,
+        `export function resetData(): void { turnCount = 0; }`,
+      ].join('\n'),
+      'utf-8',
+    );
+    fs.writeFileSync(
+      path.join(appDir, 'resetSet.evalset.json'),
+      JSON.stringify({
+        evalSetId: 'resetSet',
+        evalCases: [
+          {
+            evalId: 'firstCase',
+            conversation: [
+              {
+                invocationId: 'inv-1',
+                userContent: {role: 'user', parts: [{text: 'ping'}]},
+                finalResponse: {role: 'model', parts: [{text: 'Turn 1'}]},
+              },
+            ],
+          },
+          {
+            evalId: 'secondCase',
+            conversation: [
+              {
+                invocationId: 'inv-2',
+                userContent: {role: 'user', parts: [{text: 'pong'}]},
+                finalResponse: {role: 'model', parts: [{text: 'Turn 1'}]},
+              },
+            ],
+          },
+        ],
+      }),
+      'utf-8',
+    );
+
+    const apiServer = new AdkApiServer({
+      agentsDir: tempDir,
+      agentFileLoadOptions: {
+        compile: true,
+        bundle: false,
+        minify: false,
+      },
+    });
+    await apiServer.start();
+    const client = new HttpClient(apiServer.url);
+
+    try {
+      const evalRes = await client.post<
+        Array<{evalId: string; finalEvalStatus: EvalStatus}>
+      >('/apps/statefulApp/eval_sets/resetSet/run_eval', {
+        evalMetrics: [{metric_name: 'response_match_score', threshold: 1.0}],
+      });
+
+      expect(evalRes.status).toBe(200);
+      expect(evalRes.data).toEqual([
+        expect.objectContaining({
+          evalId: 'firstCase',
+          finalEvalStatus: EvalStatus.PASSED,
+        }),
+        expect.objectContaining({
+          evalId: 'secondCase',
+          finalEvalStatus: EvalStatus.PASSED,
+        }),
+      ]);
+    } finally {
+      await apiServer.stop();
+    }
   });
 });

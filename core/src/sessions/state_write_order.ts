@@ -138,3 +138,52 @@ export function carryDeltaStamps(from: object, to: object): void {
     carried.set(key, stamp);
   }
 }
+
+/**
+ * Carries the stamp for a deep-merged `key` onto `to`, keeping the newer of
+ * the two source stamps when both `base` and `incoming` carry one, or the
+ * existing stamp when only one source is stamped.
+ */
+export function carryMergedDeltaStamp({
+  base,
+  incoming,
+  to,
+  key,
+}: {
+  base: object;
+  incoming: object;
+  to: object;
+  key: string;
+}): void {
+  const baseStamp = deltaStamps.get(base)?.get(key);
+  const incomingStamp = deltaStamps.get(incoming)?.get(key);
+  const mergedStamp =
+    baseStamp !== undefined && incomingStamp !== undefined
+      ? Math.max(baseStamp, incomingStamp)
+      : (baseStamp ?? incomingStamp);
+  if (mergedStamp !== undefined) {
+    stampsFor(deltaStamps, to).set(key, mergedStamp);
+  }
+}
+
+/**
+ * Returns the newest write-order stamp recorded for `key` on `state`, or
+ * `undefined` when `key` has no recorded stamp.
+ */
+export function getStateWriteStamp(
+  state: object,
+  key: string,
+): number | undefined {
+  return stateStamps.get(state)?.get(key);
+}
+
+/**
+ * Returns the write-order stamp recorded for `key` on `delta`, or `undefined`
+ * when the delta entry was not written through `State`.
+ */
+export function getDeltaWriteStamp(
+  delta: object,
+  key: string,
+): number | undefined {
+  return deltaStamps.get(delta)?.get(key);
+}

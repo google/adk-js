@@ -59,8 +59,12 @@ The `CrewaiToolConfig` interface configures `new CrewaiTool(config)` or `new Cre
 ## How it works
 
 1. **Name normalization**: When `name` is omitted or empty, `CrewaiTool` normalizes `tool.name`. It replaces spaces with underscores and lowercases characters. When `tool.name` is missing, it falls back to `tool.run.name` or `'crewai_tool'`.
-2. **Schema translation**: `CrewaiTool` translates `tool.argsSchema` into a `@google/genai` `FunctionDeclaration`. It accepts Zod schemas, JSON Schema objects, or objects with `modelJsonSchema()` or `jsonSchema()` methods.
+2. **Schema translation**: `CrewaiTool` translates `tool.argsSchema` into a `@google/genai` `FunctionDeclaration`. It accepts Zod schemas, JSON Schema objects, or objects with `toJsonSchema()`, `jsonSchema()`, or `modelJsonSchema()` methods.
 3. **Tool execution**: When the model calls the tool, `runAsync` forwards arguments and the optional `toolContext` to `tool.run`.
+
+## Related samples
+
+- [`samples/integrations/crewai/`](../../../../samples/integrations/crewai/README.md) - Runnable `LlmAgent` sample equipping `CrewaiTool` with a Zod-typed tool using space-separated name normalization and a `toJsonSchema()` tool with custom name and description overrides.
 
 ## Related guides
 

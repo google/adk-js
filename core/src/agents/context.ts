@@ -9,6 +9,7 @@ import {Part} from '@google/genai';
 import {AuthCredential} from '../auth/auth_credential.js';
 import {AuthHandler} from '../auth/auth_handler.js';
 import {AuthConfig} from '../auth/auth_tool.js';
+import type {BaseCredentialService} from '../auth/credential_service/base_credential_service.js';
 import {createEventActions, EventActions} from '../events/event_actions.js';
 import {SearchMemoryResponse} from '../memory/base_memory_service.js';
 import {State} from '../sessions/state.js';
@@ -23,9 +24,9 @@ import {ReadonlyContext} from './readonly_context.js';
  *
  * This class provides the context for callbacks and tool invocations, including
  * access to the invocation context, function call ID, event actions, and
- * authentication response. It also provides methods for requesting credentials,
- * retrieving authentication responses, loading and saving artifacts, and
- * searching memory.
+ * authentication response. It also provides methods for saving, loading, and
+ * requesting credentials, retrieving authentication responses, loading, saving,
+ * and listing artifacts, and searching memory.
  */
 export class Context extends ReadonlyContext {
   private readonly _state: State;
@@ -123,6 +124,39 @@ export class Context extends ReadonlyContext {
     return version;
   }
 
+  private requireCredentialService(): BaseCredentialService {
+    const credentialService = this.invocationContext.credentialService;
+    if (!credentialService) {
+      throw new Error('Credential service is not initialized.');
+    }
+
+    return credentialService;
+  }
+
+  /**
+   * Saves a credential to the credential service.
+   *
+   * @param authConfig The authentication configuration containing the
+   *     credential.
+   * @return A promise that resolves when the credential has been saved.
+   */
+  async saveCredential(authConfig: AuthConfig): Promise<void> {
+    return this.requireCredentialService().saveCredential(authConfig, this);
+  }
+
+  /**
+   * Loads a credential from the credential service.
+   *
+   * @param authConfig The authentication configuration for the credential.
+   * @return A promise that resolves to the loaded credential, or `undefined` if
+   *     not found.
+   */
+  async loadCredential(
+    authConfig: AuthConfig,
+  ): Promise<AuthCredential | undefined> {
+    return this.requireCredentialService().loadCredential(authConfig, this);
+  }
+
   requestCredential(authConfig: AuthConfig) {
     if (!this.functionCallId) {
       throw new Error('functionCallId is not set.');
@@ -150,7 +184,7 @@ export class Context extends ReadonlyContext {
    *
    * @return A promise that resolves to a list of artifact filenames.
    */
-  listArtifacts(): Promise<string[]> {
+  async listArtifacts(): Promise<string[]> {
     if (!this.invocationContext.artifactService) {
       throw new Error('Artifact service is not initialized.');
     }

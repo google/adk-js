@@ -5,11 +5,18 @@
  */
 
 import {
+  createEvent,
+  DatabaseSessionService,
+  type DatabaseSessionServiceOptions,
+  GcsArtifactService,
   InMemoryMemoryService,
   InMemorySessionService,
   LocalEvalSetResultsManager,
+  LocalEvalSetsManager,
+  logger,
   LogLevel,
   logToTmpFolder,
+  setLogLevel,
   setupAdkLogger,
   VertexAiMemoryBankService,
   VertexAiRagMemoryService,
@@ -30,8 +37,10 @@ import {createAgent} from '../../src/cli/cli_create.js';
 import {runAgent} from '../../src/cli/cli_run.js';
 import {deployToAgentEngine} from '../../src/cli/deploy/cli_deploy_agent_engine.js';
 import {deployToCloudRun} from '../../src/cli/deploy/cli_deploy_cloud_run.js';
+import {deployToGke} from '../../src/cli/deploy/cli_deploy_gke.js';
 import {runIntegrationTests} from '../../src/integration/run_integration_tests.js';
 import {AdkApiServer} from '../../src/server/adk_api_server.js';
+import {AdkLogger} from '../../src/utils/logger.js';
 import {version} from '../../src/version.js';
 
 vi.mock('../../src/server/adk_api_server', () => {
@@ -56,6 +65,13 @@ vi.mock('../../src/cli/deploy/cli_deploy_cloud_run', () => ({
   deployToCloudRun: vi.fn(),
 }));
 
+vi.mock('../../src/cli/deploy/cli_deploy_gke', async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import('../../src/cli/deploy/cli_deploy_gke.js')
+  >()),
+  deployToGke: vi.fn(),
+}));
+
 vi.mock('../../src/integration/run_integration_tests', () => ({
   runIntegrationTests: vi.fn(),
 }));
@@ -76,11 +92,46 @@ const {
   vertexAiSessionServiceOptions,
   vertexAiMemoryBankServiceOptions,
   createGcsEvalManagersFromUriMock,
+  getSessionServiceFromUriCalls,
+  getEvaluationCriteriaOrDefaultCalls,
+  runEvalsCalls,
+  agentFileCalls,
+  agentFileDisposeCalls,
 } = vi.hoisted(() => ({
   vertexAiSessionServiceOptions: vi.fn(),
   vertexAiMemoryBankServiceOptions: vi.fn(),
   createGcsEvalManagersFromUriMock: vi.fn(),
+  getSessionServiceFromUriCalls: vi.fn(),
+  getEvaluationCriteriaOrDefaultCalls: vi.fn(),
+  runEvalsCalls: vi.fn(),
+  agentFileCalls: vi.fn(),
+  agentFileDisposeCalls: vi.fn(),
 }));
+
+vi.mock('../../src/utils/agent_loader.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../src/utils/agent_loader.js')>();
+
+  class RecordingAgentFile extends actual.AgentFile {
+    constructor(
+      filePath: string,
+      options?: ConstructorParameters<typeof actual.AgentFile>[1],
+    ) {
+      agentFileCalls(filePath, options);
+      super(filePath, {...options, compile: false, bundle: false});
+    }
+
+    override async dispose(): Promise<void> {
+      agentFileDisposeCalls();
+      return super.dispose();
+    }
+  }
+
+  return {
+    ...actual,
+    AgentFile: RecordingAgentFile,
+  };
+});
 
 vi.mock('@google/adk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@google/adk')>();
@@ -114,6 +165,22 @@ vi.mock('@google/adk', async (importOriginal) => {
     VertexAiSessionService: RecordingVertexAiSessionService,
     VertexAiMemoryBankService: RecordingVertexAiMemoryBankService,
     createGcsEvalManagersFromUri: createGcsEvalManagersFromUriMock,
+    getSessionServiceFromUri: (
+      ...args: Parameters<typeof actual.getSessionServiceFromUri>
+    ) => {
+      getSessionServiceFromUriCalls(...args);
+      return actual.getSessionServiceFromUri(...args);
+    },
+    getEvaluationCriteriaOrDefault: (
+      ...args: Parameters<typeof actual.getEvaluationCriteriaOrDefault>
+    ) => {
+      getEvaluationCriteriaOrDefaultCalls(...args);
+      return actual.getEvaluationCriteriaOrDefault(...args);
+    },
+    runEvals: async function* (...args: Parameters<typeof actual.runEvals>) {
+      runEvalsCalls(...args);
+      yield* actual.runEvals(...args);
+    },
     setupAdkLogger: vi.fn(),
     logToTmpFolder: vi.fn(),
   };
@@ -557,6 +624,7 @@ describe('CLI Entrypoint', () => {
         ['deploy', 'agent_engine'],
         () => deployToAgentEngine,
       ],
+      ['deploy gke', ['deploy', 'gke'], () => deployToGke],
     ])('is on for %s', async (_name, args, target) => {
       await parse(args);
 
@@ -824,6 +892,177 @@ describe('CLI Entrypoint', () => {
     });
   });
 
+  describe('command: deploy gke', () => {
+    it('should call deployToGke with defaults', async () => {
+      await parse(['deploy', 'gke']);
+
+      expect(deployToGke).toHaveBeenCalledWith(
+        expect.objectContaining({
+          port: 8000,
+          serviceName: 'adk-default-service-name',
+          serviceType: 'ClusterIP',
+          adkVersion: version,
+          withUi: false,
+          logLevel: 'info',
+          a2a: false,
+        }),
+      );
+    });
+
+    it('should leave tempFolder unset so no temp directory is created eagerly', async () => {
+      await parse(['deploy', 'gke']);
+
+      expect(
+        (deployToGke as Mock).mock.calls[0]?.[0]?.tempFolder,
+      ).toBeUndefined();
+    });
+
+    it('should forward snake_case options and trailing agent path to deployToGke', async () => {
+      await parse([
+        'deploy',
+        'gke',
+        '--project',
+        'test-proj',
+        '--region',
+        'us-central1',
+        '--cluster_name',
+        'my-cluster',
+        '--service_name',
+        'my-gke-svc',
+        '--service_type',
+        'LoadBalancer',
+        '--app_name',
+        'custom-app',
+        '--temp_folder',
+        '/tmp/custom-gke',
+        '--port',
+        '9090',
+        '--adk_version',
+        '1.2.0',
+        '--with_ui=true',
+        '--allow_origins',
+        'http://localhost:3000',
+        '--session_service_uri',
+        'memory://',
+        '--artifact_service_uri',
+        'gs://my-bucket',
+        '--memory_service_uri',
+        'rag://my-corpus',
+        '--trace_to_cloud=true',
+        '--a2a=true',
+        './my-agent-path',
+      ]);
+
+      expect((deployToGke as Mock).mock.calls[0]?.[0]).toMatchObject({
+        agentPath: expect.stringContaining('my-agent-path'),
+        project: 'test-proj',
+        region: 'us-central1',
+        clusterName: 'my-cluster',
+        serviceName: 'my-gke-svc',
+        serviceType: 'LoadBalancer',
+        appName: 'custom-app',
+        tempFolder: '/tmp/custom-gke',
+        port: 9090,
+        adkVersion: '1.2.0',
+        withUi: true,
+        allowOrigins: 'http://localhost:3000',
+        sessionServiceUri: 'memory://',
+        artifactServiceUri: 'gs://my-bucket',
+        memoryServiceUri: 'rag://my-corpus',
+        otelToCloud: true,
+        a2a: true,
+      });
+    });
+
+    it('should forward bare boolean flags when agent path precedes them', async () => {
+      await parse([
+        'deploy',
+        'gke',
+        './my-agent-path',
+        '--cluster_name',
+        'my-cluster',
+        '--with_ui',
+        '--trace_to_cloud',
+        '--a2a',
+      ]);
+
+      expect((deployToGke as Mock).mock.calls[0]?.[0]).toMatchObject({
+        agentPath: expect.stringContaining('my-agent-path'),
+        clusterName: 'my-cluster',
+        withUi: true,
+        otelToCloud: true,
+        a2a: true,
+      });
+    });
+
+    it('should forward kebab-case options and --verbose log level to deployToGke', async () => {
+      await parse([
+        'deploy',
+        'gke',
+        './my-agent-path',
+        '--cluster-name',
+        'kebab-cluster',
+        '--service-name',
+        'kebab-svc',
+        '--service-type',
+        'NodePort',
+        '--app-name',
+        'kebab-app',
+        '--temp-folder',
+        '/tmp/kebab-gke',
+        '--adk-version',
+        '2.0.0',
+        '--with-ui',
+        '--allow-origins',
+        'https://example.com',
+        '--session-service-uri',
+        'memory://',
+        '--artifact-service-uri',
+        'gs://kebab-bucket',
+        '--memory-service-uri',
+        'rag://kebab-corpus',
+        '--otel-to-cloud',
+        '--verbose',
+      ]);
+
+      expect((deployToGke as Mock).mock.calls[0]?.[0]).toMatchObject({
+        agentPath: expect.stringContaining('my-agent-path'),
+        clusterName: 'kebab-cluster',
+        serviceName: 'kebab-svc',
+        serviceType: 'NodePort',
+        appName: 'kebab-app',
+        tempFolder: '/tmp/kebab-gke',
+        adkVersion: '2.0.0',
+        withUi: true,
+        logLevel: 'debug',
+        allowOrigins: 'https://example.com',
+        sessionServiceUri: 'memory://',
+        artifactServiceUri: 'gs://kebab-bucket',
+        memoryServiceUri: 'rag://kebab-corpus',
+        otelToCloud: true,
+      });
+    });
+
+    it('should reject an unsupported --service-type choice', async () => {
+      const configureAll = (cmd: Command) => {
+        cmd.configureOutput({
+          writeOut: () => {},
+          writeErr: () => {},
+        });
+        cmd.exitOverride();
+        cmd.commands.forEach(configureAll);
+      };
+      configureAll(program);
+
+      await expect(
+        parse(['deploy', 'gke', '--service-type', 'ExternalName']),
+      ).rejects.toMatchObject({
+        code: 'commander.invalidArgument',
+        exitCode: 1,
+      });
+    });
+  });
+
   describe('deploy failures', () => {
     it.each([
       ['deploy cloud_run', ['deploy', 'cloud_run'], () => deployToCloudRun],
@@ -832,6 +1071,7 @@ describe('CLI Entrypoint', () => {
         ['deploy', 'agent_engine'],
         () => deployToAgentEngine,
       ],
+      ['deploy gke', ['deploy', 'gke'], () => deployToGke],
     ])(
       '%s exits non-zero when the deployment fails',
       async (_name, args, target) => {
@@ -1010,7 +1250,11 @@ describe('CLI Entrypoint', () => {
       const stdoutSpy = vi
         .spyOn(process.stdout, 'write')
         .mockImplementation((chunk: string | Uint8Array) => {
-          stdoutChunks.push(String(chunk));
+          stdoutChunks.push(
+            typeof chunk === 'string'
+              ? chunk
+              : Buffer.from(chunk).toString('utf-8'),
+          );
           return true;
         });
 
@@ -1097,7 +1341,11 @@ describe('CLI Entrypoint', () => {
       const stdoutSpy = vi
         .spyOn(process.stdout, 'write')
         .mockImplementation((chunk: string | Uint8Array) => {
-          stdoutChunks.push(String(chunk));
+          stdoutChunks.push(
+            typeof chunk === 'string'
+              ? chunk
+              : Buffer.from(chunk).toString('utf-8'),
+          );
           return true;
         });
 
@@ -1185,7 +1433,11 @@ describe('CLI Entrypoint', () => {
       const stdoutSpy = vi
         .spyOn(process.stdout, 'write')
         .mockImplementation((chunk: string | Uint8Array) => {
-          stdoutChunks.push(String(chunk));
+          stdoutChunks.push(
+            typeof chunk === 'string'
+              ? chunk
+              : Buffer.from(chunk).toString('utf-8'),
+          );
           return true;
         });
 
@@ -1210,6 +1462,383 @@ describe('CLI Entrypoint', () => {
         expect(storedResult.evalCaseResults[0].evalId).toBe('selected_case');
       } finally {
         stdoutSpy.mockRestore();
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
+    });
+
+    it('runs the eval command with a local eval set ID and persists the evaluation result', async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-cli-eval-id-'),
+      );
+      const appName = 'evalApp';
+      const evalSetId = 'sampleEvalSet';
+      const agentDir = path.join(tempDir, appName);
+      fs.mkdirSync(agentDir, {recursive: true});
+
+      const agentFile = path.join(agentDir, 'agent.js');
+      fs.writeFileSync(
+        agentFile,
+        [
+          `import {BaseAgent, createEvent} from '@google/adk';`,
+          `class EvalAgent extends BaseAgent {`,
+          `  constructor() { super({name: 'evalAgent'}); }`,
+          `  async *runAsyncImpl(ctx) {`,
+          `    const text = ctx.userContent?.parts?.[0]?.text ?? '';`,
+          `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'Echo: ' + text}]}});`,
+          `  }`,
+          `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+          `}`,
+          `export const rootAgent = new EvalAgent();`,
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const evalSetsManager = new LocalEvalSetsManager(tempDir);
+      evalSetsManager.createEvalSet(appName, evalSetId);
+      evalSetsManager.addEvalCase(appName, evalSetId, {
+        evalId: 'case1',
+        conversation: [
+          {
+            invocationId: 'inv-1',
+            userContent: {role: 'user', parts: [{text: 'ping'}]},
+            finalResponse: {role: 'model', parts: [{text: 'Echo: ping'}]},
+          },
+        ],
+      });
+      evalSetsManager.addEvalCase(appName, evalSetId, {
+        evalId: 'case2',
+        conversation: [
+          {
+            invocationId: 'inv-2',
+            userContent: {role: 'user', parts: [{text: 'pong'}]},
+            finalResponse: {role: 'model', parts: [{text: 'Echo: pong'}]},
+          },
+        ],
+      });
+
+      const stdoutChunks: string[] = [];
+      const stdoutSpy = vi
+        .spyOn(process.stdout, 'write')
+        .mockImplementation((chunk: string | Uint8Array) => {
+          stdoutChunks.push(
+            typeof chunk === 'string'
+              ? chunk
+              : Buffer.from(chunk).toString('utf-8'),
+          );
+          return true;
+        });
+
+      try {
+        await parse(['eval', agentDir, `${evalSetId}: case1 , case2 `]);
+
+        expect(process.exitCode).toBeUndefined();
+        const output = stdoutChunks.join('');
+        expect(output).toContain('Eval Run Summary');
+        expect(output).toContain('Tests passed: 2');
+        expect(output).toContain('Tests failed: 0');
+
+        const evalSetResultsManager = new LocalEvalSetResultsManager(tempDir);
+        const evalSetResults =
+          evalSetResultsManager.listEvalSetResults(appName);
+        expect(evalSetResults).toHaveLength(1);
+        const storedResult = evalSetResultsManager.getEvalSetResult(
+          appName,
+          evalSetResults[0],
+        );
+        expect(storedResult.evalSetId).toBe(evalSetId);
+        expect(storedResult.evalCaseResults.map((c) => c.evalId)).toEqual([
+          'case1',
+          'case2',
+        ]);
+      } finally {
+        stdoutSpy.mockRestore();
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
+    });
+
+    it('resolves an eval set ID when a directory with the same name exists in the working directory', async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-cli-eval-dir-collision-'),
+      );
+      const appName = 'evalApp';
+      const evalSetId = 'evalApp';
+      const agentDir = path.join(tempDir, appName);
+      fs.mkdirSync(agentDir, {recursive: true});
+
+      fs.writeFileSync(
+        path.join(agentDir, 'agent.js'),
+        [
+          `import {BaseAgent, createEvent} from '@google/adk';`,
+          `class EvalAgent extends BaseAgent {`,
+          `  constructor() { super({name: 'evalAgent'}); }`,
+          `  async *runAsyncImpl(ctx) {`,
+          `    const text = ctx.userContent?.parts?.[0]?.text ?? '';`,
+          `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'Echo: ' + text}]}});`,
+          `  }`,
+          `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+          `}`,
+          `export const rootAgent = new EvalAgent();`,
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const evalSetsManager = new LocalEvalSetsManager(tempDir);
+      evalSetsManager.createEvalSet(appName, evalSetId);
+      evalSetsManager.addEvalCase(appName, evalSetId, {
+        evalId: 'case1',
+        conversation: [
+          {
+            invocationId: 'inv-1',
+            userContent: {role: 'user', parts: [{text: 'ping'}]},
+            finalResponse: {role: 'model', parts: [{text: 'Echo: ping'}]},
+          },
+        ],
+      });
+
+      const originalCwd = process.cwd();
+      const stdoutSpy = vi
+        .spyOn(process.stdout, 'write')
+        .mockImplementation(() => true);
+
+      try {
+        process.chdir(tempDir);
+        await parse(['eval', agentDir, evalSetId]);
+
+        expect(process.exitCode).toBeUndefined();
+        const evalSetResultsManager = new LocalEvalSetResultsManager(tempDir);
+        expect(evalSetResultsManager.listEvalSetResults(appName)).toHaveLength(
+          1,
+        );
+      } finally {
+        process.chdir(originalCwd);
+        stdoutSpy.mockRestore();
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
+    });
+
+    it('rejects mixing eval set file paths and eval set IDs in either order', async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-cli-eval-mixed-'),
+      );
+      const appName = 'evalApp';
+      const evalSetId = 'sampleEvalSet';
+      const agentDir = path.join(tempDir, appName);
+      fs.mkdirSync(agentDir, {recursive: true});
+
+      fs.writeFileSync(
+        path.join(agentDir, 'agent.js'),
+        [
+          `import {BaseAgent, createEvent} from '@google/adk';`,
+          `class EvalAgent extends BaseAgent {`,
+          `  constructor() { super({name: 'evalAgent'}); }`,
+          `  async *runAsyncImpl(ctx) {`,
+          `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'pong'}]}});`,
+          `  }`,
+          `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+          `}`,
+          `export const rootAgent = new EvalAgent();`,
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const evalSetsManager = new LocalEvalSetsManager(tempDir);
+      evalSetsManager.createEvalSet(appName, evalSetId);
+      const evalSetFile = path.join(tempDir, 'external.evalset.json');
+      fs.writeFileSync(
+        evalSetFile,
+        JSON.stringify({evalSetId: 'external', evalCases: []}),
+        'utf-8',
+      );
+
+      const errorSpy = vi
+        .spyOn(AdkLogger.prototype, 'error')
+        .mockImplementation(() => {});
+
+      try {
+        process.exitCode = undefined;
+        await parse(['eval', agentDir, evalSetFile, evalSetId]);
+        expect(process.exitCode).toBe(1);
+        expect(errorSpy).toHaveBeenCalledWith(
+          'Error evaluating agent:',
+          expect.stringContaining(
+            'Mixing eval set file paths and eval set IDs is not allowed',
+          ),
+        );
+
+        errorSpy.mockClear();
+        process.exitCode = undefined;
+        await parse(['eval', agentDir, evalSetId, evalSetFile]);
+        expect(process.exitCode).toBe(1);
+        expect(errorSpy).toHaveBeenCalledWith(
+          'Error evaluating agent:',
+          expect.stringContaining(
+            'Mixing eval set file paths and eval set IDs is not allowed',
+          ),
+        );
+      } finally {
+        process.exitCode = undefined;
+        errorSpy.mockRestore();
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
+    });
+
+    it('loads an App entry file with resetData via AgentFile and disposes it after runEvals', async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-cli-eval-app-reset-'),
+      );
+      const agentDir = path.join(tempDir, 'evalApp');
+      fs.mkdirSync(agentDir, {recursive: true});
+
+      const appEntryPath = path.join(agentDir, 'app.mjs');
+      fs.writeFileSync(
+        appEntryPath,
+        [
+          `import {App, BaseAgent, createEvent} from '@google/adk';`,
+          `let turnCount = 0;`,
+          `class StatefulEvalAgent extends BaseAgent {`,
+          `  constructor() { super({name: 'statefulEvalAgent'}); }`,
+          `  async *runAsyncImpl(ctx) {`,
+          `    turnCount += 1;`,
+          `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'Turn ' + turnCount}]}});`,
+          `  }`,
+          `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+          `}`,
+          `export const app = new App({name: 'evalApp', rootAgent: new StatefulEvalAgent()});`,
+          `export function resetData() { turnCount = 0; }`,
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const evalSetFile = path.join(tempDir, 'resetSet.evalset.json');
+      fs.writeFileSync(
+        evalSetFile,
+        JSON.stringify({
+          evalSetId: 'resetSet',
+          evalCases: [
+            {
+              evalId: 'firstCase',
+              conversation: [
+                {
+                  invocationId: 'inv-1',
+                  userContent: {role: 'user', parts: [{text: 'ping'}]},
+                  finalResponse: {role: 'model', parts: [{text: 'Turn 1'}]},
+                },
+              ],
+            },
+            {
+              evalId: 'secondCase',
+              conversation: [
+                {
+                  invocationId: 'inv-2',
+                  userContent: {role: 'user', parts: [{text: 'pong'}]},
+                  finalResponse: {role: 'model', parts: [{text: 'Turn 1'}]},
+                },
+              ],
+            },
+          ],
+        }),
+        'utf-8',
+      );
+
+      let disposedDuringRunEvals = false;
+      runEvalsCalls.mockImplementationOnce(() => {
+        disposedDuringRunEvals = agentFileDisposeCalls.mock.calls.length > 0;
+      });
+      const stdoutChunks: string[] = [];
+      const stdoutSpy = vi
+        .spyOn(process.stdout, 'write')
+        .mockImplementation((chunk: string | Uint8Array) => {
+          stdoutChunks.push(
+            typeof chunk === 'string'
+              ? chunk
+              : Buffer.from(chunk).toString('utf-8'),
+          );
+          return true;
+        });
+
+      try {
+        await parse(['eval', agentDir, evalSetFile]);
+
+        expect(process.exitCode).toBeUndefined();
+        expect(agentFileCalls).toHaveBeenCalledWith(appEntryPath, {
+          compile: true,
+          bundle: true,
+          minify: false,
+          moduleType: undefined,
+        });
+        expect(disposedDuringRunEvals).toBe(false);
+        expect(agentFileDisposeCalls).toHaveBeenCalledTimes(1);
+        expect(stdoutChunks.join('')).toContain('Tests passed: 2');
+      } finally {
+        stdoutSpy.mockRestore();
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
+    });
+
+    it('sets exitCode 1 when an eval directory contains no entry file', async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-cli-eval-empty-dir-'),
+      );
+      const emptyAgentDir = path.join(tempDir, 'emptyApp');
+      fs.mkdirSync(emptyAgentDir, {recursive: true});
+
+      const errorSpy = vi
+        .spyOn(AdkLogger.prototype, 'error')
+        .mockImplementation(() => {});
+
+      try {
+        process.exitCode = undefined;
+        await parse(['eval', emptyAgentDir]);
+
+        expect(process.exitCode).toBe(1);
+        expect(agentFileCalls).not.toHaveBeenCalled();
+        expect(errorSpy).toHaveBeenCalledWith(
+          'Error evaluating agent:',
+          expect.stringContaining('No agent entry file'),
+        );
+      } finally {
+        process.exitCode = undefined;
+        errorSpy.mockRestore();
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
+    });
+
+    it('sets exitCode 1 when the loaded eval target is not a BaseAgent', async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-cli-eval-workflow-'),
+      );
+      const agentDir = path.join(tempDir, 'workflowApp');
+      fs.mkdirSync(agentDir, {recursive: true});
+      fs.writeFileSync(
+        path.join(agentDir, 'index.mjs'),
+        [
+          `import {node, Workflow} from '@google/adk';`,
+          `export const rootAgent = new Workflow({`,
+          `  name: 'evalWorkflow',`,
+          `  edges: [['START', node(() => 'done', {name: 'step'})]],`,
+          `});`,
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const errorSpy = vi
+        .spyOn(AdkLogger.prototype, 'error')
+        .mockImplementation(() => {});
+
+      try {
+        process.exitCode = undefined;
+        await parse(['eval', agentDir]);
+
+        expect(process.exitCode).toBe(1);
+        expect(runEvalsCalls).not.toHaveBeenCalled();
+        expect(agentFileDisposeCalls).toHaveBeenCalledTimes(1);
+        expect(errorSpy).toHaveBeenCalledWith(
+          'Error evaluating agent:',
+          expect.stringContaining('Evaluation requires a BaseAgent rootAgent'),
+        );
+      } finally {
+        process.exitCode = undefined;
+        errorSpy.mockRestore();
         fs.rmSync(tempDir, {recursive: true, force: true});
       }
     });
@@ -2006,6 +2635,1206 @@ describe('CLI Entrypoint', () => {
       });
     });
   });
+
+  describe('verbose and log level precedence', () => {
+    it.each([
+      {label: 'web with -v', args: ['web', '-v']},
+      {label: 'web with --verbose', args: ['web', '--verbose']},
+      {label: 'api_server with -v', args: ['api_server', '-v']},
+      {label: 'api_server with --verbose', args: ['api_server', '--verbose']},
+      {label: 'api-server with -v', args: ['api-server', '-v']},
+    ])('sets LogLevel.DEBUG for $label', async ({args}) => {
+      await parse(args);
+
+      expect(setupAdkLogger).toHaveBeenCalledWith(LogLevel.DEBUG);
+      expect(AdkApiServer).toHaveBeenCalledWith(
+        expect.objectContaining({logLevel: LogLevel.DEBUG}),
+      );
+    });
+
+    it.each([
+      {
+        label: 'web with -v before --log_level error',
+        args: ['web', '-v', '--log_level', 'error'],
+        expected: LogLevel.ERROR,
+      },
+      {
+        label: 'web with --log_level warning before -v',
+        args: ['web', '--log_level', 'warning', '-v'],
+        expected: LogLevel.WARN,
+      },
+      {
+        label: 'web with --verbose and --log-level=info',
+        args: ['web', '--verbose', '--log-level=info'],
+        expected: LogLevel.INFO,
+      },
+      {
+        label: 'api_server with -v before --log_level error',
+        args: ['api_server', '-v', '--log_level', 'error'],
+        expected: LogLevel.ERROR,
+      },
+      {
+        label: 'api_server with --log-level warning before --verbose',
+        args: ['api_server', '--log-level', 'warning', '--verbose'],
+        expected: LogLevel.WARN,
+      },
+      {
+        label: 'api-server with --verbose and --log_level=info',
+        args: ['api-server', '--verbose', '--log_level=info'],
+        expected: LogLevel.INFO,
+      },
+    ])(
+      'honours explicit log level over verbose for $label',
+      async ({args, expected}) => {
+        await parse(args);
+
+        expect(setupAdkLogger).toHaveBeenCalledWith(expected);
+        expect(AdkApiServer).toHaveBeenCalledWith(
+          expect.objectContaining({logLevel: expected}),
+        );
+      },
+    );
+
+    it.each([
+      {label: '-v before agent path', args: ['run', '-v', 'agent.ts']},
+      {label: '-v after agent path', args: ['run', 'agent.ts', '-v']},
+    ])('sets LogLevel.DEBUG on run when $label', async ({args}) => {
+      await parse(args);
+
+      expect(logToTmpFolder).toHaveBeenCalledWith({level: LogLevel.DEBUG});
+      expect(runAgent).toHaveBeenCalledWith(
+        expect.objectContaining({agentPath: 'agent.ts'}),
+      );
+    });
+
+    it.each([
+      {
+        label: '-v precedes --log_level error',
+        args: ['run', '-v', '--log_level', 'error', 'agent.ts'],
+        expected: LogLevel.ERROR,
+      },
+      {
+        label: '--log-level warning precedes -v',
+        args: ['run', '--log-level', 'warning', '-v', 'agent.ts'],
+        expected: LogLevel.WARN,
+      },
+      {
+        label: '--verbose accompanies --log_level=info',
+        args: ['run', 'agent.ts', '--verbose', '--log_level=info'],
+        expected: LogLevel.INFO,
+      },
+    ])(
+      'honours explicit log level over verbose on run when $label',
+      async ({args, expected}) => {
+        await parse(args);
+
+        expect(logToTmpFolder).toHaveBeenCalledWith({level: expected});
+      },
+    );
+
+    describe('command: eval log level precedence', () => {
+      let tempDir: string;
+      let agentDir: string;
+
+      beforeEach(() => {
+        tempDir = fs.mkdtempSync(
+          path.join(os.tmpdir(), 'adk-cli-eval-loglevel-'),
+        );
+        agentDir = path.join(tempDir, 'evalApp');
+        fs.mkdirSync(agentDir, {recursive: true});
+        fs.writeFileSync(
+          path.join(agentDir, 'agent.js'),
+          [
+            `import {BaseAgent, createEvent} from '@google/adk';`,
+            `class EvalAgent extends BaseAgent {`,
+            `  constructor() { super({name: 'evalAgent'}); }`,
+            `  async *runAsyncImpl(ctx) {`,
+            `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'ok'}]}});`,
+            `  }`,
+            `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+            `}`,
+            `export const rootAgent = new EvalAgent();`,
+          ].join('\n'),
+          'utf-8',
+        );
+      });
+
+      afterEach(() => {
+        setLogLevel(LogLevel.INFO);
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      });
+
+      it.each([
+        {
+          label: '-v alone',
+          extraArgs: ['-v'],
+          expected: LogLevel.DEBUG,
+        },
+        {
+          label: '--verbose alone',
+          extraArgs: ['--verbose'],
+          expected: LogLevel.DEBUG,
+        },
+        {
+          label: '-v before --log_level error',
+          extraArgs: ['-v', '--log_level', 'error'],
+          expected: LogLevel.ERROR,
+        },
+        {
+          label: '--log-level warning before --verbose',
+          extraArgs: ['--log-level', 'warning', '--verbose'],
+          expected: LogLevel.WARN,
+        },
+        {
+          label: '--verbose with --log_level=info',
+          extraArgs: ['--verbose', '--log_level=info'],
+          expected: LogLevel.INFO,
+        },
+      ])(
+        'sets core log level to $expected on eval with $label',
+        async ({extraArgs, expected}) => {
+          const setLogLevelSpy = vi.spyOn(logger, 'setLogLevel');
+          const stdoutSpy = vi
+            .spyOn(process.stdout, 'write')
+            .mockImplementation(() => true);
+          try {
+            await parse(['eval', agentDir, ...extraArgs]);
+
+            expect(process.exitCode).toBeUndefined();
+            expect(setLogLevelSpy).toHaveBeenCalledWith(expected);
+          } finally {
+            stdoutSpy.mockRestore();
+            setLogLevelSpy.mockRestore();
+          }
+        },
+      );
+    });
+
+    it.each([
+      {
+        label: 'deploy cloud_run with -v',
+        args: ['deploy', 'cloud_run', '-v'],
+        target: () => deployToCloudRun,
+      },
+      {
+        label: 'deploy cloud-run with --verbose',
+        args: ['deploy', 'cloud-run', '--verbose'],
+        target: () => deployToCloudRun,
+      },
+      {
+        label: 'deploy agent_engine with -v',
+        args: ['deploy', 'agent_engine', '-v'],
+        target: () => deployToAgentEngine,
+      },
+      {
+        label: 'deploy agent-engine with --verbose',
+        args: ['deploy', 'agent-engine', '--verbose'],
+        target: () => deployToAgentEngine,
+      },
+      {
+        label: 'deploy reasoning_engine with -v',
+        args: ['deploy', 'reasoning_engine', '-v'],
+        target: () => deployToAgentEngine,
+      },
+      {
+        label: 'deploy reasoning-engine with --verbose',
+        args: ['deploy', 'reasoning-engine', '--verbose'],
+        target: () => deployToAgentEngine,
+      },
+      {
+        label: 'deploy gke with -v',
+        args: ['deploy', 'gke', '-v'],
+        target: () => deployToGke,
+      },
+    ])('forwards debug logLevel for $label', async ({args, target}) => {
+      await parse(args);
+
+      expect(target()).toHaveBeenCalledWith(
+        expect.objectContaining({logLevel: 'debug'}),
+      );
+    });
+
+    it.each([
+      {
+        label: 'deploy cloud_run with -v before --log_level error',
+        args: ['deploy', 'cloud_run', '-v', '--log_level', 'error'],
+        target: () => deployToCloudRun,
+        expected: 'error',
+      },
+      {
+        label: 'deploy cloud-run with --log-level warning before --verbose',
+        args: ['deploy', 'cloud-run', '--log-level', 'warning', '--verbose'],
+        target: () => deployToCloudRun,
+        expected: 'warning',
+      },
+      {
+        label: 'deploy agent_engine with -v before --log_level error',
+        args: ['deploy', 'agent_engine', '-v', '--log_level', 'error'],
+        target: () => deployToAgentEngine,
+        expected: 'error',
+      },
+      {
+        label: 'deploy agent-engine with --log-level info before -v',
+        args: ['deploy', 'agent-engine', '--log-level', 'info', '-v'],
+        target: () => deployToAgentEngine,
+        expected: 'info',
+      },
+      {
+        label: 'deploy reasoning_engine with --verbose and --log_level=warning',
+        args: [
+          'deploy',
+          'reasoning_engine',
+          '--verbose',
+          '--log_level=warning',
+        ],
+        target: () => deployToAgentEngine,
+        expected: 'warning',
+      },
+      {
+        label: 'deploy gke with -v before --log_level error',
+        args: ['deploy', 'gke', '-v', '--log_level', 'error'],
+        target: () => deployToGke,
+        expected: 'error',
+      },
+      {
+        label: 'deploy gke with --log-level warning before --verbose',
+        args: ['deploy', 'gke', '--log-level', 'warning', '--verbose'],
+        target: () => deployToGke,
+        expected: 'warning',
+      },
+    ])(
+      'honours explicit log level over verbose for $label',
+      async ({args, target, expected}) => {
+        await parse(args);
+
+        expect(target()).toHaveBeenCalledWith(
+          expect.objectContaining({logLevel: expected}),
+        );
+      },
+    );
+
+    it.each([
+      {
+        label: 'space-separated short flags -v and -p 8080',
+        args: [
+          'deploy',
+          'cloud_run',
+          './my-agent-path',
+          '--project=my-proj',
+          '--region=us-west1',
+          '-v',
+          '-p',
+          '8080',
+          '--extra-flag=passthrough',
+        ],
+        expected: {
+          port: 8080,
+          logLevel: 'debug',
+          extraGcloudArgs: ['--extra-flag=passthrough'],
+        },
+      },
+      {
+        label: 'attached short flag -p8080 with -v',
+        args: [
+          'deploy',
+          'cloud_run',
+          './my-agent-path',
+          '--project=my-proj',
+          '--region=us-west1',
+          '-v',
+          '-p8080',
+          '--extra-flag=passthrough',
+        ],
+        expected: {
+          port: 8080,
+          logLevel: 'debug',
+          extraGcloudArgs: ['--extra-flag=passthrough'],
+        },
+      },
+      {
+        label: 'combined attached short flags -vp8080',
+        args: [
+          'deploy',
+          'cloud_run',
+          './my-agent-path',
+          '--project=my-proj',
+          '--region=us-west1',
+          '-vp8080',
+          '--extra-flag=passthrough',
+        ],
+        expected: {
+          port: 8080,
+          logLevel: 'debug',
+          extraGcloudArgs: ['--extra-flag=passthrough'],
+        },
+      },
+      {
+        label: 'combined space-separated short flags -vp 8080',
+        args: [
+          'deploy',
+          'cloud_run',
+          './my-agent-path',
+          '--project',
+          'my-proj',
+          '--region',
+          'us-west1',
+          '-vp',
+          '8080',
+          '--extra-flag=passthrough',
+        ],
+        expected: {
+          port: 8080,
+          logLevel: 'debug',
+          extraGcloudArgs: ['--extra-flag=passthrough'],
+        },
+      },
+      {
+        label: 'space-separated -v and --log_level error after agent path',
+        args: [
+          'deploy',
+          'cloud_run',
+          './my-agent-path',
+          '-v',
+          '--log_level',
+          'error',
+          '--extra-flag=passthrough',
+        ],
+        expected: {
+          port: 8000,
+          logLevel: 'error',
+          extraGcloudArgs: ['--extra-flag=passthrough'],
+        },
+      },
+    ])(
+      'excludes recognized options from deploy cloud_run extraGcloudArgs for $label',
+      async ({args, expected}) => {
+        await parse(args);
+
+        const deployOptions = vi.mocked(deployToCloudRun).mock.calls[0]?.[0];
+        expect(deployOptions).toMatchObject(expected);
+      },
+    );
+  });
+
+  describe('combined service URI options on server commands', () => {
+    it.each(['web', 'api_server'])(
+      'passes session, artifact, and memory services to AdkApiServer on %s when service URIs are set',
+      async (subcommand) => {
+        vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'test-project');
+        vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'us-central1');
+
+        await parse([
+          subcommand,
+          './my-agents-dir',
+          '--session_service_uri',
+          'sqlite:///:memory:',
+          '--artifact_service_uri',
+          'gs://my-bucket',
+          '--memory_service_uri',
+          'rag://my-corpus',
+        ]);
+
+        const serverOptions = vi.mocked(AdkApiServer).mock.calls[0]?.[0];
+        expect(serverOptions?.sessionService).toBeInstanceOf(
+          DatabaseSessionService,
+        );
+        expect(serverOptions?.artifactService).toBeInstanceOf(
+          GcsArtifactService,
+        );
+        expect(serverOptions?.memoryService).toBeInstanceOf(
+          VertexAiRagMemoryService,
+        );
+      },
+    );
+  });
+
+  describe('command option and handler parameter alignment', () => {
+    const getOptionAttributes = (cmd: Command | undefined): string[] =>
+      (cmd?.options.map((opt) => opt.attributeName()) ?? []).sort();
+
+    it('registers no duplicate option flags or attribute names on any CLI command', () => {
+      const inspectCommand = (cmd: Command) => {
+        const attributeNames = cmd.options.map((opt) => opt.attributeName());
+        expect(new Set(attributeNames).size).toBe(attributeNames.length);
+
+        const longFlags = cmd.options
+          .map((opt) => opt.long)
+          .filter((flag): flag is string => Boolean(flag));
+        expect(new Set(longFlags).size).toBe(longFlags.length);
+
+        const shortFlags = cmd.options
+          .map((opt) => opt.short)
+          .filter((flag): flag is string => Boolean(flag));
+        expect(new Set(shortFlags).size).toBe(shortFlags.length);
+
+        const allFlags = [...shortFlags, ...longFlags];
+        expect(new Set(allFlags).size).toBe(allFlags.length);
+
+        cmd.commands.forEach(inspectCommand);
+      };
+
+      inspectCommand(program);
+
+      const deployCmd = program.commands.find((c) => c.name() === 'deploy');
+      const cloudRunCmd = deployCmd?.commands.find(
+        (c) => c.name() === 'cloud_run',
+      );
+      expect(cloudRunCmd).toBeDefined();
+      const cloudRunAttributes = getOptionAttributes(cloudRunCmd);
+      expect(cloudRunAttributes).not.toContain('eval_storage_uri');
+      expect(cloudRunAttributes).not.toContain('reload');
+      expect(cloudRunAttributes).not.toContain('reload_agents');
+    });
+
+    it('aligns registered options and forwarded parameters for create', async () => {
+      const createCmd = program.commands.find((c) => c.name() === 'create');
+      expect(getOptionAttributes(createCmd)).toEqual([
+        'api_key',
+        'language',
+        'model',
+        'project',
+        'region',
+        'yes',
+      ]);
+
+      await parse([
+        'create',
+        'aligned-agent',
+        '--yes',
+        '--model',
+        'gemini-flash-latest',
+        '--api_key',
+        'key-align',
+        '--project',
+        'proj-align',
+        '--region',
+        'us-east1',
+        '--language',
+        'js',
+      ]);
+
+      expect(vi.mocked(createAgent)).toHaveBeenCalledWith({
+        agentName: 'aligned-agent',
+        forceYes: true,
+        model: 'gemini-flash-latest',
+        apiKey: 'key-align',
+        project: 'proj-align',
+        region: 'us-east1',
+        language: 'js',
+      });
+    });
+
+    it('aligns registered options and forwarded parameters for run', async () => {
+      const runCmd = program.commands.find((c) => c.name() === 'run');
+      expect(getOptionAttributes(runCmd)).toEqual([
+        'artifact_service_uri',
+        'bundle',
+        'compile',
+        'file_type',
+        'log_level',
+        'memory_service_uri',
+        'otel_to_cloud',
+        'reload_agents',
+        'replay',
+        'resume',
+        'save_session',
+        'session_id',
+        'session_service_uri',
+        'verbose',
+      ]);
+
+      await parse([
+        'run',
+        'agent.ts',
+        '--save_session',
+        '--session_id',
+        'sess-align',
+        '--replay',
+        'replay-align.json',
+        '--resume',
+        'resume-align.json',
+        '--verbose',
+        '--log_level',
+        'warn',
+        '--session_service_uri',
+        'sqlite:///:memory:',
+        '--artifact_service_uri',
+        'gs://align-artifacts',
+        '--memory_service_uri',
+        'rag://projects/proj-align/locations/us-central1/ragCorpora/corpus-align',
+        '--otel_to_cloud',
+        '--compile=false',
+        '--bundle=false',
+        '--file_type',
+        'cjs',
+        '--reload_agents',
+      ]);
+
+      expect(logToTmpFolder).toHaveBeenCalledWith({level: LogLevel.WARN});
+      expect(vi.mocked(runAgent)).toHaveBeenCalledWith({
+        agentPath: 'agent.ts',
+        inputFile: 'replay-align.json',
+        savedSessionFile: 'resume-align.json',
+        saveSession: true,
+        sessionId: 'sess-align',
+        sessionService: expect.any(DatabaseSessionService),
+        artifactService: expect.any(GcsArtifactService),
+        memoryService: expect.any(VertexAiRagMemoryService),
+        otelToCloud: true,
+        agentFileLoadOptions: {
+          compile: false,
+          bundle: false,
+          minify: false,
+          moduleType: 'cjs',
+        },
+        reloadAgents: true,
+      });
+    });
+
+    it('aligns registered options and forwarded parameters for eval', async () => {
+      const evalCmd = program.commands.find((c) => c.name() === 'eval');
+      expect(getOptionAttributes(evalCmd)).toEqual([
+        'bundle',
+        'compile',
+        'config_file_path',
+        'eval_storage_uri',
+        'file_type',
+        'log_level',
+        'print_detailed_results',
+        'verbose',
+      ]);
+
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-cli-eval-align-'),
+      );
+      const agentDir = path.join(tempDir, 'evalApp');
+      fs.mkdirSync(agentDir, {recursive: true});
+      fs.writeFileSync(
+        path.join(agentDir, 'agent.js'),
+        [
+          `import {BaseAgent, createEvent} from '@google/adk';`,
+          `class EvalAgent extends BaseAgent {`,
+          `  constructor() { super({name: 'evalAgent'}); }`,
+          `  async *runAsyncImpl(ctx) {`,
+          `    yield createEvent({invocationId: ctx.invocationId, author: this.name, content: {role: 'model', parts: [{text: 'pong'}]}});`,
+          `  }`,
+          `  async *runLiveImpl(ctx) { yield* this.runAsyncImpl(ctx); }`,
+          `}`,
+          `export const rootAgent = new EvalAgent();`,
+        ].join('\n'),
+        'utf-8',
+      );
+      const configFile = path.join(tempDir, 'eval-config.json');
+      fs.writeFileSync(configFile, JSON.stringify({criteria: {}}), 'utf-8');
+
+      const evalSetsManager = {
+        getEvalSet: vi.fn().mockResolvedValue({
+          evalSetId: 'remoteSet',
+          evalCases: [
+            {
+              evalId: 'case1',
+              conversation: [
+                {
+                  invocationId: 'inv-1',
+                  userContent: {role: 'user', parts: [{text: 'ping'}]},
+                  finalResponse: {role: 'model', parts: [{text: 'pong'}]},
+                  creationTimestamp: 1,
+                },
+              ],
+            },
+          ],
+        }),
+        createEvalSet: vi.fn(),
+        listEvalSets: vi.fn(),
+        getEvalCase: vi.fn(),
+        addEvalCase: vi.fn(),
+        updateEvalCase: vi.fn(),
+        deleteEvalCase: vi.fn(),
+      };
+      const evalSetResultsManager = {
+        saveEvalSetResult: vi.fn(),
+        getEvalSetResult: vi.fn(),
+        listEvalSetResults: vi.fn(),
+      };
+      createGcsEvalManagersFromUriMock.mockResolvedValueOnce({
+        evalSetsManager,
+        evalSetResultsManager,
+      });
+
+      const setLogLevelSpy = vi.spyOn(logger, 'setLogLevel');
+      const stdoutSpy = vi
+        .spyOn(process.stdout, 'write')
+        .mockImplementation(() => true);
+
+      try {
+        await parse([
+          'eval',
+          agentDir,
+          'remoteSet:case1',
+          '--config_file_path',
+          configFile,
+          '--print_detailed_results',
+          '--eval_storage_uri',
+          'gs://eval-align-bucket',
+          '--verbose',
+          '--log_level',
+          'warning',
+          '--compile=false',
+          '--bundle=false',
+          '--file_type',
+          'cjs',
+        ]);
+
+        expect(process.exitCode).toBeUndefined();
+        expect(agentFileCalls).toHaveBeenCalledWith(
+          path.join(agentDir, 'agent.js'),
+          {
+            compile: false,
+            bundle: false,
+            minify: false,
+            moduleType: 'cjs',
+          },
+        );
+        expect(getEvaluationCriteriaOrDefaultCalls).toHaveBeenCalledWith(
+          configFile,
+        );
+        expect(createGcsEvalManagersFromUriMock).toHaveBeenCalledWith(
+          'gs://eval-align-bucket',
+        );
+        expect(setLogLevelSpy).toHaveBeenCalledWith(LogLevel.WARN);
+        expect(runEvalsCalls).toHaveBeenCalledWith(
+          expect.objectContaining({remoteSet: expect.any(Array)}),
+          expect.anything(),
+          undefined,
+          expect.any(Array),
+          true,
+        );
+      } finally {
+        setLogLevel(LogLevel.INFO);
+        stdoutSpy.mockRestore();
+        setLogLevelSpy.mockRestore();
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
+    });
+
+    it('aligns registered options and forwarded parameters for web', async () => {
+      const webCmd = program.commands.find((c) => c.name() === 'web');
+      expect(getOptionAttributes(webCmd)).toEqual([
+        'a2a',
+        'a2a_auth_token',
+        'allow_origins',
+        'allowed_hosts',
+        'artifact_service_uri',
+        'bundle',
+        'compile',
+        'eval_storage_uri',
+        'file_type',
+        'host',
+        'log_level',
+        'memory_service_uri',
+        'otel_to_cloud',
+        'port',
+        'reload_agents',
+        'session_service_uri',
+        'verbose',
+      ]);
+
+      const evalSetsManager = {
+        getEvalSet: vi.fn(),
+        createEvalSet: vi.fn(),
+        listEvalSets: vi.fn(),
+        getEvalCase: vi.fn(),
+        addEvalCase: vi.fn(),
+        updateEvalCase: vi.fn(),
+        deleteEvalCase: vi.fn(),
+      };
+      const evalSetResultsManager = {
+        saveEvalSetResult: vi.fn(),
+        getEvalSetResult: vi.fn(),
+        listEvalSetResults: vi.fn(),
+      };
+      createGcsEvalManagersFromUriMock.mockResolvedValueOnce({
+        evalSetsManager,
+        evalSetResultsManager,
+      });
+
+      await parse([
+        'web',
+        './agents-web',
+        '--host',
+        '0.0.0.0',
+        '--port',
+        '9001',
+        '--allow_origins',
+        'https://web.example.com',
+        '--allowed_hosts',
+        'proxy.example.com',
+        '--verbose',
+        '--log_level',
+        'warn',
+        '--session_service_uri',
+        'sqlite:///:memory:',
+        '--artifact_service_uri',
+        'gs://web-artifacts',
+        '--memory_service_uri',
+        'rag://projects/proj-web/locations/us-central1/ragCorpora/corpus-web',
+        '--eval_storage_uri',
+        'gs://web-evals',
+        '--otel_to_cloud',
+        '--compile=false',
+        '--bundle=false',
+        '--file_type',
+        'cjs',
+        '--a2a',
+        '--a2a_auth_token',
+        'web-token',
+        '--reload_agents',
+      ]);
+
+      expect(setupAdkLogger).toHaveBeenCalledWith(LogLevel.WARN);
+      expect(createGcsEvalManagersFromUriMock).toHaveBeenCalledWith(
+        'gs://web-evals',
+      );
+      expect(vi.mocked(AdkApiServer)).toHaveBeenCalledWith({
+        logLevel: LogLevel.WARN,
+        agentsDir: path.resolve('agents-web'),
+        host: '0.0.0.0',
+        port: 9001,
+        serveDebugUI: true,
+        allowOrigins: 'https://web.example.com',
+        allowedHosts: ['proxy.example.com'],
+        sessionService: expect.any(DatabaseSessionService),
+        artifactService: expect.any(GcsArtifactService),
+        memoryService: expect.any(VertexAiRagMemoryService),
+        evalSetsManager,
+        evalSetResultsManager,
+        otelToCloud: true,
+        agentFileLoadOptions: {
+          compile: false,
+          bundle: false,
+          minify: false,
+          moduleType: 'cjs',
+        },
+        a2a: true,
+        a2aAuthToken: 'web-token',
+        reloadAgents: true,
+      });
+    });
+
+    it('aligns registered options and forwarded parameters for api_server', async () => {
+      const apiServerCmd = program.commands.find(
+        (c) => c.name() === 'api_server',
+      );
+      expect(getOptionAttributes(apiServerCmd)).toEqual([
+        'a2a',
+        'a2a_auth_token',
+        'allow_origins',
+        'allowed_hosts',
+        'artifact_service_uri',
+        'bundle',
+        'compile',
+        'eval_storage_uri',
+        'file_type',
+        'host',
+        'log_level',
+        'memory_service_uri',
+        'otel_to_cloud',
+        'port',
+        'reload_agents',
+        'session_service_uri',
+        'verbose',
+      ]);
+
+      const evalSetsManager = {
+        getEvalSet: vi.fn(),
+        createEvalSet: vi.fn(),
+        listEvalSets: vi.fn(),
+        getEvalCase: vi.fn(),
+        addEvalCase: vi.fn(),
+        updateEvalCase: vi.fn(),
+        deleteEvalCase: vi.fn(),
+      };
+      const evalSetResultsManager = {
+        saveEvalSetResult: vi.fn(),
+        getEvalSetResult: vi.fn(),
+        listEvalSetResults: vi.fn(),
+      };
+      createGcsEvalManagersFromUriMock.mockResolvedValueOnce({
+        evalSetsManager,
+        evalSetResultsManager,
+      });
+
+      await parse([
+        'api_server',
+        './agents-api',
+        '--host',
+        '0.0.0.0',
+        '--port',
+        '9002',
+        '--allow_origins',
+        'https://api.example.com',
+        '--allowed_hosts',
+        'gateway.example.com',
+        '--verbose',
+        '--log_level',
+        'error',
+        '--session_service_uri',
+        'sqlite:///:memory:',
+        '--artifact_service_uri',
+        'gs://api-artifacts',
+        '--memory_service_uri',
+        'rag://projects/proj-api/locations/us-central1/ragCorpora/corpus-api',
+        '--eval_storage_uri',
+        'gs://api-evals',
+        '--otel_to_cloud',
+        '--compile=false',
+        '--bundle=false',
+        '--file_type',
+        'cjs',
+        '--a2a',
+        '--a2a_auth_token',
+        'api-token',
+        '--reload_agents',
+      ]);
+
+      expect(setupAdkLogger).toHaveBeenCalledWith(LogLevel.ERROR);
+      expect(createGcsEvalManagersFromUriMock).toHaveBeenCalledWith(
+        'gs://api-evals',
+      );
+      expect(vi.mocked(AdkApiServer)).toHaveBeenCalledWith({
+        logLevel: LogLevel.ERROR,
+        agentsDir: path.resolve('agents-api'),
+        host: '0.0.0.0',
+        port: 9002,
+        serveDebugUI: false,
+        allowOrigins: 'https://api.example.com',
+        allowedHosts: ['gateway.example.com'],
+        sessionService: expect.any(DatabaseSessionService),
+        artifactService: expect.any(GcsArtifactService),
+        memoryService: expect.any(VertexAiRagMemoryService),
+        evalSetsManager,
+        evalSetResultsManager,
+        otelToCloud: true,
+        agentFileLoadOptions: {
+          compile: false,
+          bundle: false,
+          minify: false,
+          moduleType: 'cjs',
+        },
+        a2a: true,
+        a2aAuthToken: 'api-token',
+        reloadAgents: true,
+      });
+    });
+
+    it('aligns registered options and forwarded parameters for deploy cloud_run', async () => {
+      const deployCmd = program.commands.find((c) => c.name() === 'deploy');
+      const cloudRunCmd = deployCmd?.commands.find(
+        (c) => c.name() === 'cloud_run',
+      );
+      expect(getOptionAttributes(cloudRunCmd)).toEqual([
+        'a2a',
+        'a2a_auth_token',
+        'adk_version',
+        'allow_origins',
+        'app_name',
+        'artifact_service_uri',
+        'bundle',
+        'compile',
+        'file_type',
+        'log_level',
+        'memory_service_uri',
+        'otel_to_cloud',
+        'port',
+        'project',
+        'region',
+        'service_name',
+        'session_service_uri',
+        'temp_folder',
+        'verbose',
+        'with_cloud_trace',
+        'with_ui',
+      ]);
+
+      await parse([
+        'deploy',
+        'cloud_run',
+        './cloud-run-agent',
+        '--port',
+        '8081',
+        '--project',
+        'cr-project',
+        '--region',
+        'us-west1',
+        '--service_name',
+        'cr-service',
+        '--app_name',
+        'cr-app',
+        '--temp_folder',
+        '/tmp/cr-stage',
+        '--adk_version',
+        '2.4.0',
+        '--with_ui',
+        '--allow_origins',
+        'https://cloudrun.example.com',
+        '--verbose',
+        '--log_level',
+        'warn',
+        '--session_service_uri',
+        'memory://',
+        '--artifact_service_uri',
+        'gs://cr-artifacts',
+        '--memory_service_uri',
+        'rag://cr-corpus',
+        '--with_cloud_trace',
+        '--compile=false',
+        '--bundle=false',
+        '--file_type',
+        'cjs',
+        '--a2a',
+        '--a2a_auth_token',
+        'cr-token',
+      ]);
+
+      expect(vi.mocked(deployToCloudRun)).toHaveBeenCalledWith({
+        agentPath: path.resolve('cloud-run-agent'),
+        project: 'cr-project',
+        region: 'us-west1',
+        serviceName: 'cr-service',
+        appName: 'cr-app',
+        tempFolder: '/tmp/cr-stage',
+        port: 8081,
+        withUi: true,
+        logLevel: 'warn',
+        adkVersion: '2.4.0',
+        allowOrigins: 'https://cloudrun.example.com',
+        sessionServiceUri: 'memory://',
+        artifactServiceUri: 'gs://cr-artifacts',
+        memoryServiceUri: 'rag://cr-corpus',
+        otelToCloud: true,
+        agentFileLoadOptions: {
+          compile: false,
+          bundle: false,
+          minify: true,
+          moduleType: 'cjs',
+        },
+        a2a: true,
+        a2aAuthToken: 'cr-token',
+        extraGcloudArgs: [],
+      });
+    });
+
+    it('aligns registered options and forwarded parameters for deploy agent_engine', async () => {
+      const deployCmd = program.commands.find((c) => c.name() === 'deploy');
+      const agentEngineCmd = deployCmd?.commands.find(
+        (c) => c.name() === 'agent_engine',
+      );
+      const reasoningEngineCmd = deployCmd?.commands.find(
+        (c) => c.name() === 'reasoning_engine',
+      );
+      const expectedOptions = [
+        'a2a',
+        'adk_version',
+        'agent_engine_id',
+        'allow_origins',
+        'artifact_service_uri',
+        'bundle',
+        'compile',
+        'description',
+        'display_name',
+        'file_type',
+        'log_level',
+        'max_instances',
+        'memory_service_uri',
+        'min_instances',
+        'otel_to_cloud',
+        'project',
+        'region',
+        'repository',
+        'session_service_uri',
+        'staging_bucket',
+        'temp_folder',
+        'verbose',
+        'with_ui',
+      ];
+      expect(getOptionAttributes(agentEngineCmd)).toEqual(expectedOptions);
+      expect(getOptionAttributes(reasoningEngineCmd)).toEqual(expectedOptions);
+
+      await parse([
+        'deploy',
+        'agent_engine',
+        './engine-agent',
+        '--project',
+        'ae-project',
+        '--region',
+        'us-central1',
+        '--display_name',
+        'ae-display',
+        '--description',
+        'ae-description',
+        '--repository',
+        'ae-repo',
+        '--staging_bucket',
+        'ae-bucket',
+        '--temp_folder',
+        '/tmp/ae-stage',
+        '--adk_version',
+        '2.4.0',
+        '--with_ui',
+        '--allow_origins',
+        'https://engine.example.com',
+        '--verbose',
+        '--log_level',
+        'warn',
+        '--session_service_uri',
+        'memory://',
+        '--artifact_service_uri',
+        'gs://ae-artifacts',
+        '--memory_service_uri',
+        'rag://ae-corpus',
+        '--otel_to_cloud',
+        '--compile=false',
+        '--bundle=false',
+        '--file_type',
+        'cjs',
+        '--a2a',
+        '--agent_engine_id',
+        '98765',
+        '--min_instances',
+        '2',
+        '--max_instances',
+        '6',
+      ]);
+
+      expect(vi.mocked(deployToAgentEngine)).toHaveBeenCalledWith({
+        agentPath: path.resolve('engine-agent'),
+        project: 'ae-project',
+        region: 'us-central1',
+        displayName: 'ae-display',
+        description: 'ae-description',
+        repository: 'ae-repo',
+        stagingBucket: 'ae-bucket',
+        tempFolder: '/tmp/ae-stage',
+        port: 8080,
+        withUi: true,
+        logLevel: 'warn',
+        adkVersion: '2.4.0',
+        allowOrigins: 'https://engine.example.com',
+        sessionServiceUri: 'memory://',
+        artifactServiceUri: 'gs://ae-artifacts',
+        memoryServiceUri: 'rag://ae-corpus',
+        otelToCloud: true,
+        agentFileLoadOptions: {
+          compile: false,
+          bundle: false,
+          minify: true,
+          moduleType: 'cjs',
+        },
+        a2a: true,
+        agentEngineId: '98765',
+        minInstances: 2,
+        maxInstances: 6,
+      });
+    });
+
+    it('aligns registered options and forwarded parameters for deploy gke', async () => {
+      const deployCmd = program.commands.find((c) => c.name() === 'deploy');
+      const gkeCmd = deployCmd?.commands.find((c) => c.name() === 'gke');
+      expect(getOptionAttributes(gkeCmd)).toEqual([
+        'a2a',
+        'adk_version',
+        'allow_origins',
+        'app_name',
+        'artifact_service_uri',
+        'bundle',
+        'cluster_name',
+        'compile',
+        'file_type',
+        'log_level',
+        'memory_service_uri',
+        'otel_to_cloud',
+        'port',
+        'project',
+        'region',
+        'service_name',
+        'service_type',
+        'session_service_uri',
+        'temp_folder',
+        'trace_to_cloud',
+        'verbose',
+        'with_ui',
+      ]);
+
+      await parse([
+        'deploy',
+        'gke',
+        './gke-agent',
+        '--port',
+        '8082',
+        '--project',
+        'gke-project',
+        '--region',
+        'us-east4',
+        '--cluster_name',
+        'gke-cluster',
+        '--service_name',
+        'gke-service',
+        '--service_type',
+        'LoadBalancer',
+        '--app_name',
+        'gke-app',
+        '--temp_folder',
+        '/tmp/gke-stage',
+        '--adk_version',
+        '2.4.0',
+        '--with_ui',
+        '--allow_origins',
+        'https://gke.example.com',
+        '--verbose',
+        '--log_level',
+        'warn',
+        '--session_service_uri',
+        'memory://',
+        '--artifact_service_uri',
+        'gs://gke-artifacts',
+        '--memory_service_uri',
+        'rag://gke-corpus',
+        '--trace_to_cloud',
+        '--compile=false',
+        '--bundle=false',
+        '--file_type',
+        'cjs',
+        '--a2a',
+      ]);
+
+      expect(vi.mocked(deployToGke)).toHaveBeenCalledWith({
+        agentPath: path.resolve('gke-agent'),
+        project: 'gke-project',
+        region: 'us-east4',
+        clusterName: 'gke-cluster',
+        serviceName: 'gke-service',
+        serviceType: 'LoadBalancer',
+        appName: 'gke-app',
+        tempFolder: '/tmp/gke-stage',
+        port: 8082,
+        withUi: true,
+        logLevel: 'warn',
+        adkVersion: '2.4.0',
+        allowOrigins: 'https://gke.example.com',
+        sessionServiceUri: 'memory://',
+        artifactServiceUri: 'gs://gke-artifacts',
+        memoryServiceUri: 'rag://gke-corpus',
+        otelToCloud: true,
+        agentFileLoadOptions: {
+          compile: false,
+          bundle: false,
+          minify: true,
+          moduleType: 'cjs',
+        },
+        a2a: true,
+      });
+    });
+  });
 });
 
 describe('usage errors', () => {
@@ -2256,6 +4085,7 @@ describe('getMemoryServiceFromOptions', () => {
 describe('getSessionServiceFromOptions', () => {
   beforeEach(() => {
     vertexAiSessionServiceOptions.mockClear();
+    getSessionServiceFromUriCalls.mockClear();
   });
 
   afterEach(() => {
@@ -2361,5 +4191,44 @@ describe('getSessionServiceFromOptions', () => {
         sessionServiceUri: 'agentengine://123',
       }),
     ).toThrow('GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION not set.');
+  });
+
+  it('forwards sessionDbOptions when constructing a DatabaseSessionService', async () => {
+    const sessionDbOptions: DatabaseSessionServiceOptions = {
+      debug: false,
+      allowGlobalContext: true,
+      staleSession: 'reload',
+    };
+    const service = getSessionServiceFromOptions({
+      sessionServiceUri: 'sqlite:///:memory:',
+      sessionDbOptions,
+    });
+
+    expect(service).toBeInstanceOf(DatabaseSessionService);
+    expect(getSessionServiceFromUriCalls).toHaveBeenCalledWith(
+      'sqlite:///:memory:',
+      sessionDbOptions,
+    );
+
+    const key = {
+      appName: 'cliApp',
+      userId: 'user-1',
+      sessionId: 'session-1',
+    };
+    const session = await service.createSession(key);
+    const concurrentSession = await service.getSession(key);
+    expect(concurrentSession).toBeDefined();
+    if (concurrentSession) {
+      await service.appendEvent({
+        session: concurrentSession,
+        event: createEvent({timestamp: Date.now() + 10}),
+      });
+    }
+    await expect(
+      service.appendEvent({
+        session,
+        event: createEvent({timestamp: Date.now() + 20}),
+      }),
+    ).resolves.toBeDefined();
   });
 });

@@ -10,11 +10,13 @@ import {
   FileData,
   GoogleGenAI,
   HttpOptions,
+  HttpRetryOptions,
   LiveServerMessage,
   Tool,
 } from '@google/genai';
 
 import {adaptComputerUseTool} from '../tools/computer_use/computer_use_toolset.js';
+import {mergeTrackingHeaders} from '../utils/client_labels.js';
 import {isBrowser, isEnterpriseModeEnabled} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
@@ -63,6 +65,10 @@ export interface GeminiParams {
    * Whether to use the Interactions API for stateful conversations.
    */
   useInteractionsApi?: boolean;
+  /**
+   * Allow Gemini to retry failed responses.
+   */
+  retryOptions?: HttpRetryOptions;
 }
 
 const GEMINI_MODEL_SYMBOL = Symbol.for('google.adk.geminiModel');
@@ -92,6 +98,7 @@ export class Gemini extends BaseLlm {
   private readonly location?: string;
   private readonly headers?: Record<string, string>;
   readonly useInteractionsApi: boolean;
+  readonly retryOptions?: HttpRetryOptions;
 
   /**
    * @param params The parameters for creating a Gemini instance.
@@ -104,6 +111,7 @@ export class Gemini extends BaseLlm {
     location,
     headers,
     useInteractionsApi,
+    retryOptions,
   }: GeminiParams) {
     if (!model) {
       model = 'gemini-2.5-flash';
@@ -129,6 +137,7 @@ export class Gemini extends BaseLlm {
     this.headers = headers;
     this.vertexai = !!params.vertexai;
     this.useInteractionsApi = !!useInteractionsApi;
+    this.retryOptions = retryOptions;
   }
 
   /**
@@ -138,6 +147,8 @@ export class Gemini extends BaseLlm {
    */
   static override readonly supportedModels: Array<string | RegExp> = [
     /gemini-.*/,
+    // model optimizer pattern
+    /^model-optimizer-.*/,
     // fine-tuned vertex endpoint pattern
     /projects\/.+\/locations\/.+\/endpoints\/.+/,
     // vertex gemini long name
@@ -182,12 +193,11 @@ export class Gemini extends BaseLlm {
       llmRequest.config = {};
     }
 
-    if (llmRequest.config.httpOptions) {
-      llmRequest.config.httpOptions.headers = {
-        ...llmRequest.config.httpOptions.headers,
-        ...this.trackingHeaders,
-      };
-    }
+    llmRequest.config.httpOptions ??= {};
+    llmRequest.config.httpOptions.headers = mergeTrackingHeaders(
+      llmRequest.config.httpOptions.headers,
+      this.getInstanceTrackingHeaders(),
+    );
 
     if (abortSignal) {
       llmRequest.config.abortSignal = abortSignal;
@@ -219,7 +229,26 @@ export class Gemini extends BaseLlm {
   }
 
   protected getHttpOptions(): HttpOptions {
-    return {headers: {...this.trackingHeaders, ...this.headers}};
+    return {
+      headers: mergeTrackingHeaders(this.headers, this.trackingHeaders),
+      ...(this.retryOptions ? {retryOptions: this.retryOptions} : {}),
+    };
+  }
+
+  private getInstanceTrackingHeaders(): Record<string, string> {
+    const baseTrackingHeaders = this.trackingHeaders;
+    const trackingHeaderKeys = new Set(
+      Object.keys(baseTrackingHeaders).map((key) => key.toLowerCase()),
+    );
+    const mergedHeaders = mergeTrackingHeaders(
+      this.headers,
+      baseTrackingHeaders,
+    );
+    return Object.fromEntries(
+      Object.entries(mergedHeaders).filter(([key]) =>
+        trackingHeaderKeys.has(key.toLowerCase()),
+      ),
+    );
   }
 
   get apiClient(): GoogleGenAI {

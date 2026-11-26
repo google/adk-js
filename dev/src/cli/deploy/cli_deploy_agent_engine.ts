@@ -21,6 +21,7 @@ import {
 } from './deploy_utils.js';
 
 const DEFAULT_MAX_ATTEMPTS = 30;
+const AGENT_FRAMEWORK = 'google-adk';
 
 // Platform-managed variables injected by the Agent Engine runtime at container
 // startup. Forwarding them from a local .env or deploy config would overwrite
@@ -319,6 +320,7 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
       ...(!isUpdate || options.displayName !== undefined ? {displayName} : {}),
       description: options.description,
       spec: {
+        agentFramework: AGENT_FRAMEWORK,
         containerSpec: {
           imageUri: imageTag,
         },
@@ -363,6 +365,7 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
       const updateMask = [
         ...(options.displayName !== undefined ? ['display_name'] : []),
         ...(options.description !== undefined ? ['description'] : []),
+        'spec.agent_framework',
         'spec.container_spec',
         ...(options.minInstances !== undefined
           ? ['spec.deployment_spec.min_instances']

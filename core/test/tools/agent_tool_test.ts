@@ -18,7 +18,8 @@ import {
   Runner,
   State,
 } from '@google/adk';
-import {describe, expect, it, vi} from 'vitest';
+import {Type} from '@google/genai';
+import {afterEach, describe, expect, it, vi} from 'vitest';
 
 import {z} from 'zod/v4';
 
@@ -878,6 +879,116 @@ describe('AgentTool', () => {
         toolContext,
       });
       expect(schemaResult).toEqual({status: 'ok', count: 2});
+    });
+  });
+
+  describe('_getDeclaration response schema', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('sets a string response schema on Vertex AI when outputSchema is omitted', () => {
+      vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', 'true');
+      vi.stubEnv('GOOGLE_GENAI_USE_ENTERPRISE', undefined);
+      const toolAgent = new LlmAgent({
+        name: 'toolAgent',
+        description: 'Agent without output schema',
+      });
+      const agentTool = new AgentTool({agent: toolAgent});
+      const declaration = agentTool._getDeclaration();
+
+      expect(declaration.name).toBe('toolAgent');
+      expect(declaration.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          request: {
+            type: Type.STRING,
+          },
+        },
+        required: ['request'],
+      });
+      expect(declaration.response).toEqual({type: Type.STRING});
+    });
+
+    it('sets an object response schema on Vertex AI when outputSchema is configured', () => {
+      vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', 'true');
+      vi.stubEnv('GOOGLE_GENAI_USE_ENTERPRISE', undefined);
+      const toolAgent = new LlmAgent({
+        name: 'toolAgent',
+        outputSchema: z.object({
+          customOutput: z.string(),
+        }),
+      });
+      const agentTool = new AgentTool({agent: toolAgent});
+      const declaration = agentTool._getDeclaration();
+
+      expect(declaration.name).toBe('toolAgent');
+      expect(declaration.response).toEqual({type: Type.OBJECT});
+    });
+
+    it('omits the response schema on the Gemini API variant even when outputSchema is configured', () => {
+      vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', 'false');
+      vi.stubEnv('GOOGLE_GENAI_USE_ENTERPRISE', undefined);
+      const toolAgent = new LlmAgent({
+        name: 'toolAgent',
+        outputSchema: z.object({
+          customOutput: z.string(),
+        }),
+      });
+      const agentTool = new AgentTool({agent: toolAgent});
+      const declaration = agentTool._getDeclaration();
+
+      expect(declaration.name).toBe('toolAgent');
+      expect(declaration.response).toBeUndefined();
+    });
+
+    it('sets inputSchema parameters and an object response schema on Vertex AI when both schemas are configured', () => {
+      vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', 'true');
+      vi.stubEnv('GOOGLE_GENAI_USE_ENTERPRISE', undefined);
+      const toolAgent = new LlmAgent({
+        name: 'toolAgent',
+        inputSchema: z.object({
+          customInput: z.string(),
+        }),
+        outputSchema: z.object({
+          customOutput: z.string(),
+        }),
+      });
+      const agentTool = new AgentTool({agent: toolAgent});
+      const declaration = agentTool._getDeclaration();
+
+      expect(declaration.name).toBe('toolAgent');
+      expect(declaration.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          customInput: {type: Type.STRING},
+        },
+        required: ['customInput'],
+      });
+      expect(declaration.response).toEqual({type: Type.OBJECT});
+    });
+
+    it('sets inputSchema parameters and a string response schema on Vertex AI when only inputSchema is configured', () => {
+      vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', 'true');
+      vi.stubEnv('GOOGLE_GENAI_USE_ENTERPRISE', undefined);
+      const toolAgent = new LlmAgent({
+        name: 'toolAgent',
+        inputSchema: z.object({
+          customInput: z.string(),
+        }),
+      });
+      const agentTool = new AgentTool({agent: toolAgent});
+      const declaration = agentTool._getDeclaration();
+
+      expect(declaration.name).toBe('toolAgent');
+      expect(declaration.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          customInput: {type: Type.STRING},
+        },
+        required: ['customInput'],
+      });
+      expect(declaration.response).toEqual({type: Type.STRING});
     });
   });
 });

@@ -121,6 +121,15 @@ export class RestApiTool extends BaseTool {
     this.authScheme = authScheme;
   }
 
+  /**
+   * Returns the OpenAPI security scheme currently configured on this tool, if
+   * any.
+   */
+  @experimental
+  public getAuthScheme(): OpenAPIV3.SecuritySchemeObject | undefined {
+    return this.authScheme;
+  }
+
   @experimental
   public configureAuthCredential(authCredential: AuthCredential) {
     this.authCredential = authCredential;

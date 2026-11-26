@@ -67,6 +67,65 @@ export function isZodObject(
   return isZodSchema(obj) && getZodTypeName(obj) === 'ZodObject';
 }
 
+interface UnwrappableZodSchema {
+  unwrap(): unknown;
+}
+
+function isUnwrappableZodSchema(
+  schema: ZodSchema,
+): schema is ZodSchema & UnwrappableZodSchema {
+  return 'unwrap' in schema && typeof schema.unwrap === 'function';
+}
+
+function matchZodVoidOrUndefined(schema: unknown): {
+  isVoidOrUndefined: boolean;
+  description?: string;
+} {
+  let current: unknown = schema;
+  let description: string | undefined;
+  while (isZodSchema(current)) {
+    if (
+      description === undefined &&
+      typeof current.description === 'string' &&
+      current.description.length > 0
+    ) {
+      description = current.description;
+    }
+    const typeName = getZodTypeName(current);
+    if (typeName === 'ZodVoid' || typeName === 'ZodUndefined') {
+      return {isVoidOrUndefined: true, description};
+    }
+    if (
+      (typeName === 'ZodOptional' || typeName === 'ZodNullable') &&
+      isUnwrappableZodSchema(current)
+    ) {
+      current = current.unwrap();
+      continue;
+    }
+    return {isVoidOrUndefined: false};
+  }
+  return {isVoidOrUndefined: false};
+}
+
+/**
+ * Returns true if the schema represents `void` or `undefined`, including when
+ * wrapped in `.optional()` or `.nullable()` (supports both Zod v3 and v4).
+ */
+export function isZodVoidOrUndefined(schema: unknown): boolean {
+  return matchZodVoidOrUndefined(schema).isVoidOrUndefined;
+}
+
+/**
+ * Returns the first non-empty description attached to a `void` or `undefined`
+ * Zod schema or its `.optional()` / `.nullable()` wrappers, or `undefined` when
+ * none is set or the schema is not `void` / `undefined`.
+ */
+export function getZodVoidOrUndefinedDescription(
+  schema: unknown,
+): string | undefined {
+  return matchZodVoidOrUndefined(schema).description;
+}
+
 export function zodObjectToSchema(
   schema: z3.ZodObject<z3.ZodRawShape> | z4.ZodObject<z4.ZodRawShape>,
 ): Schema {

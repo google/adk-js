@@ -12,6 +12,10 @@ import {
   CreateDockerFileContentOptions,
   deployToCloudRun,
 } from '../../src/cli/deploy/cli_deploy_cloud_run.js';
+import {
+  assertSafeDockerfileToken,
+  assertSafeNpmVersion,
+} from '../../src/cli/deploy/deploy_utils.js';
 import {A2A_AUTH_TOKEN_ENV_VAR} from '../../src/server/adk_api_server.js';
 import {AgentLoader} from '../../src/utils/agent_loader.js';
 import {
@@ -354,6 +358,55 @@ describe('createDockerFileContent', () => {
       ).toThrow(/Invalid adkVersion/);
     },
   );
+
+  it('should omit ENV GOOGLE_CLOUD_LOCATION when region is omitted', () => {
+    const content = createDockerFileContent({
+      ...defaultOptions,
+      region: undefined,
+    });
+    expect(content).toContain('ENV GOOGLE_CLOUD_PROJECT=test-project');
+    expect(content).not.toContain('GOOGLE_CLOUD_LOCATION');
+    expect(content).not.toContain('undefined');
+  });
+
+  it('should omit ENV GOOGLE_CLOUD_PROJECT when project is omitted', () => {
+    const content = createDockerFileContent({
+      ...defaultOptions,
+      project: undefined,
+    });
+    expect(content).toContain('ENV GOOGLE_CLOUD_LOCATION=us-central1');
+    expect(content).not.toContain('GOOGLE_CLOUD_PROJECT');
+    expect(content).not.toContain('undefined');
+  });
+});
+
+describe('assertSafeDockerfileToken and assertSafeNpmVersion', () => {
+  it('accepts valid Dockerfile tokens and rejects unsafe tokens', () => {
+    expect(() =>
+      assertSafeDockerfileToken('my-project.example_1', 'project'),
+    ).not.toThrow();
+    expect(() => assertSafeDockerfileToken('', 'project')).toThrow(
+      /Invalid project/,
+    );
+    expect(() => assertSafeDockerfileToken('a'.repeat(129), 'project')).toThrow(
+      /Invalid project/,
+    );
+    expect(() => assertSafeDockerfileToken('proj\nRUN id', 'project')).toThrow(
+      /Invalid project/,
+    );
+  });
+
+  it('accepts valid npm versions and rejects unsafe versions', () => {
+    expect(() => assertSafeNpmVersion('2.5.0-rc.1')).not.toThrow();
+    expect(() => assertSafeNpmVersion('^2.4.0')).not.toThrow();
+    expect(() => assertSafeNpmVersion('')).toThrow(/Invalid adkVersion/);
+    expect(() => assertSafeNpmVersion('a'.repeat(129))).toThrow(
+      /Invalid adkVersion/,
+    );
+    expect(() => assertSafeNpmVersion('1.0.0;id')).toThrow(
+      /Invalid adkVersion/,
+    );
+  });
 });
 
 describe('deployToCloudRun', () => {
@@ -580,6 +633,25 @@ describe('deployToCloudRun', () => {
     );
   });
 
+  it('should reject when gcloud config get-value project fails', async () => {
+    const optionsWithoutProject = {
+      ...defaultOptions,
+      project: '',
+    };
+
+    execMock.mockImplementation((cmd: string, callback: Callback) => {
+      if (cmd.includes('config get-value project')) {
+        callback(new Error('gcloud command failed'));
+      } else {
+        callback(null, {stdout: 'gcloud-region\n'});
+      }
+    });
+
+    await expect(deployToCloudRun(optionsWithoutProject)).rejects.toThrow(
+      'gcloud command failed',
+    );
+  });
+
   it('should create a private temp folder when none is supplied', async () => {
     const createdTempFolder = '/tmp/cloud_run_deploy_src-abc123';
     (createTempDir as Mock).mockResolvedValue(createdTempFolder);
@@ -762,6 +834,24 @@ describe('deployToCloudRun', () => {
       expect.stringContaining('Command failed with exit code 1'),
       expect.stringContaining('\x1b[0m'),
     );
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('should clean up temporary folder when gcloud deploy fails', async () => {
+    spawnMock.mockReturnValue({
+      on: vi.fn((event: string, cb: (code: number) => void) => {
+        if (event === 'close') {
+          process.nextTick(() => cb(1));
+        }
+      }),
+    });
+
+    await deployToCloudRun(defaultOptions);
+
+    expect(fs.rm).toHaveBeenCalledWith('/tmp/test-deploy', {
+      recursive: true,
+      force: true,
+    });
     expect(process.exitCode).toBe(1);
   });
 

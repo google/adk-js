@@ -34,6 +34,8 @@ export interface BaseToolParams {
   name: string;
   description: string;
   isLongRunning?: boolean;
+  /** Optional JSON-serializable key-value metadata associated with the tool. */
+  customMetadata?: Record<string, unknown>;
 }
 
 /**
@@ -85,6 +87,8 @@ export abstract class BaseTool {
   readonly name: string;
   readonly description: string;
   readonly isLongRunning: boolean;
+  /** Optional JSON-serializable key-value metadata associated with the tool. */
+  customMetadata?: Record<string, unknown>;
 
   /**
    * Base constructor for a tool.
@@ -95,6 +99,7 @@ export abstract class BaseTool {
     this.name = params.name;
     this.description = params.description;
     this.isLongRunning = params.isLongRunning ?? false;
+    this.customMetadata = params.customMetadata;
   }
 
   /**

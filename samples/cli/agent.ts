@@ -36,14 +36,18 @@ import {
   EvalResult,
   EvalStatus,
   Event,
+  getRegisteredEvalMetrics,
   InMemoryRunner,
   InvocationContext,
+  type ListMetricsInfoResponse,
   LlmAgent,
   LocalEvalSetResultsManager,
   LocalEvalSetsManager,
   parseAndGetEvalsToRun,
   runEvals,
+  START,
   stringifyContent,
+  Workflow,
 } from '@google/adk';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -148,6 +152,27 @@ async function main() {
     `Initialized state from instruction placeholders: ${JSON.stringify(initialState)}\n`,
   );
 
+  const triageWorkflow = new Workflow({
+    name: 'triageWorkflow',
+    edges: [
+      [
+        START,
+        new LlmAgent({
+          name: 'triageStep',
+          model: 'gemini-flash-latest',
+          instruction:
+            'Classify ticket {ticketId} with priority {priorityLevel}.',
+        }),
+      ],
+    ],
+  });
+  const workflowState = createEmptyState(triageWorkflow, {
+    priorityLevel: 'high',
+  });
+  process.stdout.write(
+    `Initialized workflow state placeholders: ${JSON.stringify(workflowState)}\n`,
+  );
+
   const runner = new InMemoryRunner({agent: rootAgent, appName});
   const session = await runner.sessionService.createSession({
     appName,
@@ -190,8 +215,16 @@ async function main() {
 
   const parsedSpecs = parseAndGetEvalsToRun([
     'support.evalset.json:order_flow',
+    'support:order_flow',
   ]);
   process.stdout.write(`Parsed eval spec: ${JSON.stringify(parsedSpecs)}\n`);
+
+  const metricsResponse: ListMetricsInfoResponse = {
+    metricsInfo: getRegisteredEvalMetrics(),
+  };
+  process.stdout.write(
+    `Registered eval metrics: ${metricsResponse.metricsInfo.map((m) => m.metricName).join(', ')}\n`,
+  );
 
   const evalResults: EvalResult[] = [];
   for await (const result of runEvals({

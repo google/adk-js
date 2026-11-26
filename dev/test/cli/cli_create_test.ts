@@ -6,6 +6,7 @@
 
 import {isCancel, select, text} from '@clack/prompts';
 import {execSync} from 'node:child_process';
+import * as fs from 'node:fs/promises';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 import {createAgent} from '../../src/cli/cli_create.js';
 import {
@@ -32,6 +33,11 @@ vi.mock('node:child_process', () => ({
     };
   }),
   execSync: vi.fn(),
+}));
+
+vi.mock('node:fs/promises', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:fs/promises')>()),
+  mkdir: vi.fn(),
 }));
 
 // Only the I/O is faked; getAbsolutePath is the real resolver under test.
@@ -147,6 +153,24 @@ describe('createAgent', () => {
         expect.stringContaining('.env'),
         expect.stringContaining('GOOGLE_GENAI_API_KEY=my-api-key'),
       );
+    });
+
+    it('writes an empty .env file when no backend credentials or project parameters are provided', async () => {
+      await createAgent({...getFreshOptions(), forceYes: true});
+
+      const envCall = vi
+        .mocked(saveToFile)
+        .mock.calls.find(([filePath]) => /[\\/]\.env$/.test(filePath));
+      expect(envCall).toBeDefined();
+      expect(envCall?.[1]).toBe('');
+      for (const envKey of [
+        'GOOGLE_GENAI_API_KEY',
+        'GOOGLE_CLOUD_PROJECT',
+        'GOOGLE_CLOUD_LOCATION',
+        'GOOGLE_GENAI_USE_ENTERPRISE',
+      ]) {
+        expect(envCall?.[1]).not.toContain(envKey);
+      }
     });
   });
 
@@ -302,6 +326,34 @@ describe('createAgent', () => {
         expect.anything(),
       );
     });
+
+    it('falls back to empty defaults when gcloud config lookup fails', async () => {
+      vi.mocked(select)
+        .mockResolvedValueOnce('gemini-2.5-flash')
+        .mockResolvedValueOnce('ts')
+        .mockResolvedValueOnce('vertex');
+      vi.mocked(execSync).mockImplementation(() => {
+        throw new Error('gcloud command not found');
+      });
+      vi.mocked(text)
+        .mockResolvedValueOnce('manual-project')
+        .mockResolvedValueOnce('us-central1');
+
+      await createAgent(getFreshOptions());
+
+      expect(text).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Enter the Google Cloud Project ID',
+          initialValue: '',
+        }),
+      );
+      expect(text).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Enter the Google Cloud Region',
+          initialValue: '',
+        }),
+      );
+    });
   });
 
   describe('Folder Handling', () => {
@@ -333,6 +385,27 @@ describe('createAgent', () => {
         /process\.exit/,
       );
       expect(removeFolder).not.toHaveBeenCalled();
+    });
+
+    it('propagates folder creation errors without writing files', async () => {
+      const actualFileUtils = await vi.importActual<
+        typeof import('../../src/utils/file_utils.js')
+      >('../../src/utils/file_utils.js');
+      vi.mocked(isFolderExists).mockResolvedValueOnce(false);
+      const permissionError = Object.assign(
+        new Error('EACCES: permission denied'),
+        {code: 'EACCES'},
+      );
+      vi.mocked(fs.mkdir).mockRejectedValueOnce(permissionError);
+      vi.mocked(createFolder).mockImplementationOnce(
+        actualFileUtils.createFolder,
+      );
+
+      await expect(
+        createAgent({...getFreshOptions(), forceYes: true}),
+      ).rejects.toThrow('EACCES: permission denied');
+      expect(fs.mkdir).toHaveBeenCalledTimes(1);
+      expect(saveToFile).not.toHaveBeenCalled();
     });
   });
 });

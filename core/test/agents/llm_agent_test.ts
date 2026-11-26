@@ -6,7 +6,9 @@
 
 import {
   ActiveStreamingTool,
+  AsyncQueue,
   AUTH_PREPROCESSOR,
+  BaseAgent,
   BaseLlm,
   BaseLlmConnection,
   BaseLlmRequestProcessor,
@@ -24,6 +26,8 @@ import {
   Event,
   FunctionTool,
   Gemini,
+  getFunctionCalls,
+  getFunctionResponses,
   InMemorySessionService,
   INTERACTIONS_REQUEST_PROCESSOR,
   InvocationContext,
@@ -46,7 +50,7 @@ import {
   StreamingMode,
   ToolProcessLlmRequest,
 } from '@google/adk';
-import {Content, Modality, Schema, Type} from '@google/genai';
+import {Content, FinishReason, Modality, Schema, Type} from '@google/genai';
 import {
   afterEach,
   beforeEach,
@@ -392,6 +396,67 @@ describe('LlmAgent.callLlm', () => {
     agent.model = new MockLlm(null, modelError);
     const result = await callLlmUnderTest();
     expect(result).toEqual([{errorCode: '500', errorMessage: 'LLM error'}]);
+  });
+
+  it('falls back to canonical beforeModelCallback when registered plugin returns undefined', async () => {
+    pluginManager.registerPlugin(mockPlugin);
+    mockPlugin.beforeModelResponse = undefined;
+    agent.model = new MockLlm(originalLlmResponse);
+    agent.beforeModelCallback = async () => beforeCallbackResponse;
+
+    const result = await callLlmUnderTest();
+
+    expect(result).toEqual([beforeCallbackResponse]);
+  });
+
+  it('falls back to model call when registered plugin and canonical beforeModelCallback return undefined', async () => {
+    pluginManager.registerPlugin(mockPlugin);
+    mockPlugin.beforeModelResponse = undefined;
+    agent.model = new MockLlm(originalLlmResponse);
+    agent.beforeModelCallback = async () => undefined;
+
+    const result = await callLlmUnderTest();
+
+    expect(result).toEqual([originalLlmResponse]);
+  });
+
+  it('falls back to canonical afterModelCallback when registered plugin returns undefined', async () => {
+    pluginManager.registerPlugin(mockPlugin);
+    mockPlugin.afterModelResponse = undefined;
+    agent.model = new MockLlm(originalLlmResponse);
+    agent.afterModelCallback = async () => afterCallbackResponse;
+
+    const result = await callLlmUnderTest();
+
+    expect(result).toEqual([afterCallbackResponse]);
+  });
+
+  it('skips canonical afterModelCallback when abortSignal aborts during plugin afterModelCallback', async () => {
+    const abortController = new AbortController();
+    const abortingPlugin = new (class extends BasePlugin {
+      override async afterModelCallback(): Promise<LlmResponse | undefined> {
+        abortController.abort();
+        return undefined;
+      }
+    })('abortingPlugin');
+    const canonicalAfterSpy = vi.fn<SingleAfterModelCallback>(
+      () => afterCallbackResponse,
+    );
+    pluginManager.registerPlugin(abortingPlugin);
+    agent.model = new MockLlm(originalLlmResponse);
+    agent.afterModelCallback = canonicalAfterSpy;
+    invocationContext = new InvocationContext({
+      invocationId: 'inv-abort-after',
+      session: {} as Session,
+      agent,
+      pluginManager,
+      abortSignal: abortController.signal,
+    });
+
+    const result = await callLlmUnderTest();
+
+    expect(result).toEqual([]);
+    expect(canonicalAfterSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -2905,6 +2970,103 @@ describe('LlmAgent live streaming tools and supportCfc', () => {
     );
   });
 
+  it('forwards runConfig.sessionResumption onto liveConnectConfig without mutating runConfig', async () => {
+    const connection = new ScriptedLiveConnection([
+      {
+        content: {role: 'model', parts: [{text: 'resumption ready'}]},
+        turnComplete: true,
+      },
+    ]);
+    const llm = new ScriptedLiveLlm(connection);
+    const agent = new LlmAgent({
+      name: 'liveResumptionAgent',
+      model: llm,
+    });
+    const session = createSession({
+      id: 'sess-live-resumption',
+      appName: 'test-app',
+      userId: 'test-user',
+    });
+    const liveRequestQueue = new LiveRequestQueue();
+    liveRequestQueue.sendRealtime({
+      data: 'audio-bytes',
+      mimeType: 'audio/pcm',
+    });
+    liveRequestQueue.close();
+    const sessionResumption = {transparent: true};
+    const runConfig = createRunConfig({
+      responseModalities: [Modality.AUDIO],
+      sessionResumption,
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv-live-resumption',
+      session,
+      agent,
+      liveRequestQueue,
+      runConfig,
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runLive(ctx)) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(1);
+    expect(
+      llm.lastConnectedRequest?.liveConnectConfig?.sessionResumption,
+    ).toEqual({
+      transparent: true,
+    });
+    expect(
+      llm.lastConnectedRequest?.liveConnectConfig?.sessionResumption,
+    ).not.toBe(sessionResumption);
+  });
+
+  it('copies runConfig.sessionResumption in applyLiveRunConfig when custom requestProcessors omit BasicLlmRequestProcessor', async () => {
+    const connection = new ScriptedLiveConnection([
+      {
+        content: {role: 'model', parts: [{text: 'custom processors ready'}]},
+        turnComplete: true,
+      },
+    ]);
+    const llm = new ScriptedLiveLlm(connection);
+    const agent = new LlmAgent({
+      name: 'customLiveResumptionAgent',
+      model: llm,
+      requestProcessors: [],
+    });
+    const session = createSession({
+      id: 'sess-custom-live-resumption',
+      appName: 'test-app',
+      userId: 'test-user',
+    });
+    const liveRequestQueue = new LiveRequestQueue();
+    liveRequestQueue.close();
+    const sessionResumption = {transparent: true};
+    const ctx = new InvocationContext({
+      invocationId: 'inv-custom-live-resumption',
+      session,
+      agent,
+      liveRequestQueue,
+      runConfig: createRunConfig({sessionResumption}),
+      pluginManager: new PluginManager(),
+    });
+
+    for await (const _event of agent.runLive(ctx)) {
+      // Consume stream
+    }
+
+    expect(
+      llm.lastConnectedRequest?.liveConnectConfig?.sessionResumption,
+    ).toEqual({
+      transparent: true,
+    });
+    expect(
+      llm.lastConnectedRequest?.liveConnectConfig?.sessionResumption,
+    ).not.toBe(sessionResumption);
+  });
+
   it('keeps one event id across partial chunks and final event of a streamed response, minting a fresh id only after a complete event', async () => {
     class MultiResponseLlm extends BaseLlm {
       constructor(private readonly responses: LlmResponse[]) {
@@ -3054,6 +3216,638 @@ describe('LlmAgent live streaming tools and supportCfc', () => {
     expect(events[0].timestamp).toBe(1_700_000_000_100);
     expect(events[1].timestamp).toBe(1_700_000_000_200);
     expect(events[2].timestamp).toBe(1_700_000_000_300);
+  });
+});
+
+describe('LlmAgent live session resumption', () => {
+  type CapturedLiveRequest = Pick<LlmRequest, 'contents' | 'liveConnectConfig'>;
+
+  class ResumptionLiveConnection extends MockLlmConnection {
+    sentHistoryCalls: Content[][] = [];
+    closed = false;
+    private readonly queue = new AsyncQueue<LlmResponse | Error>();
+
+    constructor(responses: Array<LlmResponse | Error>) {
+      super();
+      for (const response of responses) {
+        this.queue.push(response);
+      }
+    }
+
+    override async sendHistory(history: Content[]): Promise<void> {
+      this.sentHistoryCalls.push(history);
+    }
+
+    override async *receive(): AsyncGenerator<LlmResponse, void, void> {
+      for await (const item of this.queue) {
+        if (item instanceof Error) {
+          throw item;
+        }
+        yield item;
+      }
+    }
+
+    override async close(): Promise<void> {
+      this.closed = true;
+      this.queue.close();
+    }
+  }
+
+  class ResumptionLiveLlm extends BaseLlm {
+    readonly connectedRequests: CapturedLiveRequest[] = [];
+    readonly connections: ResumptionLiveConnection[] = [];
+    private attemptIndex = 0;
+
+    constructor(
+      private readonly attempts: Array<Array<LlmResponse | Error> | Error>,
+    ) {
+      super({model: 'gemini-flash-latest'});
+    }
+
+    override async *generateContentAsync(): AsyncGenerator<
+      LlmResponse,
+      void,
+      void
+    > {
+      yield* [];
+      throw new Error('generateContentAsync should not be called in live');
+    }
+
+    override async connect(llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+      this.connectedRequests.push(
+        structuredClone({
+          contents: llmRequest.contents,
+          liveConnectConfig: llmRequest.liveConnectConfig,
+        }),
+      );
+      const scripted = this.attempts[this.attemptIndex++];
+      if (scripted instanceof Error) {
+        throw scripted;
+      }
+      const connection = new ResumptionLiveConnection(scripted ?? []);
+      this.connections.push(connection);
+      return connection;
+    }
+  }
+
+  function createSeededLiveContext(params: {
+    agent: LlmAgent;
+    runConfig?: ReturnType<typeof createRunConfig>;
+    includeHistory?: boolean;
+    plugins?: BasePlugin[];
+  }): InvocationContext {
+    const events = params.includeHistory
+      ? [
+          createEvent({
+            invocationId: 'inv-seed',
+            author: 'user',
+            content: {role: 'user', parts: [{text: 'prior turn'}]},
+          }),
+        ]
+      : [];
+    const liveRequestQueue = new LiveRequestQueue();
+    liveRequestQueue.close();
+    return new InvocationContext({
+      invocationId: 'inv-live-resumption-case',
+      agent: params.agent,
+      session: createSession({
+        id: 'sess-live-resumption-case',
+        appName: 'test-app',
+        userId: 'test-user',
+        events,
+      }),
+      liveRequestQueue,
+      runConfig: params.runConfig,
+      pluginManager: new PluginManager(params.plugins ?? []),
+    });
+  }
+
+  it('preserves explicit transparent: false on initial connect when a handle is configured', async () => {
+    const llm = new ResumptionLiveLlm([[{turnComplete: true}]]);
+    const agent = new LlmAgent({name: 'resumptionAgent', model: llm});
+    const ctx = createSeededLiveContext({
+      agent,
+      runConfig: createRunConfig({
+        sessionResumption: {handle: 'caller-handle', transparent: false},
+      }),
+    });
+
+    for await (const _event of agent.runLive(ctx)) {
+      // Consume stream
+    }
+
+    expect(llm.connectedRequests).toHaveLength(1);
+    expect(
+      llm.connectedRequests[0].liveConnectConfig?.sessionResumption,
+    ).toEqual({
+      handle: 'caller-handle',
+      transparent: false,
+    });
+  });
+
+  it('preserves explicit transparent: false across reconnects after a server resumption update', async () => {
+    const llm = new ResumptionLiveLlm([
+      [
+        {liveSessionResumptionUpdate: {newHandle: 'server-handle'}},
+        {goAway: {timeLeft: '1s'}},
+      ],
+      [
+        {
+          content: {role: 'model', parts: [{text: 'resumed'}]},
+          turnComplete: true,
+        },
+      ],
+    ]);
+    const agent = new LlmAgent({name: 'resumptionAgent', model: llm});
+    const ctx = createSeededLiveContext({
+      agent,
+      runConfig: createRunConfig({
+        sessionResumption: {transparent: false},
+      }),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runLive(ctx)) {
+      events.push(event);
+    }
+
+    expect(llm.connectedRequests).toHaveLength(2);
+    expect(
+      llm.connectedRequests[0].liveConnectConfig?.sessionResumption,
+    ).toEqual({
+      transparent: false,
+    });
+    expect(
+      llm.connectedRequests[1].liveConnectConfig?.sessionResumption,
+    ).toEqual({
+      handle: 'server-handle',
+      transparent: false,
+    });
+    expect(events.some((e) => e.content?.parts?.[0]?.text === 'resumed')).toBe(
+      true,
+    );
+  });
+
+  it('skips history replay on initial connect when resuming via runConfig.sessionResumption.handle', async () => {
+    const llm = new ResumptionLiveLlm([[{turnComplete: true}]]);
+    const agent = new LlmAgent({name: 'resumptionAgent', model: llm});
+    const ctx = createSeededLiveContext({
+      agent,
+      includeHistory: true,
+      runConfig: createRunConfig({
+        sessionResumption: {handle: 'caller-handle'},
+      }),
+    });
+
+    for await (const _event of agent.runLive(ctx)) {
+      // Consume stream
+    }
+
+    expect(llm.connectedRequests).toHaveLength(1);
+    expect(llm.connectedRequests[0].contents).toHaveLength(1);
+    expect(llm.connections[0].sentHistoryCalls).toHaveLength(0);
+    expect(
+      llm.connectedRequests[0].liveConnectConfig?.sessionResumption,
+    ).toEqual({
+      handle: 'caller-handle',
+      transparent: true,
+    });
+  });
+
+  it('retries recoverable initial connect errors when runConfig.sessionResumption.handle is set', async () => {
+    const recoverableError = Object.assign(
+      new Error('transient live connect failure'),
+      {code: 1006},
+    );
+    const llm = new ResumptionLiveLlm([
+      recoverableError,
+      [
+        {
+          content: {role: 'model', parts: [{text: 'connected'}]},
+          turnComplete: true,
+        },
+      ],
+    ]);
+    const agent = new LlmAgent({name: 'resumptionAgent', model: llm});
+    const ctx = createSeededLiveContext({
+      agent,
+      runConfig: createRunConfig({
+        sessionResumption: {handle: 'caller-handle'},
+      }),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runLive(ctx)) {
+      events.push(event);
+    }
+
+    expect(llm.connectedRequests).toHaveLength(2);
+    expect(
+      llm.connectedRequests[1].liveConnectConfig?.sessionResumption,
+    ).toEqual({
+      handle: 'caller-handle',
+      transparent: true,
+    });
+    expect(
+      events.some((e) => e.content?.parts?.[0]?.text === 'connected'),
+    ).toBe(true);
+  });
+
+  it('reconnects on goAway before a resumption update when runConfig.sessionResumption.handle is set', async () => {
+    const llm = new ResumptionLiveLlm([
+      [{goAway: {timeLeft: '1s'}}],
+      [
+        {
+          content: {role: 'model', parts: [{text: 'reconnected'}]},
+          turnComplete: true,
+        },
+      ],
+    ]);
+    const agent = new LlmAgent({name: 'resumptionAgent', model: llm});
+    const ctx = createSeededLiveContext({
+      agent,
+      runConfig: createRunConfig({
+        sessionResumption: {handle: 'caller-handle'},
+      }),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runLive(ctx)) {
+      events.push(event);
+    }
+
+    expect(llm.connectedRequests).toHaveLength(2);
+    expect(
+      llm.connectedRequests[1].liveConnectConfig?.sessionResumption,
+    ).toEqual({
+      handle: 'caller-handle',
+      transparent: true,
+    });
+    expect(
+      events.some((e) => e.content?.parts?.[0]?.text === 'reconnected'),
+    ).toBe(true);
+  });
+
+  it('clears runConfig.sessionResumption.handle for the transferred child agent and restores parent context', async () => {
+    const childLlm = new ResumptionLiveLlm([
+      [
+        {
+          content: {role: 'model', parts: [{text: 'child fresh'}]},
+          turnComplete: true,
+        },
+      ],
+    ]);
+    const parentLlm = new ResumptionLiveLlm([
+      [
+        {
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  id: 'fc-transfer',
+                  name: 'transfer_to_agent',
+                  args: {agent_name: 'childAgent'},
+                },
+              },
+            ],
+          },
+          turnComplete: true,
+        },
+      ],
+    ]);
+    let observedParentAfterAgent:
+      | {
+          agentName?: string;
+          handle?: string;
+          sessionResumption?: {handle?: string; transparent?: boolean};
+        }
+      | undefined;
+    const childAgent = new LlmAgent({name: 'childAgent', model: childLlm});
+    const parentAgent = new LlmAgent({
+      name: 'parentAgent',
+      model: parentLlm,
+      subAgents: [childAgent],
+      afterAgentCallback: (callbackContext) => {
+        observedParentAfterAgent = {
+          agentName: callbackContext.invocationContext.agent?.name,
+          handle: callbackContext.invocationContext.liveSessionResumptionHandle,
+          sessionResumption:
+            callbackContext.invocationContext.runConfig?.sessionResumption,
+        };
+        return undefined;
+      },
+    });
+    const sessionResumption = {handle: 'parent-handle', transparent: false};
+    const runConfig = createRunConfig({sessionResumption});
+    const ctx = createSeededLiveContext({
+      agent: parentAgent,
+      includeHistory: true,
+      runConfig,
+    });
+
+    const events: Event[] = [];
+    for await (const event of parentAgent.runLive(ctx)) {
+      events.push(event);
+    }
+
+    expect(parentLlm.connectedRequests).toHaveLength(1);
+    expect(
+      parentLlm.connectedRequests[0].liveConnectConfig?.sessionResumption,
+    ).toEqual({
+      handle: 'parent-handle',
+      transparent: false,
+    });
+    expect(parentLlm.connections[0].sentHistoryCalls).toHaveLength(0);
+
+    expect(childLlm.connectedRequests).toHaveLength(1);
+    expect(
+      childLlm.connectedRequests[0].liveConnectConfig?.sessionResumption,
+    ).toEqual({
+      transparent: false,
+    });
+    expect(
+      childLlm.connectedRequests[0].liveConnectConfig?.sessionResumption
+        ?.handle,
+    ).toBeUndefined();
+    expect(childLlm.connections[0].sentHistoryCalls).toHaveLength(1);
+    expect(
+      events.some((e) => e.content?.parts?.[0]?.text === 'child fresh'),
+    ).toBe(true);
+    expect(runConfig.sessionResumption).toEqual({
+      handle: 'parent-handle',
+      transparent: false,
+    });
+    expect(observedParentAfterAgent).toEqual({
+      agentName: 'parentAgent',
+      handle: 'parent-handle',
+      sessionResumption: {
+        handle: 'parent-handle',
+        transparent: false,
+      },
+    });
+  });
+
+  it('restores parent runConfig and resumption handle in finally when transferred sub-agent fails', async () => {
+    const childLlm = new ResumptionLiveLlm([new Error('child connect failed')]);
+    const parentLlm = new ResumptionLiveLlm([
+      [
+        {
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  id: 'fc-transfer-err',
+                  name: 'transfer_to_agent',
+                  args: {agent_name: 'failingChildAgent'},
+                },
+              },
+            ],
+          },
+          turnComplete: true,
+        },
+      ],
+    ]);
+    let observedParentOnError:
+      | {
+          agentName?: string;
+          handle?: string;
+          sessionResumption?: {handle?: string; transparent?: boolean};
+        }
+      | undefined;
+    class ErrorCapturingPlugin extends BasePlugin {
+      constructor() {
+        super('captureTransferErrorContext');
+      }
+      override async onAgentErrorCallback({
+        agent,
+        callbackContext,
+      }: {
+        agent: BaseAgent;
+        callbackContext: Context;
+        error: Error;
+      }) {
+        if (agent.name === 'parentAgent') {
+          observedParentOnError = {
+            agentName: callbackContext.invocationContext.agent?.name,
+            handle:
+              callbackContext.invocationContext.liveSessionResumptionHandle,
+            sessionResumption:
+              callbackContext.invocationContext.runConfig?.sessionResumption,
+          };
+        }
+        return undefined;
+      }
+    }
+    const failingChild = new LlmAgent({
+      name: 'failingChildAgent',
+      model: childLlm,
+    });
+    const parentAgent = new LlmAgent({
+      name: 'parentAgent',
+      model: parentLlm,
+      subAgents: [failingChild],
+    });
+    const ctx = createSeededLiveContext({
+      agent: parentAgent,
+      runConfig: createRunConfig({
+        sessionResumption: {handle: 'parent-handle', transparent: true},
+      }),
+      plugins: [new ErrorCapturingPlugin()],
+    });
+
+    await expect(async () => {
+      for await (const _event of parentAgent.runLive(ctx)) {
+        // Consume stream
+      }
+    }).rejects.toThrow('child connect failed');
+
+    expect(
+      childLlm.connectedRequests[0].liveConnectConfig?.sessionResumption,
+    ).toEqual({
+      transparent: true,
+    });
+    expect(observedParentOnError).toEqual({
+      agentName: 'parentAgent',
+      handle: 'parent-handle',
+      sessionResumption: {
+        handle: 'parent-handle',
+        transparent: true,
+      },
+    });
+  });
+
+  it('delegates via transfer_to_agent in Runner.runLive to a sub-agent that executes a tool call', async () => {
+    const rootLlm = new ResumptionLiveLlm([
+      [
+        {
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  id: 'fc-delegate',
+                  name: 'transfer_to_agent',
+                  args: {agent_name: 'rollAgent'},
+                },
+              },
+            ],
+          },
+          turnComplete: false,
+        },
+        {turnComplete: true},
+      ],
+    ]);
+    const rollLlm = new ResumptionLiveLlm([
+      [
+        {
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  id: 'fc-roll',
+                  name: 'rollDie',
+                  args: {sides: 20},
+                },
+              },
+            ],
+          },
+          turnComplete: false,
+        },
+        {turnComplete: true},
+      ],
+    ]);
+
+    const rollDie = new FunctionTool({
+      name: 'rollDie',
+      description: 'Rolls a die with the requested number of sides.',
+      parameters: z4.object({sides: z4.number()}),
+      execute: ({sides}) => (sides === 20 ? 15 : 1),
+    });
+    const rollAgent = new LlmAgent({
+      name: 'rollAgent',
+      model: rollLlm,
+      tools: [rollDie],
+    });
+    const rootAgent = new LlmAgent({
+      name: 'rootAgent',
+      model: rootLlm,
+      subAgents: [rollAgent],
+    });
+
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'live-multi-agent-app',
+      userId: 'user-1',
+    });
+    const runner = new Runner({
+      appName: 'live-multi-agent-app',
+      agent: rootAgent,
+      sessionService,
+    });
+    const liveRequestQueue = new LiveRequestQueue();
+    liveRequestQueue.sendRealtime({
+      data: 'Um9sbCBhIDIwLXNpZGVkIGRpZQ==',
+      mimeType: 'audio/pcm',
+    });
+    liveRequestQueue.close();
+
+    const events: Event[] = [];
+    for await (const event of runner.runLive({
+      userId: 'user-1',
+      sessionId: session.id,
+      liveRequestQueue,
+    })) {
+      events.push(event);
+    }
+
+    const functionCalls = events.flatMap((event) => getFunctionCalls(event));
+    const functionResponses = events.flatMap((event) =>
+      getFunctionResponses(event),
+    );
+    expect(functionCalls).toEqual([
+      {
+        id: 'fc-delegate',
+        name: 'transfer_to_agent',
+        args: {agent_name: 'rollAgent'},
+      },
+      {
+        id: 'fc-roll',
+        name: 'rollDie',
+        args: {sides: 20},
+      },
+    ]);
+    expect(functionResponses).toEqual([
+      {
+        id: 'fc-delegate',
+        name: 'transfer_to_agent',
+        response: {result: 'Transfer queued'},
+      },
+      {
+        id: 'fc-roll',
+        name: 'rollDie',
+        response: {result: 15},
+      },
+    ]);
+  });
+
+  it('rejects Runner.runLive without retrying when BaseLlm.connect throws an unrecoverable error', async () => {
+    const unrecoverableConnectError = Object.assign(
+      new Error(
+        'gemini-live-2.5-flash-preview is not supported in the live api.',
+      ),
+      {code: 1007},
+    );
+    const llm = new ResumptionLiveLlm([
+      unrecoverableConnectError,
+      [{turnComplete: true}],
+    ]);
+    const agent = new LlmAgent({
+      name: 'connectionFailureAgent',
+      model: llm,
+    });
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'live-connect-error-app',
+      userId: 'user-1',
+    });
+    const runner = new Runner({
+      appName: 'live-connect-error-app',
+      agent,
+      sessionService,
+    });
+    const liveRequestQueue = new LiveRequestQueue();
+    liveRequestQueue.sendRealtime({
+      data: 'SW5pdGlhbCBhdWRpbyBjaHVua3M=',
+      mimeType: 'audio/pcm',
+    });
+    liveRequestQueue.close();
+
+    let caughtError: unknown;
+    try {
+      for await (const _event of runner.runLive({
+        userId: 'user-1',
+        sessionId: session.id,
+        liveRequestQueue,
+        runConfig: createRunConfig({
+          sessionResumption: {handle: 'caller-handle'},
+        }),
+      })) {
+        // Consume stream until rejection
+      }
+    } catch (err: unknown) {
+      caughtError = err;
+    }
+
+    expect(caughtError).toBe(unrecoverableConnectError);
+    expect(caughtError).toBeInstanceOf(Error);
+    expect(caughtError).toMatchObject({
+      code: 1007,
+      message: expect.stringContaining('is not supported in the live api'),
+    });
+    expect(llm.connectedRequests).toHaveLength(1);
   });
 });
 
@@ -3645,5 +4439,106 @@ describe('LlmAgent canonical fields and config validation', () => {
       ]);
       expect(agent.canonicalAfterToolCallbacks).toEqual([afterCb1, afterCb2]);
     });
+  });
+});
+
+describe('LlmAgent.runAsync partial-event loop termination', () => {
+  async function collectRunAsyncEvents(agent: LlmAgent): Promise<Event[]> {
+    const ctx = new InvocationContext({
+      invocationId: 'inv-partial-loop',
+      agent,
+      session: createSession({
+        id: 'sess-partial-loop',
+        appName: 'test-app',
+        userId: 'test-user',
+      }),
+      pluginManager: new PluginManager(),
+    });
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(ctx)) {
+      events.push(event);
+    }
+    return events;
+  }
+
+  it('breaks and yields one event when the last event has partial: true', async () => {
+    const model = new CountingMockLlm([
+      [
+        {
+          content: {role: 'model', parts: [{text: 'Partial response'}]},
+          partial: true,
+        },
+      ],
+    ]);
+    const agent = new LlmAgent({name: 'testAgent', model});
+
+    const events = await collectRunAsyncEvents(agent);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].partial).toBe(true);
+    expect(events[0].content?.parts?.[0]?.text).toBe('Partial response');
+    expect(model.callCount).toBe(1);
+  });
+
+  it('breaks on a final response with partial: false and FinishReason.STOP', async () => {
+    const model = new CountingMockLlm([
+      [
+        {
+          content: {role: 'model', parts: [{text: 'Final response'}]},
+          partial: false,
+          finishReason: FinishReason.STOP,
+        },
+      ],
+    ]);
+    const agent = new LlmAgent({name: 'testAgent', model});
+
+    const events = await collectRunAsyncEvents(agent);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].partial).toBe(false);
+    expect(events[0].finishReason).toBe(FinishReason.STOP);
+    expect(events[0].content?.parts?.[0]?.text).toBe('Final response');
+    expect(model.callCount).toBe(1);
+  });
+
+  it('breaks with zero events when the model yields an empty response', async () => {
+    const model = new CountingMockLlm([[{content: undefined, partial: false}]]);
+    const agent = new LlmAgent({name: 'testAgent', model});
+
+    const events = await collectRunAsyncEvents(agent);
+
+    expect(events).toHaveLength(0);
+    expect(model.callCount).toBe(1);
+  });
+
+  it('breaks on the first partial: true response without calling the model a second time', async () => {
+    const model = new CountingMockLlm([
+      [
+        {
+          content: {role: 'model', parts: [{text: 'Partial response'}]},
+          partial: true,
+        },
+      ],
+      [
+        {
+          content: {role: 'model', parts: [{text: 'Non-partial response'}]},
+          partial: false,
+        },
+      ],
+      [
+        {
+          content: {role: 'model', parts: [{text: 'Final partial response'}]},
+          partial: true,
+        },
+      ],
+    ]);
+    const agent = new LlmAgent({name: 'testAgent', model});
+
+    const events = await collectRunAsyncEvents(agent);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].partial).toBe(true);
+    expect(events[0].content?.parts?.[0]?.text).toBe('Partial response');
+    expect(model.callCount).toBe(1);
   });
 });

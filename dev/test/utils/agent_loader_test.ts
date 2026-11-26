@@ -778,6 +778,466 @@ describe('AgentLoader', () => {
         `Agent file ${agentPath} does not exists`,
       );
     });
+
+    it('returns undefined from getResetFunc before loading and when no reset hook is exported', async () => {
+      const agentPath = path.join(tempAgentsDir, 'agentNoReset.js');
+      await fs.writeFile(agentPath, agent1JsContent);
+
+      const agentFile = new AgentFile(agentPath, {
+        compile: false,
+        bundle: false,
+      });
+      expect(agentFile.getResetFunc()).toBeUndefined();
+
+      await agentFile.load();
+      expect(agentFile.getResetFunc()).toBeUndefined();
+      await agentFile.dispose();
+    });
+
+    it('exposes top-level resetData and reset_data hooks via getResetFunc', async () => {
+      const appWithResetPath = path.join(tempAgentsDir, 'appWithResetData.mjs');
+      await fs.writeFile(
+        appWithResetPath,
+        [
+          `import {App, BaseAgent} from '@google/adk';`,
+          `class ResettableAgent extends BaseAgent {`,
+          `  count = 1;`,
+          `  constructor() { super({name: 'resettableAgent'}); }`,
+          `}`,
+          `const instance = new ResettableAgent();`,
+          `export const app = new App({name: 'resettableApp', rootAgent: instance});`,
+          `export function resetData() { instance.count = 0; }`,
+        ].join('\n'),
+      );
+
+      const appFile = new AgentFile(appWithResetPath, {
+        compile: false,
+        bundle: false,
+      });
+      const loadedApp = await appFile.load();
+      expect(isApp(loadedApp)).toBe(true);
+      const appReset = appFile.getResetFunc();
+      expect(appReset).toBeTypeOf('function');
+      await appReset?.();
+      if (isApp(loadedApp)) {
+        expect(loadedApp.rootAgent).toMatchObject({count: 0});
+      }
+      await appFile.dispose();
+
+      const cjsResetPath = path.join(tempAgentsDir, 'agentWithSnakeReset.ts');
+      const cjsResetCompiled = [
+        `"use strict";`,
+        `const {BaseAgent} = require('@google/adk');`,
+        `class SnakeResetAgent extends BaseAgent {`,
+        `  constructor() { super({name: 'snakeResetAgent'}); this.count = 3; }`,
+        `}`,
+        `const root = new SnakeResetAgent();`,
+        `exports.rootAgent = root;`,
+        `exports.reset_data = async () => { root.count = 0; };`,
+      ].join('\n');
+      await fs.writeFile(cjsResetPath, agent2TsContent);
+      mockCompiledOutput(cjsResetCompiled);
+
+      const cjsFile = new AgentFile(cjsResetPath);
+      const loadedAgent = await cjsFile.load();
+      const snakeReset = cjsFile.getResetFunc();
+      expect(snakeReset).toBeTypeOf('function');
+      await snakeReset?.();
+      expect(loadedAgent).toMatchObject({count: 0});
+      await cjsFile.dispose();
+    });
+
+    it('extracts reset hooks and fallback root agents from default exports', async () => {
+      const defaultCamelPath = path.join(
+        tempAgentsDir,
+        'agentDefaultCamelReset.mjs',
+      );
+      await fs.writeFile(
+        defaultCamelPath,
+        [
+          `import {BaseAgent} from '@google/adk';`,
+          `class DefaultCamelAgent extends BaseAgent {`,
+          `  count = 2;`,
+          `  constructor() { super({name: 'defaultCamelAgent'}); }`,
+          `}`,
+          `const root = new DefaultCamelAgent();`,
+          `export default Object.assign(root, {resetData() { root.count = 0; }});`,
+        ].join('\n'),
+      );
+
+      const defaultCamelFile = new AgentFile(defaultCamelPath, {
+        compile: false,
+        bundle: false,
+      });
+      const loadedCamel = await defaultCamelFile.load();
+      await defaultCamelFile.getResetFunc()?.();
+      expect(loadedCamel).toMatchObject({name: 'defaultCamelAgent', count: 0});
+      await defaultCamelFile.dispose();
+
+      const defaultSnakePath = path.join(
+        tempAgentsDir,
+        'agentDefaultSnakeReset.mjs',
+      );
+      await fs.writeFile(
+        defaultSnakePath,
+        [
+          `import {BaseAgent} from '@google/adk';`,
+          `class DefaultSnakeAgent extends BaseAgent {`,
+          `  count = 4;`,
+          `  constructor() { super({name: 'defaultSnakeAgent'}); }`,
+          `}`,
+          `const root = new DefaultSnakeAgent();`,
+          `export default {root_agent: root, reset_data() { root.count = 0; }};`,
+        ].join('\n'),
+      );
+
+      const defaultSnakeFile = new AgentFile(defaultSnakePath, {
+        compile: false,
+        bundle: false,
+      });
+      const loadedSnake = await defaultSnakeFile.load();
+      await defaultSnakeFile.getResetFunc()?.();
+      expect(loadedSnake).toMatchObject({name: 'defaultSnakeAgent', count: 0});
+      await defaultSnakeFile.dispose();
+    });
+
+    it('loads nested agent objects and extracts nested reset hooks', async () => {
+      const nestedCamelPath = path.join(tempAgentsDir, 'nestedCamelAgent.mjs');
+      await fs.writeFile(
+        nestedCamelPath,
+        [
+          `import {BaseAgent} from '@google/adk';`,
+          `class NestedCamelAgent extends BaseAgent {`,
+          `  count = 5;`,
+          `  constructor() { super({name: 'nestedCamelAgent'}); }`,
+          `}`,
+          `const root = new NestedCamelAgent();`,
+          `export const agent = {rootAgent: root, resetData() { root.count = 0; }};`,
+        ].join('\n'),
+      );
+
+      const nestedCamelFile = new AgentFile(nestedCamelPath, {
+        compile: false,
+        bundle: false,
+      });
+      const loadedNestedCamel = await nestedCamelFile.load();
+      await nestedCamelFile.getResetFunc()?.();
+      expect(loadedNestedCamel).toMatchObject({
+        name: 'nestedCamelAgent',
+        count: 0,
+      });
+      await nestedCamelFile.dispose();
+
+      const nestedDefaultPath = path.join(
+        tempAgentsDir,
+        'nestedDefaultSnakeAgent.mjs',
+      );
+      await fs.writeFile(
+        nestedDefaultPath,
+        [
+          `import {BaseAgent} from '@google/adk';`,
+          `class NestedDefaultAgent extends BaseAgent {`,
+          `  count = 6;`,
+          `  constructor() { super({name: 'nestedDefaultAgent'}); }`,
+          `}`,
+          `const root = new NestedDefaultAgent();`,
+          `export default {agent: {root_agent: root, reset_data() { root.count = 0; }}};`,
+        ].join('\n'),
+      );
+
+      const nestedDefaultFile = new AgentFile(nestedDefaultPath, {
+        compile: false,
+        bundle: false,
+      });
+      const loadedNestedDefault = await nestedDefaultFile.load();
+      await nestedDefaultFile.getResetFunc()?.();
+      expect(loadedNestedDefault).toMatchObject({
+        name: 'nestedDefaultAgent',
+        count: 0,
+      });
+      await nestedDefaultFile.dispose();
+    });
+
+    it('clears getResetFunc when loading fails without a runnable root', async () => {
+      const badResetPath = path.join(tempAgentsDir, 'onlyResetHook.mjs');
+      await fs.writeFile(badResetPath, 'export function resetData() {}');
+
+      const agentFile = new AgentFile(badResetPath, {
+        compile: false,
+        bundle: false,
+      });
+      await expect(agentFile.load()).rejects.toThrow(
+        'No @google/adk BaseAgent or Workflow instance found',
+      );
+      expect(agentFile.getResetFunc()).toBeUndefined();
+    });
+
+    it('extracts reset hooks and root agents from CJS-compiled ESM default exports', async () => {
+      const compileEsmToCjs = async (esmSource: string): Promise<string> =>
+        (await esbuild.transform(esmSource, {loader: 'ts', format: 'cjs'}))
+          .code;
+
+      const wrappedAgentPath = path.join(
+        tempAgentsDir,
+        'cjsWrappedDefaultAgent.ts',
+      );
+      await fs.writeFile(wrappedAgentPath, agent2TsContent);
+      mockCompiledOutput(
+        await compileEsmToCjs(
+          [
+            `import {BaseAgent} from '@google/adk';`,
+            `class WrappedDefaultAgent extends BaseAgent {`,
+            `  count = 7;`,
+            `  constructor() { super({name: 'wrappedDefaultAgent'}); }`,
+            `}`,
+            `const root = new WrappedDefaultAgent();`,
+            `export default Object.assign(root, {resetData() { root.count = 0; }});`,
+          ].join('\n'),
+        ),
+      );
+
+      const wrappedAgentFile = new AgentFile(wrappedAgentPath);
+      const loadedWrappedAgent = await wrappedAgentFile.load();
+      await wrappedAgentFile.getResetFunc()?.();
+      expect(loadedWrappedAgent).toMatchObject({
+        name: 'wrappedDefaultAgent',
+        count: 0,
+      });
+      await wrappedAgentFile.dispose();
+
+      const wrappedObjectPath = path.join(
+        tempAgentsDir,
+        'cjsWrappedDefaultObject.ts',
+      );
+      await fs.writeFile(wrappedObjectPath, agent2TsContent);
+      mockCompiledOutput(
+        await compileEsmToCjs(
+          [
+            `import {BaseAgent} from '@google/adk';`,
+            `class WrappedObjectAgent extends BaseAgent {`,
+            `  count = 8;`,
+            `  constructor() { super({name: 'wrappedObjectAgent'}); }`,
+            `}`,
+            `const root = new WrappedObjectAgent();`,
+            `export default {rootAgent: root, resetData() { root.count = 0; }};`,
+          ].join('\n'),
+        ),
+      );
+
+      const wrappedObjectFile = new AgentFile(wrappedObjectPath);
+      const loadedWrappedObject = await wrappedObjectFile.load();
+      await wrappedObjectFile.getResetFunc()?.();
+      expect(loadedWrappedObject).toMatchObject({
+        name: 'wrappedObjectAgent',
+        count: 0,
+      });
+      await wrappedObjectFile.dispose();
+
+      const wrappedNestedPath = path.join(
+        tempAgentsDir,
+        'cjsWrappedNestedDefault.ts',
+      );
+      await fs.writeFile(wrappedNestedPath, agent2TsContent);
+      mockCompiledOutput(
+        await compileEsmToCjs(
+          [
+            `import {BaseAgent} from '@google/adk';`,
+            `class WrappedNestedAgent extends BaseAgent {`,
+            `  count = 9;`,
+            `  constructor() { super({name: 'wrappedNestedAgent'}); }`,
+            `}`,
+            `const root = new WrappedNestedAgent();`,
+            `export default {agent: {rootAgent: root, resetData() { root.count = 0; }}};`,
+          ].join('\n'),
+        ),
+      );
+
+      const wrappedNestedFile = new AgentFile(wrappedNestedPath);
+      const loadedWrappedNested = await wrappedNestedFile.load();
+      await wrappedNestedFile.getResetFunc()?.();
+      expect(loadedWrappedNested).toMatchObject({
+        name: 'wrappedNestedAgent',
+        count: 0,
+      });
+      await wrappedNestedFile.dispose();
+    });
+
+    it('prefers camelCase resetData over legacy reset hooks and skips non-function properties', async () => {
+      const topLevelPrecedencePath = path.join(
+        tempAgentsDir,
+        'precedenceTopLevel.mjs',
+      );
+      await fs.writeFile(
+        topLevelPrecedencePath,
+        [
+          `import {BaseAgent} from '@google/adk';`,
+          `class PrecedenceAgent extends BaseAgent {`,
+          `  selected = 'none';`,
+          `  constructor() { super({name: 'precedenceAgent'}); }`,
+          `}`,
+          `export const rootAgent = new PrecedenceAgent();`,
+          `export function reset_data() { rootAgent.selected = 'legacy'; }`,
+          `export function resetData() { rootAgent.selected = 'camel'; }`,
+        ].join('\n'),
+      );
+
+      const topLevelFile = new AgentFile(topLevelPrecedencePath, {
+        compile: false,
+        bundle: false,
+      });
+      const loadedTopLevel = await topLevelFile.load();
+      await topLevelFile.getResetFunc()?.();
+      expect(loadedTopLevel).toMatchObject({selected: 'camel'});
+      await topLevelFile.dispose();
+
+      const nestedPrecedencePath = path.join(
+        tempAgentsDir,
+        'precedenceNested.mjs',
+      );
+      await fs.writeFile(
+        nestedPrecedencePath,
+        [
+          `import {BaseAgent} from '@google/adk';`,
+          `class NestedPrecedenceAgent extends BaseAgent {`,
+          `  selected = 'none';`,
+          `  constructor() { super({name: 'nestedPrecedenceAgent'}); }`,
+          `}`,
+          `const root = new NestedPrecedenceAgent();`,
+          `export const agent = {`,
+          `  rootAgent: root,`,
+          `  reset_data() { root.selected = 'legacy'; },`,
+          `  resetData() { root.selected = 'camel'; },`,
+          `};`,
+        ].join('\n'),
+      );
+
+      const nestedFile = new AgentFile(nestedPrecedencePath, {
+        compile: false,
+        bundle: false,
+      });
+      const loadedNested = await nestedFile.load();
+      await nestedFile.getResetFunc()?.();
+      expect(loadedNested).toMatchObject({selected: 'camel'});
+      await nestedFile.dispose();
+
+      const nonFunctionCandidatePath = path.join(
+        tempAgentsDir,
+        'nonFunctionResetCandidate.mjs',
+      );
+      await fs.writeFile(
+        nonFunctionCandidatePath,
+        [
+          `import {BaseAgent} from '@google/adk';`,
+          `class NonFunctionCandidateAgent extends BaseAgent {`,
+          `  count = 10;`,
+          `  constructor() { super({name: 'nonFunctionCandidateAgent'}); }`,
+          `}`,
+          `const root = new NonFunctionCandidateAgent();`,
+          `export const resetData = 'not-a-function';`,
+          `export const reset_data = 42;`,
+          `export default {`,
+          `  rootAgent: root,`,
+          `  resetData: {notCallable: true},`,
+          `  reset_data() { root.count = 0; },`,
+          `};`,
+        ].join('\n'),
+      );
+
+      const nonFunctionFile = new AgentFile(nonFunctionCandidatePath, {
+        compile: false,
+        bundle: false,
+      });
+      const loadedNonFunction = await nonFunctionFile.load();
+      expect(nonFunctionFile.getResetFunc()).toBeTypeOf('function');
+      await nonFunctionFile.getResetFunc()?.();
+      expect(loadedNonFunction).toMatchObject({count: 0});
+      await nonFunctionFile.dispose();
+    });
+
+    it('prefers explicit root candidates over helper sub-agents exported in the same module', async () => {
+      const warnSpy = vi
+        .spyOn(AdkLogger.prototype, 'warn')
+        .mockImplementation(() => {});
+
+      try {
+        const nestedRootWithHelperPath = path.join(
+          tempAgentsDir,
+          'nestedRootWithHelper.mjs',
+        );
+        await fs.writeFile(
+          nestedRootWithHelperPath,
+          [
+            `import {BaseAgent} from '@google/adk';`,
+            `class CandidateAgent extends BaseAgent {`,
+            `  constructor(name) { super({name}); }`,
+            `}`,
+            `export const helperAgent = new CandidateAgent('helperAgent');`,
+            `const declaredRoot = new CandidateAgent('declaredNestedRoot');`,
+            `export const agent = {rootAgent: declaredRoot};`,
+          ].join('\n'),
+        );
+
+        const nestedFile = new AgentFile(nestedRootWithHelperPath, {
+          compile: false,
+          bundle: false,
+        });
+        const loadedNested = await nestedFile.load();
+        expect(loadedNested.name).toBe('declaredNestedRoot');
+        await nestedFile.dispose();
+
+        const legacyRootWithHelperPath = path.join(
+          tempAgentsDir,
+          'legacyRootWithHelper.mjs',
+        );
+        await fs.writeFile(
+          legacyRootWithHelperPath,
+          [
+            `import {BaseAgent} from '@google/adk';`,
+            `class CandidateAgent extends BaseAgent {`,
+            `  constructor(name) { super({name}); }`,
+            `}`,
+            `export const helperAgent = new CandidateAgent('helperAgent');`,
+            `export const root_agent = new CandidateAgent('declaredLegacyRoot');`,
+          ].join('\n'),
+        );
+
+        const legacyFile = new AgentFile(legacyRootWithHelperPath, {
+          compile: false,
+          bundle: false,
+        });
+        const loadedLegacy = await legacyFile.load();
+        expect(loadedLegacy.name).toBe('declaredLegacyRoot');
+        await legacyFile.dispose();
+
+        const defaultObjectWithHelperPath = path.join(
+          tempAgentsDir,
+          'defaultObjectWithHelper.mjs',
+        );
+        await fs.writeFile(
+          defaultObjectWithHelperPath,
+          [
+            `import {BaseAgent} from '@google/adk';`,
+            `class CandidateAgent extends BaseAgent {`,
+            `  constructor(name) { super({name}); }`,
+            `}`,
+            `export const helperAgent = new CandidateAgent('helperAgent');`,
+            `export default {rootAgent: new CandidateAgent('declaredDefaultRoot')};`,
+          ].join('\n'),
+        );
+
+        const defaultObjectFile = new AgentFile(defaultObjectWithHelperPath, {
+          compile: false,
+          bundle: false,
+        });
+        const loadedDefaultObject = await defaultObjectFile.load();
+        expect(loadedDefaultObject.name).toBe('declaredDefaultRoot');
+        await defaultObjectFile.dispose();
+
+        expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
   });
 
   describe('replaceDirnamePlugin', () => {

@@ -10,9 +10,9 @@ This index is the only table of contents. A guide that is not listed here is unr
 
 ### A2A (Agent-to-Agent)
 
-Exposing ADK agents as A2A servers and calling remote A2A peers (`toA2a`, `bearerTokenUserBuilder`, `getA2AAgentCard`, `A2AAgentExecutor`, `AdkDefaultRequestHandler`, `getA2aRequestMetadata`, `RemoteA2AAgent`, and `AGENT_CARD_PATH`).
+Exposing ADK agents as A2A servers and calling remote A2A peers (`toA2a`, `bearerTokenUserBuilder`, `AgentCardBuilder`, `getA2AAgentCard`, `A2AAgentExecutor`, `AdkDefaultRequestHandler`, `getA2aRequestMetadata`, `RemoteA2AAgent`, and `AGENT_CARD_PATH`).
 
-- [A2A](a2a/index.md) - `toA2a`, `ToA2aOptions`, `bearerTokenUserBuilder`, `A2aUserBuilder`, `getA2AAgentCard`, `ResolveAgentCardOptions`, `AgentCardResolutionError`, `isAgentCardResolutionError`, `A2AAgentExecutor`, `AgentExecutorConfig`, `ExecutorContext`, `AdkDefaultRequestHandler`, `getA2aRequestMetadata`, `RemoteA2AAgent`, `RemoteA2AAgentConfig`, and `AGENT_CARD_PATH`.
+- [A2A](a2a/index.md) - `toA2a`, `ToA2aOptions`, `bearerTokenUserBuilder`, `A2aUserBuilder`, `AgentCardBuilder`, `AgentCardBuilderOptions`, `SkillSecurity`, `getA2AAgentCard`, `GetA2AAgentCardOptions`, `ResolveAgentCardOptions`, `AgentCardResolutionError`, `isAgentCardResolutionError`, `A2AAgentExecutor`, `AgentExecutorConfig`, `ExecutorContext`, `AdkDefaultRequestHandler`, `getA2aRequestMetadata`, `RemoteA2AAgent`, `RemoteA2AAgentConfig`, and `AGENT_CARD_PATH`.
 
 ### Agents
 
@@ -34,9 +34,9 @@ Credentials for tools that call protected APIs: how a credential is described, h
 
 ### CLI
 
-Environment loading, session-to-eval conversion, instruction placeholder initialization, log routing, runner cleanup, and batch evaluation utilities backing the ADK CLI and development server.
+Environment loading, session-to-eval conversion, instruction placeholder initialization, log routing, runner cleanup, container deployment (`adk deploy cloud_run`, `adk deploy agent_engine`, `adk deploy gke`), and batch evaluation utilities backing the ADK CLI and development server.
 
-- [CLI and Evaluation Utilities](cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalInvocations`, `convertSessionToEvalFormat`, `setupAdkLogger`, `logToTmpFolder`, `closeRunners`, `runEvals`, `LocalEvalSetsManager`, `LocalEvalSetResultsManager`, `EvalSetsManager`, `EvalSetResultsManager`, `GcsEvalSetsManager`, `GcsEvalSetResultsManager`, `createGcsEvalManagersFromUri`, `getEvaluationCriteriaOrDefault`, and `parseAndGetEvalsToRun`.
+- [CLI and Evaluation Utilities](cli/index.md) - `loadDotenvForAgent`, `walkToRootUntilFound`, `createEmptyState`, `convertSessionToEvalInvocations`, `convertSessionToEvalFormat`, `setupAdkLogger`, `logToTmpFolder`, `closeRunners`, `runEvals`, `getRegisteredEvalMetrics`, `MetricInfo`, `MetricValueInfo`, `MetricInterval`, `ListMetricsInfoResponse`, `LocalEvalSetsManager`, `LocalEvalSetResultsManager`, `EvalSetsManager`, `EvalSetResultsManager`, `GcsEvalSetsManager`, `GcsEvalSetResultsManager`, `createGcsEvalManagersFromUri`, `getEvaluationCriteriaOrDefault`, `parseAndGetEvalsToRun`, and `adk deploy gke`.
 
 ### Code executors
 
@@ -58,15 +58,15 @@ Few-shot example structures (`Example`), dynamic example providers (`BaseExample
 
 ### Flows
 
-The `LlmAgent` request/response processor pipeline, live streaming function-call dispatch (`handleFunctionCallsLive` and `stop_streaming`), and Compositional Function Calling (`supportCfc`).
+The `LlmAgent` request/response processor pipeline, concurrent parallel tool-call execution and `stateDelta` merging, live session resumption (`sessionResumption`), live streaming function-call dispatch (`handleFunctionCallsLive` and `stop_streaming`), and Compositional Function Calling (`supportCfc`).
 
-- [Flows](flows/index.md) - `BaseLlmRequestProcessor`, `BaseLlmResponseProcessor`, `CONTENT_REQUEST_PROCESSOR`, `AgentTransferLlmRequestProcessor`, `CodeExecutionResponseProcessor`, `injectSessionState`, `handleFunctionCallsLive`, and `supportCfc`.
+- [Flows](flows/index.md) - `BaseLlmRequestProcessor`, `BaseLlmResponseProcessor`, `CONTENT_REQUEST_PROCESSOR`, `AgentTransferLlmRequestProcessor`, `CodeExecutionResponseProcessor`, `injectSessionState`, `handleFunctionCallsLive`, `sessionResumption`, and `supportCfc`.
 
 ### Integrations
 
 Third-party model and ecosystem integrations packaged in `@google/adk-integrations`.
 
-- [BigQuery toolset](integrations/bigquery/index.md) - `BigQueryToolset`, `BigQueryTool`, `BigQueryCredentialsConfig`, `BigQueryToolConfig`, `getBigQueryClient`, and the first-party BigQuery metadata and SQL query tools.
+- [BigQuery toolset](integrations/bigquery/index.md) - `BigQueryToolset`, `BigQueryTool`, `BigQueryCredentialsConfig`, `BigQueryToolConfig`, `getBigQueryClient`, `askDataInsights`, and the first-party BigQuery metadata, SQL query, and data insights tools.
 - [Claude on Vertex AI](integrations/models/anthropic_llm/index.md) - `Claude`, `LLMRegistry` registration for `claude-*` models on Vertex AI, and Anthropic message and tool conversion helpers.
 - [CrewAI tool](integrations/crewai/index.md) - `CrewaiTool`, `isCrewaiTool`, and adapting CrewAI tools into ADK tools.
 - [LangChain tool](integrations/langchain/index.md) - `LangchainTool`, `isLangchainTool`, and adapting LangChain structured and simple tools into ADK tools.
@@ -94,7 +94,7 @@ Planning for an `LlmAgent` through its `planner` option: the model's built-in th
 
 Runner-wide callbacks: a plugin observes or changes the user message, the run, each agent, each model request, each tool call and each event of a runner.
 
-- [Plugins](plugins/index.md) - `BasePlugin`, `PluginManager`, `PluginCallbackName`, registration through `Runner`, `InMemoryRunner` and `App`, and the order, early exit and error handling of plugin callbacks.
+- [Plugins](plugins/index.md) - `BasePlugin`, `PluginManager`, `PluginCallbackName`, `LoggingPlugin`, `LoggingPluginOptions`, `ToolResultClassifier`, `ToolResultClassification`, `toolResultClassification`, registration through `Runner`, `InMemoryRunner` and `App`, and the order, early exit and error handling of plugin callbacks.
 
 ### Runners
 
@@ -130,7 +130,7 @@ Client-side retrieval tools. The agent calls a one-argument search function, you
 
 #### Google API Tool
 
-- [Google API tool](tools/google_api_tool/index.md) - Converting Google API Discovery documents into OpenAPI v3 tools, configuring OpenID Connect credentials, and using pre-configured Google API toolsets.
+- [Google API tool](tools/google_api_tool/index.md) - Converting Google API Discovery documents into OpenAPI v3 tools, configuring OpenID Connect or service account credentials, and using pre-configured Google API toolsets.
 
 #### API Hub Tool
 
@@ -139,6 +139,10 @@ Client-side retrieval tools. The agent calls a one-argument search function, you
 #### MCP Tool
 
 - [MCP tool](tools/mcp_tool/index.md) - Connecting `MCPToolset` over stdio, Streamable HTTP, or SSE, loading MCP resources with `LoadMcpResourceTool`, and converting schemas with `toGeminiSchema` and `genaiSchemaToJsonSchema`.
+
+#### Computer Use
+
+- [Computer use](tools/computer_use/index.md) - Operating a browser or sandbox through `BaseComputer`, `ComputerUseTool`, `ComputerUseToolset`, and `adaptComputerUseTool`.
 
 ### Telemetry
 

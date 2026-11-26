@@ -429,6 +429,133 @@ describe('getContents', () => {
     );
   });
 
+  it('removes intermediate events when matching one response out of multiple function calls', () => {
+    const callEvent = createEvent({
+      invocationId: 'inv-1',
+      author: 'myAgent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'func-123',
+              name: 'testFunction',
+              args: {param: 'value1'},
+            },
+          },
+          {
+            functionCall: {
+              id: 'func-456',
+              name: 'testFunction2',
+              args: {param: 'value2'},
+            },
+          },
+        ],
+      },
+    });
+    const intermediateEvent = createEvent({
+      invocationId: 'inv-2',
+      author: 'myAgent',
+      content: {
+        role: 'model',
+        parts: [{text: 'Processing...'}],
+      },
+    });
+    const responseEvent = createEvent({
+      invocationId: 'inv-3',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'func-123',
+              name: 'testFunction',
+              response: {result: 'success'},
+            },
+          },
+        ],
+      },
+    });
+
+    const contents = getContents(
+      [callEvent, intermediateEvent, responseEvent],
+      'myAgent',
+    );
+
+    expect(contents).toHaveLength(2);
+    expect(contents[0].parts?.map((p) => p.functionCall?.id)).toEqual([
+      'func-123',
+      'func-456',
+    ]);
+    expect(contents[1].parts?.map((p) => p.functionResponse?.id)).toEqual([
+      'func-123',
+    ]);
+  });
+
+  it('throws subset error when latest response mixes a matching id with an unknown id across multiple calls', () => {
+    const callEvent = createEvent({
+      invocationId: 'inv-1',
+      author: 'myAgent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'func-123',
+              name: 'testFunction',
+              args: {param: 'value1'},
+            },
+          },
+          {
+            functionCall: {
+              id: 'func-456',
+              name: 'testFunction2',
+              args: {param: 'value2'},
+            },
+          },
+        ],
+      },
+    });
+    const intermediateEvent = createEvent({
+      invocationId: 'inv-2',
+      author: 'myAgent',
+      content: {
+        role: 'model',
+        parts: [{text: 'Processing...'}],
+      },
+    });
+    const responseEvent = createEvent({
+      invocationId: 'inv-3',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'func-123',
+              name: 'testFunction',
+              response: {result: 'success'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'func-789',
+              name: 'testFunction3',
+              response: {result: 'other'},
+            },
+          },
+        ],
+      },
+    });
+
+    expect(() =>
+      getContents([callEvent, intermediateEvent, responseEvent], 'myAgent'),
+    ).toThrowError(
+      'Last response event should only contain the responses for the function calls in the same function call event.',
+    );
+  });
+
   it('should handle empty events list gracefully', () => {
     const contents = getContents([], 'my_agent');
     expect(contents).toEqual([]);

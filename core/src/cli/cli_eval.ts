@@ -169,6 +169,100 @@ export interface RunEvalRequest {
 }
 
 /**
+ * Numeric range of values supported by an evaluation metric.
+ */
+export interface MetricInterval {
+  minValue: number;
+  openAtMin: boolean;
+  maxValue: number;
+  openAtMax: boolean;
+}
+
+/**
+ * Value domain metadata for an evaluation metric.
+ */
+export interface MetricValueInfo {
+  interval?: MetricInterval;
+}
+
+/**
+ * Descriptor for a registered evaluation metric.
+ */
+export interface MetricInfo {
+  metricName: string;
+  description?: string;
+  metricValueInfo: MetricValueInfo;
+  requiresThreshold: boolean;
+}
+
+/**
+ * Response payload listing registered evaluation metric descriptors.
+ */
+export interface ListMetricsInfoResponse {
+  metricsInfo: MetricInfo[];
+}
+
+const REGISTERED_EVAL_METRICS: ReadonlyArray<{
+  readonly metricName: string;
+  readonly description: string;
+  readonly minValue: number;
+  readonly openAtMin: boolean;
+  readonly maxValue: number;
+  readonly openAtMax: boolean;
+  readonly requiresThreshold: boolean;
+}> = [
+  {
+    metricName: TOOL_TRAJECTORY_SCORE_KEY,
+    description:
+      'Compares expected and actual tool call trajectories (tool names and arguments) across turns. Scores range from 0 to 1, where 1 indicates an exact match.',
+    minValue: 0,
+    openAtMin: false,
+    maxValue: 1,
+    openAtMax: false,
+    requiresThreshold: true,
+  },
+  {
+    metricName: RESPONSE_MATCH_SCORE_KEY,
+    description:
+      'Measures unigram ROUGE-1 F1 similarity between the expected reference response and the actual final response. Scores range from 0 to 1, where higher values are better.',
+    minValue: 0,
+    openAtMin: false,
+    maxValue: 1,
+    openAtMax: false,
+    requiresThreshold: true,
+  },
+  {
+    metricName: RESPONSE_EVALUATION_SCORE_KEY,
+    description:
+      'Evaluates final response similarity against the expected reference response in [0, 1], where higher values indicate closer alignment.',
+    minValue: 0,
+    openAtMin: false,
+    maxValue: 1,
+    openAtMax: false,
+    requiresThreshold: true,
+  },
+];
+
+/**
+ * Returns fresh descriptors for the evaluation metrics supported by {@link runEvals}.
+ */
+export function getRegisteredEvalMetrics(): MetricInfo[] {
+  return REGISTERED_EVAL_METRICS.map((metric) => ({
+    metricName: metric.metricName,
+    description: metric.description,
+    metricValueInfo: {
+      interval: {
+        minValue: metric.minValue,
+        openAtMin: metric.openAtMin,
+        maxValue: metric.maxValue,
+        openAtMax: metric.openAtMax,
+      },
+    },
+    requiresThreshold: metric.requiresThreshold,
+  }));
+}
+
+/**
  * Result returned for a single evaluation case by the `run_eval` and
  * `eval_results` endpoints.
  */
@@ -341,40 +435,45 @@ export async function tryGetResetFunc(
 }
 
 /**
- * Parses CLI evalset file arguments of the form `file_path` or
- * `file_path:eval_1,eval_2` into a mapping from file path to requested eval IDs.
+ * Parses CLI eval set arguments of the form `<eval_set_file_path | eval_set_id>`
+ * or `<eval_set_file_path | eval_set_id>:eval_1,eval_2` into a mapping from
+ * eval set file path or ID to trimmed eval case IDs.
  *
- * @param evalSetFilePaths Array of evalset file specifications.
- * @returns Mapping of evalset file path to list of eval case names.
+ * @param evalsToRunInfo Array of eval set file paths or IDs, optionally with
+ *     colon-separated comma-delimited eval case IDs.
+ * @returns Mapping of eval set file path or ID to list of eval case IDs.
  */
 export function parseAndGetEvalsToRun(
-  evalSetFilePaths: string[],
+  evalsToRunInfo: string[],
 ): Record<string, string[]> {
-  const evalSetToEvals: Record<string, string[]> = {};
-  for (const inputEvalSet of evalSetFilePaths) {
-    let evalSetFile: string;
+  const evalSetToEvals = new Map<string, string[]>();
+  for (const inputEvalSet of evalsToRunInfo) {
+    let evalSet: string;
     let evals: string[] = [];
     // Skip the colon of a Windows drive prefix (`C:\` or `C:/`), so an
     // absolute Windows path is not split at the drive.
     const hasDrivePrefix = /^[A-Za-z]:[\\/]/.test(inputEvalSet);
     const colonIndex = inputEvalSet.indexOf(':', hasDrivePrefix ? 3 : 0);
     if (colonIndex !== -1) {
-      evalSetFile = inputEvalSet.slice(0, colonIndex);
+      evalSet = inputEvalSet.slice(0, colonIndex);
       evals = inputEvalSet
         .slice(colonIndex + 1)
         .split(',')
+        .map((s) => s.trim())
         .filter((s) => s.length > 0);
     } else {
-      evalSetFile = inputEvalSet;
+      evalSet = inputEvalSet;
     }
 
-    if (!Object.prototype.hasOwnProperty.call(evalSetToEvals, evalSetFile)) {
-      evalSetToEvals[evalSetFile] = [];
+    const existing = evalSetToEvals.get(evalSet);
+    if (existing) {
+      existing.push(...evals);
+    } else {
+      evalSetToEvals.set(evalSet, [...evals]);
     }
-    evalSetToEvals[evalSetFile].push(...evals);
   }
 
-  return evalSetToEvals;
+  return Object.fromEntries(evalSetToEvals);
 }
 
 function deepEqual(a: unknown, b: unknown): boolean {

@@ -11,8 +11,11 @@ import {
   AuthConfig,
   AuthCredentialTypes,
   BaseAgent,
+  BaseLlm,
+  BaseLlmConnection,
   BasePlugin,
   BaseTool,
+  BaseToolset,
   BeforeToolCallback,
   ComputerUseTool,
   Context,
@@ -22,19 +25,25 @@ import {
   Event,
   functionsExportedForTestingOnly,
   FunctionTool,
+  getFunctionCalls,
+  getFunctionResponses,
+  InMemorySessionService,
   InvocationContext,
   isToolNotFound,
   LiveRequestQueue,
   LlmAgent,
+  LlmRequest,
+  LlmResponse,
   LongRunningFunctionTool,
   PluginManager,
   REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+  Runner,
   Session,
   SingleAfterToolCallback,
   SingleBeforeToolCallback,
   ToolConfirmation,
 } from '@google/adk';
-import {FunctionCall, FunctionResponse} from '@google/genai';
+import {Content, FunctionCall, FunctionResponse, Type} from '@google/genai';
 import {context, SpanStatusCode, trace} from '@opentelemetry/api';
 import {AsyncLocalStorageContextManager} from '@opentelemetry/context-async-hooks';
 import {
@@ -54,6 +63,10 @@ import {
   handleFunctionCallsAsync,
   mergeParallelFunctionResponseEvents,
 } from '../../src/agents/functions.js';
+import {
+  getDeltaWriteStamp,
+  getStateWriteStamp,
+} from '../../src/sessions/state_write_order.js';
 import {logger} from '../../src/utils/logger.js';
 import {Task} from '../../src/utils/task.js';
 
@@ -2286,6 +2299,326 @@ describe('handleFunctionCallsLive and processFunctionLiveHelper', () => {
       subAgentRan: true,
     });
   });
+
+  interface LiveCallbackChainSpec {
+    name: string;
+    callbacks: Array<{response: unknown; isAsync: boolean}>;
+    expectedResponse: Record<string, unknown>;
+    expectedCalls: number[];
+    expectToolExecuted: boolean;
+  }
+
+  const LIVE_CALLBACK_CHAIN_CASES: LiveCallbackChainSpec[] = [
+    {
+      name: 'when single sync callback returns undefined',
+      callbacks: [{response: undefined, isAsync: false}],
+      expectedResponse: {initial: 'response'},
+      expectedCalls: [1],
+      expectToolExecuted: true,
+    },
+    {
+      name: 'when single async callback returns undefined',
+      callbacks: [{response: undefined, isAsync: true}],
+      expectedResponse: {initial: 'response'},
+      expectedCalls: [1],
+      expectToolExecuted: true,
+    },
+    {
+      name: 'when first sync callback returns an empty object',
+      callbacks: [
+        {response: {}, isAsync: false},
+        {response: {second: 'callback'}, isAsync: true},
+      ],
+      expectedResponse: {},
+      expectedCalls: [1, 0],
+      expectToolExecuted: false,
+    },
+    {
+      name: 'when first async callback returns an empty object',
+      callbacks: [
+        {response: {}, isAsync: true},
+        {response: {second: 'callback'}, isAsync: false},
+      ],
+      expectedResponse: {},
+      expectedCalls: [1, 0],
+      expectToolExecuted: false,
+    },
+    {
+      name: 'when first sync callback returns falsy zero',
+      callbacks: [
+        {response: 0, isAsync: false},
+        {response: {second: 'callback'}, isAsync: false},
+      ],
+      expectedResponse: {result: 0},
+      expectedCalls: [1, 0],
+      expectToolExecuted: false,
+    },
+    {
+      name: 'when first returns undefined and second async returns a payload',
+      callbacks: [
+        {response: undefined, isAsync: false},
+        {response: {second: 'callback'}, isAsync: true},
+        {response: {third: 'callback'}, isAsync: false},
+      ],
+      expectedResponse: {second: 'callback'},
+      expectedCalls: [1, 1, 0],
+      expectToolExecuted: false,
+    },
+    {
+      name: 'when mixed sync and async callbacks all return undefined',
+      callbacks: [
+        {response: undefined, isAsync: false},
+        {response: undefined, isAsync: true},
+      ],
+      expectedResponse: {initial: 'response'},
+      expectedCalls: [1, 1],
+      expectToolExecuted: true,
+    },
+  ];
+
+  it.each(LIVE_CALLBACK_CHAIN_CASES)(
+    'executes live beforeToolCallbacks chain ($name)',
+    async ({
+      callbacks,
+      expectedResponse,
+      expectedCalls,
+      expectToolExecuted,
+    }) => {
+      const ctx = createLiveInvocationContext();
+      let toolCalls = 0;
+      const simpleTool = new FunctionTool({
+        name: 'simpleTool',
+        description: 'returns an initial object',
+        parameters: z.object({}),
+        execute: async () => {
+          toolCalls += 1;
+          return {initial: 'response'};
+        },
+      });
+      const spies = callbacks.map(({response, isAsync}) =>
+        vi.fn<SingleBeforeToolCallback>(() =>
+          isAsync
+            ? Promise.resolve(response as Record<string, unknown> | undefined)
+            : (response as Record<string, unknown> | undefined),
+        ),
+      );
+      const callEvent = createEvent({
+        invocationId: ctx.invocationId,
+        author: 'liveTestAgent',
+        content: {
+          role: 'model',
+          parts: [
+            {functionCall: {id: 'fc-chain-b', name: 'simpleTool', args: {}}},
+          ],
+        },
+      });
+
+      const responseEvent = await handleFunctionCallsLive({
+        invocationContext: ctx,
+        functionCallEvent: callEvent,
+        toolsDict: {simpleTool},
+        beforeToolCallbacks: spies,
+        afterToolCallbacks: [],
+      });
+
+      expect(
+        responseEvent?.content?.parts?.[0]?.functionResponse?.response,
+      ).toEqual(expectedResponse);
+      expect(toolCalls).toBe(expectToolExecuted ? 1 : 0);
+      spies.forEach((spy, index) => {
+        expect(spy).toHaveBeenCalledTimes(expectedCalls[index]);
+      });
+    },
+  );
+
+  it.each(LIVE_CALLBACK_CHAIN_CASES)(
+    'executes live afterToolCallbacks chain ($name)',
+    async ({callbacks, expectedResponse, expectedCalls}) => {
+      const ctx = createLiveInvocationContext();
+      const simpleTool = new FunctionTool({
+        name: 'simpleTool',
+        description: 'returns an initial object',
+        parameters: z.object({}),
+        execute: async () => ({initial: 'response'}),
+      });
+      const spies = callbacks.map(({response, isAsync}) =>
+        vi.fn<SingleAfterToolCallback>(() =>
+          isAsync
+            ? Promise.resolve(response as Record<string, unknown> | undefined)
+            : (response as Record<string, unknown> | undefined),
+        ),
+      );
+      const callEvent = createEvent({
+        invocationId: ctx.invocationId,
+        author: 'liveTestAgent',
+        content: {
+          role: 'model',
+          parts: [
+            {functionCall: {id: 'fc-chain-a', name: 'simpleTool', args: {}}},
+          ],
+        },
+      });
+
+      const responseEvent = await handleFunctionCallsLive({
+        invocationContext: ctx,
+        functionCallEvent: callEvent,
+        toolsDict: {simpleTool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: spies,
+      });
+
+      expect(
+        responseEvent?.content?.parts?.[0]?.functionResponse?.response,
+      ).toEqual(expectedResponse);
+      spies.forEach((spy, index) => {
+        expect(spy).toHaveBeenCalledTimes(expectedCalls[index]);
+      });
+    },
+  );
+
+  it('runs beforeToolCallbacks and afterToolCallbacks together when before returns undefined in live mode', async () => {
+    const ctx = createLiveInvocationContext();
+    let beforeCalled = false;
+    const echoArgsTool = new FunctionTool({
+      name: 'echoArgsTool',
+      description: 'returns input args and initial tag',
+      parameters: z.object({modifiedByBefore: z.boolean().optional()}),
+      execute: async (args) => ({initial: 'response', seenArgs: args}),
+    });
+    const beforeCb: SingleBeforeToolCallback = ({args}) => {
+      beforeCalled = true;
+      args['modifiedByBefore'] = true;
+      return undefined;
+    };
+    const afterCb: SingleAfterToolCallback = ({response}) => {
+      return {...response, modifiedByAfter: true};
+    };
+    const callEvent = createEvent({
+      invocationId: ctx.invocationId,
+      author: 'liveTestAgent',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'fc-mixed', name: 'echoArgsTool', args: {}}},
+        ],
+      },
+    });
+
+    const responseEvent = await handleFunctionCallsLive({
+      invocationContext: ctx,
+      functionCallEvent: callEvent,
+      toolsDict: {echoArgsTool},
+      beforeToolCallbacks: [beforeCb],
+      afterToolCallbacks: [afterCb],
+    });
+
+    expect(beforeCalled).toBe(true);
+    expect(
+      responseEvent?.content?.parts?.[0]?.functionResponse?.response,
+    ).toEqual({
+      initial: 'response',
+      seenArgs: {modifiedByBefore: true},
+      modifiedByAfter: true,
+    });
+  });
+
+  it('prioritizes plugin tool callbacks over canonical callbacks in handleFunctionCallsLive', async () => {
+    const ctx = createLiveInvocationContext();
+    const plugin = new TestPlugin('livePlugin');
+    plugin.beforeToolCallbackResponse = {from: 'pluginBefore'};
+    ctx.pluginManager.registerPlugin(plugin);
+
+    const canonicalBefore = vi.fn<SingleBeforeToolCallback>(() => ({
+      from: 'canonicalBefore',
+    }));
+    const canonicalAfter = vi.fn<SingleAfterToolCallback>(() => ({
+      from: 'canonicalAfter',
+    }));
+    const callEvent = createEvent({
+      invocationId: ctx.invocationId,
+      author: 'liveTestAgent',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'fc-plugin-b', name: 'testTool', args: {}}},
+        ],
+      },
+    });
+
+    const beforeResult = await handleFunctionCallsLive({
+      invocationContext: ctx,
+      functionCallEvent: callEvent,
+      toolsDict: {testTool},
+      beforeToolCallbacks: [canonicalBefore],
+      afterToolCallbacks: [],
+    });
+
+    expect(
+      beforeResult?.content?.parts?.[0]?.functionResponse?.response,
+    ).toEqual({
+      from: 'pluginBefore',
+    });
+    expect(canonicalBefore).not.toHaveBeenCalled();
+
+    plugin.beforeToolCallbackResponse = undefined;
+    plugin.afterToolCallbackResponse = {from: 'pluginAfter'};
+    const afterResult = await handleFunctionCallsLive({
+      invocationContext: ctx,
+      functionCallEvent: callEvent,
+      toolsDict: {testTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [canonicalAfter],
+    });
+
+    expect(
+      afterResult?.content?.parts?.[0]?.functionResponse?.response,
+    ).toEqual({
+      from: 'pluginAfter',
+    });
+    expect(canonicalAfter).not.toHaveBeenCalled();
+  });
+
+  it('matches handleFunctionCallsAsync callback override behavior in handleFunctionCallsLive', async () => {
+    const beforeCb: SingleBeforeToolCallback = () => ({
+      bypassed: 'byBeforeCallback',
+    });
+    const asyncCtx = createLiveInvocationContext();
+    const liveCtx = createLiveInvocationContext();
+    const callEvent = createEvent({
+      invocationId: asyncCtx.invocationId,
+      author: 'liveTestAgent',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'fc-override', name: 'testTool', args: {}}},
+        ],
+      },
+    });
+
+    const asyncResult = await handleFunctionCallsAsync({
+      invocationContext: asyncCtx,
+      functionCallEvent: callEvent,
+      toolsDict: {testTool},
+      beforeToolCallbacks: [beforeCb],
+      afterToolCallbacks: [],
+    });
+    const liveResult = await handleFunctionCallsLive({
+      invocationContext: liveCtx,
+      functionCallEvent: callEvent,
+      toolsDict: {testTool},
+      beforeToolCallbacks: [beforeCb],
+      afterToolCallbacks: [],
+    });
+
+    expect(
+      asyncResult?.content?.parts?.[0]?.functionResponse?.response,
+    ).toEqual({
+      bypassed: 'byBeforeCallback',
+    });
+    expect(liveResult?.content?.parts?.[0]?.functionResponse?.response).toEqual(
+      asyncResult?.content?.parts?.[0]?.functionResponse?.response,
+    );
+  });
 });
 
 describe('OAuth2 credential request and response flows', () => {
@@ -2551,7 +2884,7 @@ describe('async tool callbacks on LlmAgent', () => {
     });
   }
 
-  it('test_async_before_tool_callback', async () => {
+  it('executes an async beforeToolCallback and returns its response', async () => {
     const mockResp = {test: 'before_tool_callback'};
     const resultEvent = await invokeToolWithCallbacks({
       beforeToolCallback: async () => mockResp,
@@ -2563,7 +2896,7 @@ describe('async tool callbacks on LlmAgent', () => {
     ).toEqual(mockResp);
   });
 
-  it('test_async_after_tool_callback', async () => {
+  it('executes an async afterToolCallback and returns its response', async () => {
     const mockResp = {test: 'after_tool_callback'};
     const resultEvent = await invokeToolWithCallbacks({
       afterToolCallback: async () => mockResp,
@@ -2733,5 +3066,2114 @@ describe('computer use function responses', () => {
 
     expect(functionResponse.response).toEqual({image});
     expect(functionResponse.parts).toBeUndefined();
+  });
+});
+
+class RecordingResponsesLlm extends BaseLlm {
+  readonly requestContents: Content[][] = [];
+  private index = 0;
+
+  constructor(private readonly responses: LlmResponse[]) {
+    super({model: 'recording-mock-llm'});
+  }
+
+  override async *generateContentAsync(
+    request: LlmRequest,
+  ): AsyncGenerator<LlmResponse, void, void> {
+    this.requestContents.push(structuredClone(request.contents));
+    const response = this.responses[this.index++];
+    if (response) {
+      yield response;
+    }
+  }
+
+  override async connect(): Promise<BaseLlmConnection> {
+    throw new Error('connect is not implemented in RecordingResponsesLlm.');
+  }
+}
+
+describe('parallel tool state merging and multi-tool EUC resumption', () => {
+  it('merges parallel tool stateDelta including nested plain objects and transferToAgent across Runner', async () => {
+    let callsCount = 0;
+    const updateNestedState = new FunctionTool({
+      name: 'updateNestedState',
+      description: 'updates a nested key in session state',
+      parameters: z.object({
+        key: z.string(),
+        nestedField: z.string(),
+        nestedValue: z.string(),
+      }),
+      execute: async ({key, nestedField, nestedValue}, toolContext) => {
+        callsCount += 1;
+        toolContext?.state.set(key, {[nestedField]: nestedValue});
+        return null;
+      },
+    });
+
+    const subAgentLlm = new RecordingResponsesLlm([
+      {content: {role: 'model', parts: [{text: 'sub agent response'}]}},
+    ]);
+    const subAgent = new LlmAgent({
+      name: 'testSubAgent',
+      model: subAgentLlm,
+    });
+    const rootLlm = new RecordingResponsesLlm([
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'call-1',
+                name: 'updateNestedState',
+                args: {
+                  key: 'profile',
+                  nestedField: 'name',
+                  nestedValue: 'Ada',
+                },
+              },
+            },
+            {
+              functionCall: {
+                id: 'call-2',
+                name: 'updateNestedState',
+                args: {
+                  key: 'profile',
+                  nestedField: 'role',
+                  nestedValue: 'admin',
+                },
+              },
+            },
+            {
+              functionCall: {
+                id: 'call-3',
+                name: 'transfer_to_agent',
+                args: {agent_name: 'testSubAgent'},
+              },
+            },
+          ],
+        },
+      },
+    ]);
+    const rootAgent = new LlmAgent({
+      name: 'rootAgent',
+      model: rootLlm,
+      tools: [updateNestedState],
+      subAgents: [subAgent],
+    });
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'parallel-app',
+      userId: 'user-1',
+    });
+    const runner = new Runner({
+      appName: 'parallel-app',
+      agent: rootAgent,
+      sessionService,
+    });
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: 'user-1',
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'test'}]},
+    })) {
+      events.push(event);
+    }
+
+    expect(callsCount).toBe(2);
+    expect(events).toHaveLength(3);
+    expect(events[1].actions.stateDelta).toEqual({
+      profile: {name: 'Ada', role: 'admin'},
+    });
+    expect(events[1].actions.transferToAgent).toBe('testSubAgent');
+    expect(events[2].author).toBe('testSubAgent');
+    expect(events[2].content?.parts?.[0]?.text).toBe('sub agent response');
+    const updatedSession = await sessionService.getSession({
+      appName: 'parallel-app',
+      userId: 'user-1',
+      sessionId: session.id,
+    });
+    expect(updatedSession?.state).toEqual({
+      profile: {name: 'Ada', role: 'admin'},
+    });
+  });
+
+  it('resumes multiple EUC-gated tools across consecutive turns and merges partial function responses', async () => {
+    function createApiKeyConfig(
+      credentialKey: string,
+      headerName: string,
+    ): AuthConfig {
+      return {
+        credentialKey,
+        authScheme: {
+          type: 'apiKey',
+          in: 'header',
+          name: headerName,
+        },
+        rawAuthCredential: {
+          authType: AuthCredentialTypes.API_KEY,
+        },
+      };
+    }
+
+    const authConfig1 = createApiKeyConfig('credKey1', 'X-Api-Key-1');
+    const authConfig2 = createApiKeyConfig('credKey2', 'X-Api-Key-2');
+
+    let functionInvoked = 0;
+    const callExternalApi1 = new FunctionTool({
+      name: 'callExternalApi1',
+      description: 'calls external API 1',
+      parameters: z.object({}),
+      execute: async (_args, toolContext) => {
+        functionInvoked += 1;
+        const auth = toolContext?.getAuthResponse(authConfig1);
+        if (!auth) {
+          toolContext?.requestCredential(authConfig1);
+          return null;
+        }
+        expect(auth.apiKey).toBe('token1');
+        return 1;
+      },
+    });
+    const callExternalApi2 = new FunctionTool({
+      name: 'callExternalApi2',
+      description: 'calls external API 2',
+      parameters: z.object({}),
+      execute: async (_args, toolContext) => {
+        functionInvoked += 1;
+        const auth = toolContext?.getAuthResponse(authConfig2);
+        if (!auth) {
+          toolContext?.requestCredential(authConfig2);
+          return null;
+        }
+        expect(auth.apiKey).toBe('token2');
+        return 2;
+      },
+    });
+
+    const mockLlm = new RecordingResponsesLlm([
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {functionCall: {id: 'id-1', name: 'callExternalApi1', args: {}}},
+            {functionCall: {id: 'id-2', name: 'callExternalApi2', args: {}}},
+          ],
+        },
+      },
+      {content: {role: 'model', parts: [{text: 'response1'}]}},
+      {content: {role: 'model', parts: [{text: 'response2'}]}},
+    ]);
+
+    const agent = new LlmAgent({
+      name: 'rootAgent',
+      model: mockLlm,
+      tools: [callExternalApi1, callExternalApi2],
+    });
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'euc-partial-app',
+      userId: 'user-1',
+    });
+    const runner = new Runner({
+      appName: 'euc-partial-app',
+      agent,
+      sessionService,
+    });
+
+    const collectTurn = async (newMessage: Content): Promise<Event[]> => {
+      const turnEvents: Event[] = [];
+      for await (const event of runner.runAsync({
+        userId: 'user-1',
+        sessionId: session.id,
+        newMessage,
+      })) {
+        turnEvents.push(event);
+      }
+      return turnEvents;
+    };
+
+    const turn1Events = await collectTurn({
+      role: 'user',
+      parts: [{text: 'test'}],
+    });
+    expect(functionInvoked).toBe(2);
+
+    const authRequestEvent = turn1Events.find((e) =>
+      getFunctionCalls(e).some(
+        (fc) => fc.name === REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+      ),
+    );
+    if (!authRequestEvent) {
+      throw new Error('Expected an adk_request_credential event in turn 1');
+    }
+    const authCalls = getFunctionCalls(authRequestEvent);
+    expect(authCalls).toHaveLength(2);
+
+    // Turn 2: supply only the first credential; API 1 resolves while API 2 stays pending.
+    await collectTurn({
+      role: 'user',
+      parts: [
+        {
+          functionResponse: {
+            id: authCalls[0].id,
+            name: authCalls[0].name,
+            response: {
+              exchangedAuthCredential: {
+                authType: AuthCredentialTypes.API_KEY,
+                apiKey: 'token1',
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    expect(functionInvoked).toBe(3);
+    expect(mockLlm.requestContents).toHaveLength(2);
+    const partialMergedParts = mockLlm.requestContents[1].at(-1)?.parts;
+    expect(partialMergedParts).toHaveLength(2);
+    expect(partialMergedParts?.[0]?.functionResponse?.name).toBe(
+      'callExternalApi1',
+    );
+    expect(partialMergedParts?.[0]?.functionResponse?.response).toEqual({
+      result: 1,
+    });
+    expect(partialMergedParts?.[1]?.functionResponse?.name).toBe(
+      'callExternalApi2',
+    );
+    expect(partialMergedParts?.[1]?.functionResponse?.response).toEqual({
+      result: null,
+    });
+
+    // Turn 3: supply the second credential; both tool responses are merged.
+    await collectTurn({
+      role: 'user',
+      parts: [
+        {
+          functionResponse: {
+            id: authCalls[1].id,
+            name: authCalls[1].name,
+            response: {
+              exchangedAuthCredential: {
+                authType: AuthCredentialTypes.API_KEY,
+                apiKey: 'token2',
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    expect(functionInvoked).toBe(4);
+    expect(mockLlm.requestContents).toHaveLength(3);
+    const finalMergedParts = mockLlm.requestContents[2].at(-1)?.parts;
+    expect(finalMergedParts).toHaveLength(2);
+    expect(finalMergedParts?.[0]?.functionResponse?.name).toBe(
+      'callExternalApi1',
+    );
+    expect(finalMergedParts?.[0]?.functionResponse?.response).toEqual({
+      result: 1,
+    });
+    expect(finalMergedParts?.[1]?.functionResponse?.name).toBe(
+      'callExternalApi2',
+    );
+    expect(finalMergedParts?.[1]?.functionResponse?.response).toEqual({
+      result: 2,
+    });
+  });
+});
+
+describe('functionCall.args deep cloning', () => {
+  function createCloneTestContext(
+    agent: LlmAgent,
+    plugins: BasePlugin[] = [],
+  ): InvocationContext {
+    return new InvocationContext({
+      invocationId: 'inv-args-clone',
+      agent,
+      session: createSession({
+        id: 'sess-args-clone',
+        userId: 'user-args-clone',
+        appName: 'app-args-clone',
+      }),
+      liveRequestQueue: new LiveRequestQueue(),
+      pluginManager: new PluginManager(plugins),
+    });
+  }
+
+  function isNestedClonePayload(value: unknown): value is {
+    nestedObject: {inner: {value: string}};
+    items: string[];
+  } {
+    return (
+      typeof value === 'object' &&
+      value !== null &&
+      'nestedObject' in value &&
+      'items' in value &&
+      Array.isArray(value.items)
+    );
+  }
+
+  it('passes a distinct copy of functionCall.args to tools and callbacks in async and live modes', async () => {
+    const receivedRefs: unknown[] = [];
+    const inspectTool = new FunctionTool({
+      name: 'inspectTool',
+      description: 'captures the args object reference',
+      parameters: {type: Type.OBJECT},
+      execute: async (input) => {
+        receivedRefs.push(input);
+        return {result: 'ok'};
+      },
+    });
+    const beforeCallback: SingleBeforeToolCallback = async ({args}) => {
+      receivedRefs.push(args);
+      return undefined;
+    };
+    const afterCallback: SingleAfterToolCallback = async ({args}) => {
+      receivedRefs.push(args);
+      return undefined;
+    };
+    const agent = new LlmAgent({
+      name: 'cloneAgent',
+      model: 'gemini-flash-latest',
+      tools: [inspectTool],
+    });
+    const invocationContext = createCloneTestContext(agent);
+    const originalArgs: Record<string, unknown> = {
+      param1: 'value1',
+      param2: 42,
+    };
+    const functionCall: FunctionCall = {
+      id: 'fc-clone-1',
+      name: inspectTool.name,
+      args: originalArgs,
+    };
+    const functionCallEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: agent.name,
+      content: {role: 'model', parts: [{functionCall}]},
+    });
+
+    const asyncResult = await handleFunctionCallsAsync({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {[inspectTool.name]: inspectTool},
+      beforeToolCallbacks: [beforeCallback],
+      afterToolCallbacks: [afterCallback],
+    });
+    const liveResult = await handleFunctionCallsLive({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {[inspectTool.name]: inspectTool},
+      beforeToolCallbacks: [beforeCallback],
+      afterToolCallbacks: [afterCallback],
+    });
+
+    expect(asyncResult).not.toBeNull();
+    expect(liveResult).not.toBeNull();
+    expect(receivedRefs).toHaveLength(6);
+    for (const ref of receivedRefs) {
+      expect(ref).toEqual(originalArgs);
+      expect(ref).not.toBe(originalArgs);
+    }
+    expect(functionCall.args).toEqual({param1: 'value1', param2: 42});
+  });
+
+  it('defaults undefined functionCall.args to an empty object in async and live modes', async () => {
+    const simpleTool = new FunctionTool({
+      name: 'simpleTool',
+      description: 'handles empty args',
+      parameters: {type: Type.OBJECT},
+      execute: async (input) => ({
+        receivedKeys:
+          typeof input === 'object' && input !== null ? Object.keys(input) : [],
+      }),
+    });
+    const agent = new LlmAgent({
+      name: 'cloneAgent',
+      model: 'gemini-flash-latest',
+      tools: [simpleTool],
+    });
+    const invocationContext = createCloneTestContext(agent);
+    const functionCall: FunctionCall = {
+      id: 'fc-undef-args',
+      name: simpleTool.name,
+      args: undefined,
+    };
+    const functionCallEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: agent.name,
+      content: {role: 'model', parts: [{functionCall}]},
+    });
+
+    const asyncResult = await handleFunctionCallsAsync({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {[simpleTool.name]: simpleTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    const liveResult = await handleFunctionCallsLive({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {[simpleTool.name]: simpleTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(
+      asyncResult?.content?.parts?.[0]?.functionResponse?.response,
+    ).toEqual({
+      receivedKeys: [],
+    });
+    expect(liveResult?.content?.parts?.[0]?.functionResponse?.response).toEqual(
+      {
+        receivedKeys: [],
+      },
+    );
+    expect(functionCall.args).toBeUndefined();
+  });
+
+  it('preserves top-level functionCall.args when a callback or tool mutates the copied args', async () => {
+    const echoTool = new FunctionTool({
+      name: 'echoTool',
+      description: 'echoes and mutates top-level args',
+      parameters: {type: Type.OBJECT},
+      execute: async (input) => {
+        if (
+          typeof input === 'object' &&
+          input !== null &&
+          'textParam' in input &&
+          'countParam' in input
+        ) {
+          const receivedArgs = {
+            textParam: input.textParam,
+            countParam: input.countParam,
+          };
+          input.textParam = 'mutatedInTool';
+          return {result: 'ok', receivedArgs};
+        }
+        return {result: 'unexpected'};
+      },
+    });
+    const beforeCallback: SingleBeforeToolCallback = async ({args}) => {
+      args['mutatedByBefore'] = true;
+      return undefined;
+    };
+    const afterCallback: SingleAfterToolCallback = async ({args}) => {
+      args['mutatedByAfter'] = true;
+      return undefined;
+    };
+    const agent = new LlmAgent({
+      name: 'cloneAgent',
+      model: 'gemini-flash-latest',
+      tools: [echoTool],
+    });
+    const invocationContext = createCloneTestContext(agent);
+    const originalArgs = {textParam: 'originalValue', countParam: 123};
+    const functionCall: FunctionCall = {
+      id: 'fc-top-level',
+      name: echoTool.name,
+      args: originalArgs,
+    };
+    const functionCallEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: agent.name,
+      content: {role: 'model', parts: [{functionCall}]},
+    });
+
+    const asyncResult = await handleFunctionCallsAsync({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {[echoTool.name]: echoTool},
+      beforeToolCallbacks: [beforeCallback],
+      afterToolCallbacks: [afterCallback],
+    });
+
+    expect(functionCall.args).toEqual({
+      textParam: 'originalValue',
+      countParam: 123,
+    });
+    expect(
+      asyncResult?.content?.parts?.[0]?.functionResponse?.response,
+    ).toEqual({
+      result: 'ok',
+      receivedArgs: {textParam: 'originalValue', countParam: 123},
+    });
+  });
+
+  it('deep-clones functionCall.args before plugin callbacks and unresolvable tool error handlers', async () => {
+    class MutatingArgsPlugin extends BasePlugin {
+      constructor() {
+        super('mutatingArgsPlugin');
+      }
+
+      override async beforeToolCallback({
+        toolArgs,
+      }: {
+        tool: BaseTool;
+        toolArgs: Record<string, unknown>;
+        toolContext: Context;
+      }): Promise<Record<string, unknown> | undefined> {
+        if (isNestedClonePayload(toolArgs)) {
+          toolArgs.nestedObject.inner.value = 'mutatedByPluginBefore';
+          toolArgs.items.push('beforeItem');
+        }
+        return undefined;
+      }
+
+      override async afterToolCallback({
+        toolArgs,
+      }: {
+        tool: BaseTool;
+        toolArgs: Record<string, unknown>;
+        toolContext: Context;
+        result: Record<string, unknown>;
+      }): Promise<Record<string, unknown> | undefined> {
+        if (isNestedClonePayload(toolArgs)) {
+          toolArgs.nestedObject.inner.value = 'mutatedByPluginAfter';
+          toolArgs.items.push('afterItem');
+        }
+        return undefined;
+      }
+
+      override async onToolErrorCallback({
+        toolArgs,
+      }: {
+        tool: BaseTool;
+        toolArgs: Record<string, unknown>;
+        toolContext: Context;
+        error: Error;
+      }): Promise<Record<string, unknown> | undefined> {
+        if (isNestedClonePayload(toolArgs)) {
+          toolArgs.nestedObject.inner.value = 'mutatedByOnToolError';
+          toolArgs.items.push('errorItem');
+        }
+        return {handled: true};
+      }
+    }
+
+    const okTool = new FunctionTool({
+      name: 'okTool',
+      description: 'returns ok',
+      parameters: {type: Type.OBJECT},
+      execute: async () => ({status: 'ok'}),
+    });
+    const agent = new LlmAgent({
+      name: 'cloneAgent',
+      model: 'gemini-flash-latest',
+      tools: [okTool],
+    });
+    const invocationContext = createCloneTestContext(agent, [
+      new MutatingArgsPlugin(),
+    ]);
+    const resolvedNested = {inner: {value: 'original'}};
+    const resolvedItems = ['item1'];
+    const resolvedCall: FunctionCall = {
+      id: 'fc-plugin-resolved',
+      name: okTool.name,
+      args: {nestedObject: resolvedNested, items: resolvedItems},
+    };
+    const missingNested = {inner: {value: 'originalMissing'}};
+    const missingItems = ['missing1'];
+    const missingCall: FunctionCall = {
+      id: 'fc-plugin-missing',
+      name: 'missingTool',
+      args: {nestedObject: missingNested, items: missingItems},
+    };
+    const functionCallEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: agent.name,
+      content: {
+        role: 'model',
+        parts: [{functionCall: resolvedCall}, {functionCall: missingCall}],
+      },
+    });
+
+    const result = await handleFunctionCallsAsync({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {[okTool.name]: okTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(result).not.toBeNull();
+    expect(result?.content?.parts?.[0]?.functionResponse?.response).toEqual({
+      status: 'ok',
+    });
+    expect(result?.content?.parts?.[1]?.functionResponse?.response).toEqual({
+      handled: true,
+    });
+    expect(resolvedCall.args).toEqual({
+      nestedObject: {inner: {value: 'original'}},
+      items: ['item1'],
+    });
+    expect(missingCall.args).toEqual({
+      nestedObject: {inner: {value: 'originalMissing'}},
+      items: ['missing1'],
+    });
+    expect(resolvedNested.inner.value).toBe('original');
+    expect(resolvedItems).toEqual(['item1']);
+    expect(missingNested.inner.value).toBe('originalMissing');
+    expect(missingItems).toEqual(['missing1']);
+  });
+
+  it('deep-clones nested objects and arrays so in-place mutations do not affect functionCall.args', async () => {
+    const mutatingTool = new FunctionTool({
+      name: 'mutatingTool',
+      description: 'mutates nested structures in place',
+      parameters: {type: Type.OBJECT},
+      execute: async (input) => {
+        if (isNestedClonePayload(input)) {
+          input.nestedObject.inner.value = 'modified';
+          input.items.push('newItem');
+          return {
+            result: 'ok',
+            receivedNested: input.nestedObject,
+            receivedItems: input.items,
+          };
+        }
+        return {result: 'unexpected'};
+      },
+    });
+    const agent = new LlmAgent({
+      name: 'cloneAgent',
+      model: 'gemini-flash-latest',
+      tools: [mutatingTool],
+    });
+    const invocationContext = createCloneTestContext(agent);
+    const originalNested = {inner: {value: 'original'}};
+    const originalItems = ['item1', 'item2'];
+    const originalArgs = {
+      nestedObject: originalNested,
+      items: originalItems,
+    };
+    const functionCall: FunctionCall = {
+      id: 'fc-deep-copy',
+      name: mutatingTool.name,
+      args: originalArgs,
+    };
+    const functionCallEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: agent.name,
+      content: {role: 'model', parts: [{functionCall}]},
+    });
+
+    const asyncResult = await handleFunctionCallsAsync({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {[mutatingTool.name]: mutatingTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    const liveResult = await handleFunctionCallsLive({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {[mutatingTool.name]: mutatingTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(functionCall.args).toEqual({
+      nestedObject: {inner: {value: 'original'}},
+      items: ['item1', 'item2'],
+    });
+    expect(originalNested.inner.value).toBe('original');
+    expect(originalItems).toEqual(['item1', 'item2']);
+    expect(
+      asyncResult?.content?.parts?.[0]?.functionResponse?.response,
+    ).toEqual({
+      result: 'ok',
+      receivedNested: {inner: {value: 'modified'}},
+      receivedItems: ['item1', 'item2', 'newItem'],
+    });
+    expect(liveResult?.content?.parts?.[0]?.functionResponse?.response).toEqual(
+      {
+        result: 'ok',
+        receivedNested: {inner: {value: 'modified'}},
+        receivedItems: ['item1', 'item2', 'newItem'],
+      },
+    );
+  });
+});
+
+describe('concurrent parallel function-call execution and state ordering', () => {
+  interface RunParallelTurnOptions {
+    tools: BaseTool[];
+    functionCalls: FunctionCall[];
+    initialState?: Record<string, unknown>;
+  }
+
+  async function runParallelTurn({
+    tools,
+    functionCalls,
+    initialState,
+  }: RunParallelTurnOptions): Promise<{
+    events: Event[];
+    storedState: Record<string, unknown>;
+  }> {
+    const appName = 'parallel-exec-app';
+    const userId = 'user-1';
+    const mockLlm = new RecordingResponsesLlm([
+      {
+        content: {
+          role: 'model',
+          parts: functionCalls.map((functionCall) => ({functionCall})),
+        },
+      },
+      {content: {role: 'model', parts: [{text: 'done'}]}},
+    ]);
+    const agent = new LlmAgent({
+      name: 'testAgent',
+      model: mockLlm,
+      tools,
+    });
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName,
+      userId,
+      state: initialState,
+    });
+    const runner = new Runner({
+      appName,
+      agent,
+      sessionService,
+    });
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'run tools'}]},
+    })) {
+      events.push(event);
+    }
+
+    const storedSession = await sessionService.getSession({
+      appName,
+      userId,
+      sessionId: session.id,
+    });
+    return {
+      events,
+      storedState: storedSession?.state ?? {},
+    };
+  }
+
+  it('returns null when no function calls match the filter', async () => {
+    const agent = new LlmAgent({
+      name: 'filterAgent',
+      model: 'gemini-flash-latest',
+      tools: [testTool],
+    });
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv-empty-filter',
+      agent,
+      session: createSession({
+        id: 'sess-empty-filter',
+        appName: 'parallel-exec-app',
+        userId: 'user-1',
+      }),
+      pluginManager: new PluginManager(),
+    });
+
+    const emptyResult = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [],
+      toolsDict: {testTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    const filteredOutResult = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: 'fc-1', name: 'testTool', args: {}}],
+      toolsDict: {testTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+      filters: new Set(['fc-other']),
+    });
+
+    expect(emptyResult).toBeNull();
+    expect(filteredOutResult).toBeNull();
+  });
+
+  it('starts multiple async tool calls concurrently in Runner.runAsync and merges responses in call order', async () => {
+    const executionLog: string[] = [];
+
+    const slowTool1 = new FunctionTool({
+      name: 'slowTool1',
+      description: 'first async tool finishing second',
+      parameters: z.object({}),
+      execute: async () => {
+        executionLog.push('start1');
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        executionLog.push('end1');
+        return {result: 'firstResult'};
+      },
+    });
+    const slowTool2 = new FunctionTool({
+      name: 'slowTool2',
+      description: 'second async tool finishing first',
+      parameters: z.object({}),
+      execute: async () => {
+        executionLog.push('start2');
+        await Promise.resolve();
+        executionLog.push('end2');
+        return {result: 'secondResult'};
+      },
+    });
+
+    const {events} = await runParallelTurn({
+      tools: [slowTool1, slowTool2],
+      functionCalls: [
+        {id: 'fc-1', name: 'slowTool1', args: {}},
+        {id: 'fc-2', name: 'slowTool2', args: {}},
+      ],
+    });
+
+    const lastStart = Math.max(
+      executionLog.indexOf('start1'),
+      executionLog.indexOf('start2'),
+    );
+    const firstEnd = Math.min(
+      executionLog.indexOf('end1'),
+      executionLog.indexOf('end2'),
+    );
+    expect(lastStart).toBeGreaterThanOrEqual(0);
+    expect(lastStart).toBeLessThan(firstEnd);
+    expect(executionLog).toEqual(['start1', 'start2', 'end2', 'end1']);
+
+    expect(events).toHaveLength(3);
+    const responses = getFunctionResponses(events[1]);
+    expect(responses).toEqual([
+      {id: 'fc-1', name: 'slowTool1', response: {result: 'firstResult'}},
+      {id: 'fc-2', name: 'slowTool2', response: {result: 'secondResult'}},
+    ]);
+  });
+
+  it('starts multiple async tool calls concurrently in handleFunctionCallsLive and merges responses in call order', async () => {
+    const executionLog: string[] = [];
+
+    const slowLiveTool1 = new FunctionTool({
+      name: 'slowLiveTool1',
+      description: 'first live async tool finishing second',
+      parameters: z.object({}),
+      execute: async () => {
+        executionLog.push('start1');
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        executionLog.push('end1');
+        return {result: 'liveFirst'};
+      },
+    });
+    const slowLiveTool2 = new FunctionTool({
+      name: 'slowLiveTool2',
+      description: 'second live async tool finishing first',
+      parameters: z.object({}),
+      execute: async () => {
+        executionLog.push('start2');
+        await Promise.resolve();
+        executionLog.push('end2');
+        return {result: 'liveSecond'};
+      },
+    });
+
+    const agent = new LlmAgent({
+      name: 'liveParallelAgent',
+      model: 'gemini-flash-latest',
+      tools: [slowLiveTool1, slowLiveTool2],
+    });
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv-live-parallel',
+      agent,
+      session: createSession({
+        id: 'sess-live-parallel',
+        appName: 'parallel-exec-app',
+        userId: 'user-1',
+      }),
+      liveRequestQueue: new LiveRequestQueue(),
+      pluginManager: new PluginManager(),
+    });
+    const functionCallEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: agent.name,
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'fc-live-1', name: 'slowLiveTool1', args: {}}},
+          {functionCall: {id: 'fc-live-2', name: 'slowLiveTool2', args: {}}},
+        ],
+      },
+    });
+
+    const mergedEvent = await handleFunctionCallsLive({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {slowLiveTool1, slowLiveTool2},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const lastStart = Math.max(
+      executionLog.indexOf('start1'),
+      executionLog.indexOf('start2'),
+    );
+    const firstEnd = Math.min(
+      executionLog.indexOf('end1'),
+      executionLog.indexOf('end2'),
+    );
+    expect(lastStart).toBeGreaterThanOrEqual(0);
+    expect(lastStart).toBeLessThan(firstEnd);
+    expect(executionLog).toEqual(['start1', 'start2', 'end2', 'end1']);
+
+    expect(mergedEvent).not.toBeNull();
+    expect(mergedEvent ? getFunctionResponses(mergedEvent) : []).toEqual([
+      {id: 'fc-live-1', name: 'slowLiveTool1', response: {result: 'liveFirst'}},
+      {
+        id: 'fc-live-2',
+        name: 'slowLiveTool2',
+        response: {result: 'liveSecond'},
+      },
+    ]);
+  });
+
+  it('merges state updates from parallel synchronous tools on toolContext.state', async () => {
+    const stateSnapshots: Array<[string, Record<string, unknown>]> = [];
+
+    const modifyState1 = new FunctionTool({
+      name: 'modifyState1',
+      description: 'increments counter and records first flag',
+      parameters: z.object({}),
+      execute: (_args, toolContext) => {
+        if (!toolContext) {
+          return {result: 'missingContext'};
+        }
+        stateSnapshots.push(['tool1Start', {...toolContext.state.toRecord()}]);
+        const current = toolContext.state.get<number>('counter') ?? 0;
+        toolContext.state.set('counter', current + 1);
+        toolContext.state.set('tool1Executed', true);
+        stateSnapshots.push(['tool1End', {...toolContext.state.toRecord()}]);
+        return {result: 'modified1'};
+      },
+    });
+    const modifyState2 = new FunctionTool({
+      name: 'modifyState2',
+      description: 'increments counter and records second flag',
+      parameters: z.object({}),
+      execute: (_args, toolContext) => {
+        if (!toolContext) {
+          return {result: 'missingContext'};
+        }
+        stateSnapshots.push(['tool2Start', {...toolContext.state.toRecord()}]);
+        const current = toolContext.state.get<number>('counter') ?? 0;
+        toolContext.state.set('counter', current + 1);
+        toolContext.state.set('tool2Executed', true);
+        stateSnapshots.push(['tool2End', {...toolContext.state.toRecord()}]);
+        return {result: 'modified2'};
+      },
+    });
+
+    const {events, storedState} = await runParallelTurn({
+      tools: [modifyState1, modifyState2],
+      functionCalls: [
+        {id: 'fc-1', name: 'modifyState1', args: {}},
+        {id: 'fc-2', name: 'modifyState2', args: {}},
+      ],
+    });
+
+    expect(events[1]?.actions.stateDelta).toEqual({
+      counter: 2,
+      tool1Executed: true,
+      tool2Executed: true,
+    });
+    expect(storedState).toEqual({
+      counter: 2,
+      tool1Executed: true,
+      tool2Executed: true,
+    });
+    expect(stateSnapshots.map(([stage]) => stage)).toEqual([
+      'tool1Start',
+      'tool1End',
+      'tool2Start',
+      'tool2End',
+    ]);
+  });
+
+  it('blocks a sibling yielding async tool until a synchronous tool finishes', async () => {
+    const executionOrder: string[] = [];
+
+    const blockingSyncTool = new FunctionTool({
+      name: 'blockingSyncTool',
+      description: 'performs synchronous CPU work',
+      parameters: z.object({}),
+      execute: () => {
+        executionOrder.push('syncA');
+        let acc = 0;
+        for (let i = 0; i < 10_000; i++) {
+          acc += i;
+        }
+        executionOrder.push('syncB');
+        return {result: acc > 0 ? 'syncDone' : 'empty'};
+      },
+    });
+    const yieldingAsyncTool = new FunctionTool({
+      name: 'yieldingAsyncTool',
+      description: 'yields control across microtasks',
+      parameters: z.object({}),
+      execute: async () => {
+        executionOrder.push('asyncC');
+        await Promise.resolve();
+        executionOrder.push('asyncD');
+        return {result: 'asyncDone'};
+      },
+    });
+
+    await runParallelTurn({
+      tools: [blockingSyncTool, yieldingAsyncTool],
+      functionCalls: [
+        {id: 'fc-1', name: 'blockingSyncTool', args: {}},
+        {id: 'fc-2', name: 'yieldingAsyncTool', args: {}},
+      ],
+    });
+
+    expect(executionOrder).toEqual(['syncA', 'syncB', 'asyncC', 'asyncD']);
+  });
+
+  it('blocks a sibling yielding async tool until a non-yielding async tool finishes', async () => {
+    const executionOrder: string[] = [];
+
+    const nonYieldingAsyncTool = new FunctionTool({
+      name: 'nonYieldingAsyncTool',
+      description: 'async function with no await points',
+      parameters: z.object({}),
+      execute: async () => {
+        executionOrder.push('nonYieldA');
+        let acc = 0;
+        for (let i = 0; i < 10_000; i++) {
+          acc += i;
+        }
+        executionOrder.push('nonYieldB');
+        return {result: acc > 0 ? 'nonYieldDone' : 'empty'};
+      },
+    });
+    const yieldingAsyncTool = new FunctionTool({
+      name: 'yieldingAsyncTool',
+      description: 'async function that yields control',
+      parameters: z.object({}),
+      execute: async () => {
+        executionOrder.push('yieldC');
+        await Promise.resolve();
+        executionOrder.push('yieldD');
+        return {result: 'yieldDone'};
+      },
+    });
+
+    await runParallelTurn({
+      tools: [nonYieldingAsyncTool, yieldingAsyncTool],
+      functionCalls: [
+        {id: 'fc-1', name: 'nonYieldingAsyncTool', args: {}},
+        {id: 'fc-2', name: 'yieldingAsyncTool', args: {}},
+      ],
+    });
+
+    expect(executionOrder).toEqual([
+      'nonYieldA',
+      'nonYieldB',
+      'yieldC',
+      'yieldD',
+    ]);
+  });
+
+  it('interleaves two yielding async tools on the event loop', async () => {
+    const executionOrder: string[] = [];
+
+    const yieldingTool1 = new FunctionTool({
+      name: 'yieldingTool1',
+      description: 'first yielding async tool',
+      parameters: z.object({}),
+      execute: async () => {
+        executionOrder.push('func1A');
+        await Promise.resolve();
+        executionOrder.push('func1B');
+        return {result: 'func1Done'};
+      },
+    });
+    const yieldingTool2 = new FunctionTool({
+      name: 'yieldingTool2',
+      description: 'second yielding async tool',
+      parameters: z.object({}),
+      execute: async () => {
+        executionOrder.push('func2C');
+        await Promise.resolve();
+        executionOrder.push('func2D');
+        return {result: 'func2Done'};
+      },
+    });
+
+    await runParallelTurn({
+      tools: [yieldingTool1, yieldingTool2],
+      functionCalls: [
+        {id: 'fc-1', name: 'yieldingTool1', args: {}},
+        {id: 'fc-2', name: 'yieldingTool2', args: {}},
+      ],
+    });
+
+    expect(executionOrder).toEqual(['func1A', 'func2C', 'func1B', 'func2D']);
+  });
+
+  it('runs synchronous, non-yielding async, and yielding async tools in expected event-loop order', async () => {
+    const executionOrder: string[] = [];
+
+    const syncTool = new FunctionTool({
+      name: 'syncTool',
+      description: 'synchronous tool',
+      parameters: z.object({}),
+      execute: () => {
+        executionOrder.push('syncA');
+        executionOrder.push('syncB');
+        return {result: 'syncDone'};
+      },
+    });
+    const nonYieldingAsyncTool = new FunctionTool({
+      name: 'nonYieldingAsyncTool',
+      description: 'non-yielding async tool',
+      parameters: z.object({}),
+      execute: async () => {
+        executionOrder.push('nonYieldC');
+        executionOrder.push('nonYieldD');
+        return {result: 'nonYieldDone'};
+      },
+    });
+    const yieldingAsyncTool = new FunctionTool({
+      name: 'yieldingAsyncTool',
+      description: 'yielding async tool',
+      parameters: z.object({}),
+      execute: async () => {
+        executionOrder.push('yieldE');
+        await Promise.resolve();
+        executionOrder.push('yieldF');
+        return {result: 'yieldDone'};
+      },
+    });
+
+    await runParallelTurn({
+      tools: [syncTool, nonYieldingAsyncTool, yieldingAsyncTool],
+      functionCalls: [
+        {id: 'fc-1', name: 'syncTool', args: {}},
+        {id: 'fc-2', name: 'nonYieldingAsyncTool', args: {}},
+        {id: 'fc-3', name: 'yieldingAsyncTool', args: {}},
+      ],
+    });
+
+    expect(executionOrder).toEqual([
+      'syncA',
+      'syncB',
+      'nonYieldC',
+      'nonYieldD',
+      'yieldE',
+      'yieldF',
+    ]);
+  });
+
+  it('retains every item when parallel array appends on toolContext.state finish out of call order', async () => {
+    let markSecondWritten: (() => void) | undefined;
+    const secondWritten = new Promise<void>((resolve) => {
+      markSecondWritten = resolve;
+    });
+
+    const appendItem = new FunctionTool({
+      name: 'appendItem',
+      description: 'appends an item to state array',
+      parameters: z.object({item: z.string()}),
+      execute: async ({item}, toolContext) => {
+        if (item === 'a') {
+          let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([
+              secondWritten,
+              new Promise<void>((resolve) => {
+                fallbackTimer = setTimeout(resolve, 50);
+              }),
+            ]);
+          } finally {
+            clearTimeout(fallbackTimer);
+          }
+        }
+        const existing = toolContext?.state.get<string[]>('items') ?? [];
+        toolContext?.state.set('items', [...existing, item]);
+        markSecondWritten?.();
+        return null;
+      },
+    });
+
+    const {events, storedState} = await runParallelTurn({
+      tools: [appendItem],
+      functionCalls: [
+        {id: 'fc-a', name: 'appendItem', args: {item: 'a'}},
+        {id: 'fc-b', name: 'appendItem', args: {item: 'b'}},
+      ],
+    });
+
+    expect(events[1]?.actions.stateDelta['items']).toEqual(['b', 'a']);
+    expect(storedState['items']).toEqual(['b', 'a']);
+  });
+
+  it('stores no duplicates when parallel array appends on toolContext.state finish in call order', async () => {
+    const appendItem = new FunctionTool({
+      name: 'appendItem',
+      description: 'appends an item to state array in order',
+      parameters: z.object({item: z.string()}),
+      execute: async ({item}, toolContext) => {
+        const existing = toolContext?.state.get<string[]>('items') ?? [];
+        toolContext?.state.set('items', [...existing, item]);
+        return null;
+      },
+    });
+
+    const {events, storedState} = await runParallelTurn({
+      tools: [appendItem],
+      functionCalls: [
+        {id: 'fc-a', name: 'appendItem', args: {item: 'a'}},
+        {id: 'fc-b', name: 'appendItem', args: {item: 'b'}},
+      ],
+    });
+
+    expect(events[1]?.actions.stateDelta['items']).toEqual(['a', 'b']);
+    expect(storedState['items']).toEqual(['a', 'b']);
+  });
+
+  it('retains the latest nested array when parallel deep-cloned object writes finish out of call order', async () => {
+    interface DocState {
+      entities: Array<{name: string; labels: string[]}>;
+    }
+
+    let markSecondWritten: (() => void) | undefined;
+    const secondWritten = new Promise<void>((resolve) => {
+      markSecondWritten = resolve;
+    });
+
+    const addLabel = new FunctionTool({
+      name: 'addLabel',
+      description: 'adds a label to a deep-cloned document entity',
+      parameters: z.object({label: z.string()}),
+      execute: async ({label}, toolContext) => {
+        if (label === 'a') {
+          let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([
+              secondWritten,
+              new Promise<void>((resolve) => {
+                fallbackTimer = setTimeout(resolve, 50);
+              }),
+            ]);
+          } finally {
+            clearTimeout(fallbackTimer);
+          }
+        }
+        const currentDoc = toolContext?.state.get<DocState>('doc');
+        if (currentDoc) {
+          const clonedDoc = structuredClone(currentDoc);
+          clonedDoc.entities[0]?.labels.push(label);
+          toolContext?.state.set('doc', clonedDoc);
+        }
+        markSecondWritten?.();
+        return null;
+      },
+    });
+
+    const {events, storedState} = await runParallelTurn({
+      tools: [addLabel],
+      functionCalls: [
+        {id: 'fc-a', name: 'addLabel', args: {label: 'a'}},
+        {id: 'fc-b', name: 'addLabel', args: {label: 'b'}},
+      ],
+      initialState: {
+        doc: {entities: [{name: 'e1', labels: []}]},
+      },
+    });
+
+    const expectedDoc: DocState = {
+      entities: [{name: 'e1', labels: ['b', 'a']}],
+    };
+    expect(events[1]?.actions.stateDelta['doc']).toEqual(expectedDoc);
+    expect(storedState['doc']).toEqual(expectedDoc);
+  });
+
+  it('retains separate keys written in parallel to the same plain-object state entry', async () => {
+    const saveDraft = new FunctionTool({
+      name: 'saveDraft',
+      description: 'writes a draft key into state',
+      parameters: z.object({draftId: z.string()}),
+      execute: async ({draftId}, toolContext) => {
+        toolContext?.state.set('drafts', {[draftId]: 'body'});
+        return null;
+      },
+    });
+
+    const {events, storedState} = await runParallelTurn({
+      tools: [saveDraft],
+      functionCalls: [
+        {id: 'fc-a', name: 'saveDraft', args: {draftId: 'a'}},
+        {id: 'fc-b', name: 'saveDraft', args: {draftId: 'b'}},
+      ],
+    });
+
+    expect(events[1]?.actions.stateDelta['drafts']).toEqual({
+      a: 'body',
+      b: 'body',
+    });
+    expect(storedState['drafts']).toEqual({
+      a: 'body',
+      b: 'body',
+    });
+  });
+
+  it('keeps call-order precedence for direct writes to toolContext.actions.stateDelta that bypass toolContext.state', async () => {
+    const setItemsDirect = new FunctionTool({
+      name: 'setItemsDirect',
+      description: 'writes array directly to actions.stateDelta',
+      parameters: z.object({item: z.string()}),
+      execute: async ({item}, toolContext) => {
+        if (toolContext) {
+          toolContext.actions.stateDelta['items'] = [item];
+        }
+        return null;
+      },
+    });
+    const setDoneDirect = new FunctionTool({
+      name: 'setDoneDirect',
+      description: 'writes scalar directly to actions.stateDelta',
+      parameters: z.object({doneFlag: z.string()}),
+      execute: async ({doneFlag}, toolContext) => {
+        if (toolContext) {
+          toolContext.actions.stateDelta['done'] = doneFlag === 'yes';
+        }
+        return null;
+      },
+    });
+
+    const arrayRun = await runParallelTurn({
+      tools: [setItemsDirect],
+      functionCalls: [
+        {id: 'fc-a', name: 'setItemsDirect', args: {item: 'a'}},
+        {id: 'fc-b', name: 'setItemsDirect', args: {item: 'b'}},
+      ],
+      initialState: {items: ['old']},
+    });
+    expect(arrayRun.events[1]?.actions.stateDelta['items']).toEqual(['b']);
+    expect(arrayRun.storedState['items']).toEqual(['b']);
+
+    const scalarRun = await runParallelTurn({
+      tools: [setDoneDirect],
+      functionCalls: [
+        {id: 'fc-no', name: 'setDoneDirect', args: {doneFlag: 'no'}},
+        {id: 'fc-yes', name: 'setDoneDirect', args: {doneFlag: 'yes'}},
+      ],
+      initialState: {done: false},
+    });
+    expect(scalarRun.events[1]?.actions.stateDelta['done']).toBe(true);
+    expect(scalarRun.storedState['done']).toBe(true);
+  });
+
+  it('preserves a newly started streaming Task when stop_streaming awaits cancellation in parallel', async () => {
+    let releaseNewStream: (() => void) | undefined;
+    const monitorFeed = new FunctionTool({
+      name: 'monitorFeed',
+      description: 'streams feed updates until released',
+      parameters: z.object({feedId: z.string()}),
+      execute: async function* ({feedId}) {
+        yield `feed:${feedId}`;
+        await new Promise<void>((resolve) => {
+          releaseNewStream = resolve;
+        });
+      },
+    });
+    const stopStreaming = new FunctionTool({
+      name: 'stop_streaming',
+      description: 'stops an active streaming tool',
+      parameters: z.object({function_name: z.string()}),
+      execute: async () => ({}),
+    });
+
+    const previousTask = new Task<void>(async (abortSignal) => {
+      await new Promise<void>((resolve) => {
+        if (abortSignal.aborted) {
+          queueMicrotask(resolve);
+          return;
+        }
+        abortSignal.addEventListener('abort', () => queueMicrotask(resolve), {
+          once: true,
+        });
+      });
+    });
+
+    const agent = new LlmAgent({
+      name: 'liveStreamGuardAgent',
+      model: 'gemini-flash-latest',
+      tools: [monitorFeed, stopStreaming],
+    });
+    const liveRequestQueue = new LiveRequestQueue();
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv-stop-restart',
+      agent,
+      session: createSession({
+        id: 'sess-stop-restart',
+        appName: 'parallel-exec-app',
+        userId: 'user-1',
+      }),
+      liveRequestQueue,
+      activeStreamingTools: {
+        monitorFeed: new ActiveStreamingTool({task: previousTask}),
+      },
+      pluginManager: new PluginManager(),
+    });
+
+    try {
+      const mergedEvent = await handleFunctionCallsLive({
+        invocationContext,
+        functionCallEvent: createEvent({
+          invocationId: invocationContext.invocationId,
+          author: agent.name,
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  id: 'fc-stop',
+                  name: 'stop_streaming',
+                  args: {function_name: 'monitorFeed'},
+                },
+              },
+              {
+                functionCall: {
+                  id: 'fc-restart',
+                  name: 'monitorFeed',
+                  args: {feedId: 'feed-2'},
+                },
+              },
+            ],
+          },
+        }),
+        toolsDict: {
+          monitorFeed,
+          stop_streaming: stopStreaming,
+        },
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+
+      const currentTask =
+        invocationContext.activeStreamingTools?.['monitorFeed']?.task;
+      expect(previousTask.done()).toBe(true);
+      expect(currentTask).toBeDefined();
+      expect(currentTask).not.toBe(previousTask);
+      expect(currentTask?.done()).toBe(false);
+      expect(mergedEvent ? getFunctionResponses(mergedEvent) : []).toEqual([
+        {
+          id: 'fc-stop',
+          name: 'stop_streaming',
+          response: {
+            status: 'Successfully stopped streaming function monitorFeed',
+          },
+        },
+        {
+          id: 'fc-restart',
+          name: 'monitorFeed',
+          response: {
+            status:
+              'The function is running asynchronously and the results are pending.',
+          },
+        },
+      ]);
+    } finally {
+      releaseNewStream?.();
+      invocationContext.activeStreamingTools?.['monitorFeed']?.task?.cancel();
+      await invocationContext.activeStreamingTools?.['monitorFeed']?.task
+        ?.promise;
+      liveRequestQueue.close();
+    }
+  });
+
+  it('retains the highest-stamped scalar value when parallel async tools update toolContext.state out of call order', async () => {
+    let markSecondWritten: (() => void) | undefined;
+    const secondWritten = new Promise<void>((resolve) => {
+      markSecondWritten = resolve;
+    });
+
+    const incrementCounter = new FunctionTool({
+      name: 'incrementCounter',
+      description: 'increments a shared scalar counter in state',
+      parameters: z.object({stepTag: z.string()}),
+      execute: async ({stepTag}, toolContext) => {
+        if (stepTag === 'slowFirst') {
+          let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([
+              secondWritten,
+              new Promise<void>((resolve) => {
+                fallbackTimer = setTimeout(resolve, 50);
+              }),
+            ]);
+          } finally {
+            clearTimeout(fallbackTimer);
+          }
+        }
+        const current = toolContext?.state.get<number>('counter') ?? 0;
+        toolContext?.state.set('counter', current + 1);
+        markSecondWritten?.();
+        return {stepTag};
+      },
+    });
+
+    const {events, storedState} = await runParallelTurn({
+      tools: [incrementCounter],
+      functionCalls: [
+        {
+          id: 'fc-slow',
+          name: 'incrementCounter',
+          args: {stepTag: 'slowFirst'},
+        },
+        {
+          id: 'fc-fast',
+          name: 'incrementCounter',
+          args: {stepTag: 'fastSecond'},
+        },
+      ],
+      initialState: {counter: 0},
+    });
+
+    const mergedDelta = events[1]?.actions.stateDelta ?? {};
+    expect(mergedDelta['counter']).toBe(2);
+    expect(storedState['counter']).toBe(2);
+    expect(getDeltaWriteStamp(mergedDelta, 'counter')).toBeTypeOf('number');
+    expect(getDeltaWriteStamp(mergedDelta, 'unstampedKey')).toBeUndefined();
+
+    const session = createSession({
+      id: 'sess-stamp-check',
+      appName: 'parallel-exec-app',
+      userId: 'user-1',
+    });
+    expect(getStateWriteStamp(session.state, 'counter')).toBeUndefined();
+    const ctx = new InvocationContext({
+      invocationId: 'inv-stamp-check',
+      agent: new LlmAgent({
+        name: 'stampCheckAgent',
+        model: 'gemini-flash-latest',
+        tools: [incrementCounter],
+      }),
+      session,
+      pluginManager: new PluginManager(),
+    });
+    const toolCtx = new Context({invocationContext: ctx});
+    toolCtx.state.set('counter', 7);
+    expect(getStateWriteStamp(session.state, 'counter')).toBe(
+      getDeltaWriteStamp(toolCtx.actions.stateDelta, 'counter'),
+    );
+
+    const setStampedThenDirect = new FunctionTool({
+      name: 'setStampedThenDirect',
+      description: 'writes either via state or directly to stateDelta',
+      parameters: z.object({mode: z.enum(['stamped', 'direct'])}),
+      execute: async ({mode}, currentToolContext) => {
+        if (mode === 'stamped') {
+          currentToolContext?.state.set('counter', 10);
+        } else if (currentToolContext) {
+          currentToolContext.actions.stateDelta['counter'] = 99;
+        }
+        return {mode};
+      },
+    });
+
+    const mixedRun = await runParallelTurn({
+      tools: [setStampedThenDirect],
+      functionCalls: [
+        {
+          id: 'fc-stamped',
+          name: 'setStampedThenDirect',
+          args: {mode: 'stamped'},
+        },
+        {
+          id: 'fc-direct',
+          name: 'setStampedThenDirect',
+          args: {mode: 'direct'},
+        },
+      ],
+    });
+
+    const mixedDelta = mixedRun.events[1]?.actions.stateDelta ?? {};
+    expect(mixedDelta['counter']).toBe(99);
+    expect(mixedRun.storedState['counter']).toBe(99);
+    expect(getDeltaWriteStamp(mixedDelta, 'counter')).toBeUndefined();
+  });
+
+  it('restores the latest stamped state write when an intermediate unstamped stateDelta write is overwritten by a later stamped call', async () => {
+    let markOlderWritten: (() => void) | undefined;
+    const olderWritten = new Promise<void>((resolve) => {
+      markOlderWritten = resolve;
+    });
+    let invocationSession: Session | undefined;
+
+    const mixedThreeWayTool = new FunctionTool({
+      name: 'mixedThreeWayTool',
+      description:
+        'writes scalar, array, and plain-object keys across stamped and unstamped paths',
+      parameters: z.object({
+        callRole: z.enum(['latestStamped', 'unstampedMiddle', 'olderStamped']),
+      }),
+      execute: async ({callRole}, toolContext) => {
+        if (!toolContext) {
+          return {callRole};
+        }
+        invocationSession = toolContext.invocationContext.session;
+        if (callRole === 'latestStamped') {
+          let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([
+              olderWritten,
+              new Promise<void>((resolve) => {
+                fallbackTimer = setTimeout(resolve, 50);
+              }),
+            ]);
+          } finally {
+            clearTimeout(fallbackTimer);
+          }
+          toolContext.state.set('score', 2);
+          const existingItems = toolContext.state.get<string[]>('items') ?? [];
+          toolContext.state.set('items', [...existingItems, 'a']);
+          const existingDoc = toolContext.state.get<{tags: string[]}>('doc');
+          toolContext.state.set('doc', {
+            tags: [...(existingDoc?.tags ?? []), 'a'],
+          });
+          toolContext.state.set('scalarOverPlain', 'latest');
+          toolContext.state.set('config', {shared: 'fromFirst', firstOnly: 1});
+          return {callRole};
+        }
+
+        if (callRole === 'unstampedMiddle') {
+          toolContext.actions.stateDelta['score'] = 50;
+          toolContext.actions.stateDelta['items'] = ['direct'];
+          toolContext.actions.stateDelta['doc'] = ['directDoc'];
+          toolContext.actions.stateDelta['scalarOverPlain'] = {direct: true};
+          toolContext.actions.stateDelta['config'] = {
+            shared: 'directOverride',
+          };
+          return {callRole};
+        }
+
+        toolContext.state.set('score', 1);
+        toolContext.state.set('items', ['c']);
+        toolContext.state.set('doc', {tags: ['c']});
+        toolContext.state.set('scalarOverPlain', 'older');
+        toolContext.state.set('config', {thirdOnly: 3});
+        markOlderWritten?.();
+        return {callRole};
+      },
+    });
+
+    const {events, storedState} = await runParallelTurn({
+      tools: [mixedThreeWayTool],
+      functionCalls: [
+        {
+          id: 'fc-1',
+          name: 'mixedThreeWayTool',
+          args: {callRole: 'latestStamped'},
+        },
+        {
+          id: 'fc-2',
+          name: 'mixedThreeWayTool',
+          args: {callRole: 'unstampedMiddle'},
+        },
+        {
+          id: 'fc-3',
+          name: 'mixedThreeWayTool',
+          args: {callRole: 'olderStamped'},
+        },
+      ],
+    });
+
+    const mergedDelta = events[1]?.actions.stateDelta ?? {};
+    const liveState = invocationSession?.state ?? {};
+
+    expect(mergedDelta['score']).toBe(2);
+    expect(liveState['score']).toBe(2);
+    expect(storedState['score']).toBe(2);
+    expect(getDeltaWriteStamp(mergedDelta, 'score')).toBe(
+      getStateWriteStamp(liveState, 'score'),
+    );
+
+    expect(mergedDelta['items']).toEqual(['c', 'a']);
+    expect(liveState['items']).toEqual(['c', 'a']);
+    expect(storedState['items']).toEqual(['c', 'a']);
+
+    expect(mergedDelta['doc']).toEqual({tags: ['c', 'a']});
+    expect(liveState['doc']).toEqual({tags: ['c', 'a']});
+    expect(storedState['doc']).toEqual({tags: ['c', 'a']});
+
+    expect(mergedDelta['scalarOverPlain']).toBe('latest');
+    expect(liveState['scalarOverPlain']).toBe('latest');
+    expect(storedState['scalarOverPlain']).toBe('latest');
+
+    const expectedConfig = {
+      shared: 'directOverride',
+      firstOnly: 1,
+      thirdOnly: 3,
+    };
+    expect(mergedDelta['config']).toEqual(expectedConfig);
+    expect(liveState['config']).toEqual(expectedConfig);
+    expect(storedState['config']).toEqual(expectedConfig);
+  });
+
+  it('ignores inherited Object.prototype keys in plain object maps during function call handling', async () => {
+    expect(
+      getLongRunningFunctionCalls(
+        [{id: 'fc-proto', name: 'toString', args: {}}],
+        {testTool},
+      ).size,
+    ).toBe(0);
+
+    let seenConfirmation: unknown = 'unset';
+    let seenResumeInputs: Record<string, unknown> | undefined;
+    const inspectContextTool = new FunctionTool({
+      name: 'inspectContextTool',
+      description: 'captures confirmation and resume inputs from toolContext',
+      parameters: z.object({}),
+      execute: (_args, toolContext) => {
+        seenConfirmation = toolContext?.toolConfirmation;
+        seenResumeInputs = toolContext?.resumeInputs;
+        return {ok: true};
+      },
+    });
+    const stopStreaming = new FunctionTool({
+      name: 'stop_streaming',
+      description: 'stops an active streaming tool',
+      parameters: z.object({function_name: z.string()}),
+      execute: async () => ({}),
+    });
+
+    const agent = new LlmAgent({
+      name: 'protoGuardAgent',
+      model: 'gemini-flash-latest',
+      tools: [inspectContextTool, stopStreaming],
+    });
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv-proto-guard',
+      agent,
+      session: createSession({
+        id: 'sess-proto-guard',
+        appName: 'parallel-exec-app',
+        userId: 'user-1',
+      }),
+      activeStreamingTools: {},
+      pluginManager: new PluginManager(),
+    });
+
+    const responseEvent = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [
+        {id: 'constructor', name: 'inspectContextTool', args: {}},
+      ],
+      toolsDict: {inspectContextTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+      toolConfirmationDict: {},
+      resumeInputsDict: {},
+    });
+
+    expect(responseEvent).not.toBeNull();
+    expect(seenConfirmation).toBeUndefined();
+    expect(seenResumeInputs).toEqual({});
+
+    const stopProtoEvent = await handleFunctionCallsLive({
+      invocationContext,
+      functionCallEvent: createEvent({
+        invocationId: invocationContext.invocationId,
+        author: agent.name,
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-stop-proto',
+                name: 'stop_streaming',
+                args: {function_name: 'constructor'},
+              },
+            },
+          ],
+        },
+      }),
+      toolsDict: {stop_streaming: stopStreaming},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(stopProtoEvent ? getFunctionResponses(stopProtoEvent) : []).toEqual([
+      {
+        id: 'fc-stop-proto',
+        name: 'stop_streaming',
+        response: {
+          status: 'No active streaming function named constructor found',
+        },
+      },
+    ]);
+  });
+
+  it('awaits in-flight sibling tools before rejecting when a tool callback throws in a parallel batch', async () => {
+    // 1. Direct `handleFunctionCallsAsync` call: rejects with the first
+    //    callback error only after the in-flight sibling tool settles.
+    let markDirectSiblingInFlight: (() => void) | undefined;
+    const directSiblingInFlight = new Promise<void>((resolve) => {
+      markDirectSiblingInFlight = resolve;
+    });
+    let releaseDirectSibling: (() => void) | undefined;
+    const allowDirectSiblingToFinish = new Promise<void>((resolve) => {
+      releaseDirectSibling = resolve;
+    });
+    let directSiblingFinished = false;
+
+    const directSiblingTool = new FunctionTool({
+      name: 'directSiblingTool',
+      description: 'updates session state after awaiting an async step',
+      parameters: z.object({}),
+      execute: async (_args, toolContext) => {
+        markDirectSiblingInFlight?.();
+        await allowDirectSiblingToFinish;
+        toolContext?.state.set('directSiblingWrite', 'settledBeforeRejection');
+        directSiblingFinished = true;
+        return {result: 'siblingDone'};
+      },
+    });
+    const directFailingBeforeTool = new FunctionTool({
+      name: 'directFailingBeforeTool',
+      description: 'never executes because beforeToolCallback throws',
+      parameters: z.object({}),
+      execute: async () => ({result: 'unreachable'}),
+    });
+    const directFailingAfterTool = new FunctionTool({
+      name: 'directFailingAfterTool',
+      description: 'executes before afterToolCallback throws',
+      parameters: z.object({}),
+      execute: () => ({result: 'fastDone'}),
+    });
+
+    const directAgent = new LlmAgent({
+      name: 'directCallbackRejectionAgent',
+      model: 'gemini-flash-latest',
+      tools: [
+        directSiblingTool,
+        directFailingBeforeTool,
+        directFailingAfterTool,
+      ],
+    });
+    const directSession = createSession({
+      id: 'sess-direct-reject',
+      appName: 'parallel-exec-app',
+      userId: 'user-1',
+    });
+    const directContext = new InvocationContext({
+      invocationId: 'inv-direct-reject',
+      agent: directAgent,
+      session: directSession,
+      pluginManager: new PluginManager(),
+    });
+
+    let caughtError: unknown;
+    let stateAtRejection: Record<string, unknown> = {};
+    try {
+      await handleFunctionCallsAsync({
+        invocationContext: directContext,
+        functionCallEvent: createEvent({
+          invocationId: directContext.invocationId,
+          author: directAgent.name,
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  id: 'fc-direct-1',
+                  name: 'directSiblingTool',
+                  args: {},
+                },
+              },
+              {
+                functionCall: {
+                  id: 'fc-direct-2',
+                  name: 'directFailingBeforeTool',
+                  args: {},
+                },
+              },
+              {
+                functionCall: {
+                  id: 'fc-direct-3',
+                  name: 'directFailingAfterTool',
+                  args: {},
+                },
+              },
+            ],
+          },
+        }),
+        toolsDict: {
+          directSiblingTool,
+          directFailingBeforeTool,
+          directFailingAfterTool,
+        },
+        beforeToolCallbacks: [
+          async ({tool}) => {
+            if (tool.name === 'directFailingBeforeTool') {
+              await directSiblingInFlight;
+              setTimeout(() => {
+                releaseDirectSibling?.();
+              }, 0);
+              throw new Error('Before-tool callback failed.');
+            }
+            return undefined;
+          },
+        ],
+        afterToolCallbacks: [
+          async ({tool}) => {
+            if (tool.name === 'directFailingAfterTool') {
+              await directSiblingInFlight;
+              throw new Error('After-tool callback failed.');
+            }
+            return undefined;
+          },
+        ],
+      });
+    } catch (e: unknown) {
+      caughtError = e;
+      stateAtRejection = {...directSession.state};
+    }
+
+    expect(caughtError).toBeInstanceOf(Error);
+    expect(caughtError instanceof Error ? caughtError.message : '').toBe(
+      'Before-tool callback failed.',
+    );
+    expect(directSiblingFinished).toBe(true);
+    expect(stateAtRejection).toEqual({
+      directSiblingWrite: 'settledBeforeRejection',
+    });
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    expect(directSession.state).toEqual(stateAtRejection);
+
+    // 2. Full `Runner.runAsync` lifecycle: `BaseToolset.close()` in `Runner`'s
+    //    `finally` runs only after the sibling async tool finishes.
+    class TrackingToolset extends BaseToolset {
+      closed = false;
+
+      constructor(private readonly resolveTools: () => BaseTool[]) {
+        super();
+      }
+
+      override async getTools(): Promise<BaseTool[]> {
+        return this.resolveTools();
+      }
+
+      override async close(): Promise<void> {
+        this.closed = true;
+      }
+    }
+
+    let markRunnerSiblingInFlight: (() => void) | undefined;
+    const runnerSiblingInFlight = new Promise<void>((resolve) => {
+      markRunnerSiblingInFlight = resolve;
+    });
+    let releaseRunnerSibling: (() => void) | undefined;
+    const allowRunnerSiblingToFinish = new Promise<void>((resolve) => {
+      releaseRunnerSibling = resolve;
+    });
+
+    let runnerSiblingFinished = false;
+    let toolsetClosedDuringSibling = false;
+    let runnerInvocationState: Record<string, unknown> | undefined;
+    const trackingToolset = new TrackingToolset(() => [
+      siblingAsyncTool,
+      failingBeforeTool,
+    ]);
+
+    const siblingAsyncTool = new FunctionTool({
+      name: 'siblingAsyncTool',
+      description: 'updates session state before runner tears down toolsets',
+      parameters: z.object({}),
+      execute: async (_args, toolContext) => {
+        runnerInvocationState = toolContext?.invocationContext.session.state;
+        markRunnerSiblingInFlight?.();
+        await allowRunnerSiblingToFinish;
+        toolsetClosedDuringSibling = trackingToolset.closed;
+        toolContext?.state.set('siblingWrite', 'settledBeforeClose');
+        runnerSiblingFinished = true;
+        return {result: 'siblingDone'};
+      },
+    });
+    const failingBeforeTool = new FunctionTool({
+      name: 'failingBeforeTool',
+      description: 'never executes because beforeToolCallback throws',
+      parameters: z.object({}),
+      execute: async () => ({result: 'unreachable'}),
+    });
+
+    const appName = 'parallel-exec-app';
+    const userId = 'user-1';
+    const mockLlm = new RecordingResponsesLlm([
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {functionCall: {id: 'fc-1', name: 'siblingAsyncTool', args: {}}},
+            {functionCall: {id: 'fc-2', name: 'failingBeforeTool', args: {}}},
+          ],
+        },
+      },
+    ]);
+    const agent = new LlmAgent({
+      name: 'callbackRejectionAgent',
+      model: mockLlm,
+      tools: [trackingToolset],
+      beforeToolCallback: async ({tool}) => {
+        if (tool.name === 'failingBeforeTool') {
+          await runnerSiblingInFlight;
+          setTimeout(() => {
+            releaseRunnerSibling?.();
+          }, 0);
+          throw new Error('Runner before-tool callback failed.');
+        }
+        return undefined;
+      },
+    });
+
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({appName, userId});
+    const runner = new Runner({appName, agent, sessionService});
+
+    const emittedEvents: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'run parallel tools'}]},
+    })) {
+      emittedEvents.push(event);
+    }
+    const stateAfterRun = {...runnerInvocationState};
+
+    expect(emittedEvents.at(-1)?.errorMessage).toBe(
+      'Runner before-tool callback failed.',
+    );
+    expect(runnerSiblingFinished).toBe(true);
+    expect(toolsetClosedDuringSibling).toBe(false);
+    expect(trackingToolset.closed).toBe(true);
+    expect(stateAfterRun).toEqual({
+      siblingWrite: 'settledBeforeClose',
+    });
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    expect(runnerInvocationState).toEqual(stateAfterRun);
   });
 });

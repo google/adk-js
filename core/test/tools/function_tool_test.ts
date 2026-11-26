@@ -59,6 +59,25 @@ describe('FunctionTool', () => {
     });
   });
 
+  describe('customMetadata', () => {
+    it('defaults customMetadata to undefined and forwards configured metadata to BaseTool', () => {
+      const defaultTool = new FunctionTool({
+        name: 'defaultMetaTool',
+        description: 'Tool without custom metadata.',
+        execute: () => 'ok',
+      });
+      expect(defaultTool.customMetadata).toBeUndefined();
+
+      const metadataTool = new FunctionTool({
+        name: 'configuredMetaTool',
+        description: 'Tool with custom metadata.',
+        customMetadata: {domain: 'billing', tier: 2},
+        execute: () => 'ok',
+      });
+      expect(metadataTool.customMetadata).toEqual({domain: 'billing', tier: 2});
+    });
+  });
+
   describe('zod v3', () => {
     it('computes the correct declaration', async () => {
       const addTool = new FunctionTool({
@@ -657,6 +676,159 @@ describe('FunctionTool', () => {
       expect(responseDeclaration(response)).toBe(response);
     });
 
+    describe.each([
+      {
+        version: 'Zod 3',
+        voidSchema: z3.void(),
+        undefinedSchema: z3.undefined(),
+        optionalVoidSchema: z3.void().optional(),
+        nullableVoidSchema: z3.void().nullable(),
+        describedVoidSchema: z3.void().describe('No return payload'),
+        describedUndefinedSchema: z3
+          .undefined()
+          .describe('Undefined return payload'),
+        innerDescribedOptionalVoidSchema: z3
+          .void()
+          .describe('Inner void description')
+          .optional(),
+        outerDescribedOptionalVoidSchema: z3
+          .void()
+          .optional()
+          .describe('Outer void description'),
+        describedOptionalUndefinedSchema: z3
+          .undefined()
+          .describe('Optional undefined description')
+          .optional(),
+        nullSchema: z3.null(),
+        describedNullSchema: z3.null().describe('Empty response payload'),
+        anySchema: z3.any(),
+        unknownSchema: z3.unknown(),
+      },
+      {
+        version: 'Zod 4',
+        voidSchema: z4.void(),
+        undefinedSchema: z4.undefined(),
+        optionalVoidSchema: z4.void().optional(),
+        nullableVoidSchema: z4.void().nullable(),
+        describedVoidSchema: z4.void().describe('No return payload'),
+        describedUndefinedSchema: z4
+          .undefined()
+          .describe('Undefined return payload'),
+        innerDescribedOptionalVoidSchema: z4
+          .void()
+          .describe('Inner void description')
+          .optional(),
+        outerDescribedOptionalVoidSchema: z4
+          .void()
+          .optional()
+          .describe('Outer void description'),
+        describedOptionalUndefinedSchema: z4
+          .undefined()
+          .describe('Optional undefined description')
+          .optional(),
+        nullSchema: z4.null(),
+        describedNullSchema: z4.null().describe('Empty response payload'),
+        anySchema: z4.any(),
+        unknownSchema: z4.unknown(),
+      },
+    ])('$version void, null, and unconstrained response schemas', (cases) => {
+      it('maps void, undefined, and null response schemas to Type.NULL', () => {
+        expect(responseDeclaration(cases.voidSchema)).toEqual({
+          type: Type.NULL,
+        });
+        expect(responseDeclaration(cases.undefinedSchema)).toEqual({
+          type: Type.NULL,
+        });
+        expect(responseDeclaration(cases.optionalVoidSchema)).toEqual({
+          type: Type.NULL,
+        });
+        expect(responseDeclaration(cases.nullableVoidSchema)).toEqual({
+          type: Type.NULL,
+        });
+        expect(responseDeclaration(cases.describedVoidSchema)).toEqual({
+          type: Type.NULL,
+          description: 'No return payload',
+        });
+        expect(responseDeclaration(cases.describedUndefinedSchema)).toEqual({
+          type: Type.NULL,
+          description: 'Undefined return payload',
+        });
+        expect(
+          responseDeclaration(cases.innerDescribedOptionalVoidSchema),
+        ).toEqual({
+          type: Type.NULL,
+          description: 'Inner void description',
+        });
+        expect(
+          responseDeclaration(cases.outerDescribedOptionalVoidSchema),
+        ).toEqual({
+          type: Type.NULL,
+          description: 'Outer void description',
+        });
+        expect(
+          responseDeclaration(cases.describedOptionalUndefinedSchema),
+        ).toEqual({
+          type: Type.NULL,
+          description: 'Optional undefined description',
+        });
+        expect(responseDeclaration(cases.nullSchema)).toEqual({
+          type: Type.NULL,
+        });
+        expect(responseDeclaration(cases.describedNullSchema)).toEqual({
+          type: Type.NULL,
+          description: 'Empty response payload',
+        });
+
+        const vertexVoidDecl = buildFunctionDeclarationUtil(
+          true,
+          'voidResponseFn',
+          'Returns void on Vertex AI.',
+          function voidResponseFn() {},
+          {
+            properties: {},
+            response: cases.voidSchema,
+          },
+        );
+        expect(vertexVoidDecl.response).toEqual({type: Type.NULL});
+
+        const vertexDescribedVoidDecl = buildFunctionDeclarationUtil(
+          true,
+          'describedVoidResponseFn',
+          'Returns described void on Vertex AI.',
+          function describedVoidResponseFn() {},
+          {
+            properties: {},
+            response: cases.innerDescribedOptionalVoidSchema,
+          },
+        );
+        expect(vertexDescribedVoidDecl.response).toEqual({
+          type: Type.NULL,
+          description: 'Inner void description',
+        });
+
+        const vertexUndefinedDecl = buildFunctionDeclarationUtil(
+          true,
+          'undefinedResponseFn',
+          'Returns undefined on Vertex AI.',
+          function undefinedResponseFn() {},
+          {
+            properties: {},
+            response: cases.undefinedSchema,
+          },
+        );
+        expect(vertexUndefinedDecl.response).toEqual({type: Type.NULL});
+      });
+
+      it('maps any and unknown response schemas to Type.TYPE_UNSPECIFIED', () => {
+        expect(responseDeclaration(cases.anySchema)).toEqual({
+          type: Type.TYPE_UNSPECIFIED,
+        });
+        expect(responseDeclaration(cases.unknownSchema)).toEqual({
+          type: Type.TYPE_UNSPECIFIED,
+        });
+      });
+    });
+
     it('streams async generator items and injects inputStream in _callLive', async () => {
       const receivedStreams: unknown[] = [];
       const liveTool = new FunctionTool({
@@ -1192,6 +1364,358 @@ describe('FunctionTool', () => {
         },
         required: ['requiredStr'],
       });
+    });
+
+    it('omits response schema on Gemini API when returnType and response are omitted', () => {
+      const decl = buildFunctionDeclarationUtil(
+        false,
+        'functionNoReturn',
+        'A function with no return schema.',
+        function functionNoReturn() {},
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+        },
+      );
+      expect(decl).toEqual({
+        name: 'functionNoReturn',
+        description: 'A function with no return schema.',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {param: {type: Type.STRING}},
+          required: ['param'],
+        },
+      });
+      expect(decl.response).toBeUndefined();
+    });
+
+    it('sets an unspecified response schema on Vertex AI when returnType and response are omitted', () => {
+      const decl = buildFunctionDeclarationUtil(
+        true,
+        'functionNoReturn',
+        'A function with no return schema.',
+        function functionNoReturn() {},
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+        },
+      );
+      expect(decl).toEqual({
+        name: 'functionNoReturn',
+        description: 'A function with no return schema.',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {param: {type: Type.STRING}},
+          required: ['param'],
+        },
+        response: {type: Type.TYPE_UNSPECIFIED},
+      });
+    });
+
+    it('sets a null response schema on Vertex AI when returnType or response is explicitly null or void', () => {
+      const nullReturnTypeDecl = buildFunctionDeclarationUtil(
+        true,
+        'functionNullReturn',
+        'A function that explicitly returns null.',
+        Object.assign(function functionNullReturn() {}, {returnType: null}),
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+        },
+      );
+      expect(nullReturnTypeDecl.response).toEqual({type: Type.NULL});
+
+      const voidReturnTypeDecl = buildFunctionDeclarationUtil(
+        true,
+        'functionVoidReturn',
+        'A function that explicitly returns void.',
+        function functionVoidReturn() {},
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+          returnType: 'void',
+        },
+      );
+      expect(voidReturnTypeDecl.response).toEqual({type: Type.NULL});
+
+      const nullResponseDecl = buildFunctionDeclarationUtil(
+        true,
+        'functionNullResponse',
+        'A function with response set to null.',
+        function functionNullResponse() {},
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+          response: null,
+        },
+      );
+      expect(nullResponseDecl.response).toEqual({type: Type.NULL});
+    });
+
+    it('gives func.response and func.returnType precedence over beforeParamSchema values', () => {
+      const funcResponseOverNullSchema = buildFunctionDeclarationUtil(
+        true,
+        'funcResponseWins',
+        'Function response overrides schema null response.',
+        Object.assign(function funcResponseWins() {}, {
+          response: {type: Type.STRING},
+        }),
+        {
+          properties: {},
+          response: null,
+        },
+      );
+      expect(funcResponseOverNullSchema.response).toEqual({type: Type.STRING});
+
+      const funcNullResponseOverSchema = buildFunctionDeclarationUtil(
+        true,
+        'funcNullResponseWins',
+        'Function null response overrides schema response.',
+        Object.assign(function funcNullResponseWins() {}, {
+          response: null,
+        }),
+        {
+          properties: {},
+          response: {type: Type.STRING},
+        },
+      );
+      expect(funcNullResponseOverSchema.response).toEqual({type: Type.NULL});
+
+      const funcReturnTypeOverNullSchema = buildFunctionDeclarationUtil(
+        true,
+        'funcReturnTypeWins',
+        'Function returnType overrides schema null returnType.',
+        Object.assign(function funcReturnTypeWins() {}, {
+          returnType: 'string',
+        }),
+        {
+          properties: {},
+          returnType: null,
+        },
+      );
+      expect(funcReturnTypeOverNullSchema.response).toEqual({
+        type: Type.STRING,
+      });
+
+      const funcNullReturnTypeOverSchema = buildFunctionDeclarationUtil(
+        true,
+        'funcNullReturnTypeWins',
+        'Function null returnType overrides schema returnType.',
+        Object.assign(function funcNullReturnTypeWins() {}, {
+          returnType: null,
+        }),
+        {
+          properties: {},
+          returnType: 'string',
+        },
+      );
+      expect(funcNullReturnTypeOverSchema.response).toEqual({type: Type.NULL});
+    });
+
+    it('omits response schema on Gemini API when returnType or response is explicitly null or void', () => {
+      const decl = buildFunctionDeclarationUtil(
+        false,
+        'functionNullReturn',
+        'A function that explicitly returns null.',
+        Object.assign(function functionNullReturn() {}, {returnType: null}),
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+          returnType: 'void',
+          response: null,
+        },
+      );
+      expect(decl.response).toBeUndefined();
+    });
+
+    it('sets string and object response schemas on Vertex AI for string and object return types', () => {
+      const stringDecl = buildFunctionDeclarationUtil(
+        true,
+        'functionStringReturn',
+        'A function that returns a string.',
+        Object.assign(function functionStringReturn() {}, {
+          returnType: 'string',
+        }),
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+        },
+      );
+      expect(stringDecl.response).toEqual({type: Type.STRING});
+
+      const objectDecl = buildFunctionDeclarationUtil(
+        true,
+        'functionObjectReturn',
+        'A function that returns an object.',
+        Object.assign(function functionObjectReturn() {}, {
+          returnType: 'object',
+        }),
+        {
+          properties: {
+            param: {type: 'string'},
+          },
+          required: ['param'],
+        },
+      );
+      expect(objectDecl.response).toEqual({type: Type.OBJECT});
+    });
+
+    it('builds a Vertex AI declaration for a parameterless function returning null without parameters', () => {
+      const decl = buildFunctionDeclarationUtil(
+        true,
+        'testFunction',
+        'A test function with no parameters that returns null.',
+        Object.assign(function testFunction() {}, {returnType: null}),
+        {properties: {}},
+      );
+      expect(decl.name).toBe('testFunction');
+      expect(decl.parameters).toBeUndefined();
+      expect(decl.response).toEqual({type: Type.NULL});
+    });
+
+    it('sets an unspecified response schema on Vertex AI for a transfer_to_agent declaration', () => {
+      const decl = buildFunctionDeclarationUtil(
+        true,
+        'transfer_to_agent',
+        'Transfer the question to another agent.',
+        function transferToAgent() {},
+        {
+          properties: {
+            agent_name: {type: 'string'},
+          },
+          required: ['agent_name'],
+        },
+      );
+      expect(decl.name).toBe('transfer_to_agent');
+      expect(decl.parameters).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          agent_name: {type: Type.STRING},
+        },
+        required: ['agent_name'],
+      });
+      expect(decl.response).toEqual({type: Type.TYPE_UNSPECIFIED});
+    });
+
+    it('maps any parameter and any returnType to Type.TYPE_UNSPECIFIED on Vertex AI', () => {
+      const decl = buildFunctionDeclarationUtil(
+        true,
+        'anyAnnotationFunction',
+        'A function that uses any parameter and return annotations.',
+        Object.assign(function anyAnnotationFunction() {}, {
+          returnType: 'any',
+        }),
+        {
+          properties: {
+            param: {type: 'any'},
+          },
+          required: ['param'],
+        },
+      );
+      expect(decl).toEqual({
+        name: 'anyAnnotationFunction',
+        description:
+          'A function that uses any parameter and return annotations.',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            param: {type: Type.TYPE_UNSPECIFIED},
+          },
+          required: ['param'],
+        },
+        response: {type: Type.TYPE_UNSPECIFIED},
+      });
+    });
+
+    it('maps mixed string, integer, and any parameter types with string returnType on Vertex AI', () => {
+      const decl = buildFunctionDeclarationUtil(
+        true,
+        'mixedParamsFunction',
+        'A function with mixed parameter types and a string return type.',
+        Object.assign(function mixedParamsFunction() {}, {
+          returnType: 'string',
+        }),
+        {
+          properties: {
+            stringParam: {type: 'string'},
+            integerParam: {type: 'integer'},
+            anyParam: {type: 'any'},
+          },
+          required: ['stringParam', 'integerParam', 'anyParam'],
+        },
+      );
+      expect(decl).toEqual({
+        name: 'mixedParamsFunction',
+        description:
+          'A function with mixed parameter types and a string return type.',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            stringParam: {type: Type.STRING},
+            integerParam: {type: Type.INTEGER},
+            anyParam: {type: Type.TYPE_UNSPECIFIED},
+          },
+          required: ['stringParam', 'integerParam', 'anyParam'],
+        },
+        response: {type: Type.STRING},
+      });
+    });
+
+    it('omits parameters and sets string response schema for a parameterless function on Vertex AI', () => {
+      const decl = buildFunctionDeclarationUtil(
+        true,
+        'parameterlessStringFunction',
+        'A function with no parameters that returns a string.',
+        Object.assign(function parameterlessStringFunction() {}, {
+          returnType: 'string',
+        }),
+        {properties: {}},
+      );
+      expect(decl).toEqual({
+        name: 'parameterlessStringFunction',
+        description: 'A function with no parameters that returns a string.',
+        response: {type: Type.STRING},
+      });
+      expect(decl.parameters).toBeUndefined();
+    });
+
+    it('maps undefined returnType to Type.NULL on Vertex AI', () => {
+      const funcReturnDecl = buildFunctionDeclarationUtil(
+        true,
+        'undefinedReturnFunction',
+        'A function that explicitly returns undefined.',
+        Object.assign(function undefinedReturnFunction() {}, {
+          returnType: 'undefined',
+        }),
+        {properties: {}},
+      );
+      expect(funcReturnDecl.response).toEqual({type: Type.NULL});
+
+      const schemaReturnDecl = buildFunctionDeclarationUtil(
+        true,
+        'undefinedSchemaReturnFunction',
+        'A function whose schema returnType is undefined.',
+        function undefinedSchemaReturnFunction() {},
+        {
+          properties: {},
+          returnType: 'undefined',
+        },
+      );
+      expect(schemaReturnDecl.response).toEqual({type: Type.NULL});
     });
   });
 

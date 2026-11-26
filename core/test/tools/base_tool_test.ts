@@ -19,8 +19,15 @@ import {describe, expect, it} from 'vitest';
 class TestingTool extends BaseTool {
   private readonly declaration?: FunctionDeclaration;
 
-  constructor(declaration?: FunctionDeclaration) {
-    super({name: 'test_tool', description: 'test_description'});
+  constructor(
+    declaration?: FunctionDeclaration,
+    customMetadata?: Record<string, unknown>,
+  ) {
+    super({
+      name: 'test_tool',
+      description: 'test_description',
+      customMetadata,
+    });
     this.declaration = declaration;
   }
 
@@ -144,5 +151,28 @@ describe('BaseTool.processLlmRequest', () => {
 
     const secondTool = llmRequest.config?.tools?.[1] as Tool | undefined;
     expect(secondTool?.functionDeclarations?.[1]).toEqual(declaration);
+  });
+});
+
+describe('BaseTool.customMetadata', () => {
+  it('defaults customMetadata to undefined when omitted from BaseToolParams', () => {
+    const tool = new TestingTool();
+
+    expect(tool.customMetadata).toBeUndefined();
+  });
+
+  it('stores caller-provided customMetadata and supports reading and updating it', () => {
+    const tool = new TestingTool(undefined, {
+      manifestVersion: '1.0',
+      tags: ['search', 'internal'],
+    });
+
+    expect(tool.customMetadata).toEqual({
+      manifestVersion: '1.0',
+      tags: ['search', 'internal'],
+    });
+
+    tool.customMetadata = {manifestVersion: '2.0'};
+    expect(tool.customMetadata).toEqual({manifestVersion: '2.0'});
   });
 });

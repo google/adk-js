@@ -294,6 +294,11 @@ export {BasePlanner, isBasePlanner} from './planners/base_planner.js';
 export {BuiltInPlanner, isBuiltInPlanner} from './planners/built_in_planner.js';
 export {PlanReActPlanner} from './planners/plan_re_act_planner.js';
 export {
+  toolResultClassification,
+  type ToolResultClassification,
+  type ToolResultClassifier,
+} from './plugins/_callback_helpers.js';
+export {
   GLOBAL_SCOPE_KEY,
   REFLECT_AND_RETRY_RESPONSE_TYPE,
   ScopedFailureTracker,
@@ -310,6 +315,7 @@ export type {
 } from './plugins/debug_logging_plugin.js';
 export {GlobalInstructionPlugin} from './plugins/global_instruction_plugin.js';
 export {LoggingPlugin} from './plugins/logging_plugin.js';
+export type {LoggingPluginOptions} from './plugins/logging_plugin.js';
 export {PluginManager} from './plugins/plugin_manager.js';
 export type {PluginCallbackName} from './plugins/plugin_manager.js';
 export {
@@ -429,7 +435,7 @@ export {
   ENTERPRISE_WEB_SEARCH,
   EnterpriseWebSearchTool,
 } from './tools/enterprise_web_search_tool.js';
-export {ExampleTool} from './tools/example_tool.js';
+export {ExampleTool, isExampleTool} from './tools/example_tool.js';
 export {EXIT_LOOP, ExitLoopTool} from './tools/exit_loop_tool.js';
 export {
   FINISH_TASK_SUCCESS_RESULT,
@@ -636,7 +642,6 @@ export {RUNNER_CLEANUP_TIMEOUT_MS, closeRunners} from './cli/utils/cleanup.js';
 export {
   convertSessionToEvalFormat,
   convertSessionToEvalInvocations,
-  createEmptyState,
 } from './cli/utils/evals.js';
 export type {
   EvalCase,
@@ -648,6 +653,7 @@ export type {
   IntermediateAgentResponseItem,
   ToolUseItem,
 } from './cli/utils/evals.js';
+export {createEmptyState} from './cli/utils/state.js';
 export {
   buildFunctionDeclarationForLangchain,
   buildFunctionDeclarationForParamsForCrewai,

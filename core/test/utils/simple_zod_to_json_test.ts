@@ -9,6 +9,10 @@ import {Type} from '@google/genai';
 import {describe, expect, it} from 'vitest';
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
+import {
+  getZodVoidOrUndefinedDescription,
+  isZodVoidOrUndefined,
+} from '../../src/utils/simple_zod_to_json.js';
 
 describe('zodObjectToSchema', () => {
   describe.each([
@@ -459,6 +463,150 @@ describe('zodObjectToSchema', () => {
         required: ['root', 'plain'],
       });
       expect(JSON.stringify(jsonSchema)).not.toContain('$ref');
+    });
+  });
+});
+
+describe('isZodVoidOrUndefined', () => {
+  describe.each([
+    {
+      version: 'Zod 3',
+      voidSchema: z3.void(),
+      undefinedSchema: z3.undefined(),
+      optionalVoidSchema: z3.void().optional(),
+      nullableVoidSchema: z3.void().nullable(),
+      optionalUndefinedSchema: z3.undefined().optional(),
+      nullableUndefinedSchema: z3.undefined().nullable(),
+      nullSchema: z3.null(),
+      anySchema: z3.any(),
+      unknownSchema: z3.unknown(),
+      nullableStringSchema: z3.string().nullable(),
+    },
+    {
+      version: 'Zod 4',
+      voidSchema: z4.void(),
+      undefinedSchema: z4.undefined(),
+      optionalVoidSchema: z4.void().optional(),
+      nullableVoidSchema: z4.void().nullable(),
+      optionalUndefinedSchema: z4.undefined().optional(),
+      nullableUndefinedSchema: z4.undefined().nullable(),
+      nullSchema: z4.null(),
+      anySchema: z4.any(),
+      unknownSchema: z4.unknown(),
+      nullableStringSchema: z4.string().nullable(),
+    },
+  ])('$version', (cases) => {
+    it('returns true for void and undefined schemas including optional and nullable wrappers', () => {
+      expect(isZodVoidOrUndefined(cases.voidSchema)).toBe(true);
+      expect(isZodVoidOrUndefined(cases.undefinedSchema)).toBe(true);
+      expect(isZodVoidOrUndefined(cases.optionalVoidSchema)).toBe(true);
+      expect(isZodVoidOrUndefined(cases.nullableVoidSchema)).toBe(true);
+      expect(isZodVoidOrUndefined(cases.optionalUndefinedSchema)).toBe(true);
+      expect(isZodVoidOrUndefined(cases.nullableUndefinedSchema)).toBe(true);
+    });
+
+    it('returns false for null, any, unknown, typed nullable, and non-Zod values', () => {
+      expect(isZodVoidOrUndefined(cases.nullSchema)).toBe(false);
+      expect(isZodVoidOrUndefined(cases.anySchema)).toBe(false);
+      expect(isZodVoidOrUndefined(cases.unknownSchema)).toBe(false);
+      expect(isZodVoidOrUndefined(cases.nullableStringSchema)).toBe(false);
+      expect(isZodVoidOrUndefined(null)).toBe(false);
+      expect(isZodVoidOrUndefined(undefined)).toBe(false);
+      expect(isZodVoidOrUndefined({type: Type.NULL})).toBe(false);
+    });
+  });
+});
+
+describe('getZodVoidOrUndefinedDescription', () => {
+  describe.each([
+    {
+      version: 'Zod 3',
+      describedVoid: z3.void().describe('Void output'),
+      describedUndefined: z3.undefined().describe('Undefined output'),
+      innerDescribedOptionalVoid: z3.void().describe('Inner void').optional(),
+      outerDescribedOptionalVoid: z3.void().optional().describe('Outer void'),
+      innerDescribedNullableUndefined: z3
+        .undefined()
+        .describe('Inner undefined')
+        .nullable(),
+      outerDescribedNullableUndefined: z3
+        .undefined()
+        .nullable()
+        .describe('Outer undefined'),
+      bothDescribedOptionalVoid: z3
+        .void()
+        .describe('Inner')
+        .optional()
+        .describe('Outer'),
+      emptyDescribedVoid: z3.void().describe(''),
+      undescribedVoid: z3.void(),
+      describedNull: z3.null().describe('Null output'),
+      describedOptionalString: z3.string().describe('String output').optional(),
+    },
+    {
+      version: 'Zod 4',
+      describedVoid: z4.void().describe('Void output'),
+      describedUndefined: z4.undefined().describe('Undefined output'),
+      innerDescribedOptionalVoid: z4.void().describe('Inner void').optional(),
+      outerDescribedOptionalVoid: z4.void().optional().describe('Outer void'),
+      innerDescribedNullableUndefined: z4
+        .undefined()
+        .describe('Inner undefined')
+        .nullable(),
+      outerDescribedNullableUndefined: z4
+        .undefined()
+        .nullable()
+        .describe('Outer undefined'),
+      bothDescribedOptionalVoid: z4
+        .void()
+        .describe('Inner')
+        .optional()
+        .describe('Outer'),
+      emptyDescribedVoid: z4.void().describe(''),
+      undescribedVoid: z4.void(),
+      describedNull: z4.null().describe('Null output'),
+      describedOptionalString: z4.string().describe('String output').optional(),
+    },
+  ])('$version', (cases) => {
+    it('extracts the first non-empty description across void, undefined, and optional or nullable wrappers', () => {
+      expect(getZodVoidOrUndefinedDescription(cases.describedVoid)).toBe(
+        'Void output',
+      );
+      expect(getZodVoidOrUndefinedDescription(cases.describedUndefined)).toBe(
+        'Undefined output',
+      );
+      expect(
+        getZodVoidOrUndefinedDescription(cases.innerDescribedOptionalVoid),
+      ).toBe('Inner void');
+      expect(
+        getZodVoidOrUndefinedDescription(cases.outerDescribedOptionalVoid),
+      ).toBe('Outer void');
+      expect(
+        getZodVoidOrUndefinedDescription(cases.innerDescribedNullableUndefined),
+      ).toBe('Inner undefined');
+      expect(
+        getZodVoidOrUndefinedDescription(cases.outerDescribedNullableUndefined),
+      ).toBe('Outer undefined');
+      expect(
+        getZodVoidOrUndefinedDescription(cases.bothDescribedOptionalVoid),
+      ).toBe('Outer');
+    });
+
+    it('returns undefined when no non-empty description is present or schema is not void or undefined', () => {
+      expect(
+        getZodVoidOrUndefinedDescription(cases.emptyDescribedVoid),
+      ).toBeUndefined();
+      expect(
+        getZodVoidOrUndefinedDescription(cases.undescribedVoid),
+      ).toBeUndefined();
+      expect(
+        getZodVoidOrUndefinedDescription(cases.describedNull),
+      ).toBeUndefined();
+      expect(
+        getZodVoidOrUndefinedDescription(cases.describedOptionalString),
+      ).toBeUndefined();
+      expect(getZodVoidOrUndefinedDescription(null)).toBeUndefined();
+      expect(getZodVoidOrUndefinedDescription(undefined)).toBeUndefined();
     });
   });
 });

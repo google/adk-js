@@ -8,7 +8,13 @@ import {FunctionDeclaration, Schema, Type} from '@google/genai';
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
 
-import {isZodObject, zodObjectToSchema} from '../utils/simple_zod_to_json.js';
+import {
+  getZodVoidOrUndefinedDescription,
+  isZodObject,
+  isZodSchema,
+  isZodVoidOrUndefined,
+  zodObjectToSchema,
+} from '../utils/simple_zod_to_json.js';
 
 import {Context} from '../agents/context.js';
 import {BaseTool, RunAsyncToolRequest} from './base_tool.js';
@@ -95,6 +101,8 @@ export type ToolOptions<TParameters extends ToolInputParameters> = {
   response?: SchemaLike;
   execute: ToolExecuteFunction<TParameters>;
   isLongRunning?: boolean;
+  /** Optional JSON-serializable key-value metadata associated with the tool. */
+  customMetadata?: Record<string, unknown>;
   /**
    * Whether this tool requires user confirmation before it runs. A boolean, or
    * a predicate over the (validated) call arguments and tool context returning
@@ -142,12 +150,11 @@ function toResponseSchema(response: SchemaLike): Schema {
   if (isZodObject(response)) {
     return zodObjectToSchema(response);
   }
-  if (
-    typeof response === 'object' &&
-    response !== null &&
-    'safeParse' in response &&
-    typeof (response as {safeParse?: unknown}).safeParse === 'function'
-  ) {
+  if (isZodSchema(response)) {
+    if (isZodVoidOrUndefined(response)) {
+      const description = getZodVoidOrUndefinedDescription(response);
+      return description ? {type: Type.NULL, description} : {type: Type.NULL};
+    }
     const jsonSchema = toJsonSchema(response);
     // `toGeminiSchema` carries the schema constraints (bounds, lengths,
     // patterns) at every depth, so nothing is restored here afterwards.
@@ -243,6 +250,7 @@ export class FunctionTool<
       name,
       description: options.description,
       isLongRunning: options.isLongRunning,
+      customMetadata: options.customMetadata,
     });
     this.execute = options.execute;
     this.parameters = options.parameters;
@@ -456,6 +464,7 @@ const SCHEMA_TYPE_MAP: Readonly<Record<string, Type>> = {
   List: Type.ARRAY,
   Tuple: Type.ARRAY,
   Any: Type.TYPE_UNSPECIFIED,
+  any: Type.TYPE_UNSPECIFIED,
   STRING: Type.STRING,
   INTEGER: Type.INTEGER,
   NUMBER: Type.NUMBER,
@@ -464,6 +473,8 @@ const SCHEMA_TYPE_MAP: Readonly<Record<string, Type>> = {
   OBJECT: Type.OBJECT,
   NULL: Type.NULL,
   null: Type.NULL,
+  void: Type.NULL,
+  undefined: Type.NULL,
   TYPE_UNSPECIFIED: Type.TYPE_UNSPECIFIED,
 };
 
@@ -645,19 +656,25 @@ function resolveReturnSchema(
 ): Schema | undefined {
   const funcObj =
     typeof func === 'function' || isPlainRecord(func)
-      ? (func as {response?: SchemaLike; returnType?: string})
+      ? (func as {response?: SchemaLike | null; returnType?: string | null})
       : undefined;
   const responseCandidate =
-    funcObj?.response ??
-    (beforeParamSchema['response'] as SchemaLike | undefined);
+    funcObj?.response !== undefined
+      ? funcObj.response
+      : beforeParamSchema['response'];
+  if (responseCandidate === null) {
+    return {type: Type.NULL};
+  }
   if (responseCandidate !== undefined) {
-    return toResponseSchema(responseCandidate);
+    return toResponseSchema(responseCandidate as SchemaLike);
   }
   const returnTypeCandidate =
-    funcObj?.returnType ??
-    (typeof beforeParamSchema['returnType'] === 'string'
-      ? beforeParamSchema['returnType']
-      : undefined);
+    funcObj?.returnType !== undefined
+      ? funcObj.returnType
+      : beforeParamSchema['returnType'];
+  if (returnTypeCandidate === null) {
+    return {type: Type.NULL};
+  }
   if (typeof returnTypeCandidate === 'string') {
     return {
       type: SCHEMA_TYPE_MAP[returnTypeCandidate] ?? Type.TYPE_UNSPECIFIED,
@@ -679,7 +696,8 @@ export function buildFunctionDeclarationUtil(
   func: unknown,
   beforeParamSchema: Record<string, unknown>,
 ): FunctionDeclaration {
-  const schemaCopy = structuredClone(beforeParamSchema);
+  const {response: _response, ...clonableSchema} = beforeParamSchema;
+  const schemaCopy = structuredClone(clonableSchema);
   mapSchemaTypes(schemaCopy);
   const properties = isPlainRecord(schemaCopy['properties'])
     ? (schemaCopy['properties'] as Record<string, Schema>)
@@ -703,7 +721,7 @@ export function buildFunctionDeclarationUtil(
     declaration.parameters = parameters;
   }
   if (vertexai) {
-    const responseSchema = resolveReturnSchema(func, schemaCopy);
+    const responseSchema = resolveReturnSchema(func, beforeParamSchema);
     if (responseSchema !== undefined) {
       declaration.response = responseSchema;
     }

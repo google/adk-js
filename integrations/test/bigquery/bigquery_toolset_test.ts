@@ -33,6 +33,7 @@ const ALL_TOOL_NAMES = [
   'list_table_ids',
   'get_table_info',
   'execute_sql',
+  'ask_data_insights',
 ];
 
 function createCredentialsConfig(): BigQueryCredentialsConfig {
@@ -56,13 +57,13 @@ describe('BigQueryToolset', () => {
     expect(toolset.toolConfig.writeMode).toBe(WriteMode.BLOCKED);
   });
 
-  it('exposes all five BigQuery tools by default', async () => {
+  it('exposes all six BigQuery tools by default', async () => {
     const toolset = new BigQueryToolset({
       credentialsConfig: createCredentialsConfig(),
     });
 
     const tools = await toolset.getTools();
-    expect(tools).toHaveLength(5);
+    expect(tools).toHaveLength(6);
     expect(tools.every((tool) => isBigQueryTool(tool))).toBe(true);
     expect(new Set(tools.map((tool) => tool.name))).toEqual(
       new Set(ALL_TOOL_NAMES),
@@ -75,6 +76,7 @@ describe('BigQueryToolset', () => {
     {selectedTools: ['list_dataset_ids', 'get_dataset_info']},
     {selectedTools: ['list_table_ids', 'get_table_info']},
     {selectedTools: ['execute_sql']},
+    {selectedTools: ['ask_data_insights']},
   ])(
     'exposes only the tools named in toolFilter $selectedTools',
     async ({selectedTools}) => {
@@ -151,6 +153,22 @@ describe('BigQueryToolset', () => {
     expect(declaration?.parameters?.properties?.['credentials']).toBe(
       undefined,
     );
+
+    const askDataInsightsTool = tools.find(
+      (tool) => tool.name === 'ask_data_insights',
+    );
+    const insightsDeclaration = askDataInsightsTool?._getDeclaration();
+    expect(insightsDeclaration?.parameters?.required).toEqual([
+      'project_id',
+      'user_query_with_context',
+      'table_references',
+    ]);
+    expect(insightsDeclaration?.parameters?.properties?.['credentials']).toBe(
+      undefined,
+    );
+    expect(insightsDeclaration?.parameters?.properties?.['config']).toBe(
+      undefined,
+    );
   });
 
   it('describes the row limit and truncation flag of execute_sql', async () => {
@@ -160,8 +178,30 @@ describe('BigQueryToolset', () => {
 
     const description = executeSql?._getDeclaration()?.description;
     expect(description).toContain("{status: 'SUCCESS', rows}");
-    expect(description).toContain('At most 50 rows');
+    expect(description).toContain('At most 50 rows are returned.');
     expect(description).toContain('result_is_likely_truncated');
+
+    const singleRowToolset = new BigQueryToolset({
+      toolConfig: new BigQueryToolConfig({maxQueryResultRows: 1}),
+    });
+    const singleRowTools = await singleRowToolset.getTools();
+    const singleRowExecuteSql = singleRowTools.find(
+      (tool) => tool.name === 'execute_sql',
+    );
+    expect(singleRowExecuteSql?._getDeclaration()?.description).toContain(
+      'At most 1 row is returned.',
+    );
+
+    const customRowToolset = new BigQueryToolset({
+      toolConfig: new BigQueryToolConfig({maxQueryResultRows: 15}),
+    });
+    const customRowTools = await customRowToolset.getTools();
+    const customRowExecuteSql = customRowTools.find(
+      (tool) => tool.name === 'execute_sql',
+    );
+    expect(customRowExecuteSql?._getDeclaration()?.description).toContain(
+      'At most 15 rows are returned.',
+    );
   });
 
   it('describes metadata tools with updated property notes and examples', async () => {

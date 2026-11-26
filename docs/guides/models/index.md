@@ -4,7 +4,7 @@ A model in the Agent Development Kit (ADK) is a `BaseLlm` subclass that turns an
 
 All models extend `BaseLlm`. The package exports these implementations:
 
-- `Gemini` - Calls Gemini through the Gemini API or Vertex AI. It is registered by default, so a `gemini-…` name resolves to it.
+- `Gemini` - Calls Gemini through the Gemini API or Vertex AI. It is registered by default, so a `gemini-…` or `model-optimizer-…` name (as well as Vertex AI endpoint and publisher model paths) resolves to it.
 - `ApigeeLlm` - A `Gemini` subclass that reaches the provider through an Apigee proxy. It is registered by default, so an `apigee/…` name resolves to it.
 - `ChromeBuiltInLlm` - Calls Chrome's built-in on-device model through the Prompt API. It is registered by default, so a `chrome-on-device` or `chrome/…` name resolves to it.
 - `RoutedLlm` - Delegates each request to one of several models that a router function selects. You create it directly; it has no name pattern.
@@ -66,15 +66,32 @@ export const rootAgent = new LlmAgent({
 
 ### Requests and responses
 
-`LlmRequest` is a plain object. `appendInstructions(llmRequest, instructions)` joins the instructions with a blank line and adds them to `config.systemInstruction`. You set the other request fields, such as `config.tools` and `config.responseSchema`, directly on the object.
+`LlmRequest` is a plain object. `appendInstructions(llmRequest, instructions)` initializes `llmRequest.config` when `config` is absent. It joins the instructions with a blank line and adds them to `config.systemInstruction`. You set the other request fields, such as `config.tools` and `config.responseSchema`, directly on the object. `LlmRequest` also carries `liveConnectConfig` for bidirectional live settings such as `sessionResumption`.
 
 `LlmResponse` is a plain object too. A model sets `partial: true` on a streamed chunk, `turnComplete: true` at the end of a turn, and `errorCode` and `errorMessage` when the model returns no content. `createLlmResponse(response)` makes an `LlmResponse` from a `GenerateContentResponse` of the `@google/genai` SDK. It copies the first candidate, or it sets the error fields when there is no candidate content. When `Gemini` streams, the final aggregated response carries `errorCode` and `errorMessage` only when the finish reason is not `STOP`.
+
+On live connections, an `LlmResponse` can also carry `liveSessionResumptionUpdate` and `goAway`.
 
 ### Model resolution
 
 `LLMRegistry.register(ModelClass)` records each pattern in the static `supportedModels` of the class. `LLMRegistry.resolve(name)` returns the class whose pattern matches the **whole** name, and `LLMRegistry.newLlm(name)` creates an instance of it. A pattern such as `echo-v1|echo-v2` matches `echo-v1` and `echo-v2`, but not `echo-v10` or `my-echo-v1`. When no pattern matches, `resolve` throws an error. The registry keeps the 32 most recent results in a cache.
 
 An `LlmAgent` with a string `model` calls `LLMRegistry.newLlm`. An agent without a `model` uses the model of its nearest ancestor `LlmAgent`.
+
+### Gemini options
+
+Pass a `GeminiParams` object to `new Gemini(...)` when you need custom credentials, headers, or retry settings instead of a model name string.
+
+| Option               | Type                     | Default              | Description                                                                                      |
+| :------------------- | :----------------------- | :------------------- | :----------------------------------------------------------------------------------------------- |
+| `model`              | `string`                 | `'gemini-2.5-flash'` | The Gemini model name or Vertex AI endpoint resource path.                                       |
+| `apiKey`             | `string`                 | `undefined`          | The Gemini API key; falls back to `GOOGLE_GENAI_API_KEY`, `GOOGLE_API_KEY`, or `GEMINI_API_KEY`. |
+| `vertexai`           | `boolean`                | `false`              | Uses the Vertex AI backend when `true` or when `GOOGLE_GENAI_USE_VERTEXAI` is enabled.           |
+| `project`            | `string`                 | `undefined`          | The Google Cloud project ID for Vertex AI; falls back to `GOOGLE_CLOUD_PROJECT`.                 |
+| `location`           | `string`                 | `undefined`          | The Google Cloud location for Vertex AI; falls back to `GOOGLE_CLOUD_LOCATION`.                  |
+| `headers`            | `Record<string, string>` | `undefined`          | Additional HTTP headers merged with the ADK tracking headers.                                    |
+| `retryOptions`       | `HttpRetryOptions`       | `undefined`          | Retry settings forwarded to the underlying `@google/genai` client `httpOptions`.                 |
+| `useInteractionsApi` | `boolean`                | `false`              | Sends requests through the stateful Interactions API instead of `generateContent`.               |
 
 ### Streaming with Gemini
 
@@ -85,6 +102,8 @@ With streaming on, `Gemini` yields each text chunk as a partial response, and th
 `connect` returns a `BaseLlmConnection` for bidirectional streaming. `receive()` on a `Gemini` connection yields the messages of one turn and ends after the message that completes the turn. Call `receive()` again for the next turn. `LlmAgent` does this for you in `runLive`: it calls `receive()` again until a call yields nothing.
 
 When the model is interrupted, the connection yields the text it has so far, and then always yields a response with `interrupted: true`.
+
+`Gemini.connect` forwards `llmRequest.liveConnectConfig`, including `sessionResumption`, to the live session. On the Gemini API backend, `Gemini.connect` removes `sessionResumption.transparent` because only Vertex AI supports transparent resumption. Whenever the server sends `sessionResumptionUpdate`, `receive()` on the returned `BaseLlmConnection` yields an `LlmResponse` with `liveSessionResumptionUpdate`. Pass `newHandle` in `liveConnectConfig.sessionResumption.handle` on the next `connect` call to resume a live session. When the server plans to close the connection, `receive()` yields an `LlmResponse` with `goAway` so the caller can reconnect.
 
 ## Related samples
 
