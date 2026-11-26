@@ -63,6 +63,54 @@ describe('InMemorySessionService', () => {
       expect(session.id).toBe(sessionId);
     });
 
+    it('persists initial app and user state across sessions', async () => {
+      await service.createSession({
+        appName: 'app',
+        userId: 'alice',
+        sessionId: 'first',
+        state: {
+          'app:theme': 'dark',
+          'user:language': 'en',
+          local: 'first',
+          'temp:prompt': 'scratch',
+        },
+      });
+      const sameUser = await service.createSession({
+        appName: 'app',
+        userId: 'alice',
+      });
+      expect(sameUser.state).toEqual({
+        'app:theme': 'dark',
+        'user:language': 'en',
+      });
+      const otherUser = await service.createSession({
+        appName: 'app',
+        userId: 'bob',
+      });
+      expect(otherUser.state).toEqual({'app:theme': 'dark'});
+      const otherApp = await service.createSession({
+        appName: 'other',
+        userId: 'alice',
+      });
+      expect(otherApp.state).toEqual({});
+
+      await service.createSession({
+        appName: 'app',
+        userId: 'alice',
+        state: {'app:theme': 'light', 'user:language': 'fr'},
+      });
+      const first = await service.getSession({
+        appName: 'app',
+        userId: 'alice',
+        sessionId: 'first',
+      });
+      expect(first?.state).toEqual({
+        'app:theme': 'light',
+        'user:language': 'fr',
+        local: 'first',
+      });
+    });
+
     it('merges existing app and user state into new session', async () => {
       // First, create a session and add some state
       const appName = 'shared-app';
