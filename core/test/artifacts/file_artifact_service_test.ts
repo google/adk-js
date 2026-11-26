@@ -102,6 +102,182 @@ describe('FileArtifactService', () => {
       }
     });
 
+    it.runIf(process.platform === 'win32')(
+      'stores names with characters Windows rejects without percent-encoding collisions',
+      async () => {
+        rootDir = await fs.mkdtemp(
+          path.join(os.tmpdir(), 'adk-artifacts-test-'),
+        );
+        const service = new FileArtifactService(rootDir);
+        const request = {appName: 'app', userId: 'user', sessionId: 'session'};
+        const names = [
+          'report_2026-10-30T11:22:32.txt',
+          'a?b<c>d|e*f".txt',
+          'foo:bar.txt',
+          'foo%3Abar.txt',
+          'a?b.txt',
+          'a%3Fb.txt',
+        ];
+
+        try {
+          for (const filename of names) {
+            const version = await service.saveArtifact({
+              ...request,
+              filename,
+              artifact: {text: filename},
+            });
+            expect(version).toBe(0);
+            const loaded = await service.loadArtifact({...request, filename});
+            expect(loaded?.text).toBe(filename);
+          }
+          expect(await service.listArtifactKeys(request)).toEqual(
+            [...names].sort(),
+          );
+        } finally {
+          await fs.rm(rootDir, {recursive: true, force: true});
+        }
+      },
+    );
+
+    it.runIf(process.platform === 'win32')(
+      'rejects Windows absolute and drive-qualified filenames',
+      async () => {
+        rootDir = await fs.mkdtemp(
+          path.join(os.tmpdir(), 'adk-artifacts-test-'),
+        );
+        const service = new FileArtifactService(rootDir);
+        const request = {appName: 'app', userId: 'user', sessionId: 'session'};
+
+        try {
+          for (const filename of ['C:\\x', 'C:x', 'user:C:\\x', 'user:C:x']) {
+            await expect(
+              service.saveArtifact({
+                ...request,
+                filename,
+                artifact: {text: '.'},
+              }),
+            ).rejects.toThrow(/Absolute artifact filename .* is not permitted/);
+          }
+        } finally {
+          await fs.rm(rootDir, {recursive: true, force: true});
+        }
+      },
+    );
+
+    it('rejects drive-qualified paths and escapes % under win32 mode', async () => {
+      rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-artifacts-test-'));
+      const service = new FileArtifactService(rootDir);
+      const request = {appName: 'app', userId: 'user', sessionId: 'session'};
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, 'platform', {value: 'win32'});
+
+      try {
+        for (const filename of ['C:\\x', 'C:x', 'user:C:\\x', 'user:C:x']) {
+          await expect(
+            service.saveArtifact({
+              ...request,
+              filename,
+              artifact: {text: '.'},
+            }),
+          ).rejects.toThrow(/Absolute artifact filename .* is not permitted/);
+        }
+
+        expect(
+          await service.saveArtifact({
+            ...request,
+            filename: 'foo:bar.txt',
+            artifact: {text: 'colon'},
+          }),
+        ).toBe(0);
+        expect(
+          await service.saveArtifact({
+            ...request,
+            filename: 'foo%3Abar.txt',
+            artifact: {text: 'percent'},
+          }),
+        ).toBe(0);
+
+        const loadedColon = await service.loadArtifact({
+          ...request,
+          filename: 'foo:bar.txt',
+        });
+        const loadedPercent = await service.loadArtifact({
+          ...request,
+          filename: 'foo%3Abar.txt',
+        });
+        expect(loadedColon?.text).toBe('colon');
+        expect(loadedPercent?.text).toBe('percent');
+      } finally {
+        Object.defineProperty(process, 'platform', {value: originalPlatform});
+        await fs.rm(rootDir, {recursive: true, force: true});
+      }
+    });
+
+    it('does not collide across save, load, list, or delete for names differing only in case', async () => {
+      rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-artifacts-test-'));
+      const service = new FileArtifactService(rootDir);
+      const request = {appName: 'app', userId: 'user', sessionId: 'session'};
+
+      try {
+        await service.saveArtifact({
+          ...request,
+          filename: 'Report.txt',
+          artifact: {text: 'upper'},
+        });
+        const caseInsensitive = await fs
+          .access(path.join(rootDir, 'USERS'))
+          .then(() => true)
+          .catch(() => false);
+
+        const saveLower = service.saveArtifact({
+          ...request,
+          filename: 'report.txt',
+          artifact: {text: 'lower'},
+        });
+        if (caseInsensitive) {
+          await expect(saveLower).rejects.toThrow(/same location/);
+          expect(
+            await service.loadArtifact({...request, filename: 'report.txt'}),
+          ).toBeUndefined();
+          expect(
+            await service.listVersions({...request, filename: 'report.txt'}),
+          ).toEqual([]);
+          expect(
+            await service.listArtifactVersions({
+              ...request,
+              filename: 'report.txt',
+            }),
+          ).toEqual([]);
+          expect(
+            await service.getArtifactVersion({
+              ...request,
+              filename: 'report.txt',
+            }),
+          ).toBeUndefined();
+
+          await service.deleteArtifact({...request, filename: 'report.txt'});
+        } else {
+          expect(await saveLower).toBe(0);
+        }
+        const loaded = await service.loadArtifact({
+          ...request,
+          filename: 'Report.txt',
+        });
+        expect(loaded?.text).toBe('upper');
+        expect(
+          await service.listVersions({...request, filename: 'Report.txt'}),
+        ).toEqual([0]);
+        expect(
+          await service.listArtifactVersions({
+            ...request,
+            filename: 'Report.txt',
+          }),
+        ).toHaveLength(1);
+      } finally {
+        await fs.rm(rootDir, {recursive: true, force: true});
+      }
+    });
+
     it('allows filenames that only start with two dots', async () => {
       rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-artifacts-test-'));
       const service = new FileArtifactService(rootDir);
