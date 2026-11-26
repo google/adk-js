@@ -174,8 +174,11 @@ describe('ApigeeLlm', () => {
       expect(httpOptions.baseUrl).toBe('https://proxy.example.com');
     });
 
-    it('should include apiVersion and exclude user headers in liveApiClient', () => {
-      const userHeaders = {'x-custom-header': 'should-not-be-here'};
+    it('should include apiVersion, baseUrl, tracking headers, and user headers in liveApiClient', () => {
+      const userHeaders = {
+        'x-custom-header': 'custom-value',
+        'X-Goog-Api-Client': 'apigee-client/1.0',
+      };
       const llm = new ApigeeLlm({
         model: geminiModelString,
         proxyUrl: defaultProxyUrl,
@@ -191,9 +194,71 @@ describe('ApigeeLlm', () => {
       expect(httpOptions.headers!['x-goog-api-client']).toContain(
         'google-adk/',
       );
-      // user headers should not be included in live api client calls.
-      expect(httpOptions.headers!['x-custom-header']).toBeUndefined();
+      expect(httpOptions.headers!['x-goog-api-client']).toContain(
+        'apigee-client/1.0',
+      );
+      expect(httpOptions.headers!['user-agent']).toContain('google-adk/');
+      expect(httpOptions.headers!['x-custom-header']).toBe('custom-value');
       expect(httpOptions.baseUrl).toBe(defaultProxyUrl);
+    });
+
+    it('should forward user headers on the live websocket handshake for ApigeeLlm.connect', async () => {
+      const llm = new ApigeeLlm({
+        model: geminiModelString,
+        apiKey: 'test-key',
+        proxyUrl: defaultProxyUrl,
+        headers: {'x-custom-auth': 'proxy-auth-value'},
+      });
+
+      let capturedUrl = '';
+      let capturedHeaders: Record<string, string> = {};
+      (
+        llm.liveApiClient.live as unknown as {
+          webSocketFactory: {
+            create: (url: string, headers: Record<string, string>) => never;
+          };
+        }
+      ).webSocketFactory = {
+        create(url: string, headers: Record<string, string>): never {
+          capturedUrl = url;
+          capturedHeaders = headers;
+          throw new Error('stop-after-capture');
+        },
+      };
+
+      const request: LlmRequest = {
+        model: geminiModelString,
+        contents: [],
+        config: {},
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      await expect(llm.connect(request)).rejects.toThrow('stop-after-capture');
+      expect(capturedUrl).toContain('wss://proxy.example.com');
+      expect(capturedHeaders['x-custom-auth']).toBe('proxy-auth-value');
+      expect(capturedHeaders['x-goog-api-client']).toContain('google-adk/');
+      expect(capturedHeaders['user-agent']).toContain('google-adk/');
+    });
+
+    it('should include user headers and proxyUrl in Vertex AI liveApiClient', () => {
+      process.env['GOOGLE_CLOUD_PROJECT'] = 'test-project';
+      process.env['GOOGLE_CLOUD_LOCATION'] = 'us-central1';
+      const llm = new ApigeeLlm({
+        model: vertexModelString,
+        proxyUrl: defaultProxyUrl,
+        headers: {'x-custom-auth': 'vertex-proxy-auth'},
+      });
+      const httpOptions = llm.liveApiClient['apiClient']['clientOptions'][
+        'httpOptions'
+      ] as HttpOptions;
+
+      expect(httpOptions.baseUrl).toBe(defaultProxyUrl);
+      expect(httpOptions.apiVersion).toBe('v1beta1');
+      expect(httpOptions.headers!['x-custom-auth']).toBe('vertex-proxy-auth');
+      expect(httpOptions.headers!['x-goog-api-client']).toContain(
+        'google-adk/',
+      );
     });
   });
 

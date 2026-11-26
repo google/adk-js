@@ -293,7 +293,7 @@ export class Gemini extends BaseLlm {
 
   protected getLiveHttpOptions(): HttpOptions {
     return {
-      headers: this.trackingHeaders,
+      headers: mergeTrackingHeaders(this.headers, this.trackingHeaders),
       apiVersion: this.liveApiVersion,
     };
   }
