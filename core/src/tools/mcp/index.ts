@@ -9,6 +9,15 @@
  * barrel. Also re-exported from `@google/adk`.
  */
 
+export {
+  McpInstructionProvider,
+  createMcpInstructionProvider,
+  isMcpInstructionProvider,
+} from '../../agents/mcp_instruction_provider.js';
+export type {
+  McpInstructionProviderOptions,
+  McpPromptArguments,
+} from '../../agents/mcp_instruction_provider.js';
 export {toGeminiSchema} from '../../utils/gemini_schema_util.js';
 export type {MCPToolSchema} from '../../utils/gemini_schema_util.js';
 export {genaiSchemaToJsonSchema} from '../../utils/genai_schema_to_json.js';
