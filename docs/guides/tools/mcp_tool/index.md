@@ -22,17 +22,18 @@ When the service is an ordinary HTTP API with an OpenAPI v3 specification, use
 server yourself and want to expose an existing ADK tool's parameter schema as
 JSON Schema, use `genaiSchemaToJsonSchema` or `toJsonSchema`.
 
-| Symbol                                     | You touch it when                                                                      |
-| :----------------------------------------- | :------------------------------------------------------------------------------------- |
-| `MCPToolset`                               | You want an agent to discover and call tools from an MCP server.                       |
-| `StdioConnectionParams`                    | The MCP server runs as a local child process over `stdin` and `stdout`.                |
-| `StreamableHTTPConnectionParams`           | The MCP server exposes a Streamable HTTP endpoint.                                     |
-| `SseConnectionParams` / `SseServerParams`  | The MCP server exposes an HTTP+SSE endpoint.                                           |
-| `LoadMcpResourceTool`                      | You want the agent to list and read MCP server resources into the prompt context.      |
-| `MCPTool`                                  | You are wrapping a single MCP `Tool` definition directly rather than listing a server. |
-| `MCPSessionManager`                        | You are managing MCP client sessions or building `MCPTool` instances yourself.         |
-| `genaiSchemaToJsonSchema` / `toJsonSchema` | You need the JSON Schema equivalent of a Gemini `Schema` or `SchemaLike`.              |
-| `toGeminiSchema`                           | You need the Gemini `Schema` equivalent of an MCP or JSON Schema object.               |
+| Symbol                                                    | You touch it when                                                                               |
+| :-------------------------------------------------------- | :---------------------------------------------------------------------------------------------- |
+| `MCPToolset`                                              | You want an agent to discover and call tools from an MCP server.                                |
+| `StdioConnectionParams`                                   | The MCP server runs as a local child process over `stdin` and `stdout`.                         |
+| `StreamableHTTPConnectionParams`                          | The MCP server exposes a Streamable HTTP endpoint.                                              |
+| `SseConnectionParams` / `SseServerParams`                 | The MCP server exposes an HTTP+SSE endpoint.                                                    |
+| `LoadMcpResourceTool`                                     | You want the agent to list and read MCP server resources into the prompt context.               |
+| `McpInstructionProvider` / `createMcpInstructionProvider` | You want an agent or `GlobalInstructionPlugin` to fetch instructions from an MCP server prompt. |
+| `MCPTool`                                                 | You are wrapping a single MCP `Tool` definition directly rather than listing a server.          |
+| `MCPSessionManager`                                       | You are managing MCP client sessions or building `MCPTool` instances yourself.                  |
+| `genaiSchemaToJsonSchema` / `toJsonSchema`                | You need the JSON Schema equivalent of a Gemini `Schema` or `SchemaLike`.                       |
+| `toGeminiSchema`                                          | You need the Gemini `Schema` equivalent of an MCP or JSON Schema object.                        |
 
 ## Get started
 
@@ -423,6 +424,33 @@ const geminiSchema = toGeminiSchema({
 });
 
 const jsonSchema = geminiSchema ? genaiSchemaToJsonSchema(geminiSchema) : {};
+```
+
+### Loading instructions from an MCP prompt
+
+`McpInstructionProvider` and `createMcpInstructionProvider` fetch a named prompt
+from an MCP server via `prompts/get` and concatenate its text messages into a
+single instruction string. Pass `arguments` either as a fixed record or as a
+callback that selects safe values from `ReadonlyContext` so session state is
+never forwarded automatically.
+
+```ts
+import {createMcpInstructionProvider, LlmAgent} from '@google/adk';
+
+export const supportAgent = new LlmAgent({
+  name: 'support_agent',
+  model: 'gemini-2.5-flash',
+  instruction: createMcpInstructionProvider({
+    connectionParams: {
+      type: 'StreamableHTTPConnectionParams',
+      url: 'http://localhost:8788/mcp',
+    },
+    promptName: 'customer_support',
+    arguments: (ctx) => ({
+      locale: String(ctx.state.get('locale') ?? 'en-US'),
+    }),
+  }),
+});
 ```
 
 ## Limitations
