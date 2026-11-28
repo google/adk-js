@@ -899,6 +899,29 @@ describe('DatabaseSessionService', () => {
       expect(response.limit).toBe(3);
     });
 
+    it('offset without limit skips sessions', async () => {
+      for (let i = 1; i <= 4; i++) {
+        const s = await service.createSession({
+          appName,
+          userId,
+          sessionId: `s${i}`,
+        });
+        await service.appendEvent({
+          session: s,
+          event: createEvent({timestamp: i * 1000}),
+        });
+      }
+
+      const response = await service.listSessions({
+        appName,
+        userId,
+        offset: 2,
+        order: 'asc',
+      });
+
+      expect(response.sessions.map((s) => s.id)).toEqual(['s3', 's4']);
+    });
+
     it('page + limit returns correct slice', async () => {
       for (let i = 1; i <= 5; i++) {
         const s = await service.createSession({
