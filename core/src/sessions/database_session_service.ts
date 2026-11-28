@@ -542,8 +542,10 @@ export class DatabaseSessionService extends BaseSessionService {
       paginationMeta = {page: effectivePage, limit, totalItems, totalPages};
     } else if (offset) {
       const totalItems = await em.count(StorageSession, where);
+      // SQLite rejects OFFSET without LIMIT; totalItems keeps this branch unbounded.
       storageSessions = await em.find(StorageSession, where, {
         orderBy,
+        limit: totalItems,
         offset,
       });
       paginationMeta = {
